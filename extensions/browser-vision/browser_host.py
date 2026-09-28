@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import hashlib
 import logging
 import os
 import threading
@@ -50,6 +51,23 @@ _CONTENT_INSET_JS = """(e) => {
         px(s.borderLeftWidth) + px(s.paddingLeft), px(s.borderTopWidth) + px(s.paddingTop),
         px(s.borderRightWidth) + px(s.paddingRight), px(s.borderBottomWidth) + px(s.paddingBottom),
     ];
+}"""
+
+# The page's title and visible text, main frame plus same-origin child
+# frames (a cross-origin frame's document is not readable from the page, so
+# by definition it is not part of the fingerprint).
+_PAGE_TEXT_JS = """() => {
+    const texts = [];
+    const walk = (doc) => {
+        texts.push(doc.body ? doc.body.innerText : '');
+        for (const frame of doc.querySelectorAll('iframe, frame')) {
+            let child = null;
+            try { child = frame.contentDocument; } catch (e) { child = null; }
+            if (child) walk(child);
+        }
+    };
+    walk(document);
+    return [document.title, texts.join('\\u0000')];
 }"""
 
 T = TypeVar("T")
@@ -95,6 +113,25 @@ class ActionOutcome:
     downloads: tuple[DownloadResult, ...] = ()
 
 
+@dataclass(frozen=True)
+class WaitOutcome:
+    """What ``wait_for_change`` saw.
+
+    Attributes:
+        changed: The page's fingerprint (URL, title, visible text) differed
+            from the one at the start at least once.
+        elapsed_s: How long the wait took, in seconds.
+        settled: After changing, the fingerprint then held still for the
+            settle window before the timeout.
+        downloads: Files the page started downloading meanwhile.
+    """
+
+    changed: bool
+    elapsed_s: float
+    settled: bool
+    downloads: tuple[DownloadResult, ...] = ()
+
+
 @dataclass
 class _Session:
     context: BrowserContext
@@ -117,6 +154,9 @@ class BrowserHost:
         download_timeout_ms: How long an action waits for a download it started.
         settle_ms: Pause after an action so the page can react (and a
             download can start) before the next screenshot.
+        wait_poll_ms: How often ``wait_for_change`` re-reads the page.
+        wait_settle_ms: How long a changed page must hold still before
+            ``wait_for_change`` calls it settled.
     """
 
     def __init__(
@@ -127,12 +167,16 @@ class BrowserHost:
         action_timeout_ms: int,
         download_timeout_ms: int,
         settle_ms: int,
+        wait_poll_ms: int,
+        wait_settle_ms: int,
     ) -> None:
         self._browsers_path = browsers_path
         self._nav_timeout_ms = nav_timeout_ms
         self._action_timeout_ms = action_timeout_ms
         self._download_timeout_ms = download_timeout_ms
         self._settle_s = settle_ms / 1000
+        self._wait_poll_s = wait_poll_ms / 1000
+        self._wait_settle_s = wait_settle_ms / 1000
         # The longest one call can legitimately take: a browser launch (nav
         # timeout), the action, a download it started, and the settle pause.
         self._call_timeout_s = (nav_timeout_ms + action_timeout_ms + download_timeout_ms + settle_ms) / 1000
@@ -178,6 +222,10 @@ class BrowserHost:
     def click(self, agent_id: str, x: float, y: float) -> ActionOutcome:
         """Click (or tap, on a touch window) at CSS ``(x, y)``."""
         return self._run(lambda: self._act(agent_id, lambda s: self._click(s, x, y)))
+
+    def hover(self, agent_id: str, x: float, y: float) -> ActionOutcome:
+        """Move the mouse to CSS ``(x, y)`` without clicking, so hover menus open."""
+        return self._run(lambda: self._act(agent_id, lambda s: s.page.mouse.move(x, y)))
 
     def type_text(self, agent_id: str, text: str, *, enter: bool) -> ActionOutcome:
         """Type ``text`` into the focused element, then press Enter if asked."""
@@ -229,6 +277,27 @@ class BrowserHost:
         """
         return self._run(lambda: self._act(agent_id, lambda s: self._select(s, mark_n, x, y, label)))
 
+    def wait_for_change(self, agent_id: str, timeout_s: float) -> WaitOutcome:
+        """Watch the page until it changes and then holds still, or ``timeout_s`` passes.
+
+        The page is fingerprinted (URL, title, a hash of the visible text of
+        the main frame and its same-origin child frames) at the start and
+        every ``wait_poll_ms``. After the first difference it keeps polling
+        until the fingerprint has been stable for ``wait_settle_ms``. Then,
+        as after any action, it waits for the page to be parsed and saves
+        any downloads the page started.
+
+        The thread timeout is widened for this call only: the wait itself,
+        a settle window that may run past it, and the tail every action is
+        budgeted for (navigation, action, download save, settle pause).
+
+        Raises:
+            BrowserActionError: No session, or the page could not be read at
+                the start.
+        """
+        budget = timeout_s + self._wait_settle_s + self._call_timeout_s
+        return self._run(lambda: self._wait_for_change(agent_id, timeout_s), timeout_s=budget)
+
     def close(self, agent_id: str) -> bool:
         """Close the agent's context. Returns whether one was open."""
         if self._loop is None:
@@ -262,14 +331,21 @@ class BrowserHost:
                 self._loop, self._thread = loop, thread
             return self._loop
 
-    def _run(self, make: Callable[[], Awaitable[T]]) -> T:
+    def _run(self, make: Callable[[], Awaitable[T]], *, timeout_s: float | None = None) -> T:
+        """Run a coroutine on the browser thread and wait for it.
+
+        ``timeout_s`` overrides the per-call limit for a call that is meant
+        to take long (``wait_for_change``); every other call uses
+        ``_call_timeout_s``.
+        """
+        limit = self._call_timeout_s if timeout_s is None else timeout_s
         loop = self._ensure_loop()
         future = asyncio.run_coroutine_threadsafe(self._guard(make), loop)
         try:
-            return future.result(self._call_timeout_s)
+            return future.result(limit)
         except concurrent.futures.TimeoutError:
             future.cancel()
-            raise BrowserActionError(f"browser did not answer within {self._call_timeout_s:.0f}s") from None
+            raise BrowserActionError(f"browser did not answer within {limit:.0f}s") from None
 
     async def _guard(self, make: Callable[[], Awaitable[T]]) -> T:
         try:
@@ -404,6 +480,50 @@ class BrowserHost:
         session.pending.clear()
         results = [await self._save(session, download) for download in pending]
         return ActionOutcome(downloads=tuple(results))
+
+    async def _fingerprint(self, session: _Session) -> tuple[str, str, str]:
+        """``(url, title, sha256 of the visible text)`` of the session's page."""
+        title, text = await session.page.evaluate(_PAGE_TEXT_JS)
+        digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        return session.page.url, title, digest
+
+    async def _poll_fingerprint(self, session: _Session) -> tuple[str, str, str] | None:
+        """The page fingerprint, or ``None`` while the page is between documents.
+
+        A navigation destroys the execution context mid-evaluate; that is the
+        page changing, so it counts as a change that has not settled rather
+        than as an error. A page that stays unreadable surfaces its error at
+        the screenshot that follows the wait.
+        """
+        try:
+            return await self._fingerprint(session)
+        except PlaywrightError as exc:
+            logger.debug("Browser Vision: page unreadable while waiting (%s)", exc.message)
+            return None
+
+    async def _wait_for_change(self, agent_id: str, timeout_s: float) -> WaitOutcome:
+        session = self._session(agent_id)
+        loop = asyncio.get_running_loop()
+        start = loop.time()
+        deadline = start + timeout_s
+        last: tuple[str, str, str] | None = await self._fingerprint(session)
+        changed_at: float | None = None
+        stable_since = start
+        settled = False
+        while (now := loop.time()) < deadline:
+            await asyncio.sleep(min(self._wait_poll_s, deadline - now))
+            current = await self._poll_fingerprint(session)
+            now = loop.time()
+            if current is None or current != last:
+                last, stable_since = current, now
+                if changed_at is None:
+                    changed_at = now
+            elif changed_at is not None and now - stable_since >= self._wait_settle_s:
+                settled = True
+                break
+        elapsed = loop.time() - start
+        outcome = await self._after_action(session)
+        return WaitOutcome(changed=changed_at is not None, elapsed_s=elapsed, settled=settled, downloads=outcome.downloads)
 
     async def _save(self, session: _Session, download: Download) -> DownloadResult:
         session.downloads_dir.mkdir(parents=True, exist_ok=True)

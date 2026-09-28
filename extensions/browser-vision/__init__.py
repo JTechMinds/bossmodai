@@ -71,6 +71,8 @@ class BrowserVisionExtension:
             action_timeout_ms=self._defaults.action_timeout_ms,
             download_timeout_ms=self._defaults.download_timeout_ms,
             settle_ms=self._defaults.settle_ms,
+            wait_poll_ms=self._defaults.wait_poll_ms,
+            wait_settle_ms=self._defaults.wait_settle_ms,
         )
         # Nothing here starts the browser: BrowserHost creates its thread and
         # loop on the first command, so the app process can construct this

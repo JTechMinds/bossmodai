@@ -41,7 +41,11 @@ one image per browser action:
 - newest screenshot, file missing (pruned or deleted) → a text notice that
   it is unavailable and to run ``bv view`` (and a warning log) — the turn
   stays resumable after pruning;
-- any earlier carrier → a text line saying it was superseded.
+- any earlier carrier → a text line saying it was superseded, and when it
+  has a one-line summary under the private :data:`SUMMARY_KEY`, its text is
+  replaced by that summary (still inside the CLI result delimiters), so the
+  context does not grow by a full result (marks legend and all) per action.
+  Each new capture therefore changes exactly one earlier message.
 
 Parts use the OpenAI chat content format, which litellm translates for each
 provider.
@@ -56,6 +60,7 @@ from typing import Any
 
 from core import config
 from core.attachments import MODEL_IMAGE_MIME_TYPES, virtual_path
+from core.bm_cli.results import wrap_cli_text
 from core.models import Attachment
 from db import attachments as db_att
 from db.model_capabilities import supports_images
@@ -66,9 +71,12 @@ logger = logging.getLogger(__name__)
 ATTACHMENT_IDS_KEY = "bm_attachment_ids"
 # Private message key naming CLI screenshot files. Never sent to a model.
 SCREENSHOT_PATHS_KEY = "bm_screenshot_paths"
+# Private message key: a screenshot carrier's one-line stand-in text for when
+# it is superseded. Never sent to a model.
+SUMMARY_KEY = "bm_cli_summary"
 SCREENSHOT_MIME_TYPE = "image/png"
 SCREENSHOT_SUPERSEDED_TEXT = "[screenshot not resent — superseded by a newer capture]"
-_PRIVATE_KEYS = frozenset({ATTACHMENT_IDS_KEY, SCREENSHOT_PATHS_KEY})
+_PRIVATE_KEYS = frozenset({ATTACHMENT_IDS_KEY, SCREENSHOT_PATHS_KEY, SUMMARY_KEY})
 
 
 class AttachmentUnavailableError(Exception):
@@ -87,12 +95,13 @@ def expand_attachment_messages(
 ) -> list[dict[str, Any]]:
     """Return a copy of ``messages`` ready for the model.
 
-    Every message loses :data:`ATTACHMENT_IDS_KEY` and
-    :data:`SCREENSHOT_PATHS_KEY`. A message that carried either has its
-    ``content`` replaced by content parts: its original text first, then one
-    part per attachment in the order the ids were given, then its screenshot
-    parts (see the module doc: only the last carrier gets images). The input
-    list and its dicts are not modified.
+    Every message loses :data:`ATTACHMENT_IDS_KEY`,
+    :data:`SCREENSHOT_PATHS_KEY` and :data:`SUMMARY_KEY`. A message that
+    carried ids or paths has its ``content`` replaced by content parts: its
+    text first, then one part per attachment in the order the ids were
+    given, then its screenshot parts (see the module doc: only the last
+    carrier gets images, and an earlier carrier's text is its wrapped summary
+    when it has one). The input list and its dicts are not modified.
 
     Args:
         messages: Chat messages; ``content`` is text on every message that
@@ -122,7 +131,11 @@ def expand_attachment_messages(
             continue
         if vision is None:
             vision = supports_images(model)
-        parts: list[dict[str, Any]] = [{"type": "text", "text": str(copy.get("content", ""))}]
+        text = str(copy.get("content", ""))
+        summary = message.get(SUMMARY_KEY)
+        if shots and index != newest_shots and summary is not None:
+            text = wrap_cli_text(str(summary))
+        parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
         if ids:
             if inline_cap is None:
                 inline_cap = config.require_int("bossmod.attach.inline_text_max_chars")

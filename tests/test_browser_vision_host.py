@@ -103,6 +103,8 @@ def test_two_agents_opening_at_once_start_one_playwright_and_one_browser(monkeyp
         action_timeout_ms=5000,
         download_timeout_ms=5000,
         settle_ms=0,
+        wait_poll_ms=500,
+        wait_settle_ms=1000,
     )
     viewport = _viewports.ViewportSpec(name="desktop", device=None, width=1280, height=800)
     barrier = threading.Barrier(2)

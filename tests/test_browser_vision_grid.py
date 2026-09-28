@@ -31,10 +31,10 @@ def _mark(n: int, rect, kind: str = "button") -> object:
 
 
 def _render(png: bytes, viewport, *, rect=None, color="auto", opacity=1.0, enabled=True,
-            mark_list=(), show_marks=True, label=_LABELS, image_max_px=1568):
+            mark_list=(), show_marks=True, label=_LABELS, image_max_px=1568, pointer=None):
     style = grid.GridStyle(enabled=enabled, color=color, opacity=opacity)
     return grid.render_view(png, viewport, rect, style, list(mark_list), show_marks=show_marks,
-                            image_max_px=image_max_px, label=label, keypad_font_px=28)
+                            image_max_px=image_max_px, label=label, keypad_font_px=28, pointer=pointer)
 
 
 def _image(rendered) -> Image.Image:
@@ -207,7 +207,7 @@ def test_marks_are_numbered_in_reading_order_and_clipped_to_the_viewport() -> No
 
 def test_legend_and_feedback_lines() -> None:
     mark = marks.Mark(n=12, kind="textbox", name="Enter your address", rect=(0, 0, 10, 10), point=(5, 5), state="empty")
-    assert marks.legend_line(mark) == '[12] textbox "Enter your address" (empty)'
+    assert marks.legend_line(mark) == '[@12] textbox "Enter your address" (empty)'
     assert marks.feedback_line({"kind": "button", "name": "Go"}) == 'clicked button "Go"'
     assert marks.feedback_line({"tag": "CANVAS"}) == "clicked canvas (not a control)"
     assert marks.feedback_line(None) == "clicked nothing"
@@ -267,3 +267,101 @@ def test_a_tag_at_an_edge_is_moved_inside_the_image() -> None:
     # A tag drawn just above a mark at the very top moves down into view.
     assert grid.fit_inside((5, -12, 20, -1), (1280, 800)) == (5, 0, 20, 11)
     assert grid.fit_inside((61, 1, 80, 14), (1280, 800)) == (61, 1, 80, 14)
+
+
+# ─── mark tags read @n (R20) ───
+
+
+def test_a_mark_tag_reads_at_n_and_keypad_digits_stay_plain() -> None:
+    assert grid.mark_tag_text(7) == "@7"
+    font = grid._font(grid.label_font_size(60, _LABELS))
+    draw = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    plain_w = grid.tag_box(draw, (0, 0), "1", font)[2] + 1
+    at_w = grid.tag_box(draw, (0, 0), "@1", font)[2] + 1
+    assert at_w > plain_w + 2
+    mark = _mark(1, (100.0, 100.0, 300.0, 160.0))
+    image = _image(_render(_png(400, 400, (255, 255, 255)), (400, 400), enabled=False, mark_list=[mark]))
+    # The tag starts inside the outline at (102, 102); its top padding row is
+    # filled out to the width of "@1", past where a plain "1" tag would end.
+    assert sum(image.getpixel((102 + at_w - 1, 102))) < 250
+    assert sum(image.getpixel((102 + at_w + 1, 110))) == 765
+
+    keypad = _image(_render(_png(300, 300, (255, 255, 255)), (300, 300)))
+    big = grid._font(28)
+    five_w = grid.tag_box(draw, (0, 0), "5", big)[2] + 1
+    five_h = grid.tag_box(draw, (0, 0), "5", big)[3] + 1
+    left, top = round(150 - five_w / 2), round(150 - five_h / 2)
+    assert sum(keypad.getpixel((left, top))) < 400  # the "5" tag's corner
+    assert keypad.getpixel((left + five_w + 1, top)) == (255, 255, 255)  # no "@" widening it
+
+
+# ─── image ↔ page mapping for bv point (R21) ───
+
+
+def _geometry(viewport, rect=None):
+    width, height = viewport
+    return _render(_png(width, height, (255, 255, 255)), viewport, rect=rect, enabled=False).geometry
+
+
+@pytest.mark.parametrize("case", ["full", "widescreen", "zoom 5", "zoom 5 9"])
+def test_image_to_page_inverts_page_to_image(case) -> None:
+    if case == "full":
+        view = _geometry((1280, 800))
+        assert grid.image_to_page(view, 412, 488) == (412, 488)
+    elif case == "widescreen":
+        view = _geometry((1920, 1080))
+        assert (view.width, view.height) == (1568, 882)
+        assert grid.image_to_page(view, 784, 441) == pytest.approx((960, 540))
+    elif case == "zoom 5":
+        region = grid.zoom_into(_FULL, 5)
+        view = _geometry((1280, 800), region)
+        assert grid.image_to_page(view, 0, 0) == pytest.approx(region[:2])
+        assert grid.image_to_page(view, view.width / 2, view.height / 2) == pytest.approx((640, 400))
+    else:
+        region = grid.zoom_into(grid.zoom_into(_FULL, 5), 9)
+        view = _geometry((1280, 800), region)
+        centre = grid.region_center(grid.zoom_into(_FULL, 5), 9)
+        assert grid.image_to_page(view, view.width / 2, view.height / 2) == pytest.approx(centre)
+    for x, y in ((0, 0), (17, 250), (view.width - 1, view.height - 1)):
+        assert grid.page_to_image(view, *grid.image_to_page(view, x, y)) == pytest.approx((x, y))
+
+
+# ─── the pointer cursor (R21) ───
+
+
+def test_the_cursor_is_a_crosshair_and_ring_that_leaves_the_centre_clear() -> None:
+    image = _image(_render(_png(400, 400, (255, 255, 255)), (400, 400), enabled=False, pointer=(200.0, 100.0)))
+    white = (255, 255, 255)
+    # The exact point and its neighbours stay clear.
+    for dx in (-1, 0, 1):
+        for dy in (-1, 0, 1):
+            assert image.getpixel((200 + dx, 100 + dy)) == white, (dx, dy)
+    # Four 2 px arms, dark on a light page.
+    for x, y in ((208, 100), (208, 101), (192, 100), (200, 108), (201, 108), (200, 92)):
+        assert sum(image.getpixel((x, y))) < 100, (x, y)
+    # The ring crosses each diagonal.
+    assert any(sum(image.getpixel((200 + k, 100 + k))) < 100 for k in (3, 4, 5))
+    assert any(sum(image.getpixel((200 - k, 100 - k))) < 100 for k in (3, 4, 5))
+    # Nothing far away is touched.
+    assert image.getpixel((230, 100)) == white
+
+
+def test_the_cursor_is_light_on_a_dark_page_and_follows_the_zoom() -> None:
+    dark = _image(_render(_png(400, 400, (0, 0, 0)), (400, 400), enabled=False, pointer=(200.0, 100.0)))
+    assert sum(dark.getpixel((208, 100))) > 600
+    region = grid.keypad_region((0.0, 0.0, 400.0, 400.0), 5)
+    rendered = _render(_png(400, 400, (255, 255, 255)), (400, 400), rect=region, enabled=False, pointer=(200.0, 200.0))
+    zoomed = _image(rendered)
+    cx, cy = round(rendered.width / 2), round(rendered.height / 2)
+    assert zoomed.getpixel((cx, cy)) == (255, 255, 255)
+    assert sum(zoomed.getpixel((cx + 8, cy))) < 100
+    # A pointer outside the zoomed region is not drawn.
+    outside = _image(_render(_png(400, 400, (255, 255, 255)), (400, 400), rect=region, enabled=False,
+                             pointer=(10.0, 10.0)))
+    assert outside.getextrema() == ((255, 255), (255, 255), (255, 255))
+
+
+def test_hover_line_uses_the_click_feedback_wording() -> None:
+    assert marks.hover_line({"kind": "option", "name": "Alpha Road"}) == 'hovering option "Alpha Road"'
+    assert marks.hover_line({"tag": "P"}) == "hovering p (not a control)"
+    assert marks.hover_line(None) == "hovering nothing"

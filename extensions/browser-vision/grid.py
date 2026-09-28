@@ -8,11 +8,13 @@ view splits into a 3×3 keypad, regions numbered like a phone keypad::
     7 8 9
 
 ``zoom <d>`` narrows the view to region ``d``; ``click <d>`` clicks its
-centre. Element marks (``marks``) are drawn on top wherever they fall.
+centre. Element marks (``marks``) are drawn on top wherever they fall, and
+the agent's pointer (``bv point``) as a cursor.
 
-All coordinates are CSS pixels; screenshots are taken at CSS scale, so image
-pixels and click coordinates share one space. A view's scale ``s`` maps CSS
-px to image px only for drawing: ``(css - view origin) * s``.
+All page coordinates are CSS pixels; screenshots are taken at CSS scale. A
+view's scale ``s`` maps CSS px to image px: ``(css - view origin) * s``
+(:func:`page_to_image`), and :func:`image_to_page` inverts it for a point
+the agent read off the image.
 """
 
 from __future__ import annotations
@@ -46,6 +48,13 @@ _OUTLINE_PX = 2
 # The smallest region a zoom may produce, in CSS px on each side: below one
 # pixel there is nothing left to see.
 MIN_REGION_PX = 1.0
+# The pointer cursor, in rendered px: crosshair arms run from _CURSOR_GAP to
+# _CURSOR_ARM px out from the centre, 2 px thick, crossing a ring of radius
+# _CURSOR_RING. The gap keeps the exact point (and a little around it) clear
+# so the agent can see what it is pointing at.
+_CURSOR_GAP = 3
+_CURSOR_ARM = 12
+_CURSOR_RING = 6
 
 _COLOR_RE = re.compile(r"^#([0-9a-fA-F]{6})$")
 
@@ -82,20 +91,48 @@ class LabelStyle:
 
 
 @dataclass(frozen=True)
-class RenderedView:
-    """A screenshot of the current view with keypad and marks drawn on.
+class ViewGeometry:
+    """Where a rendered image sits on the page.
 
     Attributes:
-        png: The image bytes.
+        rect: The view in page CSS px (the zoom rect, or the full viewport).
         width: Image width in px.
         height: Image height in px.
         scale: Rendered px per CSS px.
     """
 
-    png: bytes
+    rect: Rect
     width: int
     height: int
     scale: float
+
+
+@dataclass(frozen=True)
+class RenderedView:
+    """A screenshot of the current view with keypad, marks and pointer drawn on.
+
+    Attributes:
+        png: The image bytes.
+        geometry: Where the image sits on the page.
+    """
+
+    png: bytes
+    geometry: ViewGeometry
+
+    @property
+    def width(self) -> int:
+        """Image width in px."""
+        return self.geometry.width
+
+    @property
+    def height(self) -> int:
+        """Image height in px."""
+        return self.geometry.height
+
+    @property
+    def scale(self) -> float:
+        """Rendered px per CSS px."""
+        return self.geometry.scale
 
 
 def parse_color(raw: str) -> GridColor:
@@ -187,6 +224,22 @@ def view_scale(rect: Rect, *, zoomed: bool, image_max_px: int) -> float:
     return fit if zoomed else min(1.0, fit)
 
 
+def page_to_image(view: ViewGeometry, css_x: float, css_y: float) -> tuple[float, float]:
+    """Map a page point (CSS px) to image px of ``view``: ``(css - origin) * scale``."""
+    x0, y0, _x1, _y1 = view.rect
+    return (css_x - x0) * view.scale, (css_y - y0) * view.scale
+
+
+def image_to_page(view: ViewGeometry, x: float, y: float) -> tuple[float, float]:
+    """Map a point on ``view``'s image (image px) back to the page (CSS px).
+
+    The exact inverse of :func:`page_to_image`, so a point the agent reads
+    off a shrunk or zoomed screenshot lands where it saw it.
+    """
+    x0, y0, _x1, _y1 = view.rect
+    return x0 + x / view.scale, y0 + y / view.scale
+
+
 def render_view(
     png: bytes,
     viewport: tuple[int, int],
@@ -198,12 +251,14 @@ def render_view(
     image_max_px: int,
     label: LabelStyle,
     keypad_font_px: int,
+    pointer: tuple[float, float] | None = None,
 ) -> RenderedView:
-    """Crop and scale the screenshot to the view, then draw keypad and marks.
+    """Crop and scale the screenshot to the view, then draw keypad, marks and pointer.
 
     The image is scaled BEFORE anything is drawn, so lines and tags are crisp
     at the final size. Marks partly inside the view are drawn clipped; marks
-    outside it are not drawn (they stay addressable by number).
+    outside it are not drawn (they stay addressable by number). The pointer
+    is drawn as a cursor when it falls inside the view.
 
     Args:
         png: The viewport screenshot, exactly ``viewport`` in size.
@@ -215,6 +270,7 @@ def render_view(
         image_max_px: Longest edge of the returned image.
         label: Mark tag size and opacity.
         keypad_font_px: Keypad digit size.
+        pointer: The agent's pointer in page CSS px, or ``None``.
 
     Returns:
         The rendered image.
@@ -242,13 +298,16 @@ def render_view(
     if style.enabled:
         _draw_keypad_lines(draw, luma, style, round(style.opacity * 255))
         _draw_keypad_digits(draw, luma, style, label, keypad_font_px)
+    geometry = ViewGeometry(rect=view, width=image.size[0], height=image.size[1], scale=scale)
     if show_marks:
         for mark in marks:
             _draw_mark(draw, luma, mark, view, scale, style, label)
+    if pointer is not None:
+        _draw_cursor(draw, luma, page_to_image(geometry, *pointer))
     composed = Image.alpha_composite(image.convert("RGBA"), overlay).convert("RGB")
     buffer = io.BytesIO()
     composed.save(buffer, format="PNG")
-    return RenderedView(png=buffer.getvalue(), width=composed.size[0], height=composed.size[1], scale=scale)
+    return RenderedView(png=buffer.getvalue(), geometry=geometry)
 
 
 def _inks(luma: Image.Image, box: tuple[float, float, float, float], color: GridColor) -> tuple[RGB, RGB]:
@@ -315,7 +374,7 @@ def _draw_mark(
     style: GridStyle,
     label: LabelStyle,
 ) -> None:
-    """Outline a mark and tag it with its number, if any of it is in view."""
+    """Outline a mark and tag it ``@n``, if any of it is in view."""
     x0, y0, x1, y1 = mark.rect
     vx0, vy0, vx1, vy1 = view
     if x1 <= vx0 or x0 >= vx1 or y1 <= vy0 or y0 >= vy1:
@@ -325,13 +384,57 @@ def _draw_mark(
     alpha = round(label.opacity * 255)
     draw.rectangle(box, outline=(*ink, alpha), width=_OUTLINE_PX)
     font = _font(label_font_size(box[3] - box[1], label))
-    number = str(mark.n)
+    number = mark_tag_text(mark.n)
     tag = tag_box(draw, (0, 0), number, font)
     tag_w, tag_h = tag[2] + 1, tag[3] + 1
     # Inside the top-left corner when the mark has room, else just above it.
     inside = (box[3] - box[1]) >= tag_h + 2 * _OUTLINE_PX and (box[2] - box[0]) >= tag_w + 2 * _OUTLINE_PX
     origin = (box[0] + _OUTLINE_PX, box[1] + _OUTLINE_PX) if inside else (box[0], box[1] - tag_h)
     _draw_tag(draw, luma, number, font, origin, style.color, label.opacity, centred=False)
+
+
+def mark_tag_text(n: int) -> str:
+    """The text on mark ``n``'s tag: ``@n``, exactly what the agent types.
+
+    The ``@`` also tells a mark tag apart from a plain keypad digit ``1``–``9``.
+    """
+    return f"@{n}"
+
+
+def cursor_center(at: tuple[float, float]) -> tuple[int, int]:
+    """The image pixel the cursor for image point ``at`` is centred on.
+
+    Rounded, not floored: a whole-pixel point the agent gave comes back
+    through CSS px with float error (411.99999…), and must land on its pixel.
+    """
+    return round(at[0]), round(at[1])
+
+
+def _draw_cursor(draw: ImageDraw.ImageDraw, luma: Image.Image, at: tuple[float, float]) -> None:
+    """A crosshair with a ring at image point ``at``, if it is on the image.
+
+    Auto-contrast ink with a 1 px halo; the centre pixel and the gap around
+    it are never painted.
+    """
+    width, height = luma.size
+    cx, cy = cursor_center(at)
+    if not (0 <= cx < width and 0 <= cy < height):
+        return
+    ink, halo = _inks(luma, (cx - _CURSOR_ARM, cy - _CURSOR_ARM, cx + _CURSOR_ARM + 1, cy + _CURSOR_ARM + 1), "auto")
+    ring = (cx - _CURSOR_RING, cy - _CURSOR_RING, cx + _CURSOR_RING, cy + _CURSOR_RING)
+    # Arms are 2 px thick: rows/columns centre and centre+1, clear of the gap.
+    arms = [
+        (cx - _CURSOR_ARM, cy, cx - _CURSOR_GAP, cy + 1),
+        (cx + _CURSOR_GAP, cy, cx + _CURSOR_ARM, cy + 1),
+        (cx, cy - _CURSOR_ARM, cx + 1, cy - _CURSOR_GAP),
+        (cx, cy + _CURSOR_GAP, cx + 1, cy + _CURSOR_ARM),
+    ]
+    draw.ellipse((ring[0] - 1, ring[1] - 1, ring[2] + 1, ring[3] + 1), outline=(*halo, 255), width=4)
+    for x0, y0, x1, y1 in arms:
+        draw.rectangle((x0 - 1, y0 - 1, x1 + 1, y1 + 1), fill=(*halo, 255))
+    draw.ellipse(ring, outline=(*ink, 255), width=2)
+    for arm in arms:
+        draw.rectangle(arm, fill=(*ink, 255))
 
 
 def _draw_tag(

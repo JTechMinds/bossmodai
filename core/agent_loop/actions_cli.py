@@ -89,6 +89,7 @@ def _cli_action_result(
         "agent_name": agent.name,
         "cli_prompt_content": cli_result.prompt_content,
         "cli_image_paths": list(cli_result.image_paths),
+        "cli_summary": cli_result.summary,
         # Operator one-liners a command asked for (validated where they are posted).
         "cli_status_lines": (cli_result.data or {}).get("status_lines", []),
         "counts_as_progress": cli_result_counts_as_progress(cli_result),

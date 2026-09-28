@@ -1,9 +1,12 @@
 """Browser Vision — element marks: the page's clickable elements, numbered (pure).
 
-Marks come from plain page inspection (see ``browser_host``): no model, no
-guessing. Each visible, hit-testable control gets a number in reading order,
-an outline and a tag on the screenshot, and a line in the result legend, so
-an agent can act on ``@n`` instead of aiming at pixels.
+Marks come from plain page inspection (see ``browser_host`` and
+``page_marks.js``): no model, no guessing. A control is anything the control
+selector matches, a row of a floating popup list (kind ``option``: autocomplete
+suggestions have no role), or the outermost ``cursor:pointer`` box. Each
+visible, hit-testable control gets a number in reading order, an outline and
+an ``@n`` tag on the screenshot, and a line in the result legend, so an agent
+can act on ``@n`` instead of aiming at pixels.
 """
 
 from __future__ import annotations
@@ -108,8 +111,8 @@ def place(
 
 
 def legend_line(mark: Mark) -> str:
-    """One legend line, e.g. ``[12] textbox "Enter your address" (empty)``."""
-    line = f'[{mark.n}] {mark.kind} "{mark.name}"'
+    """One legend line, e.g. ``[@12] textbox "Enter your address" (empty)``."""
+    line = f'[@{mark.n}] {mark.kind} "{mark.name}"'
     return f"{line} ({mark.state})" if mark.state else line
 
 
@@ -120,8 +123,22 @@ def feedback_line(hit: dict[str, Any] | None) -> str:
         ``clicked <kind> "<name>"`` for a control, ``clicked <tag> (not a
         control)`` otherwise, ``clicked nothing`` when the point is empty.
     """
+    return f"clicked {_hit_text(hit)}"
+
+
+def hover_line(hit: dict[str, Any] | None) -> str:
+    """Describe what the pointer is over, from the in-page ``describe`` result.
+
+    Returns:
+        ``hovering <kind> "<name>"``, ``hovering <tag> (not a control)`` or
+        ``hovering nothing`` — the same wording as :func:`feedback_line`.
+    """
+    return f"hovering {_hit_text(hit)}"
+
+
+def _hit_text(hit: dict[str, Any] | None) -> str:
     if not hit:
-        return "clicked nothing"
+        return "nothing"
     if hit.get("kind"):
-        return f'clicked {hit["kind"]} "{hit.get("name") or ""}"'
-    return f"clicked {str(hit.get('tag') or 'element').lower()} (not a control)"
+        return f'{hit["kind"]} "{hit.get("name") or ""}"'
+    return f"{str(hit.get('tag') or 'element').lower()} (not a control)"

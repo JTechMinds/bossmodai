@@ -26,6 +26,7 @@ _marks_module = importlib.import_module(f"{_PACKAGE.__name__}.marks")
 ActionOutcome = _host_module.ActionOutcome
 Capture = _host_module.Capture
 DownloadResult = _host_module.DownloadResult
+WaitOutcome = _host_module.WaitOutcome
 Mark = _marks_module.Mark
 
 # The fake page's controls: a button, a text field and a dropdown.
@@ -73,6 +74,9 @@ class FakeHost:
         self.marks = _MARKS
         # What describe() reports for any point (click feedback).
         self.hit = {"kind": "button", "name": "Sign in"}
+        # What the next wait_for_change() reports, and where it leaves the page.
+        self.next_wait = WaitOutcome(changed=False, elapsed_s=30.0, settled=False)
+        self.wait_navigates_to: str | None = None
 
     def _outcome(self):
         outcome, self.next_outcome = self.next_outcome, ActionOutcome()
@@ -99,6 +103,10 @@ class FakeHost:
             self.url, self.click_navigates_to = self.click_navigates_to, None
         return self._outcome()
 
+    def hover(self, agent_id, x, y):
+        self.calls.append(("hover", x, y))
+        return self._outcome()
+
     def describe(self, agent_id, x, y):
         self.calls.append(("describe", x, y))
         return self.hit
@@ -122,6 +130,12 @@ class FakeHost:
     def back(self, agent_id):
         self.calls.append(("back",))
         return self._outcome()
+
+    def wait_for_change(self, agent_id, timeout_s):
+        self.calls.append(("wait", timeout_s))
+        if self.wait_navigates_to is not None:
+            self.url, self.wait_navigates_to = self.wait_navigates_to, None
+        return self.next_wait
 
     def set_viewport(self, agent_id, viewport):
         self.calls.append(("set_viewport", viewport))
@@ -199,9 +213,9 @@ def test_open_adds_https_to_a_bare_host_and_returns_a_screenshot(env) -> None:
     assert "window: desktop 1280x800" in text
     assert "view: full page" in text
     assert "marks: 3" in text
-    assert '[1] button "Sign in"' in text
-    assert '[2] textbox "Email" (empty)' in text
-    assert '[3] select "Apple"' in text
+    assert '[@1] button "Sign in"' in text
+    assert '[@2] textbox "Email" (empty)' in text
+    assert '[@3] select "Apple"' in text
 
 
 def test_each_screenshot_has_a_sidecar_describing_it(env) -> None:
@@ -244,7 +258,7 @@ def test_open_passes_any_scheme_and_adds_https_only_without_one(env, typed, open
 
 
 def test_unknown_subcommand_gives_usage(env) -> None:
-    assert _error(env["run"]("bv fly")).startswith("USAGE: bv open|view|zoom|click|type|select|")
+    assert _error(env["run"]("bv fly")).startswith("USAGE: bv open|view|zoom|point|point1k|click|type|select|")
     assert _error(env["run"]("bv")).startswith("USAGE:")
 
 
@@ -325,7 +339,7 @@ def test_marks_setting_is_sticky(env) -> None:
 
 def test_grid_settings_are_sticky_and_parse_errors_name_the_form(env) -> None:
     env["run"]("bv open example.com")
-    env["run"]("bv view --grid-color #00ff00 --grid-opacity 0.3")
+    env["run"]("bv view --grid on --grid-color #00ff00 --grid-opacity 0.3")
     env["run"]("bv key Tab")
     assert "grid: on, colour #00ff00, opacity 0.3" in env["run"]("bv status").prompt_content
     assert "auto or #rrggbb" in _error(env["run"]("bv view --grid-color green"))
@@ -373,6 +387,48 @@ def test_type_takes_the_body_and_enter_flag(env) -> None:
     assert _error(env["run"]("bv type")).startswith("USAGE: bv type needs the text")
     assert env["run"]("bv type --enter", body='say "hi" & bye').ok
     assert ("type", 'say "hi" & bye', True) in env["host"].calls
+
+
+# ─── inline type text (R25) ───
+
+
+def test_type_takes_inline_text_after_the_mark_and_enter(env) -> None:
+    env["run"]("bv open example.com")
+    typed = env["run"]("bv type @1 hello world --enter")
+    assert typed.ok, typed.prompt_content
+    calls = env["host"].calls
+    assert calls.index(("click", 120.0, 50.0)) < calls.index(("type", "hello world", True))
+    assert "typed 11 characters" in typed.prompt_content
+
+
+def test_enter_may_come_before_the_mark(env) -> None:
+    env["run"]("bv open example.com")
+    assert env["run"]("bv type --enter @2 hi").ok
+    calls = env["host"].calls
+    assert calls.index(("click", 140.0, 125.0)) < calls.index(("type", "hi", True))
+
+
+def test_inline_text_without_a_mark_types_into_the_focus(env) -> None:
+    env["run"]("bv open example.com")
+    assert env["run"]("bv type 787 SW 13th Ave").ok
+    assert ("type", "787 SW 13th Ave", False) in env["host"].calls
+    assert not any(call[0] == "click" for call in env["host"].calls)
+
+
+def test_text_in_both_the_body_and_the_command_is_a_usage_error(env) -> None:
+    env["run"]("bv open example.com")
+    message = _error(env["run"]("bv type @1 hello", body="hello"))
+    assert message == (
+        "USAGE: bv type [@<n>] [--enter] [<text …>] — give the text either in the body or after the command, not both"
+    )
+    assert _error(env["run"]("bv type @1 --enter")).startswith("USAGE: bv type needs the text")
+    assert not any(call[0] in {"click", "type"} for call in env["host"].calls)
+
+
+def test_body_only_typing_is_unchanged(env) -> None:
+    env["run"]("bv open example.com")
+    assert env["run"]("bv type @2 --enter", body="me@example.com  two spaces").ok
+    assert ("type", "me@example.com  two spaces", True) in env["host"].calls
 
 
 def test_scroll_moves_most_of_a_screen(env) -> None:
@@ -510,3 +566,317 @@ def test_short_url_keeps_a_scheme_without_slashes() -> None:
     assert _commands_module.short_url("about:blank") == "about:blank"
     assert _commands_module.short_url("file:///tmp/x.html") == "/tmp/x.html"
     assert _commands_module.short_url("http://localhost:3000/") == "localhost:3000"
+
+
+# ─── direct pointing: bv point / point1k, bv click at the pointer (R21) ───
+
+
+def _cursor_at(result, x: int, y: int) -> bool:
+    """Whether the result's image has the cursor's right arm at image px (x, y)."""
+    image = Image.open(Path(result.image_paths[0])).convert("RGB")
+    if not (0 <= x < image.width - 8 and 0 <= y < image.height):
+        return False
+    return sum(image.getpixel((x + 8, y))) < 100 and sum(image.getpixel((x, y))) > 600
+
+
+def _hovers(env) -> list[tuple]:
+    return [call for call in env["host"].calls if call[0] == "hover"]
+
+
+def test_point_moves_the_mouse_and_echoes_both_units(env) -> None:
+    env["run"]("bv open example.com")
+    env["host"].hit = {"kind": "option", "name": "Alpha Road"}
+    pointed = env["run"]("bv point 412 488")
+    assert pointed.ok, pointed.prompt_content
+    assert _hovers(env)[-1] == ("hover", 412.0, 488.0)
+    assert 'pointer: (412, 488) px = (322, 610)‰ — hovering option "Alpha Road"' in pointed.prompt_content
+    assert "view: full page" in pointed.prompt_content
+    assert _cursor_at(pointed, 412, 488)
+    assert not any(call[0] == "click" for call in env["host"].calls)
+
+
+def test_point1k_is_a_0_to_1000_scale_of_the_image(env) -> None:
+    env["run"]("bv open example.com")
+    pointed = env["run"]("bv point1k 500 250")
+    assert _hovers(env)[-1] == ("hover", 640.0, 200.0)
+    assert "pointer: (640, 200) px = (500, 250)‰" in pointed.prompt_content
+    env["run"]("bv point1k 1000 1000")
+    assert _hovers(env)[-1] == ("hover", 1280.0, 800.0)
+    env["run"]("bv point1k 0 0")
+    assert _hovers(env)[-1] == ("hover", 0.0, 0.0)
+
+
+def test_point_is_in_pixels_of_the_latest_image_shrunk_or_zoomed(env) -> None:
+    env["run"]("bv open example.com")
+    env["run"]("bv window widescreen")  # image 1568x882 of a 1920x1080 page
+    env["run"]("bv point 784 441")
+    assert _hovers(env)[-1] == ("hover", pytest.approx(960.0), pytest.approx(540.0))
+    env["run"]("bv window desktop")
+    zoomed = env["run"]("bv zoom 5")  # image 1568x980 of region 427×267 at (427, 267)
+    assert "image 1568x980 (scale ×3.675)" in zoomed.prompt_content
+    env["run"]("bv point 784 490")  # the image centre is the region centre
+    assert _hovers(env)[-1] == ("hover", pytest.approx(640.0), pytest.approx(400.0))
+    pointed = env["run"]("bv point 900 600")  # away from the keypad "5" tag
+    assert _hovers(env)[-1] == ("hover", pytest.approx(1280 / 3 + 900 * 1280 / 3 / 1568),
+                                pytest.approx(800 / 3 + 600 * 1280 / 3 / 1568))
+    assert "view: zoom 5 —" in pointed.prompt_content  # point keeps the zoom
+    assert _cursor_at(pointed, 900, 600)
+
+
+def test_points_outside_the_image_name_the_range_for_the_command(env) -> None:
+    assert _error(env["run"]("bv point 1 1")) == 'NO_PAGE: run "bv open <url>" first'
+    env["run"]("bv open example.com")
+    for bad in ("1280 0", "0 800", "-1 5", "x 5", "nan 5", "inf 5"):
+        message = _error(env["run"](f"bv point {bad}"))
+        assert message.startswith("POINT_OUT_OF_VIEW: x must be 0–1279, y 0–799"), (bad, message)
+    for bad in ("1001 0", "0 -1", "abc 1"):
+        message = _error(env["run"](f"bv point1k {bad}"))
+        assert message.startswith("POINT_OUT_OF_VIEW: x must be 0–1000, y 0–1000"), (bad, message)
+    assert _error(env["run"]("bv point 5")) == "USAGE: bv point <x> <y>"
+    assert _error(env["run"]("bv point1k 1 2 3")) == "USAGE: bv point1k <x> <y>"
+    assert _hovers(env) == []
+
+
+def test_click_without_an_argument_clicks_at_the_pointer(env) -> None:
+    env["run"]("bv open example.com")
+    assert _error(env["run"]("bv click")) == 'NO_POINTER: run "bv point x y" first'
+    env["run"]("bv point 1000 720")
+    clicked = env["run"]("bv click")
+    assert clicked.ok, clicked.prompt_content
+    assert [call for call in env["host"].calls if call[0] == "click"] == [("click", 1000.0, 720.0)]
+    assert 'clicked button "Sign in" at (1000, 720)' in clicked.prompt_content
+    assert _cursor_at(clicked, 1000, 720)  # same page: the pointer stays
+
+
+def test_a_mark_or_region_click_moves_the_pointer_to_where_it_clicked(env) -> None:
+    env["run"]("bv open example.com")
+    clicked = env["run"]("bv click @1")
+    assert _cursor_at(clicked, 120, 50)
+    env["run"]("bv click")
+    assert [call for call in env["host"].calls if call[0] == "click"][-1] == ("click", 120.0, 50.0)
+    env["run"]("bv click 9")
+    env["run"]("bv click")
+    assert [call for call in env["host"].calls if call[0] == "click"][-1] == (
+        "click", pytest.approx(2560 / 3 + 1280 / 6), pytest.approx(1600 / 3 + 800 / 6),
+    )
+
+
+@pytest.mark.parametrize(("command", "body"), [
+    ("bv view", None),
+    ("bv zoom 5", None),
+    ("bv key Tab", None),
+    ("bv type --enter", "hello"),
+    ("bv select @3 Banana", None),
+])
+def test_the_pointer_is_kept_while_the_page_stays(env, command, body) -> None:
+    env["run"]("bv open example.com")
+    env["run"]("bv point 1000 720")
+    result = env["run"](command, body=body)
+    assert result.ok, result.prompt_content
+    if command != "bv zoom 5":  # the zoomed region does not contain the pointer
+        assert _cursor_at(result, 1000, 720)
+    env["run"]("bv click")
+    assert [call for call in env["host"].calls if call[0] == "click"][-1] == ("click", 1000.0, 720.0)
+
+
+@pytest.mark.parametrize("commands", [
+    ["bv open example.org"],
+    ["bv back"],
+    ["bv scroll down"],
+    ["bv window tablet"],
+    ["bv zoom 5", "bv point 10 10", "bv zoom out"],
+    ["bv zoom 5", "bv point 10 10", "bv zoom reset"],
+])
+def test_the_pointer_is_cleared_when_the_page_moves_under_it(env, commands) -> None:
+    env["run"]("bv open example.com")
+    env["run"]("bv point 1000 720")
+    for command in commands:
+        result = env["run"](command)
+        assert result.ok, result.prompt_content
+    assert not _cursor_at(result, 1000, 720)
+    assert _error(env["run"]("bv click")) == 'NO_POINTER: run "bv point x y" first'
+
+
+def test_a_click_that_navigates_clears_the_pointer(env) -> None:
+    env["run"]("bv open example.com")
+    env["run"]("bv point 1000 720")
+    env["host"].click_navigates_to = "https://example.com/next"
+    moved = env["run"]("bv click")
+    assert moved.ok and "url: https://example.com/next" in moved.prompt_content
+    assert not _cursor_at(moved, 1000, 720)
+    assert _error(env["run"]("bv click")) == 'NO_POINTER: run "bv point x y" first'
+
+
+def test_every_screenshot_states_its_image_size(env) -> None:
+    lines = env["run"]("bv open example.com").prompt_content.splitlines()
+    assert "image 1280x800" in [line.strip() for line in lines]
+
+
+# ─── one-line summaries for superseded results (R22) ───
+
+
+def test_each_screenshot_result_has_a_one_line_summary(env) -> None:
+    opened = env["run"]("bv open https://example.com/a/")
+    assert opened.summary == "bv open https://example.com/a/ → example.com/a"
+    clicked = env["run"]("bv click @1")
+    assert clicked.summary == 'bv click @1 → example.com/a; clicked button "Sign in"'
+    typed = env["run"]("bv type @2", body="me@example.com")
+    assert typed.summary == 'bv type @2 → example.com/a; clicked button "Sign in"'
+    env["host"].next_outcome = ActionOutcome(downloads=(
+        DownloadResult(file_name="report.pdf", size=12, error=None),
+        DownloadResult(file_name=None, size=None, error="big.zip: did not finish within 120s"),
+    ))
+    downloaded = env["run"]("bv key Enter")
+    assert downloaded.summary == "bv key Enter → example.com/a; downloaded report.pdf"
+    for result in (opened, clicked, typed, downloaded):
+        assert "\n" not in result.summary and "[@" not in result.summary
+    # Results without a screenshot have nothing to collapse.
+    assert env["run"]("bv status").summary is None
+    assert env["run"]("bv click @9").summary is None
+
+
+# ─── bv wait (R24) ───
+
+
+def _waits(env) -> list[tuple]:
+    return [call for call in env["host"].calls if call[0] == "wait"]
+
+
+def test_wait_reports_a_change_that_settled_and_screenshots_the_full_page(env) -> None:
+    env["run"]("bv open example.com")
+    env["run"]("bv zoom 5")
+    env["host"].next_wait = WaitOutcome(changed=True, elapsed_s=7.23, settled=True)
+    waited = env["run"]("bv wait 10")
+    assert waited.ok, waited.prompt_content
+    assert _waits(env) == [("wait", 10.0)]
+    assert "wait: page changed after 7.2s (settled)" in waited.prompt_content
+    assert "view: full page" in waited.prompt_content  # the zoom resets, as for any action
+    assert len(waited.image_paths) == 1
+    assert waited.summary == "bv wait 10 → example.com"
+
+
+def test_wait_reports_a_page_still_changing_and_no_change(env) -> None:
+    env["run"]("bv open example.com")
+    env["host"].next_wait = WaitOutcome(changed=True, elapsed_s=30.0, settled=False)
+    assert "wait: page changed after 30.0s (still changing)" in env["run"]("bv wait").prompt_content
+    env["host"].next_wait = WaitOutcome(changed=False, elapsed_s=30.02, settled=False)
+    assert "wait: no change after 30.0s" in env["run"]("bv wait").prompt_content
+
+
+def test_wait_defaults_to_the_manifest_value(env) -> None:
+    env["run"]("bv open example.com")
+    env["run"]("bv wait")
+    assert _ENTRY.manifest.defaults["wait_default_s"] == 30
+    assert _waits(env) == [("wait", 30.0)]
+    env["run"]("bv wait 0.5")
+    assert _waits(env)[-1] == ("wait", 0.5)
+
+
+def test_wait_says_browsing_only_when_the_url_changed(env) -> None:
+    env["run"]("bv open example.com")
+    assert _lines(env["run"]("bv wait 1")) == []
+    env["host"].wait_navigates_to = "https://example.com/report"
+    env["host"].next_wait = WaitOutcome(changed=True, elapsed_s=2.5, settled=True)
+    assert _lines(env["run"]("bv wait 5")) == ["Browsing example.com/report"]
+
+
+def test_wait_lists_downloads_the_page_started(env) -> None:
+    env["run"]("bv open example.com")
+    env["host"].next_wait = WaitOutcome(
+        changed=True, elapsed_s=3.0, settled=True,
+        downloads=(DownloadResult(file_name="report.pdf", size=12, error=None),),
+    )
+    waited = env["run"]("bv wait")
+    assert "downloaded: /me/downloads/report.pdf (12 bytes)" in waited.prompt_content
+    assert _lines(waited) == ["Downloaded report.pdf to /me/downloads"]
+
+
+def test_a_bad_wait_argument_names_the_form(env) -> None:
+    env["run"]("bv open example.com")
+    for bad in ("0", "-3", "soon", "nan", "inf"):
+        message = _error(env["run"](f"bv wait {bad}"))
+        assert message == f"INVALID_ARGUMENT: bv wait [<seconds>]: seconds must be a positive number, got {bad!r}", bad
+    assert _error(env["run"]("bv wait 1 2")) == "USAGE: bv wait [<seconds>]"
+    assert _waits(env) == []
+
+
+def test_wait_needs_a_page(env) -> None:
+    assert _error(env["run"]("bv wait")) == 'NO_PAGE: run "bv open <url>" first'
+
+
+# ─── keypad off by default, overlay status line (R27) ───
+
+
+def _dark(image: Image.Image, box: tuple[int, int, int, int]) -> int:
+    """How many pixels in ``box`` are dark on the fake page's near-white background."""
+    crop = image.crop(box)
+    return sum(1 for x in range(crop.width) for y in range(crop.height) if sum(crop.getpixel((x, y))) < 600)
+
+
+def _keypad_drawn(result, *, width: int, height: int) -> tuple[bool, bool]:
+    """``(lines, digits)``: whether the keypad's lines and its centre digit are on the image.
+
+    Lines are probed on the left vertical line in the bottom third; the digit
+    ``5`` sits in the centre region. The fake page's marks are all in the top
+    left, away from both probes.
+    """
+    image = Image.open(Path(result.image_paths[0])).convert("RGB")
+    assert image.size == (width, height)
+    x = round(width / 3)
+    lines = _dark(image, (x - 2, round(height * 0.8), x + 3, round(height * 0.8) + 20)) > 0
+    cx, cy = width // 2, height // 2
+    digits = _dark(image, (cx - 30, cy - 30, cx + 30, cy + 30)) > 0
+    return lines, digits
+
+
+def test_the_default_full_view_has_no_keypad(env) -> None:
+    assert _ENTRY.manifest.defaults["grid_default"] is False
+    assert _ENTRY.manifest.defaults["marks_default"] is True
+    opened = env["run"]("bv open example.com")
+    assert _keypad_drawn(opened, width=1280, height=800) == (False, False)
+    assert "overlays: marks on · 3×3 grid off (bv view --grid on to add it)" in opened.prompt_content.splitlines()
+
+
+def test_a_zoomed_view_draws_the_keypad_with_the_grid_off(env) -> None:
+    env["run"]("bv open example.com")
+    zoomed = env["run"]("bv zoom 5")
+    assert _keypad_drawn(zoomed, width=1568, height=980) == (True, True)
+    assert "overlays: marks on · 3×3 grid shown while zoomed (bv zoom reset for the full page)" in (
+        zoomed.prompt_content.splitlines()
+    )
+    assert "grid: off" in env["run"]("bv status").prompt_content  # the sticky setting is untouched
+
+
+def test_the_sticky_grid_on_draws_the_full_view_keypad(env) -> None:
+    env["run"]("bv open example.com")
+    shown = env["run"]("bv view --grid on")
+    assert _keypad_drawn(shown, width=1280, height=800) == (True, True)
+    assert "overlays: marks on · 3×3 grid on (bv view --grid off to hide it)" in shown.prompt_content.splitlines()
+    after = env["run"]("bv key Tab")
+    assert _keypad_drawn(after, width=1280, height=800) == (True, True)
+
+
+def test_marks_off_is_stated_in_the_overlay_line(env) -> None:
+    env["run"]("bv open example.com")
+    hidden = env["run"]("bv view --marks off")
+    assert (
+        "overlays: marks off (bv view --marks on to show them) · 3×3 grid off (bv view --grid on to add it)"
+        in hidden.prompt_content.splitlines()
+    )
+
+
+def test_a_region_click_works_at_full_page_with_the_grid_off_and_says_so(env) -> None:
+    env["run"]("bv open example.com")
+    clicked = env["run"]("bv click 5")
+    assert clicked.ok, clicked.prompt_content
+    assert [call for call in env["host"].calls if call[0] == "click"] == [("click", 640.0, 400.0)]
+    assert (
+        "keypad region 5 of the full page (the 3×3 grid is hidden; its regions still apply)"
+        in clicked.prompt_content.splitlines()
+    )
+    # With the grid drawn, or zoomed, the note is not needed.
+    env["run"]("bv view --grid on")
+    assert "grid is hidden" not in env["run"]("bv click 5").prompt_content
+    env["run"]("bv view --grid off")
+    env["run"]("bv zoom 5")
+    assert "grid is hidden" not in env["run"]("bv click 5").prompt_content

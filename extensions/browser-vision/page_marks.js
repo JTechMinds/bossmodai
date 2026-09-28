@@ -6,6 +6,15 @@
 //   {mode: "describe", x, y}  → what a click at (x, y) would land on;
 //   {mode: "element", x, y}   → the <select> at (x, y), as a handle, or null.
 // Coordinates are this frame's viewport CSS px.
+//
+// Candidates come from three rules, each only adding to the set:
+//   1. the control selector below (links, buttons, fields, ARIA roles, …);
+//   2. popup-list rows: the repeated children of a floating container
+//      (position absolute/fixed, numeric z-index >= 1), kind "option" —
+//      autocomplete rows (Google Places .pac-item) have no role and get
+//      their handlers from script, so rule 1 cannot see them;
+//   3. cursor:pointer boxes: the outermost one only, since cursor is
+//      inherited by every span inside a clickable card.
 (arg) => {
     const SELECTOR = [
         'a[href]', 'button', 'input:not([type=hidden])', 'select', 'textarea', 'summary',
@@ -25,6 +34,7 @@
     const MIN_PX = 4;
     const SAME_BOX_PX = 2;
     const NAME_MAX = 40;
+    const FLOATING_POSITIONS = new Set(['absolute', 'fixed']);
 
     const clean = (s) => String(s || '').replace(/\s+/g, ' ').trim();
     const clip = (s) => (s.length > NAME_MAX ? `${s.slice(0, NAME_MAX - 1)}…` : s);
@@ -127,11 +137,73 @@
         return points.find(([x, y]) => hitsElement(el, x, y)) || null;
     }
 
+    // Every element in document order, descending into open shadow roots.
     function walk(root, out) {
         for (const el of root.querySelectorAll('*')) {
-            if (el.matches(SELECTOR)) out.push(el);
+            out.push(el);
             if (el.shadowRoot) walk(el.shadowRoot, out);
         }
+    }
+
+    // A visible, positioned element stacked above the page (rule 2).
+    function isFloating(el) {
+        const style = getComputedStyle(el);
+        if (!FLOATING_POSITIONS.has(style.position)) return false;
+        const z = Number(style.zIndex); // "auto" → NaN
+        return Number.isFinite(z) && z >= 1 && visibleRect(el) !== null;
+    }
+
+    // A floating container's list rows: its children (or, through a single
+    // wrapper, the wrapper's children) that repeat a sibling's tag and class
+    // and have text. Visibility and hit testing are checked with every
+    // candidate later.
+    function floatingRows(container) {
+        let rows = Array.from(container.children);
+        if (rows.length === 1) rows = Array.from(rows[0].children);
+        const shape = (el) => `${el.tagName}|${el.getAttribute('class') || ''}`;
+        return rows.filter((row) => clean(row.innerText)
+            && rows.some((other) => other !== row && shape(other) === shape(row)));
+    }
+
+    // The full candidate set (rules 1–3) for this frame, and which of them
+    // are popup rows (named by their text, kind "option").
+    function candidateSet() {
+        const every = [];
+        walk(document, every);
+        const candidates = new Set(every.filter((el) => el.matches(SELECTOR)));
+        const rows = new Set();
+        for (const el of every) {
+            if (!isFloating(el)) continue;
+            for (const row of floatingRows(el)) {
+                if (!candidates.has(row)) rows.add(row);
+            }
+        }
+        for (const row of rows) candidates.add(row);
+        const pointer = new Map();
+        const isPointer = (el) => {
+            if (!pointer.has(el)) pointer.set(el, getComputedStyle(el).cursor === 'pointer');
+            return pointer.get(el);
+        };
+        // Document order puts ancestors first. An element whose nearest
+        // cursor:pointer ancestor is a candidate — or was itself left out for
+        // that reason — is inside a box already marked, so it is left out too.
+        const inside = new Set();
+        for (const el of every) {
+            if (candidates.has(el) || !isPointer(el)) continue;
+            let ancestor = parentOf(el);
+            while (ancestor && !isPointer(ancestor)) ancestor = parentOf(ancestor);
+            if (ancestor && (candidates.has(ancestor) || inside.has(ancestor))) {
+                inside.add(el);
+                continue;
+            }
+            candidates.add(el);
+        }
+        return { ordered: every.filter((el) => candidates.has(el)), candidates, rows };
+    }
+
+    function kindAndName(el, rows) {
+        if (rows.has(el)) return { kind: 'option', name: clip(clean(el.innerText)) };
+        return { kind: kindOf(el), name: nameOf(el) };
     }
 
     function sameBox(a, b) {
@@ -151,11 +223,13 @@
         return el;
     }
 
-    function controlAt(x, y) {
+    // What is at (x, y) and the candidate it belongs to (same rules as marks,
+    // so click feedback names a popup row the way the legend does).
+    function controlAt(x, y, candidates) {
         const hit = deepElementFromPoint(x, y);
         if (!hit) return { hit: null, control: null };
         let el = hit;
-        while (el && !el.matches(SELECTOR)) el = parentOf(el);
+        while (el && !candidates.has(el)) el = parentOf(el);
         if (!el) {
             const label = hit.closest && hit.closest('label');
             if (label && label.control) el = label.control;
@@ -164,11 +238,9 @@
     }
 
     if (arg.mode === 'collect') {
-        const all = [];
-        walk(document, all);
-        const candidates = new Set(all);
+        const { ordered, candidates, rows } = candidateSet();
         const out = [];
-        for (const el of all) {
+        for (const el of ordered) {
             let ancestor = parentOf(el);
             while (ancestor && !candidates.has(ancestor)) ancestor = parentOf(ancestor);
             if (ancestor && sameBox(ancestor, el)) continue;
@@ -176,20 +248,22 @@
             if (!rect) continue;
             const point = clickPoint(el, rect);
             if (!point) continue;
-            const kind = kindOf(el);
-            out.push({ kind, name: nameOf(el), rect, point, state: stateOf(el, kind) });
+            const { kind, name } = kindAndName(el, rows);
+            out.push({ kind, name, rect, point, state: stateOf(el, kind) });
         }
         return out;
     }
     if (arg.mode === 'describe') {
-        const { hit, control } = controlAt(arg.x, arg.y);
+        const { candidates, rows } = candidateSet();
+        const { hit, control } = controlAt(arg.x, arg.y, candidates);
         if (!hit) return null;
         if (hit.tagName === 'IFRAME' || hit.tagName === 'FRAME') return { frame: true };
-        if (control) return { kind: kindOf(control), name: nameOf(control) };
+        if (control) return kindAndName(control, rows);
         return { tag: hit.tagName };
     }
     if (arg.mode === 'element') {
-        const { control } = controlAt(arg.x, arg.y);
+        const { candidates } = candidateSet();
+        const { control } = controlAt(arg.x, arg.y, candidates);
         return control && control.tagName === 'SELECT' ? control : null;
     }
     throw new Error(`unknown mode ${arg.mode}`);

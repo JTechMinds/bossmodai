@@ -428,3 +428,93 @@ def test_a_frozen_transcript_keeps_the_screenshot_paths(tmp_path):
     assert stored.transcript[1][SCREENSHOT_PATHS_KEY] == [path]
     restored = restore_work_turn(activity=activity, context=[{"role": "system", "content": "sys"}, {"role": "user", "content": "go on"}])
     assert restored[2][SCREENSHOT_PATHS_KEY] == [path]
+
+
+# ─── superseded screenshot results collapse to their one-line summary (R22) ───
+
+
+def _bv_result(text: str, path: str, summary: str) -> dict:
+    from core.bm_cli.results import wrap_cli_tool_message
+
+    return wrap_cli_tool_message(text, image_paths=(path,), summary=summary)
+
+
+def test_only_the_newest_browser_result_keeps_its_full_text(tmp_path):
+    from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN, CLI_TOOL_RESULT_END, wrap_cli_text
+    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY, SCREENSHOT_SUPERSEDED_TEXT, SUMMARY_KEY
+
+    set_supports_images("vision-model", True)
+    legend = '[@1] button "Sign in"\n[@2] textbox "Email" (empty)'
+    summaries = [
+        "bv open example.com → example.com",
+        'bv click @1 → example.com/login; clicked button "Sign in"',
+        "bv type @2 → example.com/login",
+    ]
+    messages = [{"role": "system", "content": "sys"}]
+    for step, summary in enumerate(summaries):
+        messages.append({"role": "assistant", "content": f"step {step}"})
+        messages.append(_bv_result(f"url: page {step}\n{legend}", _shot(tmp_path, f"{step}.png"), summary))
+    assert messages[2][SUMMARY_KEY] == summaries[0]
+
+    out = expand_attachment_messages(messages, model="vision-model")
+
+    first, second, newest = out[2]["content"], out[4]["content"], out[6]["content"]
+    for parts, summary in ((first, summaries[0]), (second, summaries[1])):
+        assert parts[0] == {"type": "text", "text": wrap_cli_text(summary)}
+        assert parts[0]["text"].startswith(CLI_TOOL_RESULT_BEGIN)
+        assert parts[0]["text"].endswith(CLI_TOOL_RESULT_END)
+        assert "[@1]" not in parts[0]["text"] and "url: page" not in parts[0]["text"]
+        assert parts[1:] == [{"type": "text", "text": SCREENSHOT_SUPERSEDED_TEXT}]
+    assert "url: page 2" in newest[0]["text"] and legend in newest[0]["text"]
+    assert newest[1]["type"] == "image_url"
+    assert all(SUMMARY_KEY not in m and SCREENSHOT_PATHS_KEY not in m for m in out)
+    # The input is untouched.
+    assert messages[2][SUMMARY_KEY] == summaries[0] and isinstance(messages[2]["content"], str)
+
+
+def test_a_summary_is_kept_only_beside_screenshots():
+    from core.bm_cli.results import cli_continuation_messages, wrap_cli_tool_message
+    from core.llm.attachment_parts import SUMMARY_KEY
+
+    assert SUMMARY_KEY not in wrap_cli_tool_message("plain output", summary="one line")
+    carried = cli_continuation_messages(
+        assistant_content="a", cli_prompt_content="full", followup_content="go on",
+        image_paths=("/x.png",), summary="bv view → example.com",
+    )[1]
+    assert carried[SUMMARY_KEY] == "bv view → example.com"
+
+
+def test_a_frozen_transcript_keeps_the_summary(tmp_path):
+    from core.agent_loop import activity_runtime
+    from core.agent_loop.work_snapshot import freeze_work_turn, restore_work_turn
+    from core.llm.attachment_parts import SCREENSHOT_SUPERSEDED_TEXT, SUMMARY_KEY
+    from core.models.message import HUMAN_SENDER_ID
+    from core.tasking import create_or_bind_task
+
+    set_supports_images("vision-model", True)
+    agent = db.create_agent("Iris", role="Researcher", model_work="vision-model")
+    task = create_or_bind_task(
+        title="Browse", description="Look at a page.", project=None, assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,
+        work_contract=None, source_channel=None, notification_policy=None, notification_channel_id=None,
+        audit_author_name="Human Operator", audit_author_type="human",
+    ).task
+    activity = activity_runtime.activate_work_activity(agent.id, task, task_status="active")
+    steps = [
+        {"role": "assistant", "content": '{"act":"cli","data":{"cmd":"bv open example.com"}}'},
+        _bv_result("full first result", _shot(tmp_path, "a.png"), "bv open example.com → example.com"),
+        {"role": "assistant", "content": '{"act":"cli","data":{"cmd":"bv view"}}'},
+        _bv_result("full second result", _shot(tmp_path, "b.png"), "bv view → example.com"),
+    ]
+
+    snapshot = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
+    )
+    assert snapshot.transcript[1][SUMMARY_KEY] == "bv open example.com → example.com"
+    assert db.get_work_snapshot(activity.id).transcript[3][SUMMARY_KEY] == "bv view → example.com"
+    restored = restore_work_turn(activity=activity, context=[{"role": "system", "content": "sys"}, {"role": "user", "content": "go on"}])
+    out = expand_attachment_messages(restored, model="vision-model")
+    assert "bv open example.com → example.com" in out[2]["content"][0]["text"]
+    assert "full first result" not in out[2]["content"][0]["text"]
+    assert out[2]["content"][1]["text"] == SCREENSHOT_SUPERSEDED_TEXT
+    assert "full second result" in out[4]["content"][0]["text"]

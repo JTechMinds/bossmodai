@@ -49,6 +49,7 @@ def test_cli_continuation_builder_never_emits_system_for_cli_output() -> None:
         prompt_content="BOSSMOD CLI RESULT\ncommand: cat notes.md\n\nSTDOUT:\nsecret sauce",
         data={},
         image_paths=(),
+        summary=None,
     )
     agent = SimpleNamespace(name="Ada")
     turn_result = _cli_result_to_turn_result(agent, cli_result)

@@ -536,6 +536,7 @@ async def _run_decision_turn(
                 followup_content=load_default_prompt("internal_loop_decision_cli_followup"),
                 followup_role="system",
                 image_paths=cli_result.image_paths,
+                summary=cli_result.summary,
             )
             current_context.extend(continuation_messages)
             next_context_snapshot = _serialize_trace_value(continuation_messages)
