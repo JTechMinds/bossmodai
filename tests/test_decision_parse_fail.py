@@ -89,7 +89,8 @@ def _joined_repair(kind: str, snippet: str) -> str:
 def test_decision_repair_attempts_defaults_to_six() -> None:
     assert config.get("decision_repair_attempts") == "6"
     assert decision_repair_attempt_limit() == DEFAULT_DECISION_REPAIR_ATTEMPTS == 6
-    settings_js = Path("ui/static/js/settings/settings-system.js").read_text(encoding="utf-8")
+    # Setting labels and descriptions live in the System settings catalog.
+    settings_js = Path("ui/static/js/settings/settings-system-meta.js").read_text(encoding="utf-8")
     assert "decision_repair_attempts" in settings_js
     assert "Decision Repair Attempts" in settings_js
 

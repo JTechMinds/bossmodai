@@ -106,7 +106,8 @@ def test_knob_is_the_only_concurrency_setting_and_is_not_wiped() -> None:
     assert config.get("max_concurrent_agent_turns") == "4"
     assert max_concurrent_model_calls() == 4
     assert "max_concurrent_llm_calls" not in (ROOT / "core" / "llm" / "client.py").read_text(encoding="utf-8")
-    assert "max_concurrent_llm_calls" not in (ROOT / "ui" / "static" / "js" / "settings" / "settings-system.js").read_text(encoding="utf-8")
+    for name in ("settings-system.js", "settings-system-meta.js"):
+        assert "max_concurrent_llm_calls" not in (ROOT / "ui" / "static" / "js" / "settings" / name).read_text(encoding="utf-8")
 
 
 def test_local_server_capacity_is_a_warning_when_lower_than_the_knob() -> None:
