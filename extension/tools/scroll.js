@@ -1,20 +1,4 @@
-'use strict';
-
-const fs = require('fs');
-const path = require('path');
 const { setPrecision, validateCoordinate, cellCenter, gridMetadata } = require('../grid/protocol');
-
-const CONFIG_PATH = path.resolve(__dirname, '../../toolkit.config.json');
-
-function isExtensionEnabled() {
-  try {
-    const raw = fs.readFileSync(CONFIG_PATH, 'utf-8');
-    const config = JSON.parse(raw);
-    return config.extensions && config.extensions['browser-vision'] && config.extensions['browser-vision'].enabled === true;
-  } catch (e) {
-    return false;
-  }
-}
 
 module.exports = {
   name: 'scroll',
@@ -40,10 +24,6 @@ module.exports = {
     }
   },
   async handler(params, getCapture) {
-    if (!isExtensionEnabled()) {
-      return { error: 'EXTENSION_DISABLED', detail: 'browser-vision extension is disabled; enable it in toolkit settings' };
-    }
-
     const N = params.precision;
     const prec = setPrecision(N);
     if (!prec.valid) {
