@@ -18,7 +18,7 @@ import pytest
 
 import db
 from core import config
-from core.agent_loop import channel_idle_check
+from core.agent_loop import activity_runtime, channel_idle_check
 from core.agent_loop.channel_host import note_channel_work, pause_thread
 from core.agent_loop.channel_idle_check import (
     IdleWake,
@@ -36,6 +36,7 @@ from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.turn_context import stamp_channel_latest_line
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
+from core.tasking.transitions import transition_task
 from core.time import ensure_utc
 from db import channel_host as host_db
 from db import channel_idle_checks as idle_db
@@ -297,20 +298,60 @@ def test_same_checked_message_does_not_judge_twice(monkeypatch: pytest.MonkeyPat
     assert calls["n"] == 0
 
 
-def test_candidate_with_a_live_task_is_not_idle(monkeypatch: pytest.MonkeyPatch) -> None:
+def _task_in(status: str, *, assignee_id: str, channel_id: str, title: str):
+    """A thread task moved from pending straight to ``status``."""
+    task = _channel_task(assignee_id=assignee_id, channel_id=channel_id, title=title)
+    return transition_task(task.id, status, reason=f"Test: {status}.", actor="BossMod")
+
+
+@pytest.mark.parametrize("status", ["accepted", "active"])
+def test_accepted_or_active_task_excludes_a_candidate(monkeypatch: pytest.MonkeyPatch, status: str) -> None:
     _harley, charles, _brian, channel = _team()
     _enable_system_ai()
     calls = _no_judge(monkeypatch)
+    _task_in(status, assignee_id=charles.id, channel_id=channel.id, title="Smoke capture")
     _human(channel.id, "Charles, can you run the smoke capture on M2?")
-    _agent_line(channel.id, charles, _PROMISE)
-    _channel_task(assignee_id=charles.id, channel_id=channel.id, title="Smoke capture")
-    # Creating the task posts its own card; that card is the newest line.
-    latest = db.get_latest_channel_message(channel.id)
-    assert latest is not None
+    latest = _agent_line(channel.id, charles, _PROMISE)
     assert check_channel(channel.id, now=_later()) == []
     assert calls["n"] == 0
     # The quiet period is still recorded as judged.
     assert idle_db.get_channel_idle_check(channel.id)["checked_message_id"] == latest.id
+
+
+def test_waiting_stalled_or_delegated_tasks_do_not_exclude_a_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    _harley, charles, _brian, channel = _team()
+    _enable_system_ai()
+    for status in ("waiting", "stalled", "delegated"):
+        _task_in(status, assignee_id=charles.id, channel_id=channel.id, title=f"Old {status} card")
+    assert activity_runtime.get_active_work_activity(charles.id) is None
+    _human(channel.id, "i see no PR?")
+    _agent_line(channel.id, charles, "Opening it now.")
+    seen: dict[str, int] = {}
+
+    def _reply(messages: list[dict[str, str]]) -> str:
+        seen["charles"] = _candidate_number(messages, "Charles")
+        return '{"wake": []}'
+
+    calls = _judge(monkeypatch, _reply)
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 1
+    assert seen["charles"] == 1
+
+
+def test_live_work_activity_excludes_a_candidate(monkeypatch: pytest.MonkeyPatch) -> None:
+    _harley, charles, _brian, channel = _team()
+    _enable_system_ai()
+    task = _channel_task(assignee_id=charles.id, channel_id=channel.id, title="Smoke capture")
+    assert activity_runtime.activate_work_activity(charles.id, task) is not None
+    # Take the task off accepted/active so only the live activity says "working".
+    transition_task(task.id, "waiting", reason="Test: waiting.", actor="BossMod")
+    assert db.get_task(task.id).status == "waiting"
+    assert activity_runtime.get_active_work_activity(charles.id) is not None
+    _human(channel.id, "Charles, can you run the smoke capture on M2?")
+    _agent_line(channel.id, charles, _PROMISE)
+    calls = _no_judge(monkeypatch)
+    assert check_channel(channel.id, now=_later()) == []
+    assert calls["n"] == 0
 
 
 def test_candidate_with_an_open_trigger_is_not_idle(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -370,6 +411,8 @@ def test_already_woken_member_is_skipped_until_a_new_human_line(monkeypatch: pyt
 def _wake_case(monkeypatch: pytest.MonkeyPatch):
     harley, charles, brian, channel = _team()
     _enable_system_ai()
+    # The 09/28 incident: an old stalled card must not hide an idle member.
+    _task_in("stalled", assignee_id=charles.id, channel_id=channel.id, title="M0.2: Diablo POC scaffold")
     latest = _charles_case(channel, harley, charles)
     calls = _judge(monkeypatch, _wake_charles)
     streaks_before = host_db.get_channel_host_state(channel.id)["pass_streaks"]

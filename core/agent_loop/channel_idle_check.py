@@ -8,7 +8,8 @@ newest line was not already checked. Any new line re-arms it; there are no
 timers to cancel. A thread quiet longer than the max age is dormant and is not judged.
 
 Deterministic gates run before the model: only members who spoke in the
-transcript window, have no open task, no open trigger, and no live turn
+transcript window, have no task being worked on (accepted/active, or a live
+work activity), no open trigger, and no live turn
 are candidates. No candidate is no System AI call. The judge must quote
 the transcript verbatim for every wake, and one bad quote rejects the
 whole payload. Each member is woken at most once per human snapshot.
@@ -30,6 +31,7 @@ from typing import Any
 
 import db
 from core import config
+from core.agent_loop import activity_runtime
 from core.agent_loop.channel_host import talk_closed
 from core.agent_loop.channel_rounds import (
     open_idle_check_round,
@@ -44,7 +46,6 @@ from core.agent_loop.channel_router import (
 )
 from core.agent_loop.dispatcher import dispatcher
 from core.llm.system_completion import complete_text, system_ai_is_configured
-from core.tasking.transitions import is_terminal_task_status
 from core.time import ensure_utc
 from db import channel_idle_checks as idle_db
 
@@ -60,6 +61,9 @@ IDLE_CHECK_MAX_AGE_MINUTES_FALLBACK = 30
 IDLE_CHECK_KEYS = frozenset({"wake"})
 _WAKE_ITEM_KEYS = frozenset({"member", "quote"})
 _NOTE_QUOTE_CHARS = 200
+# Busy means working now. Waiting, stalled, blocked, pending and delegated
+# tasks are open but not being worked on; agents carry them for days.
+WORKING_TASK_STATUSES = frozenset({"accepted", "active"})
 
 
 def idle_check_enabled() -> bool:
@@ -121,6 +125,7 @@ def build_idle_check_messages(
 
     Candidates are numbered ``1…N`` with the router's member line, so no
     agent id reaches the prompt. ``busy`` is ``(name, task_title)`` pairs
+    for members working now; an empty title renders ``Name — working``.
     for members already on live work.
 
     Returns:
@@ -137,7 +142,7 @@ def build_idle_check_messages(
         number = len(number_map) + 1
         number_map[number] = agent_id
         candidate_lines.append(format_member_line(member, number))
-    busy_lines = [f'{name} — working on "{title}"' for name, title in busy]
+    busy_lines = [f'{name} — working on "{title}"' if title else f"{name} — working" for name, title in busy]
     user = "\n".join(
         [
             "Recent thread (oldest first):",
@@ -226,7 +231,9 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
     Returns ``[]`` when the thread is not due (no line, closed to Talk, an
     active round, delay not elapsed, dormant past the max age, newest line
     already checked), when no
-    member is an idle candidate, when System AI is unset or fails, when the
+    member is an idle candidate (spoke in the window, not already woken, no
+    task being worked on (accepted/active, or a live work activity), no open
+    trigger, not mid-turn), when System AI is unset or fails, when the
     payload is rejected or empty, or when the round cannot open. Once the
     gates up to the checked-line test pass, the newest line is recorded as
     checked so one quiet period is judged once.
@@ -257,13 +264,12 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
     spoke = {line.author_agent_id for line in transcript if not line.status and line.author_agent_id}
     members = ordered_channel_members(channel_id, set())
     woken = set(state["woken_agent_ids"])
-    open_tasks = {member["id"]: _open_tasks(member["id"]) for member in members}
     candidates = [
         member
         for member in members
         if member["id"] in spoke
         and member["id"] not in woken
-        and not open_tasks[member["id"]]
+        and not _is_working(member["id"])
         and not db.has_open_trigger(member["id"])
         and not dispatcher.is_active(member["id"])
     ]
@@ -276,9 +282,9 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
         return []
     candidate_ids = {member["id"] for member in candidates}
     busy = [
-        (member["name"], open_tasks[member["id"]][-1].title)
+        (member["name"], _busy_title(member["id"]))
         for member in members
-        if member["id"] not in candidate_ids and open_tasks[member["id"]]
+        if member["id"] not in candidate_ids and _is_working(member["id"])
     ]
     max_wakes = idle_check_max_wakes()
     messages, number_map = build_idle_check_messages(
@@ -381,9 +387,23 @@ class ChannelIdleWatch:
             await asyncio.sleep(idle_check_interval_seconds())
 
 
-def _open_tasks(agent_id: str) -> list[Any]:
-    """Non-terminal tasks assigned to ``agent_id``, oldest first."""
-    return [task for task in db.list_tasks(assigned_to=agent_id) if not is_terminal_task_status(task.status)]
+def _working_tasks(agent_id: str) -> list[Any]:
+    """Tasks assigned to ``agent_id`` that are being worked on (accepted/active), oldest first."""
+    return [task for task in db.list_tasks(assigned_to=agent_id) if task.status in WORKING_TASK_STATUSES]
+
+
+def _is_working(agent_id: str) -> bool:
+    """Whether ``agent_id`` is working now: a live work activity or an accepted/active task."""
+    return activity_runtime.get_active_work_activity(agent_id) is not None or bool(_working_tasks(agent_id))
+
+
+def _busy_title(agent_id: str) -> str:
+    """The newest working task's title, else the live work activity's title, else empty."""
+    working = _working_tasks(agent_id)
+    if working:
+        return working[-1].title
+    activity = activity_runtime.get_active_work_activity(agent_id)
+    return str(activity.title or "") if activity is not None else ""
 
 
 def _flat(text: str) -> str:
