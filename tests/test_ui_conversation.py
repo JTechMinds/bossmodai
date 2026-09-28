@@ -102,6 +102,25 @@ def test_one_renderer_two_sources() -> None:
         assert callers == ["conversation/conversation.js"], f"{factory} -> {callers}"
 
 
+def test_agent_source_mention_scope_is_the_full_roster_without_everyone() -> None:
+    """A direct chat has no group: no Everyone, and no member filter."""
+    script = (
+        "const fs = require('fs');"
+        "eval(fs.readFileSync(process.argv[1], 'utf8') + ';global.BossModAgentSource = BossModAgentSource;');"
+        "const source = BossModAgentSource.createAgentSource('joey', {"
+        " api: async () => ({ ok: true }), bus: {}, store: { getState: () => ({ roster: [] }) }, presence: {} });"
+        "console.log(JSON.stringify(source.mentionScope()));"
+    )
+    result = subprocess.run(
+        ["node", "-e", script, str(SOURCES / "agent-source.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {"everyone": False, "memberIds": None}
+
+
 def test_sources_never_touch_the_dom() -> None:
     """The adapter boundary, asserted rather than trusted.
 

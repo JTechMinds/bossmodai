@@ -296,6 +296,8 @@ const BossModAgentSource = (() => {
             // Model gating is the composer's job, through the store.
             canSend: () => true,
             disabledReason: () => '',
+            // A direct chat has no group: the full live roster, no Everyone.
+            mentionScope: () => ({ everyone: false, memberIds: null }),
         };
     }
 

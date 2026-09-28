@@ -64,4 +64,6 @@ def test_seat_harness_preserves_history_and_fail_closes() -> None:
         "duplicateFailClosed": True,
         "liveChromeOffersSeat": True,
         "archivedHidesSeat": True,
+        # Everyone plus the members read live from the channel, Hugh included.
+        "mentionScope": {"everyone": True, "memberIds": ["debra", "jim", "hugh"]},
     }

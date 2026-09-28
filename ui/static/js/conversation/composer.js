@@ -37,6 +37,8 @@ const BossModComposer = (() => {
      * @param {Function} deps.getContext  The open conversation {type, id}; throws when none.
      * @param {Function} deps.onRemoveAttachment  Discards one pending upload.
      * @param {Function} deps.getAttachmentLimits  Resolves `{max_per_message}`.
+     * @param {() => {everyone: boolean, memberIds: string[]|null}} deps.mentionScope
+     *   Who the @ picker offers for the open conversation (see mention-picker.js).
      * @returns {{ element: HTMLElement, focus: Function, applyState: Function,
      *             sendText: Function, setError: Function,
      *             readDraft: () => {text: string, attachments: object[]},
@@ -56,6 +58,7 @@ const BossModComposer = (() => {
         if (typeof disabledReason !== 'function') {
             throw new Error('[composer] deps.disabledReason is required');
         }
+        if (typeof deps.mentionScope !== 'function') throw new Error('[composer] deps.mentionScope is required');
 
         const sendGate = BossModGates.createComposerSendGate();
         const disposers = [];
@@ -352,7 +355,7 @@ const BossModComposer = (() => {
 
         if (typeof BossModMentionPicker !== 'undefined') {
             mentions = BossModMentionPicker.bindComposer({
-                store, input, container: element, onChange: grow,
+                store, input, container: element, onChange: grow, mentionScope: deps.mentionScope,
             });
         }
 

@@ -1,7 +1,8 @@
 /**
  * Node harness: live-agent @mention filter, pill insert, click menu,
  * composer persist, baseline align, regular weight, soft gray chip
- * (not agent-tinted fill), and menu-under-pill.
+ * (not agent-tinted fill), menu-under-pill, and the thread-only Everyone
+ * entry.
  * Invoked by tests/test_ui_mentions.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -233,6 +234,101 @@ async function main() {
     picker.destroy();
     Mentions.configure(null);
 
+    // Everyone and the member list come from the conversation's mention scope.
+    function field(value) {
+        const el = documentStub.createElement("div");
+        el.setAttribute("contenteditable", "true");
+        el.className = "composer-input";
+        Draft.bindEditable(el, { agents: LIVE });
+        el.value = value;
+        el.selectionStart = value.length;
+        el.selectionEnd = value.length;
+        return el;
+    }
+    function bindPicker(el, scope) {
+        const host = documentStub.createElement("div");
+        host.className = "composer";
+        documentStub.body.append(host);
+        host.append(el);
+        return Picker.bindComposer({ input: el, container: host, getAgents: () => LIVE, mentionScope: () => scope });
+    }
+    function optionIds(p) {
+        return p.element.querySelectorAll(".mention-option").map((node) => node.getAttribute("id"));
+    }
+    function typed(p, el, value) {
+        el.value = value;
+        el.selectionStart = value.length;
+        el.selectionEnd = value.length;
+        p.sync();
+        return optionIds(p);
+    }
+
+    const threadField = field("");
+    const threadPicker = bindPicker(threadField, { everyone: true, memberIds: ids(LIVE) });
+    const threadAt = typed(threadPicker, threadField, "@");
+    const everyoneActive = threadField.getAttribute("aria-activedescendant");
+    const threadAl = typed(threadPicker, threadField, "@al");
+    const threadEv = typed(threadPicker, threadField, "@ev");
+    const threadJo = typed(threadPicker, threadField, "@jo");
+
+    typed(threadPicker, threadField, "hi @al");
+    const everyoneOption = threadPicker.element.querySelector("#mention-option-everyone");
+    const everyoneText = everyoneOption ? everyoneOption.textContent.trim() : "";
+    await everyoneOption.dispatchClick();
+    const everyoneClick = threadField.value;
+    const noEveryonePill = !threadField.querySelector(".mention-pill");
+
+    typed(threadPicker, threadField, "@ev");
+    const handled = threadPicker.handleKeyDown({ key: "Enter", shiftKey: false, preventDefault() {} });
+    const everyoneEnter = threadField.value;
+
+    // "Mention again" from a pill menu still inserts that agent.
+    threadField.value = "ping ";
+    threadField.selectionStart = 5;
+    threadField.selectionEnd = 5;
+    Mentions.mentionAgain(HUGH);
+    const mentionAgainAgent = threadField.value;
+    threadPicker.destroy();
+
+    const directField = field("");
+    const directPicker = bindPicker(directField, { everyone: false, memberIds: null });
+    const directAt = typed(directPicker, directField, "@");
+    const directE = typed(directPicker, directField, "@e");
+    const directAl = typed(directPicker, directField, "@al");
+    directPicker.destroy();
+
+    // A thread lists only its members; Mention again still reaches anyone live.
+    const scopedField = field("");
+    const scopedPicker = bindPicker(scopedField, { everyone: true, memberIds: ["joey", "debra"] });
+    const scopedAt = typed(scopedPicker, scopedField, "@");
+    const scopedNonMember = typed(scopedPicker, scopedField, "@hu");
+    scopedField.value = "ping ";
+    scopedField.selectionStart = 5;
+    scopedField.selectionEnd = 5;
+    Mentions.mentionAgain(HUGH);
+    const scopedMentionAgain = scopedField.value;
+    scopedPicker.destroy();
+
+    const everyone = {
+        threadAt,
+        everyoneActive,
+        threadAl,
+        threadEv,
+        threadJo,
+        everyoneText,
+        everyoneClick,
+        noEveryonePill,
+        handled,
+        everyoneEnter,
+        mentionAgainAgent,
+        directAt,
+        directE,
+        directAl,
+        scopedAt,
+        scopedNonMember,
+        scopedMentionAgain,
+    };
+
     const css = fs.readFileSync(
         path.join(__dirname, "..", "ui", "static", "css", "conversation.css"),
         "utf8",
@@ -420,6 +516,7 @@ async function main() {
         mentionAgain: mentionedAgain,
         failClosedFired: dead === null,
         noHardJumpOnClick: true,
+        everyone,
     }));
 }
 

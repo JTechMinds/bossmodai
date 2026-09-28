@@ -127,6 +127,12 @@ async function main() {
     if (loaded.length !== 2 || loaded[0].text !== "Lock the requirements.") {
         throw new Error("seating must not wipe the transcript the source paints");
     }
+    // The @ scope is read from the channel on every call: Hugh, seated
+    // above, is already in it.
+    const scope = source.mentionScope();
+    if (scope.everyone !== true || scope.memberIds.join(",") !== "debra,jim,hugh") {
+        throw new Error(`thread mention scope: ${JSON.stringify(scope)}`);
+    }
     const liveChrome = source.chrome();
     if (!liveChrome.actions.some((item) => item.id === "channel-seat-btn")) {
         throw new Error("a live thread must offer Add to thread");
@@ -147,6 +153,7 @@ async function main() {
         duplicateFailClosed: true,
         liveChromeOffersSeat: true,
         archivedHidesSeat: true,
+        mentionScope: scope,
     }));
 }
 

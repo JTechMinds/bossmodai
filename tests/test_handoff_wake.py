@@ -193,6 +193,12 @@ def test_router_prompt_is_intent_first() -> None:
         in blob
     )
     assert "A member who is only referred to ('per Brian's spec', 'Brian said') is not addressed." in blob
+    assert (
+        "An open ask to the group ('can someone…', 'anyone…', '@all', 'team,') addresses the members "
+        "whose role fits the ask: name the best fit, or two when the ask spans two roles. When the ask is "
+        "to help or review a member, the helpers are addressed; wake the member being helped too only when "
+        "the line also asks them to act."
+    ) in blob
     assert "Recent thread" in blob
     assert "Latest message from" in blob
     assert "Board next: laura | Laura" in blob

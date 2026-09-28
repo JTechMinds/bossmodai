@@ -192,4 +192,72 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
         "mentionAgain": "joey",
         "failClosedFired": True,
         "noHardJumpOnClick": True,
+        "everyone": {
+            # In a thread, Everyone is first, then the live agents.
+            "threadAt": [
+                "mention-option-everyone",
+                "mention-option-joey",
+                "mention-option-hugh",
+                "mention-option-debra",
+                "mention-option-auditor",
+            ],
+            "everyoneActive": "mention-option-everyone",
+            "threadAl": ["mention-option-everyone"],
+            "threadEv": ["mention-option-everyone"],
+            "threadJo": ["mention-option-joey"],
+            "everyoneText": "@Everyone — wakes every member of this thread",
+            # Plain text, the typed @query replaced, trailing space, no pill.
+            "everyoneClick": "hi @everyone ",
+            "noEveryonePill": True,
+            "handled": True,
+            "everyoneEnter": "@everyone ",
+            "mentionAgainAgent": "ping @Hugh ",
+            # A direct chat never offers Everyone.
+            "directAt": [
+                "mention-option-joey",
+                "mention-option-hugh",
+                "mention-option-debra",
+                "mention-option-auditor",
+            ],
+            # "@e" still lists every agent whose name or role holds an "e"; never Everyone.
+            "directE": ["mention-option-joey", "mention-option-debra", "mention-option-auditor"],
+            "directAl": [],
+            # A thread scoped to Joey and Debra lists only them, after Everyone.
+            "scopedAt": [
+                "mention-option-everyone",
+                "mention-option-joey",
+                "mention-option-debra",
+            ],
+            "scopedNonMember": [],
+            # Mention again is an explicit pick: a non-member still inserts.
+            "scopedMentionAgain": "ping @Hugh ",
+        },
     }
+
+
+def test_composer_requires_mention_scope() -> None:
+    script = (
+        "const fs = require('fs');"
+        "const { installDom } = require(process.argv[1]);"
+        "installDom();"
+        "eval(fs.readFileSync(process.argv[2], 'utf8') + ';global.BossModDom = BossModDom;');"
+        "eval(fs.readFileSync(process.argv[3], 'utf8') + ';global.BossModComposer = BossModComposer;');"
+        "const deps = { store: {}, onSend() {}, canSend() { return true; }, disabledReason() { return ''; } };"
+        "try { BossModComposer.createComposer(deps); console.log('no-throw'); }"
+        "catch (err) { console.log(err.message); }"
+    )
+    result = subprocess.run(
+        [
+            "node",
+            "-e",
+            script,
+            str(Path(__file__).resolve().parent / "js_fake_dom.cjs"),
+            str(JS / "core" / "dom.js"),
+            str(CONVERSATION / "composer.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.strip().splitlines()[-1] == "[composer] deps.mentionScope is required"

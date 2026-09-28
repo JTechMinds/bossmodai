@@ -12,7 +12,12 @@ import pytest
 
 import db
 from core import config
-from core.agent_loop.channel_round_plan import DISPATCH_FANOUT, DISPATCH_ROUNDS
+from core.agent_loop.channel_round_plan import (
+    DISPATCH_FANOUT,
+    DISPATCH_ROUNDS,
+    classify_channel_dispatch,
+    mention_ids_in_order,
+)
 from core.agent_loop.channel_router import (
     ROUTER_SPEAK_CAP,
     build_router_messages,
@@ -500,6 +505,48 @@ def test_list_channel_messages_can_exclude_a_notification_kind() -> None:
     assert [row.content for row in kept] == ["line 3", "line 4", "line 5"]
     unfiltered = db.list_channel_messages(channel.id, limit=3)
     assert [row.content for row in unfiltered] == ["Round 5", "line 5", "Round 6"]
+
+
+_GROUP = [
+    {"id": "jim", "name": "Jim"},
+    {"id": "laura", "name": "Laura"},
+    {"id": "allison", "name": "Allison"},
+]
+
+
+@pytest.mark.parametrize("text", ["@All can someone help Jim", "@all can someone help Jim", "@everyone thoughts?"])
+def test_at_all_and_at_everyone_mention_every_member(text: str) -> None:
+    assert mention_ids_in_order(text, _GROUP) == ["jim", "laura", "allison"]
+
+
+def test_a_member_named_like_all_wins_over_the_alias() -> None:
+    assert mention_ids_in_order("email me @allison", _GROUP) == ["allison"]
+    assert mention_ids_in_order("check the @allowance", [{"id": "jim", "name": "Jim"}]) == []
+
+
+def test_at_all_is_a_fanout_dispatch() -> None:
+    assert classify_channel_dispatch("@All can someone help", _GROUP) == DISPATCH_FANOUT
+
+
+def test_at_all_group_ask_wakes_every_member_without_routing(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        raise AssertionError("an @All fan-out must not route")
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "@All can someone help Jim, he's struggling with a clean git commit")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert {item["agent_id"] for item in triggers} == {jim.id, laura.id, ada.id}
+    assert triggers[0]["payload"]["dispatch_mode"] == DISPATCH_FANOUT
 
 
 def test_unset_system_ai_keeps_drain_order_and_does_not_call_the_model(monkeypatch: pytest.MonkeyPatch) -> None:

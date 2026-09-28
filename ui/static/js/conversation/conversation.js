@@ -81,19 +81,14 @@ const BossModConversation = (() => {
             },
             canSend: () => Boolean(source) && source.canSend(),
             disabledReason: () => (source ? source.disabledReason() : NO_CONVERSATION_REASON),
-            onAttach: (files, ctx) => {
-                const results = [];
-                for (const f of files) {
-                    results.push(BossModApi.uploadAttachment(f, ctx));
-                }
-                return Promise.all(results);
-            },
+            onAttach: (files, ctx) => Promise.all(Array.from(files, (f) => BossModApi.uploadAttachment(f, ctx))),
             getContext: () => {
                 if (!source) throw new Error(NO_CONVERSATION_REASON);
                 return source.context();
             },
             onRemoveAttachment: (id) => BossModApi.deleteAttachment(id),
             getAttachmentLimits: () => BossModApi.getAttachmentLimits(),
+            mentionScope: () => (source ? source.mentionScope() : { everyone: false, memberIds: null }),
         });
 
         const systemReceipts = BossModSystemReceipts.createSystemReceiptsToggle({

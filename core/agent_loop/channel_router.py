@@ -423,6 +423,7 @@ def build_router_messages(
         "A member is addressed when the line hands them work, asks them something, or names them "
         "as next ('Next up: Brian…', 'Brian, can you…', 'waiting on Brian'): wake them. "
         "A member who is only referred to ('per Brian's spec', 'Brian said') is not addressed. "
+        "An open ask to the group ('can someone…', 'anyone…', '@all', 'team,') addresses the members whose role fits the ask: name the best fit, or two when the ask spans two roles. When the ask is to help or review a member, the helpers are addressed; wake the member being helped too only when the line also asks them to act. "
         "Use Recent thread to resolve pronouns and 'me' / 'you' from the Latest message author. "
         "Status lines show who is already working. "
         "When one handoff needs two related members in sequence (e.g. an author then a reviewer), "

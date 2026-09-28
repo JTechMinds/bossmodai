@@ -25,6 +25,8 @@ NUDGE_SHOWN_KEY = "next_owner_nudge_shown"
 
 HUMAN_MENTION_NAMES = ("Human", "Operator", "Human Operator")
 _EVERYONE = "everyone"
+# Typed forms of the canonical everyone token. Checked after member names.
+_EVERYONE_ALIASES = ("everyone", "all")
 
 _NORMAL_REPLY_DECISIONS = frozenset({"answer", "clarify"})
 _FOCUS_OR_DM_TRIGGERS = frozenset({"human_chat", "peer_message"})
@@ -124,7 +126,12 @@ def mention_names_for_channel(channel_id: str) -> list[str]:
 
 
 def extract_next_owner_mentions(text: str, *, member_names: Iterable[str]) -> list[str]:
-    """Return member/@everyone mentions found in text. Conservative: @ required."""
+    """Return member/@everyone mentions found in text. Conservative: @ required.
+
+    ``@everyone`` and ``@all`` both mean every member and are returned as the
+    one canonical ``everyone`` token. Member names are matched first, so a
+    member whose name starts with "All" still resolves to that member.
+    """
     blob = text or ""
     names = sorted({name.strip() for name in member_names if name and name.strip()}, key=len, reverse=True)
     found: list[str] = []
@@ -135,10 +142,6 @@ def extract_next_owner_mentions(text: str, *, member_names: Iterable[str]) -> li
             continue
         rest = blob[index + 1 :]
         lowered = rest.lower()
-        if lowered.startswith(_EVERYONE) and _mention_boundary(rest, len(_EVERYONE)):
-            found.append(_EVERYONE)
-            index += 1 + len(_EVERYONE)
-            continue
         matched: str | None = None
         for name in names:
             if lowered.startswith(name.lower()) and _mention_boundary(rest, len(name)):
@@ -147,6 +150,18 @@ def extract_next_owner_mentions(text: str, *, member_names: Iterable[str]) -> li
         if matched is not None:
             found.append(matched)
             index += 1 + len(matched)
+            continue
+        alias = next(
+            (
+                token
+                for token in _EVERYONE_ALIASES
+                if lowered.startswith(token) and _mention_boundary(rest, len(token))
+            ),
+            None,
+        )
+        if alias is not None:
+            found.append(_EVERYONE)
+            index += 1 + len(alias)
         else:
             index += 1
     return found

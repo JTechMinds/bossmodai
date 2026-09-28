@@ -389,6 +389,8 @@ const BossModThreadSource = (() => {
             emptyState: () => ({ title: 'No thread messages yet.', hint: '' }),
             canSend: isLiveThread,
             disabledReason: () => (isLiveThread() ? '' : ARCHIVED_REASON),
+            // Who the @ picker offers: Everyone plus this thread's members, read live.
+            mentionScope: () => ({ everyone: true, memberIds: members().map((m) => m.id).filter(Boolean) }),
         };
     }
 
