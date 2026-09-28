@@ -121,7 +121,8 @@ def test_stall_timeout_is_seeded_beside_the_request_timeout() -> None:
     backstop, backstop_category = get_seed_setting_default("llm_request_timeout_seconds")
     assert backstop == "720"
     assert backstop_category == "llm"
-    settings_js = Path("ui/static/js/settings/settings-system.js").read_text(encoding="utf-8")
+    # Setting labels and descriptions live in the System settings catalog.
+    settings_js = Path("ui/static/js/settings/settings-system-meta.js").read_text(encoding="utf-8")
     assert settings_js.index("llm_request_timeout_seconds") < settings_js.index("llm_stall_timeout_seconds")
     assert "LLM Stall Timeout" in settings_js
     assert "Default 120" in settings_js

@@ -33,6 +33,7 @@ SHELL_GLOBALS = {
 SPLIT_HALVES = {
     "settings/settings-connections-form.js": "BossModConnectionForm",
     "settings/settings-runtime-contracts-actions.js": "BossModRuntimeContractActions",
+    "settings/settings-system-meta.js": "BossModSystemSettingsMeta",
 }
 
 REQUIRED_SCRIPTS = [
@@ -54,6 +55,7 @@ REQUIRED_SCRIPTS = [
     "js/settings/settings-connections-form.js",
     "js/settings/settings-connections.js",
     "js/settings/settings-personalities.js",
+    "js/settings/settings-system-meta.js",
     "js/settings/settings-system.js",
     "js/settings/settings-prompt-template.js",
     "js/settings/settings-advanced.js",
@@ -262,6 +264,7 @@ def test_index_loads_split_scripts_in_dependency_order() -> None:
             < index["js/settings/settings-connections.js"])
     assert (index["js/settings/settings-runtime-contracts-actions.js"]
             < index["js/settings/settings-runtime-contracts.js"])
+    assert index["js/settings/settings-system-meta.js"] < index["js/settings/settings-system.js"]
 
 
 def test_settings_and_cli_policy_use_shared_api_client() -> None:
@@ -407,6 +410,8 @@ def test_split_halves_define_their_own_iifes() -> None:
     assert "BossModConnectionForm.renderForm(conn, { container, onDone: renderList })" in connections
     contracts = _read("settings/settings-runtime-contracts.js")
     assert "BossModRuntimeContractActions.bindActions({ onRefresh: () => render(el) })" in contracts
+    system = _read("settings/settings-system.js")
+    assert "= BossModSystemSettingsMeta;" in system
 
 
 def test_all_split_files_exist_and_are_nonempty() -> None:

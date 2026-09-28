@@ -28,11 +28,6 @@ from core.models import AIConnection
 
 logger = logging.getLogger(__name__)
 
-# Bound for this helper only. It does not change llm_stall_timeout_seconds
-# or llm_request_timeout_seconds.
-SYSTEM_COMPLETION_TIMEOUT_SECONDS = 20
-
-
 def _usable(connection: AIConnection | None) -> AIConnection | None:
     if connection is None:
         return None
@@ -86,7 +81,8 @@ def complete_text(
 
     Raises:
         ConfigError: ``max_tokens`` is ``None`` and the setting is missing or
-            not an integer.
+            not an integer; or ``system_ai_timeout_seconds`` is missing or not
+            an integer.
     """
     connection = resolve_system_connection()
     if connection is None:
@@ -100,7 +96,9 @@ def complete_text(
         "messages": messages,
         "temperature": 0,
         "max_tokens": cap,
-        "timeout": SYSTEM_COMPLETION_TIMEOUT_SECONDS,
+        # Wall-clock bound for this helper only. It does not change
+        # llm_stall_timeout_seconds or llm_request_timeout_seconds.
+        "timeout": config.require_int("system_ai_timeout_seconds"),
         "stream": False,
         "num_retries": 0,
         "max_retries": 0,

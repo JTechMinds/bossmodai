@@ -99,6 +99,9 @@ def _render_system_settings() -> dict:
             str(harness),
             str(JS / "core" / "format.js"),
             str(JS / "settings" / "settings-system.js"),
+            str(JS / "core" / "dom.js"),
+            str(JS / "core" / "switch.js"),
+            str(JS / "settings" / "settings-system-meta.js"),
         ],
         check=False,
         capture_output=True,
@@ -127,6 +130,7 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
         "decision_repair_attempts",
         "max_concurrent_agent_turns",
         "system_ai_max_tokens",
+        "system_ai_timeout_seconds",
         "compaction_mode",
         "compaction_task_budget_headroom_percent",
         "compaction_chat_budget_headroom_percent",
@@ -210,6 +214,23 @@ def test_settings_put_rejects_a_bad_system_ai_max_tokens(bad: str) -> None:
     assert config.require_int("system_ai_max_tokens") == 6144
 
 
+@pytest.mark.parametrize("bad", ["0", "abc"])
+def test_settings_put_rejects_a_bad_system_ai_timeout(bad: str) -> None:
+    res = _put_setting("system_ai_timeout_seconds", bad, "llm")
+    assert res.status_code == 400
+    assert res.json()["detail"] == "System AI timeout must be a whole number of at least 1."
+    config.reload()
+    assert config.require_int("system_ai_timeout_seconds") == 180
+
+
+def test_settings_put_accepts_a_whole_system_ai_timeout() -> None:
+    res = _put_setting("system_ai_timeout_seconds", "180", "llm")
+    assert res.status_code == 200, res.text
+    res = _put_setting("system_ai_timeout_seconds", "240", "llm")
+    assert res.status_code == 200, res.text
+    assert config.require_int("system_ai_timeout_seconds") == 240
+
+
 def test_settings_put_accepts_a_whole_system_ai_max_tokens() -> None:
     res = _put_max_tokens("4096")
     assert res.status_code == 200, res.text
@@ -227,6 +248,7 @@ def _put_setting(key: str, value: str, category: str):
 # (key, category, label named by the 400, seeded default)
 POSITIVE_INT_KEYS = (
     ("system_ai_max_tokens", "llm", "System AI max output tokens", "6144"),
+    ("system_ai_timeout_seconds", "llm", "System AI timeout", "180"),
     ("standing_prefs_line_max_chars", "context", "Standing Pref Line Limit", "400"),
     ("standing_prefs_section_max_chars", "context", "Standing Prefs Section Limit", "4000"),
 )
@@ -368,6 +390,122 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
     assert "Default 4000." in section["paragraphs"][0]
     for row in (line, section):
         assert "restart" not in row["paragraphs"][0].lower()
+
+
+THREAD_KEYS = [
+    "channel_router_transcript_messages",
+    "channel_response_round_cap",
+    "channel_idle_check_enabled",
+    "channel_idle_check_delay_seconds",
+    "channel_idle_check_max_age_minutes",
+    "channel_idle_check_max_wakes",
+    "channel_idle_check_max_attempts",
+    "channel_idle_check_interval_seconds",
+]
+
+
+def test_threads_tab_lists_thread_settings_in_order() -> None:
+    payload = _render_system_settings()
+    assert payload["threadsHeading"] == "Threads"
+    assert payload["threadsOrder"] == THREAD_KEYS
+    for row in payload["threadsInputs"]:
+        # Grouped under Threads, still stored and saved as llm.
+        assert row["category"] == "llm"
+    inputs = _by_key(payload["threadsInputs"])
+    assert inputs["channel_router_transcript_messages"]["label"] == "Router Transcript Lines"
+    assert "0 sends no history" in inputs["channel_router_transcript_messages"]["paragraphs"][0]
+    assert inputs["channel_idle_check_max_age_minutes"]["label"] == "Idle Check Max Age (minutes)"
+    assert inputs["channel_idle_check_delay_seconds"]["value"] == "45"
+    idle = payload["idle"]
+    assert idle["before"]["role"] == "switch"
+    assert idle["before"]["checked"] == "true"
+    assert idle["before"]["name"] == "Idle Check"
+    # The switch row is the label; the card repeats no <label> heading.
+    assert idle["before"]["cardLabels"] == 0
+    assert idle["before"]["paragraphs"][0].startswith("When a thread goes quiet")
+    assert idle["toggleSaves"] == [
+        {
+            "url": "/api/settings/channel_idle_check_enabled?value=false&category=llm",
+            "method": "PUT",
+        },
+    ]
+    assert idle["afterToggle"] == "false"
+
+
+def test_failed_save_shows_the_server_message() -> None:
+    payload = _render_system_settings()
+    assert payload["delayError"] == {
+        "text": "Idle check delay must be a whole number of at least 1.",
+        "role": "alert",
+    }
+    # Only the refused row shows the message.
+    assert payload["otherError"] == {"text": "", "role": "alert"}
+    idle = payload["idle"]
+    assert idle["beforeRefused"] == "false"
+    assert idle["afterRefused"] == "false"
+    assert idle["error"] == {"text": "Idle check must be true or false.", "role": "alert"}
+    # The next accepted save clears the line.
+    assert payload["delayErrorAfterFix"] == {"text": "", "role": "alert"}
+
+
+# (key, label named by the 400, a valid value)
+THREAD_POSITIVE_INT_KEYS = (
+    ("channel_response_round_cap", "Round cap per message", "32"),
+    ("channel_idle_check_delay_seconds", "Idle check delay", "60"),
+    ("channel_idle_check_interval_seconds", "Idle check scan interval", "10"),
+    ("channel_idle_check_max_age_minutes", "Idle check max age", "15"),
+    ("channel_idle_check_max_wakes", "Idle check max wakes", "1"),
+    ("channel_idle_check_max_attempts", "Idle check attempts", "5"),
+)
+
+
+@pytest.mark.parametrize("bad", ["0", "abc", "45s", "-1"])
+@pytest.mark.parametrize(("key", "label", "_good"), THREAD_POSITIVE_INT_KEYS)
+def test_thread_positive_int_settings_reject_a_bad_value(key: str, label: str, _good: str, bad: str) -> None:
+    before = config.get(key)
+    res = _put_setting(key, bad, "llm")
+    assert res.status_code == 400
+    assert res.json()["detail"] == f"{label} must be a whole number of at least 1."
+    config.reload()
+    assert config.get(key) == before
+
+
+@pytest.mark.parametrize(("key", "_label", "good"), THREAD_POSITIVE_INT_KEYS)
+def test_thread_positive_int_settings_accept_a_whole_number(key: str, _label: str, good: str) -> None:
+    res = _put_setting(key, good, "llm")
+    assert res.status_code == 200, res.text
+    assert config.get(key) == good
+
+
+def test_router_transcript_lines_accept_zero_and_reject_negative() -> None:
+    bad = _put_setting("channel_router_transcript_messages", "-1", "llm")
+    assert bad.status_code == 400
+    assert bad.json()["detail"] == "Router transcript lines must be a whole number of 0 or more."
+    abc = _put_setting("channel_router_transcript_messages", "abc", "llm")
+    assert abc.status_code == 400
+    config.reload()
+    assert config.get("channel_router_transcript_messages") == "10"
+    zero = _put_setting("channel_router_transcript_messages", "0", "llm")
+    assert zero.status_code == 200, zero.text
+    assert config.get("channel_router_transcript_messages") == "0"
+    twenty = _put_setting("channel_router_transcript_messages", "20", "llm")
+    assert twenty.status_code == 200, twenty.text
+    assert config.get("channel_router_transcript_messages") == "20"
+
+
+def test_idle_check_flag_accepts_only_true_or_false() -> None:
+    for bad in ("yes", "True", "1", ""):
+        res = _put_setting("channel_idle_check_enabled", bad, "llm")
+        assert res.status_code == 400
+        assert res.json()["detail"] == "Idle check must be true or false."
+    config.reload()
+    assert config.get("channel_idle_check_enabled") == "true"
+    off = _put_setting("channel_idle_check_enabled", "false", "llm")
+    assert off.status_code == 200, off.text
+    assert config.get("channel_idle_check_enabled") == "false"
+    on = _put_setting("channel_idle_check_enabled", "true", "llm")
+    assert on.status_code == 200, on.text
+    assert config.get("channel_idle_check_enabled") == "true"
 
 
 def _stored_system_ai() -> str:
@@ -539,7 +677,10 @@ def test_system_ai_is_the_first_control_under_ai_connections() -> None:
 
 def test_system_ai_picker_source_is_under_ai_connections() -> None:
     connections = (JS / "settings" / "settings-connections.js").read_text(encoding="utf-8")
-    system = (JS / "settings" / "settings-system.js").read_text(encoding="utf-8")
+    # The System section is its renderer plus its setting catalog.
+    system = (JS / "settings" / "settings-system.js").read_text(encoding="utf-8") + (
+        JS / "settings" / "settings-system-meta.js"
+    ).read_text(encoding="utf-8")
     completion = (ROOT / "core" / "llm" / "system_completion.py").read_text(encoding="utf-8")
     assert "system_ai_connection" not in system
     h2 = connections.index('<h2 class="text-lg font-semibold">AI Connections</h2>')

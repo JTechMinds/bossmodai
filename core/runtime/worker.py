@@ -13,6 +13,7 @@ from typing import Any
 
 import db
 from core import config
+from core.agent_loop.channel_idle_check import channel_idle_watch
 from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.meeting_watchdog import meeting_watchdog
 from core.agent_loop.watchdog import watchdog
@@ -55,8 +56,10 @@ class RuntimeController:
         simulation.start()
         watchdog.start()
         meeting_watchdog.start()
+        channel_idle_watch.start()
 
     async def _stop_services(self) -> None:
+        await channel_idle_watch.stop()
         await meeting_watchdog.stop()
         await watchdog.stop()
         await dispatcher.stop()

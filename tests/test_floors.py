@@ -19,7 +19,7 @@ from core.agent_loop.actions_work import _handle_message
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import assignment_wake_trigger, persist_result_triggers
 from core.agent_loop.dispatcher import TurnDispatcher
-from core.agent_loop.channel_rounds import _ordered_members, start_channel_peer_round
+from core.agent_loop.channel_rounds import ordered_channel_members, start_channel_peer_round
 from core.agent_loop.chat_fade import _run_fade_job
 from core.agent_loop.soft_blocks import apply_no_progress_block
 from core.agent_loop.sticky_slots import _allowed_sources
@@ -176,7 +176,7 @@ def test_talk_fanout_skips_a_member_moved_off_the_thread_floor() -> None:
         created_by=ada.id,
     )
     db.update_agent(bob.id, floor_id=finance.id)
-    ordered = _ordered_members(channel.id, set())
+    ordered = ordered_channel_members(channel.id, set())
     assert [item["id"] for item in ordered] == [ada.id]
 
     message = db.create_channel_message(

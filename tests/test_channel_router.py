@@ -23,15 +23,18 @@ from core.agent_loop.channel_router import (
     role_summary,
     short_sticky_context,
 )
-from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
+from core.agent_loop import channel_rounds
+from core.agent_loop.channel_rounds import (
+    ROUND_MARKER_KIND,
+    advance_channel_round,
+    begin_channel_response,
+    start_channel_peer_round,
+)
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.standing_prefs import standing_prefs_file
 from core.bm_cli import filesystem
-from core.llm.system_completion import (
-    SYSTEM_COMPLETION_TIMEOUT_SECONDS,
-    complete_text,
-)
+from core.llm.system_completion import complete_text
 from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
 from tests._router_fakes import route_reply, router_numbers, speak_reply
@@ -104,7 +107,7 @@ def _ordered(round_id: str) -> list[str]:
 
 def test_speak_cap_and_stall_defaults_stay_put() -> None:
     assert ROUTER_SPEAK_CAP == 2
-    assert SYSTEM_COMPLETION_TIMEOUT_SECONDS == 20
+    assert config.get("system_ai_timeout_seconds") == "180"
     assert config.get("system_ai_max_tokens") == "6144"
     assert config.get("max_concurrent_agent_turns") == "2"
     assert config.get("llm_stall_timeout_seconds") == "120"
@@ -349,18 +352,19 @@ def test_router_sees_prior_lines_and_the_latest_author(monkeypatch: pytest.Monke
     )
     assert [item["agent_id"] for item in triggers] == [laura.id]
     prompt = prompts[0]
-    # The router reads limit + 1 rows (11) and skips the marker inside
-    # that window, so the transcript holds the non-marker rows 3..12.
-    expected = "\n".join(
+    # 13 rows; the marker (row 5) sits inside the newest 11. The transcript
+    # is still exactly the last 10 non-marker lines before the latest: 2..12.
+    expected_lines = [
         "[status] Harley Accepted: Sequence the M2 plan"
         if index == 9
         else f"Human Operator: prior line {index}"
-        for index in range(3, 13)
+        for index in range(2, 13)
         if index != 5
-    )
-    assert _block(prompt, "Recent thread (oldest first):", "Latest message from") == expected
+    ]
+    assert len(expected_lines) == 10
+    assert _block(prompt, "Recent thread (oldest first):", "Latest message from") == "\n".join(expected_lines)
     assert "Round 2" not in prompt
-    assert "prior line 2" not in prompt
+    assert "prior line 1\n" not in prompt
     assert _block(prompt, "Latest message from Harley (Feature Planner):", "Members:") == latest.content
     assert prompt.count(latest.content) == 1
     for agent in (jim, laura, ada, harley):
@@ -385,6 +389,117 @@ def test_transcript_limit_setting_zero_renders_none(monkeypatch: pytest.MonkeyPa
     )
     assert _block(prompts[0], "Recent thread (oldest first):", "Latest message from") == "(none)"
     assert "prior line" not in prompts[0]
+
+
+def test_in_round_speak_route_keeps_the_previous_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    db.create_channel_message(
+        channel_id=channel.id,
+        author_type="agent",
+        author_name=ada.name,
+        author_agent_id=ada.id,
+        content="Fixture is checked in.",
+        source_channel="channel",
+    )
+    prompts = _scripted_route(monkeypatch, [[jim.id, laura.id], [laura.id]])
+    message = _message(channel.id, "Where are we on the plan?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert [item["agent_id"] for item in triggers] == [jim.id]
+    trigger = dict(triggers[0]["payload"])
+    trigger["type"] = "channel_response"
+    _joined, can_speak = begin_channel_response(jim, trigger)
+    assert can_speak
+    state = db.get_agent_state(jim.id)
+    assert state is not None
+    result = apply_decision(
+        {
+            "decision": "answer",
+            "workCommit": False,
+            "intentKind": "status_request",
+            "reply": "The plan is filed.",
+            "proceedUntagged": True,
+        },
+        jim,
+        state,
+        trigger,
+    )
+    assert result["channel_message"]["content"] == "The plan is filed."
+    # The re-route ran before the reply row was written.
+    assert len(prompts) == 2
+    reroute = prompts[1]
+    recent = _block(reroute, "Recent thread (oldest first):", "Latest message from")
+    assert recent.splitlines()[-1] == "Human Operator: Where are we on the plan?"
+    assert "Ada: Fixture is checked in." in recent
+    assert _block(reroute, "Latest message from Jim (PM):", "Members:") == "The plan is filed."
+    assert reroute.count("The plan is filed.") == 1
+
+
+def test_reroute_with_empty_speak_labels_the_actual_latest_line(monkeypatch: pytest.MonkeyPatch) -> None:
+    jim, laura, _ada, channel = _trio()
+    _enable_system_ai()
+    prompts = _scripted_route(monkeypatch, [[jim.id, laura.id], [laura.id]])
+    message = _message(channel.id, "Where are we on the plan?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    round_id = triggers[0]["payload"]["round_id"]
+    db.mark_channel_candidate_responded(round_id=round_id, agent_id=jim.id)
+    db.create_channel_message(
+        channel_id=channel.id,
+        author_type="agent",
+        author_name=jim.name,
+        author_agent_id=jim.id,
+        content="The plan is filed.",
+        source_channel="channel",
+    )
+    pending = channel_rounds._pending_candidates(db.list_channel_response_candidates(round_id))
+    assert [candidate.agent_id for candidate in pending] == [laura.id]
+    channel_rounds._redecide_remaining(
+        round_id=round_id,
+        channel_id=channel.id,
+        pending=pending,
+        pinned_ids=[],
+        opening_message=message.content,
+        latest_message="",
+        speaker_id=laura.id,
+    )
+    assert len(prompts) == 2
+    reroute = prompts[1]
+    assert _block(reroute, "Latest message from Jim (PM):", "Members:") == "The plan is filed."
+    assert "Latest message from Laura" not in reroute
+    recent = _block(reroute, "Recent thread (oldest first):", "Latest message from")
+    assert recent == "Human Operator: Where are we on the plan?"
+
+
+def test_list_channel_messages_can_exclude_a_notification_kind() -> None:
+    _jim, _laura, _ada, channel = _trio()
+    for index in range(1, 6):
+        _message(channel.id, f"line {index}")
+        db.create_channel_message(
+            channel_id=channel.id,
+            author_type="system",
+            author_name="BossMod",
+            content=f"Round {index + 1}",
+            source_channel="channel",
+            notification_kind=ROUND_MARKER_KIND,
+        )
+    kept = db.list_channel_messages(channel.id, limit=3, exclude_notification_kind=ROUND_MARKER_KIND)
+    assert [row.content for row in kept] == ["line 3", "line 4", "line 5"]
+    unfiltered = db.list_channel_messages(channel.id, limit=3)
+    assert [row.content for row in unfiltered] == ["Round 5", "line 5", "Round 6"]
 
 
 def test_unset_system_ai_keeps_drain_order_and_does_not_call_the_model(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1021,10 +1136,15 @@ def test_system_completion_uses_the_connection_model_not_an_identity_model(
     assert seen["model"] == "openai/mock-small"
     assert seen["temperature"] == 0
     assert seen["max_tokens"] == 6144
-    assert seen["timeout"] == SYSTEM_COMPLETION_TIMEOUT_SECONDS
+    assert seen["timeout"] == 180
     assert seen["stream"] is False
     assert seen["api_key"] == "secret"
     assert "identity-big" not in str(seen["model"])
+    # The timeout is the setting, not a constant: a changed value is used.
+    db.set_setting("system_ai_timeout_seconds", "300", "llm")
+    config.reload()
+    assert complete_text([{"role": "user", "content": "hi"}]) == '{"ok":true}'
+    assert seen["timeout"] == 300
 
 
 def test_system_completion_cap_follows_the_setting_and_explicit_caps_win(
@@ -1134,9 +1254,9 @@ def test_reroute_prompt_states_echo_fail_closed() -> None:
     assert "Round:" not in blob
     assert _block(blob, "Already spoke:", "Work-bound:") == "1 | Jim"
     assert _block(blob, "Work-bound:", None) == "2 | Laura"
-    assert "If you are unsure whether an already-spoke member would add new substance" in blob
-    assert "Do not name someone because they might have something" in blob
-    assert "A member who has not spoken may still be named" in blob
+    assert "if unsure whether they would add new substance, leave them out" in blob
+    assert "do not wake an already-spoke member to restate what the thread already shows" in blob
+    assert "An empty speak array is the stop when nobody is addressed and nobody has new substance" in blob
     assert "Leave work-bound members out of speak" in blob
     plain, _numbers = build_router_messages(
         members=[{"id": "jim", "name": "Jim", "role": "PM"}],
@@ -1147,8 +1267,28 @@ def test_reroute_prompt_states_echo_fail_closed() -> None:
         sticky="",
     )
     plain_blob = "\n".join(item["content"] for item in plain)
-    assert "If you are unsure whether an already-spoke member would add new substance" not in plain_blob
+    assert "if unsure whether they would add new substance, leave them out" not in plain_blob
     assert "Already spoke:" not in plain_blob
+
+
+def test_reroute_prompt_does_not_let_already_spoke_exclude_the_addressed() -> None:
+    messages, _numbers = build_router_messages(
+        members=[
+            {"id": "harley", "name": "Harley", "role": "Feature Planner"},
+            {"id": "charles", "name": "Charles", "role": "Engineer"},
+        ],
+        latest_message="Confirmed. @Charles you're clear to run the capture.",
+        latest_author="Harley (Feature Planner)",
+        transcript=[],
+        pending_mention_ids=[],
+        sticky="",
+        agent_line=True,
+        already_spoke_ids=["charles"],
+        work_bind_ids=[],
+    )
+    blob = "\n".join(item["content"] for item in messages)
+    assert _block(blob, "Already spoke:", "Work-bound:") == "2 | Charles"
+    assert "Already spoke never excludes a member the latest message addresses" in blob
 
 
 def _scripted_route(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> list[str]:
@@ -1221,7 +1361,7 @@ def test_reroute_after_speakers_stays_out_on_echo(monkeypatch: pytest.MonkeyPatc
             both.append(blob)
     assert both
     assert any(
-        "If you are unsure whether an already-spoke member would add new substance" in blob for blob in both
+        "if unsure whether they would add new substance, leave them out" in blob for blob in both
     )
 
 
@@ -1254,7 +1394,7 @@ def test_reroute_still_speaks_for_new_substance(monkeypatch: pytest.MonkeyPatch)
         spoken_text="The fixture failed. Who takes the fix?",
     )
     assert [item["agent_id"] for item in progress["trigger_requests"]] == [jim.id]
-    assert any("If you are unsure whether an already-spoke member would add new substance" in blob for blob in prompts)
+    assert any("if unsure whether they would add new substance, leave them out" in blob for blob in prompts)
 
 
 def test_system_completion_failure_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -63,7 +63,7 @@ _TRANSCRIPT_LINE_CHARS = 280
 
 # Intent gate for a peer round opened from an agent speak. Not a phrase list.
 AGENT_LINE_ROUTE = (
-    "The latest message is an agent speak. Judge that line, not the opening sticky. "
+    "The latest message is an agent speak. Judge that line. Recent thread is context for it, not a new request. "
     "Put an id in speak only when the line adds new work, a question, or a handoff (naming who is next, even without @). "
     "Settled status, an echo of a line the thread already shows, or a no-op is an empty speak array. "
     "A peer @ on that line is not a pending pin and does not open another round."
@@ -74,11 +74,12 @@ AGENT_LINE_ROUTE = (
 REROUTE_ECHO_ROUTE = (
     "Already spoke lists members who already took a turn on this operator message. "
     "Work-bound lists members on live work. "
-    "Do not put an already-spoke member in speak when that turn would only restate what the thread already shows. "
-    "If you are unsure whether an already-spoke member would add new substance, leave them out of speak. "
-    "An empty speak array is the stop when nobody has new substance. "
-    "Do not name someone because they might have something. "
-    "A member who has not spoken may still be named for new work, a question, or a handoff. "
+    "Already spoke never excludes a member the latest message addresses: if it hands them work, "
+    "answers their question, or gives them the go-ahead they asked for, wake them even though they "
+    "spoke before. "
+    "For members the latest message does not address, do not wake an already-spoke member to restate "
+    "what the thread already shows; if unsure whether they would add new substance, leave them out. "
+    "An empty speak array is the stop when nobody is addressed and nobody has new substance. "
     "Leave work-bound members out of speak."
 )
 
@@ -88,12 +89,14 @@ class RouterLine:
     """One prior thread line for the router's Recent thread section.
 
     ``status`` marks a system task card (Accepted, Writing, Done, Blocked)
-    so the model reads it as state, not speech.
+    so the model reads it as state, not speech. ``author_agent_id`` is the
+    row's agent author, or empty; it is engine data and is never printed.
     """
 
     author: str
     text: str
     status: bool
+    author_agent_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,7 +234,7 @@ def parse_router_payload(raw: str, number_map: dict[int, str]) -> list[str] | No
         or a duplicate.
     """
     try:
-        payload = json.loads(_unwrap_json(raw))
+        payload = json.loads(unwrap_json(raw))
     except json.JSONDecodeError:
         return None
     if not isinstance(payload, dict) or set(payload) != ROUTER_KEYS:
@@ -511,7 +514,8 @@ def short_sticky_context(members: list[dict[str, str]]) -> str:
     return _clip("\n".join(parts), _STICKY_CHARS)
 
 
-def _unwrap_json(raw: str) -> str:
+def unwrap_json(raw: str) -> str:
+    """Strip one code fence around a JSON completion. Unfenced text is returned trimmed."""
     text = (raw or "").strip()
     if not text.startswith("```"):
         return text

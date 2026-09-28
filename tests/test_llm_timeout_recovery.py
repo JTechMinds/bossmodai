@@ -149,7 +149,8 @@ async def test_llm_request_timeout_seconds_still_bounds_the_call(
     assert seeded == "720"
     assert category == "llm"
     assert config.get("llm_request_timeout_seconds") == "720"
-    settings_js = Path("ui/static/js/settings/settings-system.js").read_text(encoding="utf-8")
+    # Setting labels and descriptions live in the System settings catalog.
+    settings_js = Path("ui/static/js/settings/settings-system-meta.js").read_text(encoding="utf-8")
     assert "llm_request_timeout_seconds" in settings_js
     assert "LLM Request Timeout" in settings_js
     assert "720" in settings_js

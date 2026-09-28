@@ -145,27 +145,52 @@ def _validate_telegram_settings(key: str, value: str) -> None:
             )
 
 
-# Settings read with ``config.require_int`` where 0 or a non-number would break
-# every reader. Key → the label the 400 names, matching the Settings UI.
+# Settings that must be a whole number of at least 1. Key → the label the
+# 400 names, matching the Settings UI.
 POSITIVE_INT_SETTINGS = frozenset({
     "system_ai_max_tokens",
+    "system_ai_timeout_seconds",
     "standing_prefs_line_max_chars",
     "standing_prefs_section_max_chars",
+    "channel_response_round_cap",
+    "channel_idle_check_delay_seconds",
+    "channel_idle_check_interval_seconds",
+    "channel_idle_check_max_age_minutes",
+    "channel_idle_check_max_wakes",
+    "channel_idle_check_max_attempts",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
+    "system_ai_timeout_seconds": "System AI timeout",
     "standing_prefs_line_max_chars": "Standing Pref Line Limit",
     "standing_prefs_section_max_chars": "Standing Prefs Section Limit",
+    "channel_response_round_cap": "Round cap per message",
+    "channel_idle_check_delay_seconds": "Idle check delay",
+    "channel_idle_check_interval_seconds": "Idle check scan interval",
+    "channel_idle_check_max_age_minutes": "Idle check max age",
+    "channel_idle_check_max_wakes": "Idle check max wakes",
+    "channel_idle_check_max_attempts": "Idle check attempts",
+}
+_NON_NEGATIVE_INT_SETTING_LABELS = {
+    "channel_router_transcript_messages": "Router transcript lines",
+}
+_BOOLEAN_SETTING_LABELS = {
+    "channel_idle_check_enabled": "Idle check",
 }
 
 
 def _validate_positive_int_setting(key: str, value: str) -> None:
     """Reject a value for a ``POSITIVE_INT_SETTINGS`` key that is not a whole number ≥ 1.
 
-    Each of these keys is read with ``config.require_int``: System AI
-    completions (``system_ai_max_tokens``), and every standing-prefs save and
-    warm render (the two prefs limits). A bad value (``6k``, ``0``) would fail
-    all of them, so it is rejected here, at the write boundary, instead.
+    ``system_ai_max_tokens``, ``system_ai_timeout_seconds`` and the two
+    standing-prefs limits are read with
+    ``config.require_int``: System AI completions, and every standing-prefs
+    save and warm render. A bad value (``6k``, ``0``) would fail all of them,
+    so it is rejected here, at the write boundary, instead. The thread keys
+    (``channel_response_round_cap`` and the ``channel_idle_check_*``
+    numbers) are read with ``config.get_int`` / ``get_float`` plus a
+    fallback; they are rejected here so the operator's value is never
+    silently replaced by that fallback.
 
     For the prefs limits it also requires section ≥ line +
     ``WARM_PREFIX_MAX_CHARS`` + the warm header and its newline, reading the
@@ -205,6 +230,45 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
         )
 
 
+def _validate_non_negative_int_setting(key: str, value: str) -> None:
+    """Reject a value for a non-negative integer key that is not a whole number ≥ 0.
+
+    0 means the router sees no transcript.
+
+    Args:
+        key: Setting key being written. Other keys are not checked.
+        value: Raw value from the request.
+
+    Raises:
+        HTTPException: 400 naming the setting's label when the stripped
+            value is not a base-10 integer of 0 or more.
+    """
+    label = _NON_NEGATIVE_INT_SETTING_LABELS.get(key)
+    if label is None:
+        return
+    stripped = value.strip()
+    # isascii + isdigit: base-10 digits only, so "-1" and "+5" are refused.
+    if not (stripped.isascii() and stripped.isdigit()):
+        raise HTTPException(400, f"{label} must be a whole number of 0 or more.")
+
+
+def _validate_boolean_setting(key: str, value: str) -> None:
+    """Reject a value for a boolean key that is not exactly ``true`` or ``false``.
+
+    Args:
+        key: Setting key being written. Other keys are not checked.
+        value: Raw value from the request.
+
+    Raises:
+        HTTPException: 400 naming the setting's label for any other value.
+    """
+    label = _BOOLEAN_SETTING_LABELS.get(key)
+    if label is None:
+        return
+    if value not in {"true", "false"}:
+        raise HTTPException(400, f"{label} must be true or false.")
+
+
 @router.put("/settings/{key}")
 async def set_setting(key: str, value: str, category: str = "general"):
     if key == "system_prompt_template" or key in _RUNTIME_CONTRACT_KEYS.values():
@@ -215,6 +279,8 @@ async def set_setting(key: str, value: str, category: str = "general"):
     _validate_telegram_settings(key, value)
     _validate_nest_git_settings(key, value)
     _validate_positive_int_setting(key, value)
+    _validate_non_negative_int_setting(key, value)
+    _validate_boolean_setting(key, value)
     if key == "workspace_host_roots":
         from core.bm_cli.host_roots import SETTING_CATEGORY, normalize_host_root_setting
 

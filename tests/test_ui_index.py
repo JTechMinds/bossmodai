@@ -74,6 +74,7 @@ SETTINGS_SCRIPTS = [
     "js/settings/settings-connections-form.js",
     "js/settings/settings-connections.js",
     "js/settings/settings-personalities.js",
+    "js/settings/settings-system-meta.js",
     "js/settings/settings-system.js",
     "js/settings/settings-prompt-template.js",
     "js/settings/settings-advanced.js",

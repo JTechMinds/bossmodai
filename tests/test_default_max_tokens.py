@@ -30,7 +30,8 @@ def test_default_max_tokens_seed_is_16384() -> None:
     assert seeded == "16384"
     assert category == "llm"
     assert config.get("default_max_tokens") == "16384"
-    settings_js = Path("ui/static/js/settings/settings-system.js").read_text(encoding="utf-8")
+    # Setting labels and descriptions live in the System settings catalog.
+    settings_js = Path("ui/static/js/settings/settings-system-meta.js").read_text(encoding="utf-8")
     assert "default_max_tokens" in settings_js
     assert "Default Max Completion Tokens" in settings_js
     assert "Default 16384" in settings_js
