@@ -48,3 +48,12 @@ artifacts/
 docs/*
 !docs/*.md
 strategy-docs/*
+
+# Node.js
+node_modules/
+
+# Evidence artifacts
+evidence/
+
+# Docs (spec/verdict artifacts live outside repo)
+docs/
