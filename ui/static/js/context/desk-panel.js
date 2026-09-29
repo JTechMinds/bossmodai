@@ -1,11 +1,13 @@
 /**
  * BossMod AI — one agent's desk in the context column.
  *
- * Profile, Tasks, Files, Notes, and a footer of actions, in that order
- * (spec 7). It composes rather than renders: Tasks is context/desk-tasks.js,
- * Files is context/desk-files.js, Notes is context/desk-notes.js, and the
- * footer is context/desk-actions.js, each owning its own request and its own
- * load generation.
+ * Profile, Tasks, Files, Notes, Extensions, and a footer of actions, in that
+ * order (spec 7). It composes rather than renders: Tasks is
+ * context/desk-tasks.js, Files is context/desk-files.js, Notes is
+ * context/desk-notes.js, Extensions is context/desk-extensions.js (hidden
+ * while no per-agent extension is enabled), and the footer is
+ * context/desk-actions.js, each owning its own request and its own load
+ * generation.
  *
  * THE SECTION VOCABULARY IS THIS FILE'S. The panel stacked eight blocks at one
  * visual level and each module authored its own header, so nothing said which
@@ -105,6 +107,13 @@ const BossModDeskPanel = (() => {
         const notes = BossModDeskNotes.createDeskNotes({
             api, agentId, onOpenFolder: (path) => { void files.open(path); },
         });
+        /** Built below; null until then, so an early onChange is a no-op. */
+        let extensionsSection = null;
+        const deskExtensions = BossModDeskExtensions.createDeskExtensions({
+            agentId,
+            agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
+            onChange: () => { if (extensionsSection) extensionsSection.hidden = deskExtensions.isEmpty(); },
+        });
         /** The open role dialog, or null. One at a time. */
         let edit = null;
         /** Server lane note. Queued replaces the status pill until a lane frees. */
@@ -140,7 +149,9 @@ const BossModDeskPanel = (() => {
             }, tasks.element),
             section('Files', null, files.element),
             section('Notes', null, notes.element),
+            extensionsSection = section('Extensions', null, deskExtensions.element),
             actions.element);
+        extensionsSection.hidden = deskExtensions.isEmpty();
 
         const element = h('section', { class: 'desk-panel' }, bodyEl);
         // Nothing else in the context column sweeps for placeholders, so this
@@ -251,7 +262,7 @@ const BossModDeskPanel = (() => {
             element,
 
             /**
-             * Drain this panel and both of its sections.
+             * Drain this panel and its sections.
              * @returns {void}
              */
             destroy() {
@@ -265,6 +276,7 @@ const BossModDeskPanel = (() => {
                 tasks.destroy();
                 files.destroy();
                 notes.destroy();
+                deskExtensions.destroy();
             },
         };
     }

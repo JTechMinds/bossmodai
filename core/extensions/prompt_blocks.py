@@ -12,6 +12,7 @@ from core.extensions.registry import Discovery, ExtensionEntry, enabled_ids, get
 from core.extensions.setup_runner import entry_setup_status
 from core.llm.routing import select_model
 from core.models import Agent
+from db.extension_agent_configs import get_extension_agent_config
 from db.model_capabilities import supports_images
 
 logger = logging.getLogger(__name__)
@@ -25,9 +26,11 @@ def render_extension_blocks(
     """Return the prompt text of every extension that applies to this turn.
 
     An extension applies when it is valid, enabled, set up (or needs no
-    setup), and — when it requires an image model — the model this turn is
-    routed to (the same mode/model the agent loop picks for ``trigger``) is
-    flagged image-capable.
+    setup), when it requires an image model the model this turn is routed
+    to (the same mode/model the agent loop picks for ``trigger``) is flagged
+    image-capable, and — when its manifest declares ``agent_config`` — this
+    agent has a stored config (an agent without a mailbox is not told about
+    ``mail``).
 
     Each block is the extension's static prompt text, then — when the
     extension implements ``prompt_state`` — its state line last. The state
@@ -49,6 +52,7 @@ def render_extension_blocks(
         OSError: A valid extension's prompt file cannot be read.
         core.extensions.registry.ExtensionSettingError: The enabled setting
             is unreadable.
+        ValueError: An agent's stored extension config is corrupt.
         Exception: Whatever an extension's ``prompt_state`` raises (e.g.
             Browser Vision's browser thread not answering), unchanged.
     """
@@ -58,17 +62,19 @@ def render_extension_blocks(
     blocks = [
         _block(entry, agent)
         for entry in found.valid_entries()
-        if entry.id in enabled and _applies(entry, model)
+        if entry.id in enabled and _applies(entry, model, agent)
     ]
     blocks = [block for block in blocks if block]
     return "\n\n".join(blocks) if blocks else None
 
 
-def _applies(entry: ExtensionEntry, model: str | None) -> bool:
+def _applies(entry: ExtensionEntry, model: str | None, agent: Agent) -> bool:
     if entry_setup_status(entry).state not in {"ready", "not_required"}:
         return False
-    if entry.manifest.requires.image_model:
-        return model is not None and supports_images(model)
+    if entry.manifest.requires.image_model and not (model is not None and supports_images(model)):
+        return False
+    if entry.manifest.agent_config is not None:
+        return get_extension_agent_config(entry.id, agent.id) is not None
     return True
 
 

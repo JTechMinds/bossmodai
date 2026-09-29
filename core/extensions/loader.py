@@ -12,8 +12,16 @@ import logging
 import sys
 import threading
 from types import ModuleType
+from typing import Callable
 
-from core.extensions.contract import Extension, ExtensionContext, SupportsLiveView
+from core.extensions.contract import (
+    Extension,
+    ExtensionContext,
+    SupportsAgentConfig,
+    SupportsAgentView,
+    SupportsLiveView,
+)
+from core.extensions.manifest import ExtensionManifest
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry
 
@@ -89,8 +97,9 @@ def load_extension(entry: ExtensionEntry) -> Extension:
     Raises:
         ExtensionLoadError: The entry is invalid, the package failed to
             import, it has no ``create``, ``create`` raised, or the instance
-            lacks a method its manifest declares (``live_view``) — that last
-            one also marks the extension invalid (see :func:`contract_failure`).
+            lacks a method its manifest declares (``live_view``,
+            ``agent_config``, ``agent_view``) — that last one also marks the
+            extension invalid (see :func:`contract_failure`).
     """
     with _lock:
         existing = _loaded.get(entry.id)
@@ -113,19 +122,43 @@ def load_extension(entry: ExtensionEntry) -> Extension:
         ctx = ExtensionContext(
             manifest=manifest,
             data_dir=extension_data_dir(entry.id),
+            read_agent_config=_agent_config_reader(entry.id),
             runtime_worker=is_runtime_worker(),
         )
         try:
             instance = create(ctx)
         except Exception as exc:
             raise ExtensionLoadError(f"extension {entry.id} failed to start: {exc}") from exc
-        if manifest.live_view and not isinstance(instance, SupportsLiveView):
-            reason = "manifest declares live_view but the extension has no live_view() method"
+        reason = _broken_contract(manifest, instance)
+        if reason is not None:
             _contract_failures[entry.id] = reason
             raise ExtensionLoadError(reason)
         _loaded[entry.id] = instance
         logger.info("Loaded extension %s", entry.id)
         return instance
+
+
+def _agent_config_reader(ext_id: str) -> Callable[[str], dict[str, str] | None]:
+    """Bind ``db.get_extension_agent_config`` to one extension id."""
+
+    def read(agent_id: str) -> dict[str, str] | None:
+        # Imported here: db loads the CLI runtime, which imports this module.
+        import db
+
+        return db.get_extension_agent_config(ext_id, agent_id)
+
+    return read
+
+
+def _broken_contract(manifest: ExtensionManifest, instance: object) -> str | None:
+    """Name the first capability the manifest declares that the instance lacks."""
+    if manifest.live_view and not isinstance(instance, SupportsLiveView):
+        return "manifest declares live_view but the extension has no live_view() method"
+    if manifest.agent_config is not None and not isinstance(instance, SupportsAgentConfig):
+        return "manifest declares agent_config but the extension has no verify_agent_config() method"
+    if manifest.agent_view is not None and not isinstance(instance, SupportsAgentView):
+        return "manifest declares agent_view but the extension has no agent_view()/agent_view_item() methods"
+    return None
 
 
 def contract_failure(ext_id: str) -> str | None:

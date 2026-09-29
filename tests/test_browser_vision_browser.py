@@ -31,6 +31,13 @@ from core.extensions.registry import get_discovery
 from core.extensions.setup_runner import read_setup_status
 
 _ENTRY = get_discovery().get("browser-vision")
+
+
+def _no_agent_config(agent_id: str) -> None:
+    """Browser Vision declares no agent_config, so no agent has one."""
+    return None
+
+
 # An install dir to use instead of the real one (read only either way).
 _INSTALL_DIR_ENV = "BOSSMOD_BV_TEST_INSTALL_DIR"
 
@@ -254,7 +261,7 @@ def browse(tmp_path, monkeypatch):
     )
     _Fixture.served = []
     extension = package.BrowserVisionExtension(
-        ExtensionContext(manifest=manifest, data_dir=tmp_path / "data"),
+        ExtensionContext(manifest=manifest, data_dir=tmp_path / "data", read_agent_config=_no_agent_config),
         install_dir=install_dir,
         vision_model=lambda agent: ("vision-model", True),
         downloads_dir=lambda agent: downloads,

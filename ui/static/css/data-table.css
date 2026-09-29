@@ -1,0 +1,116 @@
+/* ─── Data table (core/data-table.js, over vendored Tabulator) ───
+
+   Re-skins Tabulator's base sheet (css/vendor/tabulator.min.css) with
+   tokens.css variables only: no hex, no Tabulator theme file. Every rule is
+   scoped under .data-table, so it outranks the base sheet's selectors and
+   touches no other Tabulator. Flat and soft-grey like .btn: the header and
+   footer are one quiet fill, the border stays for contrast. Linked after the
+   vendor sheet. */
+
+.data-table { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+
+/* The wrapper's own states over the table. */
+.data-table-status:empty { display: none; }
+.data-table-status { margin: 0; font-size: 12px; color: var(--muted); }
+.data-table-error {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 10px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r);
+  background: var(--alert-bg);
+}
+.data-table-error[hidden] { display: none; }
+.data-table-error-text { margin: 0; font-size: 12px; color: var(--alert-ink); }
+
+.data-table .tabulator {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.data-table .tabulator .tabulator-header {
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--btn-face);
+  color: var(--muted);
+  font-weight: 600;
+}
+.data-table .tabulator .tabulator-header .tabulator-col {
+  border-right: 0;
+  background: var(--btn-face);
+}
+.data-table .tabulator .tabulator-header .tabulator-col .tabulator-col-content { padding: 6px 10px; }
+
+.data-table .tabulator .tabulator-tableholder .tabulator-table {
+  background: var(--panel);
+  color: var(--ink);
+}
+.data-table .tabulator-row { background: var(--panel); border-bottom: 1px solid var(--line); }
+.data-table .tabulator-row.tabulator-row-even { background: var(--panel); }
+.data-table .tabulator-row:hover { background: var(--bg); }
+.data-table .tabulator-row .tabulator-cell { border-right: 0; padding: 6px 10px; }
+
+/* Unread (or any emphasis): weight plus a dot; the accessible name says it. */
+.data-table .tabulator-row.is-emphasis { font-weight: 600; }
+.data-table-dot {
+  display: inline-block;
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* The row's activator: text-like, full cell width, with the app's focus ring. */
+.data-table-row-btn {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: inherit;
+  color: var(--ink);
+  text-align: left;
+}
+.data-table-row-btn:hover { text-decoration: underline; }
+
+.data-table .tabulator .tabulator-tableholder .tabulator-placeholder .tabulator-placeholder-contents {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+.data-table .tabulator .tabulator-footer {
+  border-top: 1px solid var(--line-strong);
+  background: var(--btn-face);
+  color: var(--muted);
+  font-weight: 400;
+}
+.data-table .tabulator .tabulator-footer .tabulator-page {
+  min-height: 24px;
+  margin: 0 2px;
+  padding: 2px 8px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--ink);
+}
+.data-table .tabulator .tabulator-footer .tabulator-page.active {
+  border-color: var(--accent-deep);
+  background: var(--accent);
+  color: var(--panel);
+}
+.data-table .tabulator .tabulator-footer .tabulator-page:disabled { opacity: 0.5; }
+@media (hover: hover) and (pointer: fine) {
+  .data-table .tabulator .tabulator-footer .tabulator-page:not(:disabled):hover {
+    background: var(--btn-face-hover);
+    color: var(--ink);
+  }
+  .data-table .tabulator .tabulator-footer .tabulator-page.active:not(:disabled):hover {
+    background: var(--accent-deep);
+    color: var(--panel);
+  }
+}

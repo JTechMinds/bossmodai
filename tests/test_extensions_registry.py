@@ -240,6 +240,87 @@ def test_a_manifest_declaring_live_view_without_the_method_is_invalid_at_load(tm
     assert "EXTENSION_LOAD_FAILED: manifest declares live_view" in result.prompt_content
 
 
+# ─── agent_config / agent_view manifest blocks ───
+
+
+def _agent_config(**overrides: Any) -> dict[str, Any]:
+    block: dict[str, Any] = {
+        "label": "Demo account",
+        "help": "How to get the values.",
+        "fields": [
+            {"key": "token", "label": "Token", "kind": "secret"},
+            {"key": "address", "label": "Address", "kind": "email", "summary": True},
+            {"key": "note", "label": "Note", "kind": "text", "required": False},
+        ],
+    }
+    block.update(overrides)
+    return block
+
+
+def test_a_manifest_with_agent_config_and_agent_view_is_valid(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "per-agent", _manifest(
+        ext_id="per-agent", command="peragent", agent_config=_agent_config(), agent_view={"label": "Open it"},
+    ))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("per-agent")
+    assert entry.valid, entry.invalid_reason
+    spec = entry.manifest.agent_config
+    assert [f.key for f in spec.fields] == ["token", "address", "note"]
+    assert spec.fields[0].required is True and spec.fields[2].required is False
+    assert entry.manifest.agent_view.label == "Open it" and entry.manifest.agent_view.requires_config is True
+
+
+@pytest.mark.parametrize("fields, fragment", [
+    ([{"key": "a", "label": "A", "kind": "text"}, {"key": "a", "label": "B", "kind": "text"}], "duplicate field keys: a"),
+    ([{"key": "a", "label": "A", "kind": "text", "summary": True},
+      {"key": "b", "label": "B", "kind": "email", "summary": True}], "at most one field may set summary"),
+    ([{"key": "Bad-Key", "label": "A", "kind": "text"}], "key"),
+    ([{"key": "a", "label": "A", "kind": "password"}], "kind"),
+    ([], "fields"),
+])
+def test_bad_agent_config_fields_are_invalid(tmp_path: Path, fields: list, fragment: str) -> None:
+    _write_ext(tmp_path, "bad-config", _manifest(ext_id="bad-config", command="badconfig", agent_config=_agent_config(fields=fields)))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("bad-config")
+    assert not entry.valid and fragment in entry.invalid_reason, entry.invalid_reason
+
+
+def test_an_agent_view_that_needs_config_without_agent_config_is_invalid(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "view-only", _manifest(ext_id="view-only", command="viewonly", agent_view={"label": "Open"}))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("view-only")
+    assert not entry.valid and "agent_view.requires_config needs an agent_config block" in entry.invalid_reason
+    _write_ext(tmp_path, "view-free", _manifest(
+        ext_id="view-free", command="viewfree", agent_view={"label": "Open", "requires_config": False},
+    ))
+    assert discover(tmp_path, CORE_COMMAND_NAMES).get("view-free").valid
+
+
+@pytest.mark.parametrize("block, method", [
+    ({"agent_config": "config"}, "verify_agent_config"),
+    ({"agent_view": "view"}, "agent_view"),
+])
+def test_a_declared_per_agent_capability_without_its_protocol_is_a_contract_failure(
+    tmp_path: Path, block: dict[str, str], method: str,
+) -> None:
+    from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
+
+    ext_id = f"no-{block[next(iter(block))]}"
+    extra: dict[str, Any] = {"agent_config": _agent_config()}
+    if "agent_view" in block:
+        # The config half is implemented; only the view is missing.
+        extra["agent_view"] = {"label": "Open"}
+    _write_ext(tmp_path, ext_id, _manifest(ext_id=ext_id, command=ext_id.replace("-", ""), **extra))
+    if "agent_view" in block:
+        init = tmp_path / ext_id / "__init__.py"
+        init.write_text(init.read_text(encoding="utf-8").replace(
+            "    def shutdown(self):",
+            "    def verify_agent_config(self, values):\n        return 'ok'\n    def shutdown(self):",
+        ), encoding="utf-8")
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get(ext_id)
+    assert entry.valid  # discovery does not import (D10)
+    with pytest.raises(ExtensionLoadError, match=method):
+        load_extension(entry)
+    assert method in contract_failure(ext_id)
+
+
 # ─── setup.ready_requires (R35 amendment) ───
 
 

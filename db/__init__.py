@@ -348,6 +348,15 @@ from db.ai_connections import (
 # Model capabilities (operator-set, keyed by raw model name)
 from db.model_capabilities import set_supports_images, supports_images
 
+# Per-agent extension settings (manifest agent_config)
+from db.extension_agent_configs import (
+    configured_agent_ids,
+    delete_extension_agent_config,
+    extension_agent_config_updated_at,
+    get_extension_agent_config,
+    set_extension_agent_config,
+)
+
 # AI Personalities
 from db.ai_personalities import (
     create_personality,
@@ -616,6 +625,12 @@ __all__ = [
     "update_connection",
     "set_supports_images",
     "supports_images",
+    # Per-agent extension settings
+    "configured_agent_ids",
+    "delete_extension_agent_config",
+    "extension_agent_config_updated_at",
+    "get_extension_agent_config",
+    "set_extension_agent_config",
     # AI Personalities
     "create_personality",
     "delete_personality",

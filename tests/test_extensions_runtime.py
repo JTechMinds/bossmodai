@@ -121,6 +121,33 @@ def test_an_extension_without_prompt_state_adds_only_its_static_text(monkeypatch
     assert prompt_blocks.render_extension_blocks(seer, {"type": "activity_resumed", "content": "Continue."}) == prompt
 
 
+_MAIL = "ms365-mail"
+_MAIL_MARKER = "## Email (Microsoft 365 Mailbox)"
+
+
+@pytest.mark.parametrize("contract_kind", ["decision", "execution"])
+def test_the_mail_block_applies_only_to_agents_with_a_stored_mailbox(contract_kind: str) -> None:
+    configured = db.create_agent("Iris", role="Researcher")
+    bare = db.create_agent("Vera", role="Writer")
+    db.set_extension_agent_config(_MAIL, configured.id, {
+        "tenant_id": "t", "client_id": "c", "client_secret": "s", "mailbox": "reports@contoso.com",
+    })
+    set_enabled(_MAIL, True)
+
+    block = next(
+        (m["content"] for m in _context(configured, contract_kind) if m["content"].startswith(_MAIL_MARKER)),
+        None,
+    )
+    assert block is not None
+    prompt = (get_discovery().get(_MAIL).root / "prompt.md").read_text(encoding="utf-8").strip()
+    # Static text first, the state line last (cache-stable prefix).
+    assert block == prompt + "\n\nYour mailbox: reports@contoso.com"
+    assert not any(m["content"].startswith(_MAIL_MARKER) for m in _context(bare, contract_kind))
+
+    set_enabled(_MAIL, False)
+    assert not any(m["content"].startswith(_MAIL_MARKER) for m in _context(configured, contract_kind))
+
+
 @pytest.mark.asyncio
 async def test_worker_shutdown_shuts_loaded_extensions_down(monkeypatch: pytest.MonkeyPatch) -> None:
     from core.runtime import worker

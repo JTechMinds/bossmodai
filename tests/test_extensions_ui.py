@@ -1,4 +1,4 @@
-"""Extensions dialog, Browser Vision status reader and viewer, in the fake DOM."""
+"""Extensions dialog, Browser Vision status reader and viewer, and the per-agent surfaces, in the fake DOM."""
 
 from __future__ import annotations
 
@@ -18,6 +18,11 @@ MODULES = [
     JS / "extensions" / "browser-vision-status.js",
     JS / "extensions" / "extensions-live.js",
     JS / "extensions" / "extensions-dialog.js",
+    JS / "core" / "gates.js",
+    JS / "core" / "secret-field.js",
+    JS / "core" / "data-table.js",
+    JS / "extensions" / "agent-config-dialog.js",
+    JS / "context" / "desk-extensions.js",
 ]
 
 
@@ -68,3 +73,26 @@ def test_the_multi_agent_tile_layer_is_gone() -> None:
     assert "return { openForAgent, headerCapability };" in live
     assert "ext-live-tile" not in live and "market-cards" not in live
     assert "BossModExtensionsLive" not in dialog and "Watch" not in dialog
+
+
+def test_the_per_agent_surfaces() -> None:
+    payload = _payload()
+    for key in (
+        "dataTableRejectsBadOptions", "dataTablePassesRemotePaging", "dataTableNamesTheGridByCaption",
+        "dataTableShowsLoading", "dataTableMapsPagesToSkipTop", "dataTableLastPageWithoutMore",
+        "dataTableFirstCellIsAButton", "dataTableCellsAreText", "dataTableRowClickActivates",
+        "dataTableShowsTheError", "dataTableRetryReloadsAndDestroyTearsDown",
+        "deskSectionHiddenWithNone", "deskSectionShowsNotSetUp",
+        "configDialogMasksTheSecret", "configDialogSendsABlankSecret", "configDialogShowsTheServerError",
+        "configDialogShowsVerified", "deskDestroyClosesItsDialogs",
+    ):
+        assert payload.get(key) is True, (key, payload)
+
+
+def test_nothing_but_the_data_table_names_tabulator() -> None:
+    offenders = [
+        path.relative_to(JS).as_posix()
+        for path in JS.rglob("*.js")
+        if "vendor" not in path.parts and "Tabulator" in path.read_text(encoding="utf-8")
+    ]
+    assert offenders == ["core/data-table.js"], offenders

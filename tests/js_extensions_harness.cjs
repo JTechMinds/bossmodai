@@ -1,6 +1,9 @@
 /**
- * Node harness: the Extensions dialog, the Browser Vision status reader and
- * the single-agent browser viewer.
+ * Node harness: the Extensions dialog, the Browser Vision status reader, the
+ * single-agent browser viewer, and the per-agent surfaces — the data table's
+ * wrapper contract (over an injected table factory: Tabulator needs real
+ * layout, so its rendering is checked in the real app), the desk's
+ * Extensions section and the per-agent settings dialog.
  *
  * Invoked by tests/test_extensions_ui.py with the module paths in load order.
  * The modal frame, the confirm strip, the clock and the network are stubbed;
@@ -16,6 +19,7 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModExtensionsApi",
     "BossModBrowserVisionStatus", "BossModExtensionsLive", "BossModExtensionsDialog",
+    "BossModGates", "BossModSecretField", "BossModDataTable", "BossModAgentConfigDialog", "BossModDeskExtensions",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -33,13 +37,35 @@ global.BossModMarketplaceDetail = {
 const layers = [];
 global.BossModOverlays = {
     createModal: (options) => {
-        const layer = { options, body: h("div", { class: "layer" }, options.body) };
+        const actionsEl = h("div", { class: "actions" });
+        const layer = { options, body: h("div", { class: "layer" }, options.body, actionsEl), actions: [] };
+        const setActions = (actions) => {
+            layer.actions = actions || [];
+            actionsEl.replaceChildren();
+            layer.actions.forEach((action) => {
+                const button = h("button", {
+                    type: action.form ? "submit" : "button", form: action.form || null, id: action.id || null,
+                    onclick: action.form ? null : () => {
+                        if (action.onSelect) action.onSelect();
+                        if (!action.keepOpen) closeLayer(layer);
+                    },
+                }, action.label);
+                actionsEl.append(button);
+            });
+        };
+        setActions(options.actions);
         layers.push(layer);
         document.body.append(layer.body);
-        return { close: () => closeLayer(layer) };
+        return {
+            close: () => closeLayer(layer),
+            element: layer.body,
+            setActions,
+            setTitle: (title) => { layer.options.title = title; },
+        };
     },
 };
 function closeLayer(layer) {
+    if (!layers.includes(layer)) return;
     layers.splice(layers.indexOf(layer), 1);
     layer.body.remove();
     if (layer.options.onClose) layer.options.onClose();
@@ -88,6 +114,20 @@ const liveItem = (takenAt) => ({
     image_url: `/api/extensions/browser-vision/live/a1/image?t=${Date.parse(takenAt)}`,
 });
 let liveReply = { kind: "ok", body: { items: [] } };
+let deskReply = [];
+const configCalls = [];
+const storedConfig = {
+    label: "Microsoft 365 mailbox", help: "Step one.\n\nStep two.", configured: true, updated_at: "2026-09-29T09:00:00Z",
+    fields: [
+        { key: "tenant_id", label: "Tenant ID", kind: "text", required: true, value: "t-1" },
+        { key: "client_secret", label: "Client secret", kind: "secret", required: true, set: true },
+        { key: "mailbox", label: "Mailbox address", kind: "email", required: true, value: "old@contoso.com" },
+    ],
+};
+let putReply = () => ({
+    ok: false, status: 422,
+    json: async () => ({ detail: { error: "CONFIG_VERIFY_FAILED", message: "The client secret is wrong or has expired. Create a new secret and try again." } }),
+});
 let liveCalls = 0;
 global.apiFetch = async (url, init) => {
     const ok = (body) => ({ ok: true, status: 200, json: async () => body });
@@ -103,6 +143,12 @@ global.apiFetch = async (url, init) => {
         return ok(liveReply.body);
     }
     if (url.endsWith("/enabled")) return ok({ ...bv, enabled: JSON.parse(init.body).enabled });
+    if (url === "/api/agents/a1/extensions") return ok(deskReply);
+    if (url === "/api/extensions/mail/agents/a1/config") {
+        configCalls.push({ method: (init && init.method) || "GET", body: init && init.body ? JSON.parse(init.body) : null });
+        if (!init || !init.method) return ok(storedConfig);
+        return putReply();
+    }
     throw new Error(`unexpected fetch ${url}`);
 };
 
@@ -240,6 +286,128 @@ const verdict = {};
     push("browser-vision", "a1");
     await drain();
     verdict.viewerStopsReadingOnClose = liveCalls === before && timers.size === 0;
+
+    // 8. The data table wrapper: argument checks, the Tabulator options it
+    //    passes, loadPage paging, text-only cells, the activator and states.
+    const DataTable = global.BossModDataTable;
+    const throws = (fn) => { try { fn(); return false; } catch (_err) { return true; } };
+    const baseOptions = {
+        caption: "Inbox of reports@contoso.com",
+        columns: [{ key: "subject", label: "Subject" }, { key: "from", label: "From" }],
+        rowLabel: (row) => `Open ${row.cells.subject}`,
+        onActivate: () => {},
+        loadPage: async () => ({ rows: [], has_more: false }),
+        pageSize: 25,
+        emptyText: "Nothing here yet.",
+    };
+    verdict.dataTableRejectsBadOptions = ["caption", "columns", "rowLabel", "onActivate", "loadPage", "pageSize", "emptyText"]
+        .every((key) => throws(() => DataTable.create({ ...baseOptions, [key]: undefined, tableFactory: () => ({ on() {} }) })))
+        && throws(() => DataTable.create({ ...baseOptions, pageSize: 0, tableFactory: () => ({ on() {} }) }));
+
+    let made = null;
+    const handlers = {};
+    let destroyedTable = false;
+    let setDataCalls = 0;
+    const activated = [];
+    const pageCalls = [];
+    let pageReply = { rows: [{ id: "m1", cells: { subject: "<b>Hi</b>", from: "Alice" }, emphasis: true }], has_more: true };
+    const table = DataTable.create({
+        ...baseOptions,
+        onActivate: (row) => activated.push(row.id),
+        loadPage: async (args) => {
+            pageCalls.push(args);
+            if (pageReply instanceof Error) throw pageReply;
+            return pageReply;
+        },
+        tableFactory: (el, opts) => {
+            made = { el, opts };
+            return {
+                on: (name, fn) => { handlers[name] = fn; },
+                setData: () => { setDataCalls += 1; return Promise.resolve(); },
+                destroy: () => { destroyedTable = true; },
+            };
+        },
+    });
+    document.body.append(table.element);
+    const opts = made.opts;
+    verdict.dataTablePassesRemotePaging = opts.pagination === true && opts.paginationMode === "remote"
+        && opts.paginationSize === 25 && opts.layout === "fitColumns" && opts.placeholder === "Nothing here yet."
+        && typeof opts.ajaxRequestFunc === "function" && Boolean(opts.ajaxURL) && opts.dataLoader === false
+        && opts.columns.every((column) => column.headerSort === false);
+    verdict.dataTableNamesTheGridByCaption = made.el.getAttribute("aria-label") === "Inbox of reports@contoso.com";
+
+    const pending = opts.ajaxRequestFunc("x", {}, { page: 3, size: 25 });
+    verdict.dataTableShowsLoading = table.element.textContent.includes("Loading…");
+    const answer = await pending;
+    verdict.dataTableMapsPagesToSkipTop = pageCalls[0].skip === 50 && pageCalls[0].top === 25
+        && answer.last_page === 4 && answer.data.length === 1 && !table.element.textContent.includes("Loading…");
+    pageReply = { rows: [], has_more: false };
+    verdict.dataTableLastPageWithoutMore = (await opts.ajaxRequestFunc("x", {}, { page: 1, size: 25 })).last_page === 1;
+
+    const rowData = { id: "m1", cells: { subject: "<b>Hi</b>", from: "<i>Alice</i>" }, emphasis: true };
+    const fakeCell = { getRow: () => ({ getData: () => rowData }) };
+    const activator = opts.columns[0].formatter(fakeCell);
+    const plain = opts.columns[1].formatter(fakeCell);
+    verdict.dataTableFirstCellIsAButton = activator.tagName === "BUTTON" && activator.getAttribute("type") === "button"
+        && activator.getAttribute("aria-label") === "Unread: Open <b>Hi</b>"
+        && Boolean(activator.querySelector(".data-table-dot"));
+    verdict.dataTableCellsAreText = plain.nodeType === 3 && plain.textContent === "<i>Alice</i>"
+        && opts.columns[0].titleFormatter().nodeType === 3;
+    handlers.rowClick({}, { getData: () => rowData });
+    verdict.dataTableRowClickActivates = activated.join(",") === "m1";
+
+    pageReply = new Error("MAILBOX_ACCESS_DENIED: Access is denied.");
+    let rejected = false;
+    await opts.ajaxRequestFunc("x", {}, { page: 1, size: 25 }).catch(() => { rejected = true; });
+    const alertEl = table.element.querySelector(".data-table-error");
+    verdict.dataTableShowsTheError = rejected && alertEl && !alertEl.hidden
+        && alertEl.textContent.includes("MAILBOX_ACCESS_DENIED: Access is denied.");
+    alertEl.querySelector("button").click();
+    await drain();
+    table.destroy();
+    verdict.dataTableRetryReloadsAndDestroyTearsDown = setDataCalls === 1 && destroyedTable;
+
+    // 9. The desk section: hidden with no per-agent extensions, a row when one is enabled.
+    let changes = 0;
+    deskReply = [];
+    const emptyDesk = global.BossModDeskExtensions.createDeskExtensions({ agentId: "a1", agentName: () => "Iris", onChange: () => { changes += 1; } });
+    const emptyWhileLoading = emptyDesk.isEmpty();
+    await drain();
+    verdict.deskSectionHiddenWithNone = emptyWhileLoading && emptyDesk.isEmpty() && changes >= 2
+        && emptyDesk.element.textContent === "";
+    emptyDesk.destroy();
+    deskReply = [{ id: "mail", name: "Microsoft 365 Mailbox", config_label: "Microsoft 365 mailbox", view_label: "Open inbox", configured: false, summary: null }];
+    const desk = global.BossModDeskExtensions.createDeskExtensions({ agentId: "a1", agentName: () => "Iris", onChange: () => {} });
+    await drain();
+    verdict.deskSectionShowsNotSetUp = !desk.isEmpty() && desk.element.textContent.includes("Not set up")
+        && Boolean(desk.element.querySelector("#desk-ext-config-mail")) && !desk.element.querySelector("#desk-ext-view-mail");
+
+    // 10. The settings dialog: a blank secret is sent as "", the server's error is shown.
+    desk.element.querySelector("#desk-ext-config-mail").click();
+    await drain();
+    const dialog = layers[layers.length - 1];
+    const secretInput = dialog.body.querySelector("#ext-config-client_secret");
+    verdict.configDialogMasksTheSecret = dialog.options.title === "Settings for Iris" && Boolean(secretInput)
+        && secretInput.value === "" && secretInput.getAttribute("placeholder") === "Leave blank to keep the current secret"
+        && dialog.body.querySelector("#ext-config-mailbox").getAttribute("type") === "email"
+        && dialog.body.textContent.includes("Step one.") && dialog.body.textContent.includes("Step two.");
+    dialog.body.querySelector("#ext-config-mailbox").value = "reports@contoso.com";
+    await dialog.body.querySelector("#ext-config-save").dispatchClick();
+    await drain();
+    const put = configCalls.find((call) => call.method === "PUT");
+    const alertBox = dialog.body.querySelector('[role="alert"]');
+    verdict.configDialogSendsABlankSecret = Boolean(put) && put.body.values.client_secret === ""
+        && put.body.values.mailbox === "reports@contoso.com" && put.body.values.tenant_id === "t-1";
+    verdict.configDialogShowsTheServerError = Boolean(alertBox) && !alertBox.hidden
+        && alertBox.textContent.includes("The client secret is wrong or has expired. Create a new secret and try again.")
+        && layers.includes(dialog) && !dialog.body.querySelector("#ext-config-save").disabled;
+    putReply = () => ({ ok: true, status: 200, json: async () => ({ ...storedConfig, verified: "Connected to reports@contoso.com" }) });
+    await dialog.body.querySelector("#ext-config-save").dispatchClick();
+    await drain();
+    verdict.configDialogShowsVerified = dialog.body.textContent.includes("Connected to reports@contoso.com")
+        && Boolean(dialog.body.querySelector("#ext-config-done"));
+    desk.destroy();
+    verdict.deskDestroyClosesItsDialogs = !layers.includes(dialog);
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

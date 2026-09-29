@@ -289,8 +289,8 @@ def delete_agent_rows(agent_id: str) -> bool:
     The snapshot is captured, stamped deleted, BEFORE the first row goes: its
     prompt-history policy is one of the rows this removes, and Add agent's
     Recent keeps it. Private rows (notifications, DMs, diagnostics, triggers,
-    activities, CLI audit and approvals, agent-scoped CLI policy rules, the
-    companion rows) are deleted. Shared history (channel and meeting
+    activities, CLI audit and approvals, agent-scoped CLI policy rules,
+    per-agent extension settings, the companion rows) are deleted. Shared history (channel and meeting
     messages, task events, tasks, channels, meetings it created or hosted)
     stays with this agent's id detached to NULL so teammates' transcripts stay
     whole. The storage key
@@ -375,6 +375,7 @@ def delete_agent_rows(agent_id: str) -> bool:
         # companion tables
         execute("DELETE FROM agent_prompt_history_policies WHERE agent_id = $1", [agent_id])
         execute("DELETE FROM agent_cli_state WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM extension_agent_configs WHERE agent_id = $1", [agent_id])
         execute("DELETE FROM agent_state WHERE agent_id = $1", [agent_id])
         retire_agent_storage_key(agent_id)
         delete_agent_storage_identity(agent_id)

@@ -143,6 +143,8 @@ const NAMES = [
     "BossModContextColumn",
     // The chat place hands agent conversations the Browser Vision screen.
     "BossModExtensionsApi", "BossModBrowserVisionStatus", "BossModExtensionsLive",
+    // The desk panel's Extensions section (read at call time, so after it).
+    "BossModDeskExtensions",
     "BossModChatPlace",
 ];
 if (paths.length !== NAMES.length) {

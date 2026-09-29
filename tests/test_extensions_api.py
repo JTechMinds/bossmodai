@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import time
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -400,3 +401,222 @@ def test_an_extension_that_broke_its_live_view_contract_is_listed_invalid(client
     item = _item(client, "liar")
     assert item["valid"] is False and item["enabled"] is False
     assert "no live_view() method" in item["invalid_reason"]
+
+
+# ─── per-agent config and view (agent_config / agent_view) ───
+
+_FAKE_SECRET = "fake-secret-value-123"
+_fake_counter = iter(range(1, 10_000))
+
+_FAKE_INIT = '''
+import json
+from core.extensions.contract import (
+    AgentConfigError, AgentViewColumn, AgentViewError, AgentViewItem, AgentViewPage, AgentViewRow,
+)
+
+class _Ext:
+    def __init__(self, ctx):
+        self.ctx = ctx
+    def handle(self, ctx, parsed, body):
+        raise AssertionError("not used")
+    def shutdown(self):
+        pass
+    def verify_agent_config(self, values):
+        self.ctx.data_dir.mkdir(parents=True, exist_ok=True)
+        (self.ctx.data_dir / "verified.json").write_text(json.dumps(dict(values)), encoding="utf-8")
+        if values["token"] == "bad":
+            raise AgentConfigError("The client secret is wrong or has expired. Create a new secret and try again.")
+        return "Connected to " + values["address"]
+    def agent_view(self, agent_id, *, skip, top):
+        config = self.ctx.read_agent_config(agent_id)
+        if config["token"] == "throttled":
+            raise AgentViewError("GRAPH_THROTTLED", "retry after 5s")
+        rows = [AgentViewRow(id="m1", cells={"subject": "Hello"}, emphasis=True)]
+        return AgentViewPage(columns=[AgentViewColumn(key="subject", label="Subject")], rows=rows[:top],
+                             has_more=skip == 0, caption="Inbox of " + config["address"])
+    def agent_view_item(self, agent_id, item_id):
+        if item_id != "m1":
+            raise AgentViewError("UNKNOWN_MESSAGE_ID", item_id + " is not listed")
+        return AgentViewItem(title="Hello", facts=[("From", "alice@x.com")], body_text="Line 1\\nLine 2")
+
+def create(ctx):
+    return _Ext(ctx)
+'''
+
+
+@pytest.fixture()
+def fake_mail(client, monkeypatch, tmp_path):
+    """A per-agent extension with a unique id (the loader caches instances per id)."""
+    ext_id = f"fake-mail-{next(_fake_counter)}"
+    folder = tmp_path / ext_id
+    folder.mkdir()
+    (folder / "manifest.json").write_text(json.dumps({
+        "id": ext_id, "name": "Fake Mail", "version": "1.0.0", "description": "d",
+        "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
+        "setup": {"required": False},
+        "agent_config": {"label": "Fake mailbox", "help": "Para one.\n\nPara two.", "fields": [
+            {"key": "token", "label": "Token", "kind": "secret"},
+            {"key": "address", "label": "Address", "kind": "email", "summary": True},
+            {"key": "note", "label": "Note", "kind": "text", "required": False},
+        ]},
+        "agent_view": {"label": "Open inbox"},
+    }), encoding="utf-8")
+    (folder / "__init__.py").write_text(_FAKE_INIT, encoding="utf-8")
+    found = discover(tmp_path, CORE_COMMAND_NAMES)
+    monkeypatch.setattr("api.routes.extensions.get_discovery", lambda: found)
+    assert client.put(f"/api/extensions/{ext_id}/enabled", json={"enabled": True}).status_code == 200
+    agent = db.create_agent("Iris", role="Researcher")
+    return SimpleNamespace(id=ext_id, agent=agent, base=f"/api/extensions/{ext_id}/agents/{agent.id}")
+
+
+def _save(client, fake, **values):
+    body = {"token": _FAKE_SECRET, "address": "reports@contoso.com", **values}
+    return client.put(f"{fake.base}/config", json={"values": body})
+
+
+def _verified(fake) -> dict:
+    return json.loads((extension_data_dir(fake.id) / "verified.json").read_text(encoding="utf-8"))
+
+
+def test_the_list_item_names_its_per_agent_surfaces(client, fake_mail) -> None:
+    item = _item(client, fake_mail.id)
+    assert item["agent_config"] == {"label": "Fake mailbox"} and item["agent_view"] == {"label": "Open inbox"}
+
+
+def test_an_extension_without_per_agent_surfaces_lists_them_as_null(client) -> None:
+    item = _item(client)
+    assert item["agent_config"] is None and item["agent_view"] is None
+    mail = _item(client, "ms365-mail")
+    assert mail["agent_config"] == {"label": "Microsoft 365 mailbox"} and mail["agent_view"] == {"label": "Open inbox"}
+
+
+def test_the_desk_lists_enabled_per_agent_extensions_with_their_state(client, fake_mail) -> None:
+    listed = client.get(f"/api/agents/{fake_mail.agent.id}/extensions")
+    assert listed.status_code == 200, listed.text
+    assert listed.json() == [{
+        "id": fake_mail.id, "name": "Fake Mail", "config_label": "Fake mailbox", "view_label": "Open inbox",
+        "configured": False, "summary": None,
+    }]
+    assert _save(client, fake_mail).status_code == 200
+    assert client.get(f"/api/agents/{fake_mail.agent.id}/extensions").json()[0]["summary"] == "reports@contoso.com"
+    client.put(f"/api/extensions/{fake_mail.id}/enabled", json={"enabled": False})
+    assert client.get(f"/api/agents/{fake_mail.agent.id}/extensions").json() == []
+    assert client.get("/api/agents/nobody/extensions").status_code == 404
+
+
+def test_get_config_masks_secrets(client, fake_mail) -> None:
+    empty = client.get(f"{fake_mail.base}/config").json()
+    assert empty["configured"] is False and empty["updated_at"] is None
+    assert empty["help"] == "Para one.\n\nPara two."
+    assert _save(client, fake_mail, note="hi").status_code == 200
+    response = client.get(f"{fake_mail.base}/config")
+    assert _FAKE_SECRET not in response.text
+    payload = response.json()
+    assert payload["configured"] is True and payload["updated_at"]
+    assert payload["fields"] == [
+        {"key": "token", "label": "Token", "kind": "secret", "required": True, "set": True},
+        {"key": "address", "label": "Address", "kind": "email", "required": True, "value": "reports@contoso.com"},
+        {"key": "note", "label": "Note", "kind": "text", "required": False, "value": "hi"},
+    ]
+
+
+def test_put_verifies_then_stores_and_never_echoes_the_secret(client, fake_mail) -> None:
+    response = _save(client, fake_mail)
+    assert response.status_code == 200, response.text
+    assert response.json()["verified"] == "Connected to reports@contoso.com"
+    assert _FAKE_SECRET not in response.text
+    assert db.get_extension_agent_config(fake_mail.id, fake_mail.agent.id) == {
+        "token": _FAKE_SECRET, "address": "reports@contoso.com", "note": "",
+    }
+
+
+@pytest.mark.parametrize("values, fragment", [
+    ({"surprise": "x"}, "Unknown field: surprise"),
+    ({"address": ""}, "Address is required."),
+    ({"address": "not-an-address"}, "Address is not an email address."),
+])
+def test_put_validation_is_422_config_invalid(client, fake_mail, values, fragment) -> None:
+    response = _save(client, fake_mail, **values)
+    assert response.status_code == 422
+    assert response.json()["detail"] == {"error": "CONFIG_INVALID", "message": fragment}
+    assert db.get_extension_agent_config(fake_mail.id, fake_mail.agent.id) is None
+
+
+def test_a_failed_verification_stores_nothing(client, fake_mail) -> None:
+    response = _save(client, fake_mail, token="bad")
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "error": "CONFIG_VERIFY_FAILED", "message": "The client secret is wrong or has expired. Create a new secret and try again.",
+    }
+    assert db.get_extension_agent_config(fake_mail.id, fake_mail.agent.id) is None
+
+
+def test_a_blank_secret_keeps_the_stored_one_and_is_verified_with_it(client, fake_mail) -> None:
+    assert _save(client, fake_mail).status_code == 200
+    response = _save(client, fake_mail, token="", address="other@contoso.com")
+    assert response.status_code == 200, response.text
+    assert _verified(fake_mail)["token"] == _FAKE_SECRET
+    assert db.get_extension_agent_config(fake_mail.id, fake_mail.agent.id)["token"] == _FAKE_SECRET
+
+
+def test_a_blank_secret_with_nothing_stored_is_422(client, fake_mail) -> None:
+    response = _save(client, fake_mail, token="  ")
+    assert response.status_code == 422
+    assert response.json()["detail"] == {"error": "CONFIG_INVALID", "message": "Token is required."}
+
+
+def test_per_agent_routes_refuse_a_disabled_extension_and_unknowns(client, fake_mail) -> None:
+    client.put(f"/api/extensions/{fake_mail.id}/enabled", json={"enabled": False})
+    for response in (client.get(f"{fake_mail.base}/config"), _save(client, fake_mail), client.get(f"{fake_mail.base}/view")):
+        assert response.status_code == 409 and response.json()["detail"]["error"] == "EXTENSION_DISABLED"
+    client.put(f"/api/extensions/{fake_mail.id}/enabled", json={"enabled": True})
+    assert client.get(f"/api/extensions/{fake_mail.id}/agents/nobody/config").status_code == 404
+    assert client.get(f"/api/extensions/nope/agents/{fake_mail.agent.id}/config").status_code == 404
+    unknown_body = client.put(f"{fake_mail.base}/config", json={"values": {}, "extra": 1})
+    assert unknown_body.status_code == 422
+
+
+def test_an_extension_without_agent_config_is_409(client) -> None:
+    _mark_ready()
+    assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True}).status_code == 200
+    agent = db.create_agent("Iris", role="Researcher")
+    response = client.get(f"/api/extensions/{_BV}/agents/{agent.id}/config")
+    assert response.status_code == 409 and response.json()["detail"]["error"] == "NO_AGENT_CONFIG"
+
+
+def test_delete_config(client, fake_mail) -> None:
+    assert client.delete(f"{fake_mail.base}/config").status_code == 404
+    _save(client, fake_mail)
+    assert client.delete(f"{fake_mail.base}/config").status_code == 204
+    assert db.get_extension_agent_config(fake_mail.id, fake_mail.agent.id) is None
+
+
+def test_view_and_item_need_a_config_then_answer(client, fake_mail) -> None:
+    refused = client.get(f"{fake_mail.base}/view")
+    assert refused.status_code == 409 and refused.json()["detail"]["error"] == "NOT_CONFIGURED"
+    _save(client, fake_mail)
+
+    page = client.get(f"{fake_mail.base}/view", params={"skip": 0, "top": 25})
+    assert page.status_code == 200, page.text
+    assert page.json() == {
+        "columns": [{"key": "subject", "label": "Subject"}],
+        "rows": [{"id": "m1", "cells": {"subject": "Hello"}, "emphasis": True}],
+        "has_more": True,
+        "caption": "Inbox of reports@contoso.com",
+    }
+    item = client.get(f"{fake_mail.base}/view/m1")
+    assert item.status_code == 200
+    assert item.json() == {"title": "Hello", "facts": [["From", "alice@x.com"]], "body_text": "Line 1\nLine 2"}
+
+    missing = client.get(f"{fake_mail.base}/view/m9")
+    assert missing.status_code == 502
+    assert missing.json()["detail"] == {"error": "UNKNOWN_MESSAGE_ID", "message": "m9 is not listed"}
+    for bad in ({"top": 0}, {"top": 101}, {"skip": -1}):
+        assert client.get(f"{fake_mail.base}/view", params=bad).status_code == 422, bad
+
+
+def test_a_view_failure_is_502_with_its_code(client, fake_mail) -> None:
+    _save(client, fake_mail, token="throttled")
+    response = client.get(f"{fake_mail.base}/view")
+    assert response.status_code == 502
+    assert response.json()["detail"] == {"error": "GRAPH_THROTTLED", "message": "retry after 5s"}

@@ -39,6 +39,11 @@
     <link rel="stylesheet" href="{{ static_url('css/vendor/hljs-github-dark.css') }}">
     <script src="{{ static_url('js/vendor/highlight.min.js') }}"></script>
 
+    <!-- Tabulator 6.5.3 (vendored, MIT): only core/data-table.js names it.
+         Its base sheet is re-skinned by css/data-table.css, linked after it. -->
+    <link rel="stylesheet" href="{{ static_url('css/vendor/tabulator.min.css') }}">
+    <script src="{{ static_url('js/vendor/tabulator.min.js') }}"></script>
+
     <!-- Shell styles. tokens.css is the single source of truth for colour. -->
     <link rel="stylesheet" href="{{ static_url('css/tokens.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/base.css') }}">
@@ -61,6 +66,7 @@
          so it must be able to override the overlay primitives it rides on. -->
     <link rel="stylesheet" href="{{ static_url('css/marketplace.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/extensions.css') }}">
+    <link rel="stylesheet" href="{{ static_url('css/data-table.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/places.css') }}">
 </head>
 <body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden" data-view="app">
@@ -171,6 +177,8 @@
     <!-- Token paste/Save shares one reader. The nest git card and Settings
          both use it, so it loads before either. -->
     <script src="{{ static_url('js/core/secret-field.js') }}"></script>
+    <!-- The one table seam (over the vendored Tabulator). -->
+    <script src="{{ static_url('js/core/data-table.js') }}"></script>
     <script src="{{ static_url('js/core/nest-git-credential-form.js') }}"></script>
     <script src="{{ static_url('js/core/consent-card-nest-git.js') }}"></script>
     <script src="{{ static_url('js/core/consent-card.js') }}"></script>
@@ -338,6 +346,9 @@
     <script src="{{ static_url('js/extensions/browser-vision-status.js') }}"></script>
     <script src="{{ static_url('js/extensions/extensions-live.js') }}"></script>
     <script src="{{ static_url('js/extensions/extensions-dialog.js') }}"></script>
+    <!-- Per-agent settings and view, opened from the desk's Extensions section. -->
+    <script src="{{ static_url('js/extensions/agent-config-dialog.js') }}"></script>
+    <script src="{{ static_url('js/extensions/agent-view-dialog.js') }}"></script>
 
     <script src="{{ static_url('js/context/agent-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-fields.js') }}"></script>
@@ -386,6 +397,7 @@
     <script src="{{ static_url('js/context/desk-notes.js') }}"></script>
     <script src="{{ static_url('js/context/desk-tasks.js') }}"></script>
     <script src="{{ static_url('js/context/desk-actions.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-extensions.js') }}"></script>
     <script src="{{ static_url('js/context/desk-panel.js') }}"></script>
     <script src="{{ static_url('js/context/context-column.js') }}"></script>
 

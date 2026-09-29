@@ -1,0 +1,62 @@
+{
+  "id": "ms365-mail",
+  "name": "Microsoft 365 Mailbox",
+  "version": "1.0.0",
+  "description": "Lets agents send and read email through a Microsoft 365 mailbox, using an app you authorize in Microsoft Entra. After enabling, set up each agent's mailbox at their desk.",
+  "command": {
+    "name": "mail",
+    "summary": "Send and read email through your Microsoft 365 mailbox.",
+    "usage": "mail inbox [--unread] [--limit N] [--skip N] | mail read <id> | mail send <to>[,<to>…] [--cc <a>[,<b>…]] --subject <text> (message in the body; <to> and --cc take addresses or saved contact names, comma-separated) | mail reply <id> [--all] (reply in the body) | mail contacts [list] | mail contacts add <addr>[,<addr>…] [--name <text>] | mail contacts remove <addr>[,<addr>…]",
+    "help": "Send and read email through your Microsoft 365 mailbox. Messages are plain\ntext. Put the message itself in the body, not on the command line.\n\nSubcommands:\n  mail inbox [--unread] [--limit N] [--skip N]\n                              list inbox messages, newest first; ● marks unread.\n                              Each has a short id like [m3f9a21c].\n  mail read <id>              show one message in full; this marks it read\n  mail send <to>[,<to>…] [--cc <a>[,<b>…]] --subject <text>\n                              send a new message; the body is the message.\n                              <to> and --cc take addresses or saved contact\n                              names, comma-separated. Quote a name with a space.\n  mail reply <id> [--all]     reply to the sender (--all: everyone on it);\n                              the body is the reply\n  mail contacts               list saved contacts (same as mail contacts list)\n  mail contacts add <addr>[,<addr>…] [--name <text>]\n                              save addresses; --name needs exactly one address\n  mail contacts remove <addr>[,<addr>…]\n                              forget saved addresses\nContacts are saved in BossMod, not in Outlook.\n\nWork queue: mail inbox --unread, then mail read <id>, then mail reply <id>.\n\nExamples:\n  mail inbox --unread\n  mail read m3f9a21c\n  mail reply m3f9a21c                          with body: Thanks, done.\n  mail send jordan@contoso.com --subject \"Daily report 2026-09-29\"\n                                               with body: the report text\n  mail send \"Alice Doe\",bob@x.com --cc ops --subject \"RCA: login outage\"\n                                               with body: the RCA text\n  mail contacts add alice@contoso.com --name \"Alice Doe\"\n  mail send alice --subject \"Daily report\"     with body: …\n\nAttachments are not supported yet."
+  },
+  "prompt": "prompt.md",
+  "requires": {
+    "python_modules": [
+      "httpx"
+    ]
+  },
+  "setup": {
+    "required": false
+  },
+  "agent_config": {
+    "label": "Microsoft 365 mailbox",
+    "help": "Each agent sends and reads mail as one Microsoft 365 mailbox, using an app registered in Microsoft Entra with the Microsoft Graph application permissions Mail.Send and Mail.ReadWrite (admin consent granted).\n\nEnter the app's tenant ID, client ID and client secret, and the mailbox address. Saving checks that BossMod can open the mailbox.\n\nBossMod only reads this mailbox's inbox and sends from it. The client secret itself can reach other mailboxes in your tenant, so keep it private.",
+    "fields": [
+      {
+        "key": "tenant_id",
+        "label": "Tenant ID",
+        "kind": "text"
+      },
+      {
+        "key": "client_id",
+        "label": "Client ID",
+        "kind": "text"
+      },
+      {
+        "key": "client_secret",
+        "label": "Client secret",
+        "kind": "secret"
+      },
+      {
+        "key": "mailbox",
+        "label": "Mailbox address",
+        "kind": "email",
+        "summary": true
+      }
+    ]
+  },
+  "agent_view": {
+    "label": "Open inbox"
+  },
+  "defaults": {
+    "graph_base": "https://graph.microsoft.com/v1.0",
+    "authority": "https://login.microsoftonline.com",
+    "graph_scope": "https://graph.microsoft.com/.default",
+    "request_timeout_s": 20,
+    "token_refresh_margin_s": 300,
+    "inbox_default_limit": 10,
+    "inbox_max_limit": 50,
+    "id_map_keep": 500,
+    "preview_chars": 120
+  }
+}

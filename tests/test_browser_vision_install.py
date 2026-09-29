@@ -16,6 +16,13 @@ from core.extensions.loader import import_package
 from core.extensions.registry import get_discovery
 
 _ENTRY = get_discovery().get("browser-vision")
+
+
+def _no_agent_config(agent_id: str) -> None:
+    """Browser Vision declares no agent_config, so no agent has one."""
+    return None
+
+
 _PACKAGE = import_package(_ENTRY)
 _install = importlib.import_module(f"{_PACKAGE.__name__}.install")
 
@@ -94,7 +101,7 @@ def test_an_install_from_before_full_chromium_reads_out_of_date(tmp_path: Path) 
     install_dir.mkdir()
     (install_dir / "ready.json").write_text(json.dumps({"playwright": "1.63.0", "browser": "153.0"}), encoding="utf-8")
     extension = _PACKAGE.BrowserVisionExtension(
-        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data"), install_dir=install_dir,
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data", read_agent_config=_no_agent_config), install_dir=install_dir,
     )
     assert extension.setup_status().model_dump() == _OUT_OF_DATE
 

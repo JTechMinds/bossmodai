@@ -1,23 +1,39 @@
-"""Extensions: list, enable/disable, and one-click setup.
+"""Extensions: list, enable/disable, one-click setup, per-agent config and view.
 
 The enabled set is the ``extensions_enabled`` setting; this is the only route
 that writes it, because enabling needs the extension to be valid and set up.
 The runtime worker reads it live, so nothing here touches runtime internals.
+
+Per-agent config (manifest ``agent_config``) is stored by the host, wrapped
+at rest, and verified through the extension before it is stored. Secret
+fields never leave the backend: reads say only whether one is set. Calls
+into an extension that may block on the network run in a worker thread.
 """
 
 from __future__ import annotations
 
+import asyncio
+import re
 from typing import Any
 
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 import db
 from api.websocket import manager
-from core.extensions.contract import LiveViewItem, SupportsLiveView
+from core.extensions.contract import (
+    AgentConfigError,
+    AgentViewError,
+    Extension,
+    LiveViewItem,
+    SupportsAgentConfig,
+    SupportsAgentView,
+    SupportsLiveView,
+)
+from core.extensions.manifest import AgentConfigSpec
 from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery, set_enabled
@@ -44,8 +60,24 @@ class SetupBody(BaseModel):
     enable_on_success: bool
 
 
+class AgentConfigBody(BaseModel):
+    """``PUT /extensions/{id}/agents/{agent_id}/config`` body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, str]
+
+
+# An address shape check, not RFC validation: the service is the authority.
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
 def _conflict(code: str, message: str) -> HTTPException:
     return HTTPException(409, {"error": code, "message": message})
+
+
+def _invalid(code: str, message: str) -> HTTPException:
+    return HTTPException(422, {"error": code, "message": message})
 
 
 def _entry(ext_id: str) -> ExtensionEntry:
@@ -84,6 +116,8 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
             "invalid_reason": entry.invalid_reason,
             "requires_image_model": False,
             "live_view": False,
+            "agent_config": None,
+            "agent_view": None,
             "setup": None,
             "setup_label": None,
             "excluded_agents": [],
@@ -103,6 +137,8 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
         "invalid_reason": entry.invalid_reason or broken,
         "requires_image_model": requires_image,
         "live_view": manifest.live_view,
+        "agent_config": {"label": manifest.agent_config.label} if manifest.agent_config else None,
+        "agent_view": {"label": manifest.agent_view.label} if manifest.agent_view else None,
         "setup": entry_setup_status(entry).model_dump(),
         "setup_label": manifest.setup.label,
         "excluded_agents": _excluded_agents() if requires_image and valid else [],
@@ -232,3 +268,262 @@ async def extension_live_image(ext_id: str, agent_id: str) -> FileResponse:
     if not path.is_relative_to(root) or not path.is_file():
         raise HTTPException(404, "No screenshot for that agent")
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+# ─── per-agent config and view ───
+
+
+def _usable(entry: ExtensionEntry) -> bool:
+    """Valid, not contract-broken, and enabled."""
+    return entry.valid and contract_failure(entry.id) is None and entry.id in enabled_ids()
+
+
+def _agent_or_404(agent_id: str) -> None:
+    if db.get_agent(agent_id) is None:
+        raise HTTPException(404, "Agent not found")
+
+
+def _enabled_entry(ext_id: str) -> ExtensionEntry:
+    """The entry for a per-agent route: known, valid, enabled.
+
+    Raises:
+        HTTPException: 404 unknown; 409 ``INVALID_EXTENSION``; 409
+            ``EXTENSION_DISABLED``.
+    """
+    entry = _entry(ext_id)
+    if not entry.valid:
+        raise _conflict("INVALID_EXTENSION", entry.invalid_reason or "This extension is invalid.")
+    broken = contract_failure(entry.id)
+    if broken is not None:
+        raise _conflict("INVALID_EXTENSION", broken)
+    if ext_id not in enabled_ids():
+        raise _conflict("EXTENSION_DISABLED", f"{entry.manifest.name} is off.")
+    return entry
+
+
+def _config_spec(entry: ExtensionEntry) -> AgentConfigSpec:
+    spec = entry.manifest.agent_config
+    if spec is None:
+        raise _conflict("NO_AGENT_CONFIG", f"{entry.manifest.name} has no per-agent settings.")
+    return spec
+
+
+def _load(entry: ExtensionEntry) -> Extension:
+    try:
+        return load_extension(entry)
+    except ExtensionLoadError as exc:
+        raise _conflict("INVALID_EXTENSION", str(exc)) from exc
+
+
+def _summary(spec: AgentConfigSpec, stored: dict[str, str] | None) -> str | None:
+    if stored is None:
+        return None
+    field = next((item for item in spec.fields if item.summary), None)
+    return None if field is None else stored.get(field.key)
+
+
+def _config_payload(entry: ExtensionEntry, spec: AgentConfigSpec, agent_id: str) -> dict[str, Any]:
+    """The config as the UI sees it: secrets only say whether they are set."""
+    stored = db.get_extension_agent_config(entry.id, agent_id)
+    updated = db.extension_agent_config_updated_at(entry.id, agent_id)
+    fields = []
+    for item in spec.fields:
+        field: dict[str, Any] = {"key": item.key, "label": item.label, "kind": item.kind, "required": item.required}
+        if item.kind == "secret":
+            field["set"] = bool(stored and stored.get(item.key))
+        else:
+            field["value"] = stored.get(item.key, "") if stored else ""
+        fields.append(field)
+    return {
+        "label": spec.label,
+        "help": spec.help,
+        "configured": stored is not None,
+        "updated_at": updated.isoformat() if updated is not None else None,
+        "fields": fields,
+    }
+
+
+def _resolve_values(
+    spec: AgentConfigSpec,
+    submitted: dict[str, str],
+    stored: dict[str, str] | None,
+) -> dict[str, str]:
+    """Validate a submitted config and fill blank secrets from the stored one.
+
+    A blank secret while a config is stored means "keep the stored secret"
+    (the dialog says so); with nothing stored it is a missing value.
+
+    Raises:
+        HTTPException: 422 ``CONFIG_INVALID`` naming the first problem.
+    """
+    declared = {item.key for item in spec.fields}
+    unknown = sorted(set(submitted) - declared)
+    if unknown:
+        raise _invalid("CONFIG_INVALID", f"Unknown field: {', '.join(unknown)}")
+    resolved: dict[str, str] = {}
+    for item in spec.fields:
+        value = submitted.get(item.key, "").strip()
+        if item.kind == "secret" and not value and stored is not None and stored.get(item.key):
+            value = stored[item.key]
+        if item.required and not value:
+            raise _invalid("CONFIG_INVALID", f"{item.label} is required.")
+        if item.kind == "email" and value and not _EMAIL_RE.match(value):
+            raise _invalid("CONFIG_INVALID", f"{item.label} is not an email address.")
+        resolved[item.key] = value
+    return resolved
+
+
+@router.get("/agents/{agent_id}/extensions")
+async def agent_extensions(agent_id: str) -> list[dict[str, Any]]:
+    """The desk's one read: every enabled, valid extension with per-agent settings.
+
+    Returns:
+        ``[{id, name, config_label, view_label, configured, summary}]`` where
+        ``summary`` is the ``summary: true`` field's stored value, else null.
+
+    Raises:
+        HTTPException: 404 unknown agent.
+    """
+    _agent_or_404(agent_id)
+    items = []
+    for entry in get_discovery().valid_entries():
+        spec = entry.manifest.agent_config
+        if spec is None or not _usable(entry):
+            continue
+        stored = db.get_extension_agent_config(entry.id, agent_id)
+        view = entry.manifest.agent_view
+        items.append({
+            "id": entry.id,
+            "name": entry.manifest.name,
+            "config_label": spec.label,
+            "view_label": view.label if view is not None else None,
+            "configured": stored is not None,
+            "summary": _summary(spec, stored),
+        })
+    return items
+
+
+@router.get("/extensions/{ext_id}/agents/{agent_id}/config")
+async def get_agent_config(ext_id: str, agent_id: str) -> dict[str, Any]:
+    """One agent's settings for one extension, secrets masked as ``{"set": bool}``.
+
+    Raises:
+        HTTPException: 404 unknown extension or agent; 409
+            ``INVALID_EXTENSION`` / ``EXTENSION_DISABLED`` / ``NO_AGENT_CONFIG``.
+    """
+    entry = _enabled_entry(ext_id)
+    spec = _config_spec(entry)
+    _agent_or_404(agent_id)
+    return _config_payload(entry, spec, agent_id)
+
+
+@router.put("/extensions/{ext_id}/agents/{agent_id}/config")
+async def put_agent_config(ext_id: str, agent_id: str, body: AgentConfigBody) -> dict[str, Any]:
+    """Verify and store one agent's settings for one extension.
+
+    Every declared field is taken from ``body.values`` (trimmed). A blank
+    secret while a config is stored keeps the stored secret; this is resolved
+    BEFORE verification, so the extension verifies the values that will be
+    stored. Nothing is stored unless verification passes.
+
+    Returns:
+        The GET shape plus ``verified``: the extension's success detail.
+
+    Raises:
+        HTTPException: 404 unknown extension or agent; 409
+            ``INVALID_EXTENSION`` / ``EXTENSION_DISABLED`` / ``NO_AGENT_CONFIG``;
+            422 ``CONFIG_INVALID`` (unknown or missing keys, a bad email);
+            422 ``CONFIG_VERIFY_FAILED`` with the extension's message.
+    """
+    entry = _enabled_entry(ext_id)
+    spec = _config_spec(entry)
+    _agent_or_404(agent_id)
+    stored = db.get_extension_agent_config(entry.id, agent_id)
+    values = _resolve_values(spec, body.values, stored)
+    instance = _load(entry)
+    if not isinstance(instance, SupportsAgentConfig):
+        raise _conflict("INVALID_EXTENSION", "the extension has no verify_agent_config() method")
+    try:
+        verified = await asyncio.to_thread(instance.verify_agent_config, values)
+    except AgentConfigError as exc:
+        raise _invalid("CONFIG_VERIFY_FAILED", str(exc)) from exc
+    db.set_extension_agent_config(entry.id, agent_id, values)
+    return {**_config_payload(entry, spec, agent_id), "verified": verified}
+
+
+@router.delete("/extensions/{ext_id}/agents/{agent_id}/config", status_code=204)
+async def delete_agent_config(ext_id: str, agent_id: str) -> Response:
+    """Remove one agent's settings for one extension.
+
+    Raises:
+        HTTPException: 404 unknown extension or agent, or no stored config;
+            409 ``INVALID_EXTENSION`` / ``EXTENSION_DISABLED`` / ``NO_AGENT_CONFIG``.
+    """
+    entry = _enabled_entry(ext_id)
+    _config_spec(entry)
+    _agent_or_404(agent_id)
+    if not db.delete_extension_agent_config(entry.id, agent_id):
+        raise HTTPException(404, "No settings are stored for that agent")
+    return Response(status_code=204)
+
+
+def _view_instance(ext_id: str, agent_id: str) -> SupportsAgentView:
+    """Load an enabled agent-view extension for an agent that may use it.
+
+    Raises:
+        HTTPException: 404 unknown extension or agent; 409
+            ``INVALID_EXTENSION`` / ``EXTENSION_DISABLED`` / ``NO_AGENT_VIEW``;
+            409 ``NOT_CONFIGURED`` when the view needs a config the agent lacks.
+    """
+    entry = _enabled_entry(ext_id)
+    view = entry.manifest.agent_view
+    if view is None:
+        raise _conflict("NO_AGENT_VIEW", f"{entry.manifest.name} has no per-agent view.")
+    _agent_or_404(agent_id)
+    if view.requires_config and db.get_extension_agent_config(entry.id, agent_id) is None:
+        raise _conflict("NOT_CONFIGURED", f"{entry.manifest.name} is not set up for this agent.")
+    instance = _load(entry)
+    if not isinstance(instance, SupportsAgentView):
+        raise _conflict("INVALID_EXTENSION", "the extension has no agent_view() method")
+    return instance
+
+
+def _view_failed(exc: AgentViewError) -> HTTPException:
+    return HTTPException(502, {"error": exc.code, "message": exc.message})
+
+
+@router.get("/extensions/{ext_id}/agents/{agent_id}/view")
+async def agent_view(
+    ext_id: str,
+    agent_id: str,
+    skip: int = Query(0, ge=0),
+    top: int = Query(25, ge=1, le=100),
+) -> dict[str, Any]:
+    """One page of an agent's records (e.g. its inbox), read-only.
+
+    Raises:
+        HTTPException: the ``_view_instance`` refusals; 502 ``{error,
+            message}`` when the extension's read fails.
+    """
+    instance = _view_instance(ext_id, agent_id)
+    try:
+        page = await asyncio.to_thread(instance.agent_view, agent_id, skip=skip, top=top)
+    except AgentViewError as exc:
+        raise _view_failed(exc) from exc
+    return page.model_dump()
+
+
+@router.get("/extensions/{ext_id}/agents/{agent_id}/view/{item_id}")
+async def agent_view_item(ext_id: str, agent_id: str, item_id: str) -> dict[str, Any]:
+    """One record in full (e.g. a message), read-only.
+
+    Raises:
+        HTTPException: the ``_view_instance`` refusals; 502 ``{error,
+            message}`` when the extension's read fails.
+    """
+    instance = _view_instance(ext_id, agent_id)
+    try:
+        item = await asyncio.to_thread(instance.agent_view_item, agent_id, item_id)
+    except AgentViewError as exc:
+        raise _view_failed(exc) from exc
+    return item.model_dump()

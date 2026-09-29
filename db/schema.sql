@@ -989,3 +989,14 @@ CREATE TABLE IF NOT EXISTS model_capabilities (
     supports_images BOOLEAN NOT NULL,
     updated_at      TIMESTAMP DEFAULT current_timestamp
 );
+
+-- Per-agent settings an extension declares (manifest agent_config). config
+-- is a bm1:-wrapped JSON object of str -> str (it holds credentials). An
+-- agent's rows are deleted with the agent (db.agents.delete_agent_rows).
+CREATE TABLE IF NOT EXISTS extension_agent_configs (
+    extension_id VARCHAR NOT NULL,
+    agent_id     VARCHAR NOT NULL REFERENCES agents(id),
+    config       TEXT    NOT NULL,
+    updated_at   TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (extension_id, agent_id)
+);

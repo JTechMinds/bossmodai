@@ -1,5 +1,6 @@
 /**
- * BossMod AI — the calls the Extensions dialog and its live view make.
+ * BossMod AI — the calls the Extensions dialog, its live view and the
+ * per-agent desk surfaces (settings and view) make.
  *
  * The routes answer a refusal as `HTTPException(409, {error, message})`, so
  * the useful part is nested under `detail`; FastAPI's own validation errors
@@ -94,5 +95,109 @@ const BossModExtensionsApi = (() => {
         return res.json();
     }
 
-    return { listExtensions, setEnabled, startSetup, liveView };
+    const enc = encodeURIComponent;
+
+    function agentBase(id, agentId) {
+        return `/api/extensions/${enc(id)}/agents/${enc(agentId)}`;
+    }
+
+    /**
+     * The desk's one read: enabled extensions with per-agent settings.
+     *
+     * @param {string} agentId
+     * @returns {Promise<Array<{id: string, name: string, config_label: string,
+     *   view_label: string|null, configured: boolean, summary: string|null}>>}
+     * @throws {Error} On any non-2xx.
+     */
+    async function agentExtensions(agentId) {
+        const res = await apiFetch(`/api/agents/${enc(agentId)}/extensions`, { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t load this agent’s extensions.');
+        return res.json();
+    }
+
+    /**
+     * One agent's settings for one extension; secret fields carry only `set`.
+     *
+     * @param {string} id
+     * @param {string} agentId
+     * @returns {Promise<object>} `{label, help, configured, updated_at, fields}`.
+     * @throws {Error} `code` is `EXTENSION_DISABLED`, `INVALID_EXTENSION` or
+     *   `NO_AGENT_CONFIG` for the server's refusals.
+     */
+    async function getAgentConfig(id, agentId) {
+        const res = await apiFetch(`${agentBase(id, agentId)}/config`, { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t load these settings.');
+        return res.json();
+    }
+
+    /**
+     * Verify and store one agent's settings. A blank secret keeps the stored one.
+     *
+     * @param {string} id
+     * @param {string} agentId
+     * @param {Object<string, string>} values  Every field, secrets as typed ("" = keep).
+     * @returns {Promise<object>} The GET shape plus `verified`.
+     * @throws {Error} `code` is `CONFIG_INVALID` or `CONFIG_VERIFY_FAILED`
+     *   (the message is the server's, e.g. an AADSTS error).
+     */
+    async function saveAgentConfig(id, agentId, values) {
+        const res = await apiFetch(`${agentBase(id, agentId)}/config`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ values }),
+        });
+        if (!res.ok) throw await failure(res, 'Couldn’t save these settings.');
+        return res.json();
+    }
+
+    /**
+     * Remove one agent's settings for one extension.
+     *
+     * @param {string} id
+     * @param {string} agentId
+     * @returns {Promise<void>}
+     * @throws {Error} On any non-2xx (404 when none were stored).
+     */
+    async function deleteAgentConfig(id, agentId) {
+        const res = await apiFetch(`${agentBase(id, agentId)}/config`, { method: 'DELETE' });
+        if (!res.ok) throw await failure(res, 'Couldn’t remove these settings.');
+    }
+
+    /**
+     * One page of an agent's records (e.g. its inbox).
+     *
+     * @param {string} id
+     * @param {string} agentId
+     * @param {number} skip
+     * @param {number} top
+     * @returns {Promise<{columns: object[], rows: object[], has_more: boolean, caption: string}>}
+     * @throws {Error} `code` is `NOT_CONFIGURED`, or the extension's own
+     *   (e.g. `MAILBOX_ACCESS_DENIED`) on a 502.
+     */
+    async function agentView(id, agentId, skip, top) {
+        const query = `skip=${enc(String(skip))}&top=${enc(String(top))}`;
+        const res = await apiFetch(`${agentBase(id, agentId)}/view?${query}`, { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t load this list.');
+        return res.json();
+    }
+
+    /**
+     * One record in full.
+     *
+     * @param {string} id
+     * @param {string} agentId
+     * @param {string} itemId
+     * @returns {Promise<{title: string, facts: Array<[string, string]>, body_text: string}>}
+     * @throws {Error} As agentView.
+     */
+    async function agentViewItem(id, agentId, itemId) {
+        const res = await apiFetch(`${agentBase(id, agentId)}/view/${enc(itemId)}`, { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t open this item.');
+        return res.json();
+    }
+
+    return {
+        listExtensions, setEnabled, startSetup, liveView,
+        agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
+    };
 })();

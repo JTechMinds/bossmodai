@@ -322,6 +322,24 @@
 .desk-note-title { font-size: 12px; font-weight: 500; color: var(--ink); word-break: break-word; }
 .desk-note-meta { font-size: 11px; color: var(--hint); }
 
+/* The Extensions section (context/desk-extensions.js): one card per
+   per-agent extension, the .desk-note card treatment, with its actions. */
+.desk-ext-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.desk-ext {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+}
+.desk-ext-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.desk-ext-name { font-size: 12px; font-weight: 500; color: var(--ink); word-break: break-word; }
+/* --muted, not --hint: this line is the state, not metadata. */
+.desk-ext-status { font-size: 11px; color: var(--muted); word-break: break-word; }
+.desk-ext-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+
 /* Pinned to the bottom of the column, under a rule: the desk's facts and the
    actions on the agent, below everything that is about the agent's work. */
 .desk-footer {

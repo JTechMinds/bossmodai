@@ -20,6 +20,13 @@ from core.extensions.loader import import_package
 from core.extensions.registry import get_discovery
 
 _ENTRY = get_discovery().get("browser-vision")
+
+
+def _no_agent_config(agent_id: str) -> None:
+    """Browser Vision declares no agent_config, so no agent has one."""
+    return None
+
+
 _PACKAGE = import_package(_ENTRY)
 _host_module = importlib.import_module(f"{_PACKAGE.__name__}.browser_host")
 _commands_module = importlib.import_module(f"{_PACKAGE.__name__}.commands")
@@ -195,7 +202,7 @@ def env(tmp_path: Path):
     host = FakeHost()
     vision = {"value": ("vision-model", True)}
     extension = _PACKAGE.BrowserVisionExtension(
-        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data"),
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data", read_agent_config=_no_agent_config),
         host=host,
         install_dir=install_dir,
         vision_model=lambda agent: vision["value"],
@@ -973,7 +980,7 @@ def _leftovers(data_dir: Path) -> tuple[Path, Path]:
 def test_only_the_runtime_worker_clears_what_an_earlier_worker_left(tmp_path: Path, worker: bool) -> None:
     shot, marker = _leftovers(tmp_path / "data")
     _PACKAGE.BrowserVisionExtension(
-        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data", runtime_worker=worker),
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data", read_agent_config=_no_agent_config, runtime_worker=worker),
         host=FakeHost(),
         install_dir=tmp_path,
     )
@@ -1073,7 +1080,7 @@ def test_asking_the_prompt_state_does_not_start_the_browser(tmp_path: Path) -> N
     import threading
 
     extension = _PACKAGE.BrowserVisionExtension(
-        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data"),
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data", read_agent_config=_no_agent_config),
         install_dir=tmp_path,
     )
     agent = db.create_agent("Iris", role="Researcher")
@@ -1183,7 +1190,7 @@ def test_the_cooldown_survives_a_new_extension_instance(env, tmp_path: Path) -> 
     )
     host = FakeHost()
     fresh = _PACKAGE.BrowserVisionExtension(
-        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data"),
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data", read_agent_config=_no_agent_config),
         host=host,
         install_dir=env["install"],
         vision_model=lambda agent: ("vision-model", True),

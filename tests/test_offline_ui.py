@@ -83,10 +83,11 @@ def test_vendor_chrome_assets_exist() -> None:
     human to measure, and the answer is recorded in RETIRED_VENDOR.
     """
     references = _vendor_references()
-    # Five: Tailwind, Lucide, marked, highlight.js and the hljs stylesheet.
+    # Seven: Tailwind, Lucide, marked, highlight.js, the hljs stylesheet, and
+    # Tabulator's script and base stylesheet (core/data-table.js).
     # An exact count rather than a floor, because a floor is what let eleven
     # redundant language packs sit here inflating it.
-    assert len(references) == 5, f"{len(references)} vendored references: {references}"
+    assert len(references) == 7, f"{len(references)} vendored references: {references}"
 
     for ref in references:
         path = STATIC / ref

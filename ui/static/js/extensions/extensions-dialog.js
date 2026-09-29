@@ -18,6 +18,9 @@
  *                           refusal with the server's message on the card;
  *   enabled + excluded    → which agents cannot use it, and why.
  *
+ * An extension with per-agent settings (`agent_config`) says where they are
+ * set: each agent's desk, not this dialog.
+ *
  * A live view is not shown here: it is the screen button in each browsing
  * agent's chat header. After a successful toggle this asks
  * BossModBrowserVisionStatus to re-read, so those buttons follow at once.
@@ -40,6 +43,7 @@ const BossModExtensionsDialog = (() => {
         excludedLead: 'Not available to: ',
         excludedTail: ' — their models aren’t marked image-capable (Settings → Connections).',
         noModel: 'no model',
+        perAgentLead: 'Set up per agent: open an agent’s desk → Extensions → ',
     });
 
     /**
@@ -217,6 +221,9 @@ const BossModExtensionsDialog = (() => {
                 ? h('p', { class: 'market-card-specialty' }, `${item.command.name} — ${item.command.summary}`)
                 : null,
             item.description ? h('p', { class: 'market-card-desc' }, item.description) : null,
+            item.agent_config
+                ? h('p', { class: 'market-card-note' }, COPY.perAgentLead + item.agent_config.label + '.')
+                : null,
             item.valid
                 ? controls(item)
                 : h('p', { class: 'market-card-note' }, item.invalid_reason || COPY.unavailable));
