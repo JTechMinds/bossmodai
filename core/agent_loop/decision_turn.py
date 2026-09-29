@@ -43,6 +43,7 @@ from core.agent_loop.turn_helpers import (
     _finalize_turn,
     _serialize_trace_value,
     _summarize_action_chain,
+    announce_extension_result,
     post_cli_status_lines,
 )
 from core.agent_loop.task_origins import consent_origin_channel_id
@@ -483,6 +484,7 @@ async def _run_decision_turn(
                 lines=(cli_result.data or {}).get("status_lines", []),
                 command=cli_call.command,
             )
+            await announce_extension_result(agent, cli_result.data)
             if cli_call.thought:
                 await manager.broadcast_thought(
                     agent_id=agent.id,

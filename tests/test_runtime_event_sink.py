@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from core.runtime.events import NullRuntimeEventSink, RuntimeEventProxy
+import db
+from core.runtime.events import NullRuntimeEventSink, RuntimeEventProxy, TransportRuntimeEventSink
 from core.runtime.services import RuntimeServices
 
 
@@ -68,6 +70,9 @@ class _RecordingSink:
 
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None:
         self.calls.append(("feed_update", entry))
+
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
+        self.calls.append(("extension_live", {"extension_id": extension_id, "agent_id": agent_id}))
 
 
 @pytest.mark.asyncio
@@ -137,3 +142,100 @@ async def test_proxy_broadcast_activity_forwards_peek_budget_in_extra() -> None:
 
     proxy.set_sink(NullRuntimeEventSink())
     await proxy.broadcast_activity(**result)
+
+
+# ─── extension_live (R37) ───
+
+
+class _RecordingTransport:
+    def __init__(self) -> None:
+        self.envelopes: list[dict[str, Any]] = []
+
+    async def send_event(self, envelope: dict[str, Any]) -> None:
+        self.envelopes.append(envelope)
+
+
+@pytest.mark.asyncio
+async def test_the_transport_sink_emits_the_extension_live_envelope() -> None:
+    transport = _RecordingTransport()
+    await TransportRuntimeEventSink(transport).broadcast_extension_live("browser-vision", "a1")
+    assert transport.envelopes == [{
+        "type": "event",
+        "payload": {"kind": "extension_live", "data": {"extension_id": "browser-vision", "agent_id": "a1"}},
+    }]
+
+
+@pytest.mark.asyncio
+async def test_the_proxy_forwards_extension_live() -> None:
+    proxy = RuntimeEventProxy()
+    sink = _RecordingSink()
+    proxy.set_sink(sink)
+    await proxy.broadcast_extension_live("browser-vision", "a1")
+    assert sink.calls == [("extension_live", {"extension_id": "browser-vision", "agent_id": "a1"})]
+    proxy.set_sink(NullRuntimeEventSink())
+    await proxy.broadcast_extension_live(None, None)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_event_routes_extension_live() -> None:
+    services = RuntimeServices()
+    sink = _RecordingSink()
+    services.set_event_sink(sink)
+    await services._dispatch_event(
+        {"kind": "extension_live", "data": {"extension_id": "browser-vision", "agent_id": "a1"}}
+    )
+    assert sink.calls == [("extension_live", {"extension_id": "browser-vision", "agent_id": "a1"})]
+
+
+@pytest.mark.asyncio
+async def test_worker_ready_announces_every_extension_changed() -> None:
+    services = RuntimeServices()
+    sink = _RecordingSink()
+    services.set_event_sink(sink)
+    await services._handle_worker_message({"type": "ready"})
+    assert sink.calls == [("extension_live", {"extension_id": None, "agent_id": None})]
+
+
+class _EndedStdout:
+    async def readline(self) -> bytes:
+        return b""
+
+    def close(self) -> None:
+        return None
+
+
+class _ExitedProcess:
+    """A worker process that has already exited: stdout at EOF, returncode set."""
+
+    def __init__(self) -> None:
+        self.pid = None
+        self.returncode = 0
+        self.stdout = _EndedStdout()
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_worker_exit_announces_every_extension_changed() -> None:
+    db.init_db()
+    services = RuntimeServices()
+    sink = _RecordingSink()
+    services.set_event_sink(sink)
+    services._process = _ExitedProcess()
+    await services._read_worker_output()
+    assert sink.calls == [("extension_live", {"extension_id": None, "agent_id": None})]
+    assert db.get_runtime_worker_state("primary").lifecycle_state == "error"
+
+
+@pytest.mark.asyncio
+async def test_a_normal_stop_announces_every_extension_changed_once() -> None:
+    db.init_db()
+    services = RuntimeServices()
+    sink = _RecordingSink()
+    services.set_event_sink(sink)
+    services._process = _ExitedProcess()
+    services._process_loop = asyncio.get_running_loop()
+    services._expecting_shutdown = True
+    # The reader sees EOF on an expected shutdown: it leaves the announcement to the stop.
+    await services._read_worker_output()
+    assert sink.calls == []
+    await services._stop_unlocked()
+    assert sink.calls == [("extension_live", {"extension_id": None, "agent_id": None})]

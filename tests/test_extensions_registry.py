@@ -164,6 +164,33 @@ def test_a_disabled_extension_handler_answers_extension_disabled(tmp_path: Path)
     assert ran.ok and ran.kind == "demo"
 
 
+def test_every_result_of_an_extension_command_is_stamped_with_its_id(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "demo-ext", _manifest())
+    handler = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["demo"]
+    ctx = _ctx()
+
+    disabled = handler(ctx, _parsed("demo go"), None)
+    assert not disabled.ok and disabled.data["extension_id"] == "demo-ext"
+    assert disabled.data["error"].startswith("EXTENSION_DISABLED")  # the error data is kept
+
+    set_enabled("demo-ext", True)
+    ran = handler(ctx, _parsed("demo go"), None)
+    assert ran.ok and ran.data == {"extension_id": "demo-ext"}
+
+
+def test_a_load_failure_is_stamped_too(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "no-live2", _manifest(ext_id="no-live2", command="nolive2", live_view=True))
+    set_enabled("no-live2", True)
+    result = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["nolive2"](_ctx(), _parsed("nolive2 go"), None)
+    assert "EXTENSION_LOAD_FAILED" in result.prompt_content
+    assert result.data["extension_id"] == "no-live2"
+
+
+def test_core_commands_are_not_stamped() -> None:
+    agent = db.create_agent("Iris", role="Researcher")
+    result = execute_bm_cli(agent, db.get_agent_state(agent.id), "pwd")
+    assert "extension_id" not in (result.data or {})
+
 def test_browser_vision_is_a_virtual_command_answering_disabled_by_default() -> None:
     entry = get_discovery().get("browser-vision")
     assert entry is not None and entry.valid, entry

@@ -83,6 +83,7 @@ class RuntimeEventSink(Protocol):
         extra: dict[str, Any] | None = None,
     ) -> None: ...
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None: ...
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None: ...
 
 
 class RuntimeEventTransport(Protocol):
@@ -131,6 +132,9 @@ class NullRuntimeEventSink:
         return None
 
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None:
+        return None
+
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
         return None
 
 
@@ -203,6 +207,9 @@ class TransportRuntimeEventSink:
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None:
         await self._emit("feed_update", {"entry": entry})
 
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
+        await self._emit("extension_live", {"extension_id": extension_id, "agent_id": agent_id})
+
 
 class RuntimeEventProxy:
     """Mutable proxy used by runtime code regardless of execution context."""
@@ -265,6 +272,9 @@ class RuntimeEventProxy:
 
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None:
         await self._sink.broadcast_feed_update(entry)
+
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
+        await self._sink.broadcast_extension_live(extension_id, agent_id)
 
 
 runtime_events = RuntimeEventProxy()

@@ -301,6 +301,24 @@ class ConnectionManager:
         """Broadcast a unified feed entry for an activity or notification update."""
         await self.broadcast({"type": "activity_update", "data": entry})
 
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
+        """Nudge clients to re-read an extension's live-view state.
+
+        Carries no state, only which extension and agent may have changed, so
+        ``GET /api/extensions/{id}/live`` stays the one source of truth.
+
+        Args:
+            extension_id: The extension whose live state may have changed, or
+                ``None`` for "any extension" (the runtime worker started or
+                exited).
+            agent_id: The agent whose command caused it, or ``None`` when the
+                change is not one agent's (a toggle, setup, worker start/exit).
+        """
+        await self.broadcast({
+            "type": "extension_live",
+            "data": {"extension_id": extension_id, "agent_id": agent_id},
+        })
+
 
 # Module-level singleton — imported by api.routes and wired into RuntimeServices in main.py
 manager = ConnectionManager()

@@ -20,6 +20,7 @@ from core.agent_loop.task_origin_mirrors import (
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.bm_cli.managed_writer import ManagedWriteProgress
 from core.default_prompts import load_default_prompt, render_default_prompt
+from core.extensions.registry import get_discovery
 from core.models import Agent
 from core.runtime.events import runtime_events as manager
 from core.tasking.service import append_task_event
@@ -495,6 +496,36 @@ async def post_cli_status_lines(
         else:
             posted = persist_unbound_status_line(agent=agent, content=content, kind="progress", channel_id=channel_id)
         await _broadcast_origin_post(posted)
+
+
+async def announce_extension_result(agent: Agent, data: dict[str, Any] | None) -> None:
+    """Nudge the UI to re-read a live-view extension's state after its command ran.
+
+    The CLI bridge stamps ``data["extension_id"]`` on every result an
+    extension command returns (success or error, including
+    ``EXTENSION_DISABLED``). When that extension declares ``live_view`` in its
+    manifest, this broadcasts ``extension_live(extension_id, agent.id)``; the
+    event carries no state, so the extension's ``/live`` route stays the one
+    source of truth. Call it right after ``post_cli_status_lines`` with the
+    same result's data.
+
+    Args:
+        agent: The agent whose command produced the result.
+        data: The CLI result's ``data``; ``None`` or a dict without an
+            ``extension_id`` (any non-extension command) announces nothing.
+
+    A stamped id that this process's discovery does not know is a bug in the
+    stamping: logged at error, nothing broadcast, and the turn continues.
+    """
+    ext_id = data.get("extension_id") if data else None
+    if not ext_id:
+        return
+    entry = get_discovery().get(ext_id)
+    if entry is None or entry.manifest is None:
+        logger.error("CLI result stamped with unknown extension %r; no live-view event sent", ext_id)
+        return
+    if entry.manifest.live_view:
+        await manager.broadcast_extension_live(ext_id, agent.id)
 
 
 async def _skip_turn(

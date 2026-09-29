@@ -28,6 +28,7 @@ const BossModBus = (() => {
         'unified_feed',
         'floors_updated',
         'operator_invalidate',
+        'extension_live',
         'resync',
     ]);
 

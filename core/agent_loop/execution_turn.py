@@ -39,6 +39,7 @@ from core.agent_loop.turn_helpers import (
     _render_loop_prompt,
     _serialize_trace_value,
     _summarize_action_chain,
+    announce_extension_result,
     post_cli_status_lines,
 )
 from core.agent_loop.turn_rules import (
@@ -541,6 +542,7 @@ async def _run_execution_turn(
                 lines=result.get("cli_status_lines", []),
                 command=str(action.get("command") or ""),
             )
+            await announce_extension_result(agent, {"extension_id": result.get("cli_extension_id")})
         if result.get("trigger_requests"):
             scheduled_triggers.extend(result["trigger_requests"])
 

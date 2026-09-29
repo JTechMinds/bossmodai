@@ -1,4 +1,4 @@
-"""CLI status lines: a command's operator one-liners posted like task lines."""
+"""CLI status lines and live-view nudges: what a command's result tells the operator."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ import pytest
 
 import db
 from core import config
-from core.agent_loop.turn_helpers import post_cli_status_lines
+from core.agent_loop.turn_helpers import announce_extension_result, post_cli_status_lines
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.tasking.service import create_or_bind_task
@@ -21,12 +21,16 @@ class _RecordingSink(NullRuntimeEventSink):
     def __init__(self) -> None:
         self.chat: list[dict[str, Any]] = []
         self.channel: list[dict[str, Any]] = []
+        self.live: list[tuple[str | None, str | None]] = []
 
     async def broadcast_chat_message(self, **kwargs: Any) -> None:
         self.chat.append(kwargs)
 
     async def broadcast_channel_message(self, **kwargs: Any) -> None:
         self.channel.append(kwargs)
+
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
+        self.live.append((extension_id, agent_id))
 
 
 @pytest.fixture()
@@ -232,3 +236,114 @@ async def test_an_execution_turn_bv_open_posts_the_browsing_line_to_the_task_ori
 
     assert "Iris Browsing example.com" in _chat_lines(agent.id)
     assert any(item["content"] == "Iris Browsing example.com" for item in sink.chat)
+
+
+
+# ─── live-view nudges (R37) ───
+
+
+@pytest.mark.asyncio
+async def test_a_live_view_extension_result_is_announced_once(sink) -> None:
+    agent = db.create_agent("Iris", role="Researcher")
+    await announce_extension_result(agent, {"extension_id": "browser-vision", "status_lines": []})
+    assert sink.live == [("browser-vision", agent.id)]
+
+
+@pytest.mark.asyncio
+async def test_an_extension_without_a_live_view_is_not_announced(sink, monkeypatch, tmp_path) -> None:
+    import json
+
+    from core.bm_cli.command_registry import CORE_COMMAND_NAMES
+    from core.extensions.registry import discover
+
+    folder = tmp_path / "plain-ext"
+    folder.mkdir()
+    (folder / "manifest.json").write_text(json.dumps({
+        "id": "plain-ext", "name": "Plain", "version": "0.1.0", "description": "No live view.",
+        "command": {"name": "plain", "summary": "s", "usage": "plain go", "help": "h"},
+        "setup": {"required": False},
+    }), encoding="utf-8")
+    (folder / "__init__.py").write_text("def create(ctx):\n    raise AssertionError('not loaded')\n", encoding="utf-8")
+    found = discover(tmp_path, CORE_COMMAND_NAMES)
+    assert found.get("plain-ext").valid
+    monkeypatch.setattr("core.agent_loop.turn_helpers.get_discovery", lambda: found)
+
+    agent = db.create_agent("Iris", role="Researcher")
+    await announce_extension_result(agent, {"extension_id": "plain-ext"})
+    assert sink.live == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("data", [None, {}, {"status_lines": ["Browsing example.com"]}, {"extension_id": None}])
+async def test_non_extension_data_is_not_announced(sink, data) -> None:
+    agent = db.create_agent("Iris", role="Researcher")
+    await announce_extension_result(agent, data)
+    assert sink.live == []
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_stamped_extension_is_logged_and_not_announced(sink, caplog) -> None:
+    agent = db.create_agent("Iris", role="Researcher")
+    with caplog.at_level(logging.ERROR):
+        await announce_extension_result(agent, {"extension_id": "no-such-extension"})
+    assert "CLI result stamped with unknown extension 'no-such-extension'" in caplog.text
+    assert sink.live == []
+
+
+# Both turn kinds below run the REAL `bv` command with Browser Vision off (the
+# default): the CLI bridge stamps its EXTENSION_DISABLED result, which is the
+# disable path the header must hear about. No browser is started.
+
+
+@pytest.mark.asyncio
+async def test_a_decision_turn_bv_command_announces_the_live_view(sink, monkeypatch) -> None:
+    from core.agent_loop.loop import run_turn
+
+    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    _script(monkeypatch, [
+        '{"act":"cli","data":{"cmd":"bv open example.com"},"th":"look"}',
+        '{"act":"reply","work_commit":false,"intent":"question","msg":"It is off.","th":"answer"}',
+    ])
+    trigger = {
+        "type": "human_chat", "content": "Open example.com", "from_name": "Human",
+        "from_id": HUMAN_SENDER_ID, "source_channel": "chat", "author_type": "human",
+    }
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    assert outcome.trigger_status == "completed"
+    assert sink.live == [("browser-vision", agent.id)]
+
+
+@pytest.mark.asyncio
+async def test_an_execution_turn_bv_command_announces_the_live_view(sink, monkeypatch) -> None:
+    from core.agent_loop import activity_runtime
+    from core.agent_loop.loop import run_turn
+
+    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    task = _task(agent.id, channel_id=None)
+    activity_runtime.activate_work_activity(agent.id, task, task_status="active")
+    _script(monkeypatch, [
+        '{"act":"cli","data":{"cmd":"bv open example.com"},"th":"look"}',
+        '{"act":"idle","data":{},"th":"looked"}',
+    ])
+    trigger = {"type": "activity_resumed", "task_id": task.id, "content": "Resume.", "source_channel": "work"}
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    assert sink.live == [("browser-vision", agent.id)]
+
+
+@pytest.mark.asyncio
+async def test_a_core_command_in_a_turn_announces_nothing(sink, monkeypatch) -> None:
+    from core.agent_loop.loop import run_turn
+
+    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    _script(monkeypatch, [
+        '{"act":"cli","data":{"cmd":"pwd"},"th":"where"}',
+        '{"act":"reply","work_commit":false,"intent":"question","msg":"Here.","th":"answer"}',
+    ])
+    trigger = {
+        "type": "human_chat", "content": "Where are you?", "from_name": "Human",
+        "from_id": HUMAN_SENDER_ID, "source_channel": "chat", "author_type": "human",
+    }
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+    assert sink.live == []

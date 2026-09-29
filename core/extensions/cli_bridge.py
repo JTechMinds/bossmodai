@@ -8,6 +8,7 @@ whether it RUNS is decided per call from the live enabled set.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import TYPE_CHECKING, Callable
 
 from core.extensions.loader import ExtensionLoadError, load_extension, loaded_extension
@@ -76,10 +77,19 @@ def _meta_for(entry: ExtensionEntry) -> VirtualCommandMeta:
     )
 
 
+def _stamped(result: BossModCliResult, ext_id: str) -> BossModCliResult:
+    """Return ``result`` with ``data["extension_id"] = ext_id`` merged in.
+
+    Core reads the stamp to learn which extension produced a result (see
+    ``turn_helpers.announce_extension_result``) without parsing command names.
+    """
+    return replace(result, data={**(result.data or {}), "extension_id": ext_id})
+
+
 def _handler_for(entry: ExtensionEntry) -> CliHandler:
     name = entry.manifest.name
 
-    def handler(ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:
+    def run(ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:
         from core.bm_cli.results import error_result
 
         if not is_enabled(entry.id):
@@ -98,5 +108,10 @@ def _handler_for(entry: ExtensionEntry) -> CliHandler:
         except ExtensionLoadError as exc:
             return error_result(parsed.raw, f"EXTENSION_LOAD_FAILED: {exc}", cwd=ctx.cwd)
         return instance.handle(ctx, parsed, body)
+
+    def handler(ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:
+        # Every result this extension's command returns, success or error, is
+        # stamped, so the disable path's EXTENSION_DISABLED is announced too.
+        return _stamped(run(ctx, parsed, body), entry.id)
 
     return handler

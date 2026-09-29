@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 import db
+from api.websocket import manager
 from core.extensions.contract import LiveViewItem, SupportsLiveView
 from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
 from core.extensions.paths import extension_data_dir
@@ -131,6 +132,9 @@ async def set_extension_enabled(ext_id: str, body: EnabledBody) -> dict[str, Any
         if state not in {"ready", "not_required"}:
             raise _conflict("SETUP_REQUIRED", f"Set up {entry.manifest.name} before turning it on (setup is {state}).")
     set_enabled(ext_id, body.enabled)
+    # Turning a live-view extension off empties its live view and on again
+    # may bring one back; open chat headers re-read /live on this nudge.
+    await manager.broadcast_extension_live(ext_id, None)
     return _item(entry, enabled_ids())
 
 

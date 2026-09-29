@@ -69,6 +69,9 @@ const BossModShell = (() => {
         if (typeof BossModFloorScope !== 'undefined') BossModFloorScope.attach(store);
         const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
         const offOperatorInvalidate = BossModOperatorInvalidate.attach({ bus });
+        // Browser Vision's live-view status re-reads on server pushes, not a
+        // timer; it must hear them from the first broadcast on.
+        BossModBrowserVisionStatus.attach({ bus });
 
         const layoutElement = requireElement('main-layout');
         const placeElement = requireElement('app-place');

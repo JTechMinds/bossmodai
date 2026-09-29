@@ -109,6 +109,23 @@ def test_enable_disable_round_trip_once_set_up(client) -> None:
     assert json.loads(config.get_live("extensions_enabled")) == []
 
 
+def test_enable_and_disable_announce_the_live_view_change(client, monkeypatch) -> None:
+    from api.websocket import manager
+
+    calls: list[tuple] = []
+
+    async def _record(extension_id, agent_id):
+        calls.append((extension_id, agent_id))
+
+    monkeypatch.setattr(manager, "broadcast_extension_live", _record)
+    refused = client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True})
+    assert refused.status_code == 409 and calls == []
+    _mark_ready()
+    assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True}).status_code == 200
+    assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": False}).status_code == 200
+    assert calls == [(_BV, None), (_BV, None)]
+
+
 def test_unknown_extension_is_404(client) -> None:
     assert client.put("/api/extensions/nope/enabled", json={"enabled": True}).status_code == 404
     assert client.post("/api/extensions/nope/setup", json={"enable_on_success": True}).status_code == 404

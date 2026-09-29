@@ -1,11 +1,11 @@
 /**
- * Node harness: the Extensions dialog, the Browser Vision status poller and
+ * Node harness: the Extensions dialog, the Browser Vision status reader and
  * the single-agent browser viewer.
  *
  * Invoked by tests/test_extensions_ui.py with the module paths in load order.
- * The modal frame, the confirm strip and the network are stubbed; the dialog,
- * the status module, the viewer, the switch and the DOM helpers are the real
- * modules. Prints one JSON object of named verdicts.
+ * The modal frame, the confirm strip, the clock and the network are stubbed;
+ * the bus, the dialog, the status module, the viewer, the switch and the DOM
+ * helpers are the real modules. Prints one JSON object of named verdicts.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -14,7 +14,7 @@ installDom();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModFormat", "BossModSwitch", "BossModExtensionsApi",
+    "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModExtensionsApi",
     "BossModBrowserVisionStatus", "BossModExtensionsLive", "BossModExtensionsDialog",
 ];
 if (paths.length !== NAMES.length) {
@@ -44,15 +44,29 @@ function closeLayer(layer) {
     layer.body.remove();
     if (layer.options.onClose) layer.options.onClose();
 }
+// A fake clock: every timer (one-shot or repeating) is recorded, and
+// advance() fires whatever falls due, so a hidden poller would show up as
+// extra /live reads.
 const timers = new Map();
 let nextTimer = 1;
-global.setTimeout = (fn) => { const id = nextTimer++; timers.set(id, fn); return id; };
+let now = 0;
+const addTimer = (fn, ms, every) => { const id = nextTimer++; timers.set(id, { fn, at: now + (ms || 0), every }); return id; };
+global.setTimeout = (fn, ms) => addTimer(fn, ms, 0);
+global.setInterval = (fn, ms) => addTimer(fn, ms, ms || 1);
 global.clearTimeout = (id) => { timers.delete(id); };
-// Fire the one pending timer the way the event loop would: it leaves the queue.
-async function fireTimer() {
-    const [id, fn] = [...timers.entries()][0];
-    timers.delete(id);
-    await fn();
+global.clearInterval = (id) => { timers.delete(id); };
+async function advance(ms) {
+    const until = now + ms;
+    for (;;) {
+        const due = [...timers.entries()].filter(([, t]) => t.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!due) break;
+        const [id, t] = due;
+        now = t.at;
+        if (t.every) t.at += t.every; else timers.delete(id);
+        await t.fn();
+        await drain();
+    }
+    now = until;
 }
 const revoked = [];
 global.URL.revokeObjectURL = (url) => { revoked.push(url); };
@@ -96,6 +110,9 @@ NAMES.slice(1).forEach((name, index) => {
     eval(`${fs.readFileSync(paths[index + 1], "utf8")}\n;global.${name} = ${name};\n`);
 });
 const Status = global.BossModBrowserVisionStatus;
+const bus = global.BossModBus.createBus(global.BossModBus.KNOWN_TOPICS);
+Status.attach({ bus });
+const push = (extensionId, agentId) => bus.publish("extension_live", { extension_id: extensionId, agent_id: agentId });
 
 const drain = async () => { for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r)); };
 const text = () => document.body.textContent;
@@ -110,40 +127,71 @@ const verdict = {};
         && !text().includes("Watch") && !byId("ext-watch-browser-vision");
     closeLayer(layers[layers.length - 1]);
 
-    // 2. Polling runs only while subscribed.
+    // 2. Nothing is read while no one is subscribed, whatever arrives.
     await drain();
-    verdict.noPollWithoutSubscribers = liveCalls === 0 && timers.size === 0;
+    push("browser-vision", "a1");
+    push(null, null);
+    bus.publish("resync", { downtimeMs: 0 });
+    await drain();
+    verdict.noFetchesWithoutSubscribers = liveCalls === 0 && timers.size === 0;
+
+    // 3. The first subscriber reads once; then time alone reads nothing.
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
     let notified = 0;
     const off = Status.subscribe(() => { notified += 1; });
     await drain();
-    verdict.subscribingPollsAtOnce = liveCalls === 1 && notified === 1 && Status.hasView("a1")
-        && Status.latest("a1").title === "Example Domain" && timers.size === 1;
-    await fireTimer();
-    await drain();
-    verdict.pollsEveryTickWhileSubscribed = liveCalls === 2 && timers.size === 1;
+    verdict.subscribingReadsAtOnce = liveCalls === 1 && notified === 1 && Status.hasView("a1")
+        && Status.latest("a1").title === "Example Domain" && timers.size === 0;
+    await advance(60000);
+    verdict.noPollingOverSixtySeconds = liveCalls === 1 && timers.size === 0;
 
-    // 3. Another failure keeps the last known state and logs; disabled empties it.
+    // 4. Pushes: ours or null reads once each; another extension's reads nothing.
+    let before = liveCalls;
+    push("browser-vision", "a1");
+    await drain();
+    verdict.anEventReadsExactlyOnce = liveCalls === before + 1;
+    before = liveCalls;
+    push(null, null);
+    await drain();
+    verdict.aNullEventReadsExactlyOnce = liveCalls === before + 1;
+    before = liveCalls;
+    push("some-other-extension", "a1");
+    await drain();
+    verdict.anotherExtensionsEventReadsNothing = liveCalls === before;
+    before = liveCalls;
+    for (let i = 0; i < 5; i += 1) push("browser-vision", "a1");
+    await drain();
+    verdict.aBurstOfFiveReadsAtMostTwice = liveCalls - before >= 1 && liveCalls - before <= 2;
+    before = liveCalls;
+    bus.publish("resync", { downtimeMs: 1200 });
+    await drain();
+    verdict.resyncReadsOnce = liveCalls === before + 1;
+
+    // 5. Another failure keeps the last known state and logs; disabled empties it.
     liveReply = { kind: "broken" };
-    await fireTimer();
+    push("browser-vision", "a1");
     await drain();
     verdict.failureKeepsLastStateAndLogs = Status.hasView("a1")
         && errors.some((line) => line.includes("[browser-vision-status]"));
     liveReply = { kind: "disabled" };
-    await fireTimer();
+    push("browser-vision", null);
     await drain();
     verdict.disabledIsAnEmptySet = !Status.hasView("a1") && Status.latest("a1") === null;
 
     off();
-    verdict.pollingStopsWhenTheLastSubscriberLeaves = timers.size === 0;
+    before = liveCalls;
+    push("browser-vision", "a1");
+    push(null, null);
+    bus.publish("resync", { downtimeMs: 0 });
+    await drain();
+    await advance(60000);
+    verdict.noSubscribersMeansNoFetches = liveCalls === before && timers.size === 0;
 
-    // 4. A toggle in the dialog asks the status to re-read at once.
+    // 6. A toggle in the dialog asks the status to re-read at once.
     const again = Status.subscribe(() => {});
     await drain();
-    await fireTimer();  // settle into the steady schedule
-    await drain();
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
-    const before = liveCalls;
+    before = liveCalls;
     global.BossModExtensionsDialog.open();
     await drain();
     byId("ext-switch-browser-vision").click();  // turn off
@@ -152,7 +200,7 @@ const verdict = {};
     closeLayer(layers[layers.length - 1]);
     again();
 
-    // 5. The single-agent viewer: real alt, caption lines, and it follows the status.
+    // 7. The single-agent viewer: real alt, caption lines, and it follows the status.
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
     const blobsBefore = blobFetches.length;
     global.BossModExtensionsLive.openForAgent("a1", "Iris");
@@ -168,27 +216,30 @@ const verdict = {};
         "title: Example Domain", "window: desktop 1280x800", "view: full page", "image 1280x800", "marks: 3", "taken: "]
         .every((line) => viewer.body.textContent.includes(line));
 
-    // Same taken_at on the next poll: no refetch.
-    await fireTimer();
+    // Same taken_at on the next read: no refetch.
+    push("browser-vision", "a1");
     await drain();
     verdict.viewerDoesNotRefetchAnUnchangedShot = blobFetches.length === blobsBefore + 1;
 
     // A newer shot: refetched, and the old blob is revoked.
     const oldSrc = img().getAttribute("src");
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:05:00Z")] } };
-    await fireTimer();
+    push("browser-vision", "a1");
     await drain();
     verdict.viewerUpdatesOnANewShotAndRevokesTheOld = blobFetches.length === blobsBefore + 2
         && img().getAttribute("src") !== oldSrc && revoked.includes(oldSrc);
 
     // The session ended while open (bv close, restart): the item disappears.
     liveReply = { kind: "ok", body: { items: [] } };
-    await fireTimer();
+    push("browser-vision", "a1");
     await drain();
     verdict.viewerSaysSessionEnded = text().includes("Iris’s browser session ended.") && !img();
 
     closeLayer(viewer);
-    verdict.viewerStopsPollingOnClose = timers.size === 0;
+    before = liveCalls;
+    push("browser-vision", "a1");
+    await drain();
+    verdict.viewerStopsReadingOnClose = liveCalls === before && timers.size === 0;
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

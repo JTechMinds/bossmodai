@@ -66,6 +66,8 @@ class EventSink(Protocol):
 
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None: ...
 
+    async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None: ...
+
 
 class RuntimeServices:
     """Expose a durable control boundary to the runtime worker process."""
@@ -296,6 +298,7 @@ class RuntimeServices:
             await self._kill_process(process)
             await self._clear_process_state()
             db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
+            await self._announce_extension_sessions_changed()
             return
 
         if process.returncode is None:
@@ -309,6 +312,19 @@ class RuntimeServices:
         state = db.get_runtime_worker_state(_WORKER_NAME)
         if state is None or state.lifecycle_state not in {"stopped", "error"}:
             db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
+        await self._announce_extension_sessions_changed()
+
+    async def _announce_extension_sessions_changed(self) -> None:
+        """Tell the UI every extension's live state may have changed.
+
+        Extension sessions (e.g. Browser Vision's browsers) live in the worker
+        and die with it, and the worker's own event sink is already gone by the
+        time it shuts them down, so the app process announces worker start and
+        exit as ``extension_live(None, None)``: "re-read everything".
+        """
+        sink = self._event_sink
+        if sink is not None:
+            await sink.broadcast_extension_live(None, None)
 
     async def _clear_process_state(self) -> None:
         reader_task = self._reader_task
@@ -410,12 +426,15 @@ class RuntimeServices:
                 state = db.get_runtime_worker_state(_WORKER_NAME)
                 if state is None or state.lifecycle_state not in {"stopped", "error"}:
                     db.mark_runtime_worker_error("Runtime worker exited unexpectedly", worker_name=_WORKER_NAME)
+                # A normal stop announces from _stop_unlocked instead.
+                await self._announce_extension_sessions_changed()
 
     async def _handle_worker_message(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
         if message_type == "ready":
             if self._ready_future is not None and not self._ready_future.done():
                 self._ready_future.set_result(None)
+            await self._announce_extension_sessions_changed()
             return
         if message_type == "fatal":
             error = message.get("error") or "Runtime worker failed"
@@ -486,6 +505,9 @@ class RuntimeServices:
             return
         if kind == "feed_update":
             await sink.broadcast_feed_update(data["entry"])
+            return
+        if kind == "extension_live":
+            await sink.broadcast_extension_live(**data)
             return
         logger.warning("Unknown runtime event kind received: %s", kind)
 

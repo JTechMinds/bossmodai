@@ -1,4 +1,4 @@
-"""Extensions dialog, Browser Vision status poller and viewer, in the fake DOM."""
+"""Extensions dialog, Browser Vision status reader and viewer, in the fake DOM."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ JS = ROOT / "ui" / "static" / "js"
 HARNESS = Path(__file__).resolve().parent / "js_extensions_harness.cjs"
 MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "switch.js",
     JS / "extensions" / "extensions-api.js",
@@ -29,18 +30,31 @@ def _payload() -> dict:
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def test_status_poller_viewer_and_card() -> None:
+def test_status_reader_viewer_and_card() -> None:
     payload = _payload()
     for key in (
         "cardHasNoWatchButton",
-        "noPollWithoutSubscribers", "subscribingPollsAtOnce", "pollsEveryTickWhileSubscribed",
+        "noFetchesWithoutSubscribers", "subscribingReadsAtOnce", "noPollingOverSixtySeconds",
+        "anEventReadsExactlyOnce", "aNullEventReadsExactlyOnce", "anotherExtensionsEventReadsNothing",
+        "aBurstOfFiveReadsAtMostTwice", "resyncReadsOnce",
         "failureKeepsLastStateAndLogs", "disabledIsAnEmptySet",
-        "pollingStopsWhenTheLastSubscriberLeaves", "toggleRefreshesTheStatus",
+        "noSubscribersMeansNoFetches", "toggleRefreshesTheStatus",
         "viewerTitleAndHeadFocus", "viewerImageHasRealAlt", "viewerShowsEveryCaptionLine",
         "viewerDoesNotRefetchAnUnchangedShot", "viewerUpdatesOnANewShotAndRevokesTheOld",
-        "viewerSaysSessionEnded", "viewerStopsPollingOnClose",
+        "viewerSaysSessionEnded", "viewerStopsReadingOnClose",
     ):
         assert payload.get(key) is True, (key, payload)
+
+
+def test_the_status_module_has_no_timer() -> None:
+    source = (JS / "extensions" / "browser-vision-status.js").read_text(encoding="utf-8")
+    assert "setInterval" not in source and "setTimeout" not in source
+
+
+def test_the_shell_wires_the_status_to_the_bus_before_the_socket() -> None:
+    shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
+    assert "BossModBrowserVisionStatus.attach({ bus });" in shell
+    assert shell.index("BossModBrowserVisionStatus.attach({ bus });") < shell.index("socket.connect();")
 
 
 def test_the_live_tone_colours_the_icon_soft_green() -> None:

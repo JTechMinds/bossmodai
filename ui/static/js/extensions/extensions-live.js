@@ -5,7 +5,7 @@
  * debug surface for the operator: the latest screenshot at full size (the
  * scroller pans, the image is never downscaled) and every caption line.
  *
- * It does not poll. It listens to BossModBrowserVisionStatus, the one poller,
+ * It does not poll. It listens to BossModBrowserVisionStatus, the one reader,
  * and refetches the image only when the item's `taken_at` changes. Images come
  * from an authenticated route, so they are fetched as blob URLs (a bare
  * <img src> would not carry the API token) and revoked when replaced or when
@@ -147,7 +147,7 @@ const BossModExtensionsLive = (() => {
     /**
      * The `browserView` capability an agent conversation's header takes:
      * which agents have a view and change notifications (from the one
-     * status poller), and this viewer to open.
+     * status reader), and this viewer to open.
      *
      * @returns {{hasView: Function, subscribe: Function, open: Function}}
      */

@@ -92,6 +92,9 @@ def _cli_action_result(
         "cli_summary": cli_result.summary,
         # Operator one-liners a command asked for (validated where they are posted).
         "cli_status_lines": (cli_result.data or {}).get("status_lines", []),
+        # Which extension produced it (stamped by the CLI bridge), for the
+        # live-view nudge (see turn_helpers.announce_extension_result).
+        "cli_extension_id": (cli_result.data or {}).get("extension_id"),
         "counts_as_progress": cli_result_counts_as_progress(cli_result),
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": not (
