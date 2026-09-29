@@ -27,6 +27,12 @@ class TriggerPolicy:
     blocks_on_in_transit: bool = True
     # Dispatch: require no live activity. Used by social only.
     blocks_on_active_activity: bool = False
+    # Execution: run beside any live work without touching it — no frozen
+    # transcript is restored or written, the task and activity are treated as
+    # unbound (idle is allowed, task-state actions are refused), and idle ends
+    # the turn without completing any activity. Used by extension_event.
+    # Read only through core.agent_loop.work_binding.is_detached.
+    detached_from_work: bool = False
 
 
 _DEFAULT_POLICY = TriggerPolicy(trigger_type="unknown")
@@ -79,6 +85,12 @@ _POLICIES: dict[str, TriggerPolicy] = {
     ),
     "activity_resumed": TriggerPolicy(
         trigger_type="activity_resumed",
+    ),
+    "extension_event": TriggerPolicy(
+        trigger_type="extension_event",
+        # Like checking email between steps of a task: the task's transcript
+        # and state are untouched, and the dispatcher re-queues it after.
+        detached_from_work=True,
     ),
     "social": TriggerPolicy(
         trigger_type="social",

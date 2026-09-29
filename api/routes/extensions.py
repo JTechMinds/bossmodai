@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 from pathlib import Path
@@ -33,7 +34,7 @@ from core.extensions.contract import (
     SupportsAgentView,
     SupportsLiveView,
 )
-from core.extensions.manifest import AgentConfigSpec
+from core.extensions.manifest import AgentConfigField, AgentConfigSpec, agent_config_value
 from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery, set_enabled
@@ -138,7 +139,10 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
         "requires_image_model": requires_image,
         "live_view": manifest.live_view,
         "agent_config": {"label": manifest.agent_config.label} if manifest.agent_config else None,
-        "agent_view": {"label": manifest.agent_view.label} if manifest.agent_view else None,
+        "agent_view": {
+            "label": manifest.agent_view.label,
+            "views": [{"key": view.key, "label": view.label} for view in manifest.agent_view.views],
+        } if manifest.agent_view else None,
         "setup": entry_setup_status(entry).model_dump(),
         "setup_label": manifest.setup.label,
         "excluded_agents": _excluded_agents() if requires_image and valid else [],
@@ -331,6 +335,10 @@ def _config_payload(entry: ExtensionEntry, spec: AgentConfigSpec, agent_id: str)
         field: dict[str, Any] = {"key": item.key, "label": item.label, "kind": item.kind, "required": item.required}
         if item.kind == "secret":
             field["set"] = bool(stored and stored.get(item.key))
+        elif item.kind == "number":
+            field.update({"min": item.min, "max": item.max, "default": item.default})
+            # A config saved before the field existed reads as its default.
+            field["value"] = agent_config_value(spec, stored, item.key) if stored else item.default
         else:
             field["value"] = stored.get(item.key, "") if stored else ""
         fields.append(field)
@@ -369,8 +377,37 @@ def _resolve_values(
             raise _invalid("CONFIG_INVALID", f"{item.label} is required.")
         if item.kind == "email" and value and not _EMAIL_RE.match(value):
             raise _invalid("CONFIG_INVALID", f"{item.label} is not an email address.")
+        if item.kind == "number":
+            value = _number_value(item, value)
         resolved[item.key] = value
     return resolved
+
+
+def _number_value(item: AgentConfigField, value: str) -> str:
+    """A number field's value to store: blank is its default, else a whole number in bounds.
+
+    Raises:
+        HTTPException: 422 ``CONFIG_INVALID`` naming the allowed range.
+    """
+    if not value:
+        return item.default
+    try:
+        number = int(value)
+    except ValueError:
+        number = None
+    if number is None or (item.min is not None and number < item.min) or (item.max is not None and number > item.max):
+        raise _invalid("CONFIG_INVALID", f"{item.label} must be a whole number{_range_text(item)}.")
+    return str(number)
+
+
+def _range_text(item: AgentConfigField) -> str:
+    if item.min is not None and item.max is not None:
+        return f" from {item.min} to {item.max}"
+    if item.min is not None:
+        return f" of at least {item.min}"
+    if item.max is not None:
+        return f" of at most {item.max}"
+    return ""
 
 
 @router.get("/agents/{agent_id}/extensions")
@@ -378,8 +415,13 @@ async def agent_extensions(agent_id: str) -> list[dict[str, Any]]:
     """The desk's one read: every enabled, valid extension with per-agent settings.
 
     Returns:
-        ``[{id, name, config_label, view_label, configured, summary}]`` where
-        ``summary`` is the ``summary: true`` field's stored value, else null.
+        ``[{id, name, config_label, view_label, configured, summary, wakes,
+        wake}]`` where ``summary`` is the ``summary: true`` field's stored
+        value, else null; ``wakes`` says whether the extension wakes agents
+        (so the desk can tell "no check yet" from "never checks"); and
+        ``wake`` is the last wake check ``{checked_at, ok, error, last_new_at,
+        last_new_count}`` (UTC ISO times), null for a non-wake extension or
+        before the first check.
 
     Raises:
         HTTPException: 404 unknown agent.
@@ -399,8 +441,29 @@ async def agent_extensions(agent_id: str) -> list[dict[str, Any]]:
             "view_label": view.label if view is not None else None,
             "configured": stored is not None,
             "summary": _summary(spec, stored),
+            "wakes": entry.manifest.wake is not None,
+            "wake": _wake_status(entry, agent_id) if entry.manifest.wake is not None else None,
         })
     return items
+
+
+def _wake_status(entry: ExtensionEntry, agent_id: str) -> dict[str, Any] | None:
+    """The agent's last wake check for the desk, or ``None`` before the first."""
+    row = db.get_wake_status(entry.id, agent_id)
+    if row is None:
+        return None
+    return {
+        "checked_at": _iso_utc(row["checked_at"]),
+        "ok": bool(row["ok"]),
+        "error": row["error"],
+        "last_new_at": _iso_utc(row["last_new_at"]) if row["last_new_at"] is not None else None,
+        "last_new_count": row["last_new_count"],
+    }
+
+
+def _iso_utc(moment: datetime) -> str:
+    """ISO 8601 with an explicit UTC offset, so the desk can show local time."""
+    return (moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)).isoformat()
 
 
 @router.get("/extensions/{ext_id}/agents/{agent_id}/config")
@@ -467,11 +530,11 @@ async def delete_agent_config(ext_id: str, agent_id: str) -> Response:
     return Response(status_code=204)
 
 
-def _view_instance(ext_id: str, agent_id: str) -> SupportsAgentView:
+def _view_instance(ext_id: str, agent_id: str, view_key: str) -> SupportsAgentView:
     """Load an enabled agent-view extension for an agent that may use it.
 
     Raises:
-        HTTPException: 404 unknown extension or agent; 409
+        HTTPException: 404 unknown extension, agent or view; 409
             ``INVALID_EXTENSION`` / ``EXTENSION_DISABLED`` / ``NO_AGENT_VIEW``;
             409 ``NOT_CONFIGURED`` when the view needs a config the agent lacks.
     """
@@ -479,6 +542,8 @@ def _view_instance(ext_id: str, agent_id: str) -> SupportsAgentView:
     view = entry.manifest.agent_view
     if view is None:
         raise _conflict("NO_AGENT_VIEW", f"{entry.manifest.name} has no per-agent view.")
+    if view_key not in {item.key for item in view.views}:
+        raise HTTPException(404, f"{entry.manifest.name} has no view {view_key!r}")
     _agent_or_404(agent_id)
     if view.requires_config and db.get_extension_agent_config(entry.id, agent_id) is None:
         raise _conflict("NOT_CONFIGURED", f"{entry.manifest.name} is not set up for this agent.")
@@ -496,34 +561,42 @@ def _view_failed(exc: AgentViewError) -> HTTPException:
 async def agent_view(
     ext_id: str,
     agent_id: str,
+    view: str = Query(..., min_length=1),
     skip: int = Query(0, ge=0),
     top: int = Query(25, ge=1, le=100),
 ) -> dict[str, Any]:
-    """One page of an agent's records (e.g. its inbox), read-only.
+    """One page of one of an agent's record lists (e.g. its inbox), read-only.
+
+    ``view`` is one of the manifest's ``agent_view.views`` keys (required).
 
     Raises:
         HTTPException: the ``_view_instance`` refusals; 502 ``{error,
             message}`` when the extension's read fails.
     """
-    instance = _view_instance(ext_id, agent_id)
+    instance = _view_instance(ext_id, agent_id, view)
     try:
-        page = await asyncio.to_thread(instance.agent_view, agent_id, skip=skip, top=top)
+        page = await asyncio.to_thread(instance.agent_view, agent_id, view=view, skip=skip, top=top)
     except AgentViewError as exc:
         raise _view_failed(exc) from exc
     return page.model_dump()
 
 
 @router.get("/extensions/{ext_id}/agents/{agent_id}/view/{item_id}")
-async def agent_view_item(ext_id: str, agent_id: str, item_id: str) -> dict[str, Any]:
-    """One record in full (e.g. a message), read-only.
+async def agent_view_item(
+    ext_id: str,
+    agent_id: str,
+    item_id: str,
+    view: str = Query(..., min_length=1),
+) -> dict[str, Any]:
+    """One record of one list in full (e.g. a message), read-only.
 
     Raises:
         HTTPException: the ``_view_instance`` refusals; 502 ``{error,
             message}`` when the extension's read fails.
     """
-    instance = _view_instance(ext_id, agent_id)
+    instance = _view_instance(ext_id, agent_id, view)
     try:
-        item = await asyncio.to_thread(instance.agent_view_item, agent_id, item_id)
+        item = await asyncio.to_thread(instance.agent_view_item, agent_id, item_id, view=view)
     except AgentViewError as exc:
         raise _view_failed(exc) from exc
     return item.model_dump()

@@ -12,7 +12,6 @@ import logging
 import time
 from typing import Any
 
-from core.agent_loop import activity_runtime
 from core.agent_loop.chat_fade import note_agent_turn
 from core.agent_loop.sticky_slots import note_sticky_slot_turn
 from core.agent_loop.communication import (
@@ -37,6 +36,7 @@ from core.agent_loop.turn_context import (
     _get_reference_materials,
     stamp_channel_latest_line,
 )
+from core.agent_loop.work_binding import bind_turn, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, mark_restored, restore_work_turn
 from core.agent_loop.turn_helpers import (
     _cli_result_to_turn_result,
@@ -65,16 +65,30 @@ async def run_turn(
     (idle/complete/blocked/delegated/abandoned), walks somewhere, or
     the Guardian intervenes. Every exit path refreshes the visible runtime
     status and updates last_active_at.
+
+    The whole turn runs inside ``work_binding.bind_turn``, so every
+    turn-facing "what live work is this turn bound to?" lookup sees the
+    turn's binding (empty for a detached trigger).
     """
+    with bind_turn(agent.id, trigger):
+        return await _run_bound_turn(agent, state, trigger)
+
+
+async def _run_bound_turn(
+    agent: Agent,
+    state: AgentState,
+    trigger: dict[str, Any],
+) -> TurnOutcome:
+    """Body of :func:`run_turn`, inside the turn's work-binding scope."""
     start = time.monotonic()
     note_agent_turn()
     note_sticky_slot_turn()
     logger.info("Running turn for %s (trigger: %s)", agent.name, trigger.get("type"))
 
     trigger_type = trigger.get("type", "unknown")
-    stamp_trigger_origin_channel(trigger, task_id=activity_runtime.get_active_task_id(agent.id))
-    stamp_channel_latest_line(agent.id, trigger)
     policy = get_trigger_policy(trigger_type)
+    stamp_trigger_origin_channel(trigger, task_id=bound_task_id(agent.id))
+    stamp_channel_latest_line(agent.id, trigger)
 
     # 1. Determine activation mode
     mode = _determine_mode(trigger)
@@ -96,7 +110,7 @@ async def run_turn(
     current_channel = _get_current_channel(trigger)
     reference_materials = _get_reference_materials(agent.id)
     pending_count = max(db.count_queued_triggers(agent.id) - 1, 0)
-    initial_task_id = activity_runtime.get_active_task_id(agent.id)
+    initial_task_id = bound_task_id(agent.id)
     communication_snapshot = None
     if trigger_type in _COMMUNICATION_TRIGGER_TYPES:
         communication_snapshot = build_communication_snapshot(
@@ -123,9 +137,11 @@ async def run_turn(
         communication_snapshot_json=communication_snapshot_json(communication_snapshot) if communication_snapshot else None,
     )
     context = context_builder.build_context(turn_context)
-    if not is_decision_turn and trigger_type in RESUME_TRIGGER_TYPES:
+    # A detached turn never replays frozen work, including a resume that a
+    # detached turn opened (``detached_origin``).
+    if not is_decision_turn and not is_detached(trigger) and trigger_type in RESUME_TRIGGER_TYPES:
         # Resuming frozen work: fresh preamble, then the agent's own steps.
-        work_activity = activity_runtime.get_active_work_activity(agent.id)
+        work_activity = bound_work_activity(agent.id)
         if work_activity is not None:
             restored = restore_work_turn(activity=work_activity, context=context)
             if restored is not context:

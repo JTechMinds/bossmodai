@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import db
-from core.agent_loop import activity_runtime
+from core.agent_loop.work_binding import bound_task_id
 from core.bm_cli.types import BossModCliResult
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models import Agent
@@ -16,7 +16,7 @@ def register_cli_artifacts(agent: Agent, result: BossModCliResult) -> list[str]:
     if not result.ok or result.kind not in {"write", "append", "batch-write", "replace-section", "rewrite-section"}:
         return []
     data = result.data or {}
-    task_id = activity_runtime.get_active_task_id(agent.id)
+    task_id = bound_task_id(agent.id)
     virtual_paths: list[str] = []
     if isinstance(data.get("path"), str) and str(data.get("path")).strip():
         virtual_paths.append(str(data["path"]))

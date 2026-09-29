@@ -33,6 +33,7 @@ from core.llm.client import close_provider_sessions
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
+from core.agent_loop.work_binding import is_detached
 from core.agent_loop.work_snapshot import finish_restored_turn, paused_work_snapshot
 from core.agent_loop.task_origin_mirrors import (
     format_origin_status_line,
@@ -144,19 +145,25 @@ class TurnDispatcher:
         source_channel: str,
         payload: dict[str, Any],
         task_id: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Persist a trigger and wake the dispatcher.
 
         Writes nothing for a payload aimed at an archived thread or for an
         agent on vacation; both are expected, documented skips.
+
+        Returns:
+            Whether a trigger row was written (or merged into a queued one by
+            ``create_agent_trigger``). ``False`` for either skip, so a caller
+            that must not lose what it delivers (the extension wake service)
+            knows the agent was not told.
         """
         if agent_id_on_vacation(agent_id):
             logger.info("Skipped %s trigger for %s: agent is on vacation", trigger_type, agent_id)
-            return
+            return False
         if trigger_type == "human_chat":
             db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)
         if db.payload_targets_archived_channel(payload):
-            return
+            return False
         db.create_agent_trigger(
             agent_id=agent_id,
             trigger_type=trigger_type,
@@ -166,6 +173,7 @@ class TurnDispatcher:
         )
         schedule_queue_visibility(agent_id)
         self.notify()
+        return True
 
     async def reset_runtime(self) -> None:
         """Cancel all active turns and deferred timers without mutating the database."""
@@ -631,7 +639,9 @@ class TurnDispatcher:
             return False
 
         policy = get_trigger_policy(candidate.trigger_type)
-        state = activity_runtime.refresh_agent_status(agent.id)
+        # A detached trigger is not the agent resuming its live work, so the
+        # claim leaves that task's Soft-block alone.
+        state = activity_runtime.refresh_agent_status(agent.id, clear_soft_block=not is_detached(payload))
         if state is None:
             if db.fail_agent_trigger(
                 candidate.id,

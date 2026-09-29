@@ -19,6 +19,7 @@ from core.agent_loop.soft_blocks import (
     apply_no_progress_checkpoint,
 )
 from core.agent_loop.liveness import classify_step, next_stale_streak, record_action_liveness, step_fingerprint
+from core.agent_loop.work_binding import bound_activity, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import freeze_work_turn
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
@@ -130,7 +131,9 @@ async def _run_execution_turn(
     # Everything from here on, including approval/consent results, is this
     # turn's working transcript; the preamble before it is never frozen.
     initial_len = len(context)
-    work_activity = activity_runtime.get_active_work_activity(agent.id)
+    # A detached turn binds no work activity (see work_binding), so every
+    # _freeze_if_live exit is a no-op and no prior snapshot is read.
+    work_activity = bound_work_activity(agent.id)
     prior_snapshot = db.get_work_snapshot(work_activity.id) if work_activity else None
     seen_fingerprints: list[str] = list(prior_snapshot.fingerprints) if prior_snapshot else []
     no_progress_checkpoints = prior_snapshot.no_progress_checkpoints if prior_snapshot else 0
@@ -312,8 +315,8 @@ async def _run_execution_turn(
         action = parse_action(response.content)
         action_name = action["action"]
 
-        active_task_id = activity_runtime.get_active_task_id(agent.id)
-        active_activity = activity_runtime.get_active_activity(agent.id)
+        active_task_id = bound_task_id(agent.id)
+        active_activity = bound_activity(agent.id)
 
         # Handle parse failure
         if action_name == "_parse_failed":
@@ -413,6 +416,7 @@ async def _run_execution_turn(
             policy,
             active_activity.kind if active_activity else None,
             active_task_id,
+            trigger=trigger,
         )
         if validation_error:
             logger.warning("Contextual action validation failed for %s: %s", agent.name, validation_error)
@@ -533,7 +537,7 @@ async def _run_execution_turn(
                 result = await execute_action(action, agent, state, trigger, token_model=response.model)
         else:
             result = await execute_action(action, agent, state, trigger, token_model=response.model)
-        active_task_id = activity_runtime.get_active_task_id(agent.id)
+        active_task_id = bound_task_id(agent.id)
         if action_name == "bm_cli":
             await post_cli_status_lines(
                 agent,
@@ -688,6 +692,51 @@ async def _run_execution_turn(
         # reset the streak and novel reads leave it, so investigation alone
         # cannot trip this.
         violation = check_no_progress(agent, stale_streak)
+        if violation and is_detached(trigger):
+            # A detached turn has no task to checkpoint or block: it ends the
+            # way a hard guardian stop does above (failed turn, guardian
+            # detail on the step) and the paused task is left untouched.
+            logger.warning("Guardian %s for %s (detached turn): %s", violation.rule, agent.name, violation.detail)
+            result = {
+                "event": "guardian_violation",
+                "detail": f"Guardian [{violation.rule}]: {agent.name} — {violation.detail}",
+                "agent_name": agent.name,
+            }
+            await manager.broadcast_activity(**result)
+            return await _finalize_turn(
+                agent=agent,
+                trigger=trigger,
+                trigger_type=trigger_type,
+                mode=mode,
+                model=model,
+                model_source=model_source,
+                initial_context_json=initial_context_json,
+                outcome=TurnOutcome.failure(
+                    result=result,
+                    error=f"Guardian [{violation.rule}]: {violation.detail}",
+                    action=action,
+                    action_summary=_summarize_action_chain(executed_actions, action_name),
+                    raw_response=last_response_content,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                    total_tokens=total_tokens,
+                    steps=step_traces + [
+                        _build_step_trace(
+                            step_index=action_count,
+                            context_snapshot=prompt_delta,
+                            raw_response=last_response_content,
+                            action=action,
+                            result=result,
+                            prompt_tokens=step_prompt_tokens,
+                            completion_tokens=step_completion_tokens,
+                            total_tokens=step_total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=f"Guardian [{violation.rule}]: {violation.detail}",
+                        ),
+                    ],
+                ),
+                start=start,
+            )
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
             _freeze_if_live(

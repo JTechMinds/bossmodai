@@ -57,6 +57,18 @@ def _preview_trigger(trigger_type: str) -> dict[str, Any]:
         base.update({"content": "Provide a status update on the current task.", "task_title": "Write API summary"})
     if trigger_type == "social":
         base.update({"content": "", "from_name": "Nearby Team", "nearby_names": ["Morgan", "Riley"]})
+    if trigger_type == "extension_event":
+        title = "New email in reports@contoso.com"
+        line = '[m3f9a21c] Alice Doe <alice@contoso.com> — Re: Daily report — "Thanks, can you add the Q3 numbers?"'
+        base.update({
+            "source_channel": "system",
+            "extension_id": "ms365-mail",
+            "extension_name": "Microsoft 365 Mailbox",
+            "from_name": "Microsoft 365 Mailbox",
+            "title": title,
+            "lines": [line],
+            "content": f"{title}\n- {line}",
+        })
     return base
 
 

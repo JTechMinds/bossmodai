@@ -60,6 +60,7 @@ _RUNTIME_PREVIEW_TRIGGERS = [
     "activity_resumed",
     "watchdog_status_ping",
     "social",
+    "extension_event",
 ]
 
 

@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.agent_loop import activity_runtime
 from core.agent_loop.actions_shared import (
     _count_action_tokens,
     _normalize_delegate_work_contract,
@@ -29,6 +28,7 @@ from core.agent_loop.task_origins import (
     task_notification_policy_for_trigger,
     task_source_channel_for_trigger,
 )
+from core.agent_loop.work_binding import bound_task_id
 from core.agent_loop.role_contracts import evaluate_specialty_assignment
 from core.agent_loop.task_roles import (
     default_task_owner_id,
@@ -196,7 +196,7 @@ async def _handle_delegate_task(
             "expected_action": "delegateTask",
         }
 
-    parent_task_id = activity_runtime.get_active_task_id(agent.id)
+    parent_task_id = bound_task_id(agent.id)
     parent_task = db.get_task(parent_task_id) if parent_task_id else None
     if parent_task is not None:
         owner_id = str(parent_task.owner_id or "").strip()

@@ -246,6 +246,7 @@ from db.agent_triggers import (
     delete_queued_triggers_for_session,
     delete_queued_triggers_for_task,
     fail_agent_trigger,
+    find_queued_extension_event,
     get_agent_trigger,
     get_latest_trigger,
     has_claimed_trigger,
@@ -259,6 +260,7 @@ from db.agent_triggers import (
     release_trigger,
     retry_agent_trigger,
     requeue_stale_triggers,
+    update_queued_trigger_payload,
 )
 from db.runtime_control import (
     claim_runtime_command,
@@ -356,6 +358,7 @@ from db.extension_agent_configs import (
     get_extension_agent_config,
     set_extension_agent_config,
 )
+from db.extension_wake_status import get_wake_status, record_wake_check
 
 # AI Personalities
 from db.ai_personalities import (
@@ -542,6 +545,7 @@ __all__ = [
     "delete_queued_triggers_for_session",
     "delete_queued_triggers_for_task",
     "fail_agent_trigger",
+    "find_queued_extension_event",
     "get_agent_trigger",
     "get_latest_trigger",
     "has_claimed_trigger",
@@ -555,6 +559,7 @@ __all__ = [
     "release_trigger",
     "retry_agent_trigger",
     "requeue_stale_triggers",
+    "update_queued_trigger_payload",
     "claim_runtime_command",
     "complete_runtime_command",
     "create_runtime_command",
@@ -631,6 +636,9 @@ __all__ = [
     "extension_agent_config_updated_at",
     "get_extension_agent_config",
     "set_extension_agent_config",
+    # Per-agent extension wake checks
+    "get_wake_status",
+    "record_wake_check",
     # AI Personalities
     "create_personality",
     "delete_personality",

@@ -238,6 +238,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # JSON array of enabled extension ids. Written only by the extensions API,
     # which checks setup first; the generic settings PUT refuses it.
     ("extensions_enabled", "[]", "extensions"),
+    # How often the runtime worker's wake service looks for (extension, agent)
+    # pairs whose own poll interval (a per-agent setting) has come due.
+    ("extension_wake_tick_seconds", "5", "extensions"),
 ]
 _SEED_SETTING_DEFAULTS: dict[str, tuple[str, str]] = {
     key: (value, category) for key, value, category in _SEED_SETTINGS
@@ -267,6 +270,7 @@ def seed_defaults() -> None:
     reconcile_factory_cli_default_policy()
     reconcile_work_commit_prompt_contract()
     reconcile_work_commit_resume_prompt()
+    reconcile_extension_event_prompt()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -407,6 +411,38 @@ def reconcile_work_commit_resume_prompt() -> None:
         "Reconciled prompt settings to the work_commit resume and thread-wake contract: %s",
         ", ".join(_WORK_COMMIT_RESUME_PROMPT_KEYS),
     )
+
+
+# The ``extension_event`` branch (an extension woke the agent, e.g. new email)
+# lives in the trigger-event row. Seeding never overwrites it, so it moves to
+# the shipped default once per database.
+_EXTENSION_EVENT_PROMPT_KEY = "runtime_block_trigger_event"
+_EXTENSION_EVENT_PROMPT_RECONCILED = "extension_event_prompt_reconciled"
+
+
+def reconcile_extension_event_prompt() -> None:
+    """Overwrite the trigger-event row with the shipped default once.
+
+    Same marker-guarded pattern as :func:`reconcile_work_commit_resume_prompt`:
+    the first pass on a database writes the file-backed default and records
+    the marker; every later pass is a no-op, so operator edits made after it
+    are never touched. Edits made before it are replaced.
+
+    Raises:
+        RuntimeError: The prompt key has no seeded default.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_EXTENSION_EVENT_PROMPT_RECONCILED],
+    )
+    if seen is not None:
+        return
+    seeded = get_seed_setting_default(_EXTENSION_EVENT_PROMPT_KEY)
+    if seeded is None:
+        raise RuntimeError(f"Prompt setting '{_EXTENSION_EVENT_PROMPT_KEY}' has no seeded default")
+    set_setting(_EXTENSION_EVENT_PROMPT_KEY, load_default_prompt(_EXTENSION_EVENT_PROMPT_KEY), seeded[1])
+    set_setting(_EXTENSION_EVENT_PROMPT_RECONCILED, "true", "advanced")
+    logger.info("Reconciled prompt setting to the extension_event contract: %s", _EXTENSION_EVENT_PROMPT_KEY)
 
 
 def ensure_local_api_token() -> str:

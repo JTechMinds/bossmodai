@@ -212,14 +212,23 @@ def terminal_wake_feedback(agent: Agent, task: Task | None = None) -> dict[str, 
     }
 
 
-def refresh_agent_status(agent_id: str) -> AgentState | None:
-    """Derive visible agent status from the active runtime activity."""
+def refresh_agent_status(agent_id: str, *, clear_soft_block: bool = True) -> AgentState | None:
+    """Derive visible agent status from the active runtime activity.
+
+    Args:
+        agent_id: The agent to refresh.
+        clear_soft_block: Whether live work demotes the bound task's sticky
+            Soft-block (the default). The caller owns that decision: a
+            detached turn's claim and finalize pass ``False`` because they
+            are not the agent resuming that work.
+    """
     active = get_active_activity(agent_id)
     if active and active.kind == "work" and active.task_id:
         from core.agent_loop.soft_blocks import clear_soft_block_for_live_work
 
         # Live work demotes sticky Soft-block. Waiting still reads as waiting.
-        clear_soft_block_for_live_work(agent_id)
+        if clear_soft_block:
+            clear_soft_block_for_live_work(agent_id)
         task = db.get_task(active.task_id)
         if task is not None and task.status == "waiting":
             return db.update_agent_state(agent_id, status="waiting")

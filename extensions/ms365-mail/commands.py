@@ -19,6 +19,7 @@ from core.bm_cli.results import error_result, success_result
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 
 from .contacts import Contact, ContactBook, ContactBookError, ContactError
+from .formatting import render_body
 from .graph import (
     Address,
     GraphAuthError,
@@ -53,6 +54,8 @@ class Ms365MailDefaults(BaseModel):
     inbox_max_limit: int = Field(ge=1)
     id_map_keep: int = Field(ge=1)
     preview_chars: int = Field(ge=1)
+    # Most new messages one wake check delivers; the rest follow next check.
+    wake_batch_max: int = Field(ge=1)
 
     @model_validator(mode="after")
     def _default_within_max(self) -> "Ms365MailDefaults":
@@ -69,7 +72,7 @@ class MailboxLike(Protocol):
     def list_inbox(self, top: int, skip: int, unread_only: bool) -> InboxPage: ...
     def get_message(self, message_id: str) -> Message: ...
     def mark_read(self, message_id: str) -> None: ...
-    def send(self, to: Sequence[Address], cc: Sequence[Address], subject: str, body: str) -> None: ...
+    def send(self, to: Sequence[Address], cc: Sequence[Address], subject: str, body_html: str) -> None: ...
     def reply(self, message_id: str, body: str, reply_all: bool) -> None: ...
 
 
@@ -244,7 +247,8 @@ class MailCommands:
             [Address(name=c.name or "", address=c.address) for c in to],
             [Address(name=c.name or "", address=c.address) for c in cc],
             subject,
-            text,
+            # Agents write Markdown; it goes out formatted (plan E5).
+            render_body(text),
         )
         sent = "sent to " + ", ".join(c.display() for c in to)
         if cc:

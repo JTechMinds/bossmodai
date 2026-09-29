@@ -90,6 +90,10 @@ def test_deleting_the_agent_removes_its_rows() -> None:
     other = db.create_agent("Vera", role="Writer")
     db.set_extension_agent_config("ms365-mail", agent.id, {"a": "1"})
     db.set_extension_agent_config("ms365-mail", other.id, {"a": "2"})
+    db.record_wake_check("ms365-mail", agent.id, ok=True, error=None, new_count=1)
+    db.record_wake_check("ms365-mail", other.id, ok=True, error=None, new_count=0)
     assert db.delete_agent_rows(agent.id) is True
     assert db.get_extension_agent_config("ms365-mail", agent.id) is None
     assert db.get_extension_agent_config("ms365-mail", other.id) == {"a": "2"}
+    assert db.get_wake_status("ms365-mail", agent.id) is None
+    assert db.get_wake_status("ms365-mail", other.id) is not None

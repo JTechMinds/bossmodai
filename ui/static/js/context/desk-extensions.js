@@ -7,6 +7,13 @@
  * action (BossModAgentConfigDialog) and, once configured, the extension's
  * view action (BossModAgentViewDialog, e.g. "Open inbox").
  *
+ * A configured extension that wakes agents (manifest `wake`) adds one health
+ * line: "Last checked 13:42" (local, absolute, so it is never stale on
+ * screen) with "· 2 new at 13:41" when the last find was new, "Can't check
+ * <setting group>: <sentence>" in the alert ink, or "Waiting for first check".
+ * It is re-read when the desk opens and after the settings dialog closes;
+ * there is no polling.
+ *
  * Content only: the header is desk-panel.js's. The panel hides the whole
  * section while `isEmpty()` — no per-agent extension is enabled, or the
  * first read has not answered yet — so most desks show nothing new. A failed
@@ -24,7 +31,47 @@ const BossModDeskExtensions = (() => {
         configured: 'Set up',
         configure: 'Configure',
         edit: 'Edit',
+        waiting: 'Waiting for first check',
+        lastChecked: (time) => `Last checked ${time}`,
+        newAt: (count, time) => ` · ${count} new at ${time}`,
+        cantCheck: (label, sentence) => `Can’t check ${label}: ${sentence}`,
     });
+
+    /**
+     * `13:42`: an ISO instant as local 24-hour time.
+     *
+     * @param {string} iso
+     * @returns {string}
+     * @throws {Error} When the server sent an unreadable time.
+     */
+    function localTime(iso) {
+        const at = new Date(iso);
+        if (Number.isNaN(at.getTime())) throw new Error(`[desk-extensions] unreadable time ${iso}`);
+        return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+    }
+
+    /**
+     * The wake health line for a configured wake extension, or null.
+     *
+     * @param {object} item  An agentExtensions item whose extension wakes
+     *   agents (`wakes`); its `wake` is null before the first check.
+     * @returns {HTMLElement}
+     */
+    function wakeLine(item) {
+        const wake = item.wake;
+        if (!wake) {
+            return h('span', { class: 'desk-ext-wake', role: 'status' }, COPY.waiting);
+        }
+        if (!wake.ok) {
+            return h('span', { class: 'desk-ext-wake', 'data-tone': 'alert', role: 'status' },
+                COPY.cantCheck(item.config_label, wake.error));
+        }
+        let text = COPY.lastChecked(localTime(wake.checked_at));
+        if (wake.last_new_count > 0 && wake.last_new_at) {
+            text += COPY.newAt(wake.last_new_count, localTime(wake.last_new_at));
+        }
+        return h('span', { class: 'desk-ext-wake', role: 'status' }, text);
+    }
 
     /**
      * Build the section.
@@ -64,6 +111,7 @@ const BossModDeskExtensions = (() => {
                 agentId,
                 agentName: agentName() || item.name,
                 onSaved: () => { void refresh(); },
+                onClosed: () => { if (!destroyed) void refresh(); },
             }));
         }
 
@@ -81,7 +129,8 @@ const BossModDeskExtensions = (() => {
                 h('div', { class: 'desk-ext-main' },
                     h('span', { class: 'desk-ext-name', id: nameId }, item.name),
                     h('span', { class: 'desk-ext-status' },
-                        item.configured ? (item.summary || COPY.configured) : COPY.notSetUp)),
+                        item.configured ? (item.summary || COPY.configured) : COPY.notSetUp),
+                    item.configured && item.wakes ? wakeLine(item) : null),
                 h('div', { class: 'desk-ext-actions' },
                     h('button', {
                         class: 'btn btn-sm', type: 'button', id: `desk-ext-config-${item.id}`,

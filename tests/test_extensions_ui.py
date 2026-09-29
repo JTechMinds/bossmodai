@@ -23,6 +23,9 @@ MODULES = [
     JS / "core" / "data-table.js",
     JS / "extensions" / "agent-config-dialog.js",
     JS / "context" / "desk-extensions.js",
+    JS / "core" / "tabs.js",
+    JS / "core" / "fact-list.js",
+    JS / "extensions" / "agent-view-dialog.js",
 ]
 
 
@@ -85,6 +88,12 @@ def test_the_per_agent_surfaces() -> None:
         "deskSectionHiddenWithNone", "deskSectionShowsNotSetUp",
         "configDialogMasksTheSecret", "configDialogSendsABlankSecret", "configDialogShowsTheServerError",
         "configDialogShowsVerified", "deskDestroyClosesItsDialogs",
+        "configDialogRendersTheNumberField", "configDialogSendsTheNumber", "deskRereadsWhenTheDialogCloses",
+        "deskWakeWaiting", "deskWakeLastChecked", "deskWakeLastCheckedNothingNew", "deskWakeCantCheck",
+        "deskNoWakeLineForNonWake",
+        "viewTabsRendered", "viewOnlyTheShownTabIsRead", "viewSentTabBuildsItsOwnTable",
+        "viewSwitchingBackReadsNothingNew", "viewItemOpensWithItsView", "viewCloseDestroysEveryTable",
+        "viewOneListHasNoTabRow",
     ):
         assert payload.get(key) is True, (key, payload)
 

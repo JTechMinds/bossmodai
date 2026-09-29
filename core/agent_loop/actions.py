@@ -32,6 +32,7 @@ from core.agent_loop.actions_work import (
     _handle_walk_to,
     _handle_work,
 )
+from core.agent_loop.work_binding import bind_turn
 from core.models import Agent, AgentState
 from core.models.work_contract import WorkContract
 
@@ -461,7 +462,12 @@ async def execute_action(
     trigger: dict[str, Any] | None = None,
     token_model: str | None = None,
 ) -> dict[str, Any]:
-    """Execute a flat action dict and return the result."""
+    """Execute a flat action dict and return the result.
+
+    With a trigger, the handler runs inside ``work_binding.bind_turn`` for
+    it, so an action executed on its own binds the same live work as it would
+    inside ``run_turn`` (where this nests the identical scope).
+    """
     if token_model:
         action = {**action, "_token_model": token_model}
     action_type = action["action"]
@@ -471,7 +477,10 @@ async def execute_action(
         logger.warning("Unknown action '%s' from agent %s", action_type, agent.name)
         return {"event": "status_changed", "detail": f"Unknown action: {action_type}", "agent_name": agent.name}
 
-    return await handler(agent, state, action, trigger)
+    if trigger is None:
+        return await handler(agent, state, action, trigger)
+    with bind_turn(agent.id, trigger):
+        return await handler(agent, state, action, trigger)
 
 
 # ---------------------------------------------------------------------------

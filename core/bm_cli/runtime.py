@@ -128,7 +128,7 @@ def preview_bm_cli(
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="virtual")
 
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
     from core.bm_cli.nest_git_consent import maybe_block_gh_cli
 
@@ -137,7 +137,7 @@ def preview_bm_cli(
         parsed=parsed,
         content=None,
         cwd=cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
         channel_id=None,
         persist_chrome=False,
     )
@@ -148,7 +148,7 @@ def preview_bm_cli(
         agent,
         parsed,
         cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
         virtual_commands=VIRTUAL_COMMANDS,
     )
     if preview_outcome is not None:
@@ -239,11 +239,11 @@ def execute_bm_cli(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Execute a bounded shell-like BossMod CLI command for the given agent."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
 
     cwd_before = get_cli_cwd(agent.id)
     token = host_path_consent_scope.set(
-        ConsentScope(agent_id=agent.id, task_id=get_active_task_id(agent.id))
+        ConsentScope(agent_id=agent.id, task_id=bound_task_id(agent.id))
     )
     try:
         return _execute_bm_cli_inner(
@@ -483,14 +483,14 @@ def execute_approved_command(
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
 
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.locked_clone_outcome import prepare_locked_clone_approved
 
     prepared_clone = prepare_locked_clone_approved(
         agent,
         parsed,
         cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
     )
     if isinstance(prepared_clone, BossModCliResult):
         return prepared_clone
@@ -645,7 +645,7 @@ def _maybe_shell_executor_consent(
     channel_id: str | None,
 ) -> BossModCliResult | None:
     """Pause for Shell Executor Enable/Deny when a locked clone needs shell."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.shell_executor_consent import maybe_pause_for_shell_executor
 
     paused = maybe_pause_for_shell_executor(
@@ -653,7 +653,7 @@ def _maybe_shell_executor_consent(
         parsed=parsed,
         content=content,
         cwd=cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
         channel_id=channel_id,
         trigger_type=trigger_type,
     )
@@ -686,7 +686,7 @@ def _maybe_nest_git_auth_failure(
     shell_exec: object,
 ) -> BossModCliResult | None:
     """Map interactive git auth / rejected PAT to Blocked + Nest git card bounce."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.nest_git import (
         classify_git_auth_failure,
         is_gh_cli,
@@ -707,7 +707,7 @@ def _maybe_nest_git_auth_failure(
         parsed=parsed,
         content=content,
         cwd=cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
         channel_id=channel_id,
         auth_kind=classify_git_auth_failure(stdout, stderr),
     )
@@ -723,7 +723,7 @@ def _maybe_nest_git_consent(
     channel_id: str | None,
 ) -> BossModCliResult | None:
     """Pause or fail-closed for nest git auth. Always-allow does not skip this."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.nest_git_consent import maybe_pause_for_nest_git
 
     paused = maybe_pause_for_nest_git(
@@ -731,7 +731,7 @@ def _maybe_nest_git_consent(
         parsed=parsed,
         content=content,
         cwd=cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
         channel_id=channel_id,
         trigger_type=trigger_type,
     )
@@ -763,7 +763,7 @@ def _maybe_gh_cli_block(
     channel_id: str | None,
 ) -> BossModCliResult | None:
     """Fail-closed one Nest git / compare-URL card for gh. No Approve spam."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.nest_git_consent import maybe_block_gh_cli
 
     blocked = maybe_block_gh_cli(
@@ -771,7 +771,7 @@ def _maybe_gh_cli_block(
         parsed=parsed,
         content=content,
         cwd=cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
         channel_id=channel_id,
         trigger_type=trigger_type,
     )
@@ -846,14 +846,14 @@ def _apply_locked_clone_shell_outcome(
     channel_id: str | None,
 ) -> BossModCliResult | None:
     """Apply the shared locked-clone shell outcome, or None for the desk path."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
 
     outcome = decide_locked_clone_shell_outcome(
         agent,
         parsed,
         cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
         virtual_commands=VIRTUAL_COMMANDS,
     )
     if outcome is None:
@@ -1009,14 +1009,14 @@ def _apply_project_env_gate(
     cwd_before: str,
 ) -> ParsedCliCommand | BossModCliResult:
     """Rewrite or deny host pip on a locked clone; prefer uv/venv pytest."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.project_env import gate_locked_clone_command
 
     return gate_locked_clone_command(
         agent,
         parsed,
         cwd_before,
-        task_id=get_active_task_id(agent.id),
+        task_id=bound_task_id(agent.id),
     )
 
 
@@ -1422,7 +1422,7 @@ def _execute_virtual(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Route to the virtual handler and record the audit event."""
-    from core.agent_loop.activity_runtime import get_active_task_id
+    from core.agent_loop.work_binding import bound_task_id
 
     handler = _HANDLERS.get(parsed.name)
     if handler is None:
@@ -1454,7 +1454,7 @@ def _execute_virtual(
             parsed=parsed,
             content=content,
             cwd=cwd_before,
-            task_id=get_active_task_id(agent.id),
+            task_id=bound_task_id(agent.id),
             channel_id=channel_id,
         )
         if paused is not None:
@@ -1464,7 +1464,7 @@ def _execute_virtual(
     except PathOutsideRootsError as exc:
         raw_path = exc.raw_path or _named_path_from_command(parsed)
         if raw_path:
-            from core.agent_loop.activity_runtime import get_active_task_id
+            from core.agent_loop.work_binding import bound_task_id
 
             result = handle_named_path_consent(
                 agent=agent,
@@ -1472,7 +1472,7 @@ def _execute_virtual(
                 command=parsed.raw,
                 content=content,
                 cwd=cwd_before,
-                task_id=get_active_task_id(agent.id),
+                task_id=bound_task_id(agent.id),
                 channel_id=channel_id,
             )
         else:

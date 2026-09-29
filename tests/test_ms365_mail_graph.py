@@ -141,16 +141,16 @@ def test_get_message_asks_for_a_text_body() -> None:
     assert message.body == "Line 1\r\nLine 2" and message.to[0].address == "reports@contoso.com"
 
 
-def test_send_posts_plain_text_with_recipients() -> None:
+def test_send_posts_html_with_recipients() -> None:
     seen = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(json.loads(request.content))
         return httpx.Response(202)
 
-    _mailbox(handler).send([graph.Address("Alice Doe", "alice@x.com")], [graph.Address("", "ops@x.com")], "Subj", "Body text")
+    _mailbox(handler).send([graph.Address("Alice Doe", "alice@x.com")], [graph.Address("", "ops@x.com")], "Subj", "<div><p>Body</p></div>")
     message = seen[0]["message"]
-    assert message["body"] == {"contentType": "Text", "content": "Body text"}
+    assert message["body"] == {"contentType": "HTML", "content": "<div><p>Body</p></div>"}
     assert message["toRecipients"] == [{"emailAddress": {"address": "alice@x.com", "name": "Alice Doe"}}]
     assert message["ccRecipients"] == [{"emailAddress": {"address": "ops@x.com"}}]
     assert seen[0]["saveToSentItems"] is True
@@ -256,17 +256,102 @@ def test_the_operator_view_lists_short_ids_and_never_marks_read(tmp_path) -> Non
         return httpx.Response(200, json={**_message("GRAPH-1"), "toRecipients": [], "body": {"content": "Body"}})
 
     extension = _extension(tmp_path, handler, FakeTokens())
-    page = extension.agent_view("agent-1", skip=0, top=25)
+    page = extension.agent_view("agent-1", view="inbox", skip=0, top=25)
     short = page.rows[0].id
     assert page.caption == f"Inbox of {MAILBOX}" and page.rows[0].emphasis is True
     assert page.rows[0].cells == {"subject": "Hello", "from": "Alice Doe <alice@x.com>", "received": "2026-09-29 09:14"}
-    item = extension.agent_view_item("agent-1", short)
+    item = extension.agent_view_item("agent-1", short, view="inbox")
     assert item.title == "Hello" and item.body_text == "Body" and ("Status", "Unread") in item.facts
     assert all(request.method == "GET" for request in requests)
     with pytest.raises(AgentViewError) as caught:
-        extension.agent_view_item("agent-1", "m00000000")
+        extension.agent_view_item("agent-1", "m00000000", view="inbox")
     assert caught.value.code == "UNKNOWN_MESSAGE_ID"
     unconfigured = _extension(tmp_path, handler, FakeTokens(), config=None)
     with pytest.raises(AgentViewError) as caught:
-        unconfigured.agent_view("agent-1", skip=0, top=25)
+        unconfigured.agent_view("agent-1", view="inbox", skip=0, top=25)
     assert caught.value.code == "MAILBOX_NOT_CONFIGURED"
+
+
+# ─── Sent Items (operator viewer only) and plain-language viewer errors ───
+
+
+def _sent(graph_id="SENT-1", **overrides):
+    item = {
+        "id": graph_id, "subject": "Daily report", "sentDateTime": "2026-09-29T10:02:00Z",
+        "toRecipients": [{"emailAddress": {"name": "Jordan", "address": "jordan@contoso.com"}}],
+        "bodyPreview": "Numbers attached", "hasAttachments": False,
+    }
+    item.update(overrides)
+    return item
+
+
+def test_sent_list_and_item_stay_under_the_root_and_order_by_sent_time() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"value": [_sent()], "@odata.nextLink": "https://elsewhere.example/next"})
+        return httpx.Response(200, json={**_sent(), "ccRecipients": [], "body": {"content": "Body"}})
+
+    mailbox = _mailbox(handler)
+    page = mailbox.list_sent(top=25, skip=25)
+    message = mailbox.get_sent_message("SENT/../1")
+    assert all(str(request.url).startswith(ROOT + "/") for request in seen)
+    assert seen[0].url.path == "/v1.0/users/reports@contoso.com/mailFolders/sentitems/messages"
+    assert seen[0].url.params["$orderby"] == "sentDateTime desc"
+    assert seen[0].url.params["$skip"] == "25" and seen[0].url.params["$top"] == "25"
+    assert {"toRecipients", "sentDateTime", "subject", "bodyPreview"} <= set(seen[0].url.params["$select"].split(","))
+    assert seen[1].url.raw_path.decode().startswith("/v1.0/users/reports@contoso.com/mailFolders/sentitems/messages/SENT%2F")
+    assert seen[1].headers["Prefer"] == 'outlook.body-content-type="text"'
+    assert len(seen) == 2  # the nextLink is never followed
+    assert page.has_more is True and page.messages[0].to[0].address == "jordan@contoso.com"
+    assert message.body == "Body" and message.sent.isoformat() == "2026-09-29T10:02:00+00:00"
+
+
+def test_the_operator_sent_view_lists_recipients_and_opens_an_item(tmp_path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert "/mailFolders/sentitems/messages" in request.url.path
+        if request.url.path.endswith("/messages"):
+            return httpx.Response(200, json={"value": [_sent("SENT-9")]})
+        return httpx.Response(200, json={**_sent("SENT-9"), "ccRecipients": [], "body": {"content": "Sent body"}})
+
+    extension = _extension(tmp_path, handler, FakeTokens())
+    page = extension.agent_view("agent-1", view="sent", skip=0, top=25)
+    assert [column.key for column in page.columns] == ["subject", "to", "sent"]
+    assert [column.label for column in page.columns] == ["Subject", "To", "Sent (UTC)"]
+    assert page.rows[0].cells == {"subject": "Daily report", "to": "Jordan <jordan@contoso.com>", "sent": "2026-09-29 10:02"}
+    assert page.caption == f"Sent from {MAILBOX}"
+    item = extension.agent_view_item("agent-1", page.rows[0].id, view="sent")
+    assert item.body_text == "Sent body" and ("Sent", "2026-09-29 10:02 UTC") in item.facts
+
+
+def test_viewer_errors_are_plain_sentences_and_the_detail_is_logged(tmp_path, caplog) -> None:
+    import logging
+
+    from core.extensions.contract import AgentViewError
+
+    denied = _extension(
+        tmp_path,
+        lambda r: httpx.Response(403, json={"error": {"code": "ErrorAccessDenied", "message": "Access is denied. Raw."}}),
+        FakeTokens(),
+    )
+    with caplog.at_level(logging.WARNING, logger=_PACKAGE.__name__):
+        with pytest.raises(AgentViewError) as caught:
+            denied.agent_view("agent-1", view="inbox", skip=0, top=25)
+    assert caught.value.code == "MAILBOX_ACCESS_DENIED"
+    assert caught.value.message == "The app doesn't have permission to open this mailbox."
+    assert any("Access is denied. Raw." in record.getMessage() for record in caplog.records)
+
+    fine = _extension(tmp_path, lambda r: httpx.Response(200, json={"value": []}), FakeTokens())
+    with pytest.raises(AgentViewError) as caught:
+        fine.agent_view_item("agent-1", "m00000000", view="sent")
+    assert caught.value.code == "UNKNOWN_MESSAGE_ID"
+    assert caught.value.message == "That message is no longer listed. Refresh the inbox."
+
+    (tmp_path / "ids").mkdir(exist_ok=True)
+    (tmp_path / "ids" / "agent-1.json").write_text("not json", encoding="utf-8")
+    with pytest.raises(AgentViewError) as caught:
+        fine.agent_view("agent-1", view="inbox", skip=0, top=25)
+    assert caught.value.code == "ID_MAP_UNREADABLE"
+    assert caught.value.message == "Couldn't read the saved message list. Refresh the inbox."

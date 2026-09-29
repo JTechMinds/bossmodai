@@ -106,7 +106,11 @@ const BossModExtensionsApi = (() => {
      *
      * @param {string} agentId
      * @returns {Promise<Array<{id: string, name: string, config_label: string,
-     *   view_label: string|null, configured: boolean, summary: string|null}>>}
+     *   view_label: string|null, configured: boolean, summary: string|null,
+     *   wakes: boolean, wake: {checked_at: string, ok: boolean, error: string|null,
+     *     last_new_at: string|null, last_new_count: number|null}|null}>>}
+     *   `wakes` says whether the extension wakes agents; `wake` is its last
+     *   check, null when it does not wake agents or before the first check.
      * @throws {Error} On any non-2xx.
      */
     async function agentExtensions(agentId) {
@@ -164,18 +168,19 @@ const BossModExtensionsApi = (() => {
     }
 
     /**
-     * One page of an agent's records (e.g. its inbox).
+     * One page of one of an agent's record lists (e.g. its inbox).
      *
      * @param {string} id
      * @param {string} agentId
+     * @param {string} view  One of the extension's `agent_view.views` keys.
      * @param {number} skip
      * @param {number} top
      * @returns {Promise<{columns: object[], rows: object[], has_more: boolean, caption: string}>}
      * @throws {Error} `code` is `NOT_CONFIGURED`, or the extension's own
-     *   (e.g. `MAILBOX_ACCESS_DENIED`) on a 502.
+     *   (e.g. `MAILBOX_ACCESS_DENIED`, with a plain sentence) on a 502.
      */
-    async function agentView(id, agentId, skip, top) {
-        const query = `skip=${enc(String(skip))}&top=${enc(String(top))}`;
+    async function agentView(id, agentId, view, skip, top) {
+        const query = `view=${enc(view)}&skip=${enc(String(skip))}&top=${enc(String(top))}`;
         const res = await apiFetch(`${agentBase(id, agentId)}/view?${query}`, { cache: 'no-store' });
         if (!res.ok) throw await failure(res, 'Couldn’t load this list.');
         return res.json();
@@ -186,12 +191,13 @@ const BossModExtensionsApi = (() => {
      *
      * @param {string} id
      * @param {string} agentId
+     * @param {string} view  The list the item was opened from.
      * @param {string} itemId
      * @returns {Promise<{title: string, facts: Array<[string, string]>, body_text: string}>}
      * @throws {Error} As agentView.
      */
-    async function agentViewItem(id, agentId, itemId) {
-        const res = await apiFetch(`${agentBase(id, agentId)}/view/${enc(itemId)}`, { cache: 'no-store' });
+    async function agentViewItem(id, agentId, view, itemId) {
+        const res = await apiFetch(`${agentBase(id, agentId)}/view/${enc(itemId)}?view=${enc(view)}`, { cache: 'no-store' });
         if (!res.ok) throw await failure(res, 'Couldn’t open this item.');
         return res.json();
     }

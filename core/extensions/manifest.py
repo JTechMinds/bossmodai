@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -60,17 +60,44 @@ class AgentConfigField(_Strict):
     Attributes:
         key: The stored key, a lowercase identifier.
         label: What the form shows.
-        kind: ``text``, ``secret`` (never sent back to the UI) or ``email``
-            (checked for an address shape on save).
+        kind: ``text``, ``secret`` (never sent back to the UI), ``email``
+            (checked for an address shape on save) or ``number`` (a whole
+            number within ``min``/``max``; blank on save stores ``default``).
         required: Whether an empty value is refused on save.
         summary: The one field whose value the desk shows once configured.
+        min: A ``number`` field's smallest value; ``None`` for no bound.
+        max: A ``number`` field's largest value; ``None`` for no bound.
+        default: A ``number`` field's value when left blank, and its value
+            in a config saved before the field existed. Required for a
+            ``number`` field; not allowed on any other kind.
     """
 
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
     label: str = Field(min_length=1)
-    kind: Literal["text", "secret", "email"]
+    kind: Literal["text", "secret", "email", "number"]
     required: bool = True
     summary: bool = False
+    min: int | None = None
+    max: int | None = None
+    default: str | None = None
+
+    @model_validator(mode="after")
+    def _number_bounds_and_default(self) -> "AgentConfigField":
+        if self.kind != "number":
+            if self.min is not None or self.max is not None or self.default is not None:
+                raise ValueError(f"field {self.key}: min, max and default apply only to a number field")
+            return self
+        if self.default is None:
+            raise ValueError(f"number field {self.key} needs a default")
+        try:
+            value = int(self.default)
+        except ValueError as exc:
+            raise ValueError(f"number field {self.key}: default {self.default!r} is not a whole number") from exc
+        if self.min is not None and self.max is not None and self.min > self.max:
+            raise ValueError(f"number field {self.key}: min is greater than max")
+        if (self.min is not None and value < self.min) or (self.max is not None and value > self.max):
+            raise ValueError(f"number field {self.key}: default {value} is outside min/max")
+        return self
 
 
 class AgentConfigSpec(_Strict):
@@ -98,16 +125,50 @@ class AgentConfigSpec(_Strict):
         return self
 
 
+class AgentViewTab(_Strict):
+    """One tab of a per-agent view, e.g. Inbox or Sent.
+
+    Attributes:
+        key: The ``view`` value the routes and ``agent_view`` take.
+        label: What the tab shows.
+    """
+
+    key: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,31}$")
+    label: str = Field(min_length=1)
+
+
 class AgentViewSpec(_Strict):
     """A read-only per-agent record list (``contract.SupportsAgentView``).
 
     Attributes:
         label: The desk action that opens it, e.g. "Open inbox".
+        views: The lists it offers, in tab order; at least one, keys unique.
+            With one, the viewer shows no tab row.
         requires_config: The view needs the agent's ``agent_config`` stored.
     """
 
     label: str = Field(min_length=1)
+    views: tuple[AgentViewTab, ...] = Field(min_length=1)
     requires_config: bool = True
+
+    @model_validator(mode="after")
+    def _view_keys_unique(self) -> "AgentViewSpec":
+        keys = [item.key for item in self.views]
+        duplicates = sorted({key for key in keys if keys.count(key) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate view keys: {', '.join(duplicates)}")
+        return self
+
+
+class WakeSpec(_Strict):
+    """How often the host asks an extension for new events (``contract.SupportsWake``).
+
+    Attributes:
+        interval_field: The ``agent_config`` ``number`` field holding each
+            agent's poll interval in seconds.
+    """
+
+    interval_field: str = Field(min_length=1)
 
 
 class ExtensionManifest(_Strict):
@@ -131,12 +192,27 @@ class ExtensionManifest(_Strict):
     agent_config: AgentConfigSpec | None = None
     # Set when the instance implements contract.SupportsAgentView.
     agent_view: AgentViewSpec | None = None
+    # Set when the instance implements contract.SupportsWake.
+    wake: WakeSpec | None = None
     defaults: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def _agent_view_config_declared(self) -> "ExtensionManifest":
         if self.agent_view is not None and self.agent_view.requires_config and self.agent_config is None:
             raise ValueError("agent_view.requires_config needs an agent_config block")
+        return self
+
+    @model_validator(mode="after")
+    def _wake_interval_is_a_number_field(self) -> "ExtensionManifest":
+        # Events are per agent and only configured agents are polled, so a
+        # wake extension needs per-agent settings holding its interval.
+        if self.wake is None:
+            return self
+        if self.agent_config is None:
+            raise ValueError("wake needs an agent_config block")
+        field = next((item for item in self.agent_config.fields if item.key == self.wake.interval_field), None)
+        if field is None or field.kind != "number":
+            raise ValueError(f"wake.interval_field {self.wake.interval_field!r} must name a number field of agent_config")
         return self
 
     @field_validator("prompt")
@@ -147,6 +223,35 @@ class ExtensionManifest(_Strict):
         if value is not None and (not value or "/" in value or "\\" in value or value.startswith(".")):
             raise ValueError("prompt must be a file name inside the extension folder")
         return value
+
+
+def agent_config_value(spec: AgentConfigSpec, stored: Mapping[str, str], key: str) -> str:
+    """Return one declared field's value from an agent's stored config.
+
+    A config saved before a field existed has no key for it; a field with a
+    manifest ``default`` then reads as that default. This is the declared
+    schema default, not a cover for missing data.
+
+    Args:
+        spec: The extension's ``agent_config`` block.
+        stored: The agent's stored values.
+        key: A field key.
+
+    Returns:
+        The stored value, or the field's ``default`` when the key is absent.
+
+    Raises:
+        KeyError: ``key`` is not a declared field, or it is absent from
+            ``stored`` and the field has no default.
+    """
+    field = next((item for item in spec.fields if item.key == key), None)
+    if field is None:
+        raise KeyError(f"{key!r} is not a declared agent_config field")
+    if key in stored:
+        return stored[key]
+    if field.default is None:
+        raise KeyError(f"stored config has no {key!r} and the field has no default")
+    return field.default
 
 
 def load_manifest(path: Path) -> ExtensionManifest:

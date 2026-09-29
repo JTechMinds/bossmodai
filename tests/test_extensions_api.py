@@ -427,46 +427,80 @@ class _Ext:
         if values["token"] == "bad":
             raise AgentConfigError("The client secret is wrong or has expired. Create a new secret and try again.")
         return "Connected to " + values["address"]
-    def agent_view(self, agent_id, *, skip, top):
+    def agent_view(self, agent_id, *, view, skip, top):
+        assert view == "inbox"
         config = self.ctx.read_agent_config(agent_id)
         if config["token"] == "throttled":
             raise AgentViewError("GRAPH_THROTTLED", "retry after 5s")
         rows = [AgentViewRow(id="m1", cells={"subject": "Hello"}, emphasis=True)]
         return AgentViewPage(columns=[AgentViewColumn(key="subject", label="Subject")], rows=rows[:top],
                              has_more=skip == 0, caption="Inbox of " + config["address"])
-    def agent_view_item(self, agent_id, item_id):
+    def agent_view_item(self, agent_id, item_id, *, view):
+        assert view == "inbox"
         if item_id != "m1":
             raise AgentViewError("UNKNOWN_MESSAGE_ID", item_id + " is not listed")
         return AgentViewItem(title="Hello", facts=[("From", "alice@x.com")], body_text="Line 1\\nLine 2")
 
+class _WakeExt(_Ext):
+    def poll_wake(self, agent_id):
+        raise AssertionError("not used")
+    def commit_wake(self, batch):
+        raise AssertionError("not used")
+    def skip_wake(self, agent_id):
+        raise AssertionError("not used")
+    def describe_wake_error(self, exc):
+        raise AssertionError("not used")
+
 def create(ctx):
-    return _Ext(ctx)
+    return _WakeExt(ctx) if ctx.manifest.wake is not None else _Ext(ctx)
 '''
 
 
-@pytest.fixture()
-def fake_mail(client, monkeypatch, tmp_path):
+_INTERVAL_FIELD = {
+    "key": "every", "label": "Check every (seconds)", "kind": "number",
+    "min": 15, "max": 3600, "default": "90", "required": False,
+}
+
+
+def _install_fake(client, monkeypatch, tmp_path, *, wake: bool):
     """A per-agent extension with a unique id (the loader caches instances per id)."""
     ext_id = f"fake-mail-{next(_fake_counter)}"
     folder = tmp_path / ext_id
     folder.mkdir()
-    (folder / "manifest.json").write_text(json.dumps({
+    fields = [
+        {"key": "token", "label": "Token", "kind": "secret"},
+        {"key": "address", "label": "Address", "kind": "email", "summary": True},
+        {"key": "note", "label": "Note", "kind": "text", "required": False},
+    ]
+    manifest = {
         "id": ext_id, "name": "Fake Mail", "version": "1.0.0", "description": "d",
         "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False},
-        "agent_config": {"label": "Fake mailbox", "help": "Para one.\n\nPara two.", "fields": [
-            {"key": "token", "label": "Token", "kind": "secret"},
-            {"key": "address", "label": "Address", "kind": "email", "summary": True},
-            {"key": "note", "label": "Note", "kind": "text", "required": False},
-        ]},
-        "agent_view": {"label": "Open inbox"},
-    }), encoding="utf-8")
+        "agent_config": {"label": "Fake mailbox", "help": "Para one.\n\nPara two.",
+                         "fields": fields + ([_INTERVAL_FIELD] if wake else [])},
+        "agent_view": {"label": "Open inbox", "views": [{"key": "inbox", "label": "Inbox"}]},
+    }
+    if wake:
+        manifest["wake"] = {"interval_field": "every"}
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (folder / "__init__.py").write_text(_FAKE_INIT, encoding="utf-8")
     found = discover(tmp_path, CORE_COMMAND_NAMES)
     monkeypatch.setattr("api.routes.extensions.get_discovery", lambda: found)
     assert client.put(f"/api/extensions/{ext_id}/enabled", json={"enabled": True}).status_code == 200
     agent = db.create_agent("Iris", role="Researcher")
     return SimpleNamespace(id=ext_id, agent=agent, base=f"/api/extensions/{ext_id}/agents/{agent.id}")
+
+
+@pytest.fixture()
+def fake_mail(client, monkeypatch, tmp_path):
+    """A per-agent extension without wake."""
+    return _install_fake(client, monkeypatch, tmp_path, wake=False)
+
+
+@pytest.fixture()
+def fake_wake_mail(client, monkeypatch, tmp_path):
+    """A per-agent extension that wakes agents, with a number interval field."""
+    return _install_fake(client, monkeypatch, tmp_path, wake=True)
 
 
 def _save(client, fake, **values):
@@ -480,14 +514,18 @@ def _verified(fake) -> dict:
 
 def test_the_list_item_names_its_per_agent_surfaces(client, fake_mail) -> None:
     item = _item(client, fake_mail.id)
-    assert item["agent_config"] == {"label": "Fake mailbox"} and item["agent_view"] == {"label": "Open inbox"}
+    assert item["agent_config"] == {"label": "Fake mailbox"}
+    assert item["agent_view"] == {"label": "Open inbox", "views": [{"key": "inbox", "label": "Inbox"}]}
 
 
 def test_an_extension_without_per_agent_surfaces_lists_them_as_null(client) -> None:
     item = _item(client)
     assert item["agent_config"] is None and item["agent_view"] is None
     mail = _item(client, "ms365-mail")
-    assert mail["agent_config"] == {"label": "Microsoft 365 mailbox"} and mail["agent_view"] == {"label": "Open inbox"}
+    assert mail["agent_config"] == {"label": "Microsoft 365 mailbox"}
+    assert mail["agent_view"] == {"label": "Open inbox", "views": [
+        {"key": "inbox", "label": "Inbox"}, {"key": "sent", "label": "Sent"},
+    ]}
 
 
 def test_the_desk_lists_enabled_per_agent_extensions_with_their_state(client, fake_mail) -> None:
@@ -495,7 +533,7 @@ def test_the_desk_lists_enabled_per_agent_extensions_with_their_state(client, fa
     assert listed.status_code == 200, listed.text
     assert listed.json() == [{
         "id": fake_mail.id, "name": "Fake Mail", "config_label": "Fake mailbox", "view_label": "Open inbox",
-        "configured": False, "summary": None,
+        "configured": False, "summary": None, "wakes": False, "wake": None,
     }]
     assert _save(client, fake_mail).status_code == 200
     assert client.get(f"/api/agents/{fake_mail.agent.id}/extensions").json()[0]["summary"] == "reports@contoso.com"
@@ -567,7 +605,10 @@ def test_a_blank_secret_with_nothing_stored_is_422(client, fake_mail) -> None:
 
 def test_per_agent_routes_refuse_a_disabled_extension_and_unknowns(client, fake_mail) -> None:
     client.put(f"/api/extensions/{fake_mail.id}/enabled", json={"enabled": False})
-    for response in (client.get(f"{fake_mail.base}/config"), _save(client, fake_mail), client.get(f"{fake_mail.base}/view")):
+    for response in (
+        client.get(f"{fake_mail.base}/config"), _save(client, fake_mail),
+        client.get(f"{fake_mail.base}/view", params={"view": "inbox"}),
+    ):
         assert response.status_code == 409 and response.json()["detail"]["error"] == "EXTENSION_DISABLED"
     client.put(f"/api/extensions/{fake_mail.id}/enabled", json={"enabled": True})
     assert client.get(f"/api/extensions/{fake_mail.id}/agents/nobody/config").status_code == 404
@@ -592,11 +633,11 @@ def test_delete_config(client, fake_mail) -> None:
 
 
 def test_view_and_item_need_a_config_then_answer(client, fake_mail) -> None:
-    refused = client.get(f"{fake_mail.base}/view")
+    refused = client.get(f"{fake_mail.base}/view", params={"view": "inbox"})
     assert refused.status_code == 409 and refused.json()["detail"]["error"] == "NOT_CONFIGURED"
     _save(client, fake_mail)
 
-    page = client.get(f"{fake_mail.base}/view", params={"skip": 0, "top": 25})
+    page = client.get(f"{fake_mail.base}/view", params={"view": "inbox", "skip": 0, "top": 25})
     assert page.status_code == 200, page.text
     assert page.json() == {
         "columns": [{"key": "subject", "label": "Subject"}],
@@ -604,19 +645,81 @@ def test_view_and_item_need_a_config_then_answer(client, fake_mail) -> None:
         "has_more": True,
         "caption": "Inbox of reports@contoso.com",
     }
-    item = client.get(f"{fake_mail.base}/view/m1")
+    item = client.get(f"{fake_mail.base}/view/m1", params={"view": "inbox"})
     assert item.status_code == 200
     assert item.json() == {"title": "Hello", "facts": [["From", "alice@x.com"]], "body_text": "Line 1\nLine 2"}
 
-    missing = client.get(f"{fake_mail.base}/view/m9")
+    missing = client.get(f"{fake_mail.base}/view/m9", params={"view": "inbox"})
     assert missing.status_code == 502
     assert missing.json()["detail"] == {"error": "UNKNOWN_MESSAGE_ID", "message": "m9 is not listed"}
     for bad in ({"top": 0}, {"top": 101}, {"skip": -1}):
-        assert client.get(f"{fake_mail.base}/view", params=bad).status_code == 422, bad
+        assert client.get(f"{fake_mail.base}/view", params={"view": "inbox", **bad}).status_code == 422, bad
 
 
 def test_a_view_failure_is_502_with_its_code(client, fake_mail) -> None:
     _save(client, fake_mail, token="throttled")
-    response = client.get(f"{fake_mail.base}/view")
+    response = client.get(f"{fake_mail.base}/view", params={"view": "inbox"})
     assert response.status_code == 502
     assert response.json()["detail"] == {"error": "GRAPH_THROTTLED", "message": "retry after 5s"}
+
+
+def test_the_view_route_needs_a_view_and_refuses_an_unknown_one(client, fake_mail) -> None:
+    _save(client, fake_mail)
+    assert client.get(f"{fake_mail.base}/view").status_code == 422
+    assert client.get(f"{fake_mail.base}/view/m1").status_code == 422
+    unknown = client.get(f"{fake_mail.base}/view", params={"view": "sent"})
+    assert unknown.status_code == 404
+    assert client.get(f"{fake_mail.base}/view/m1", params={"view": "sent"}).status_code == 404
+
+
+# ─── number fields and wake status ───
+
+
+def test_a_blank_number_field_stores_its_default(client, fake_wake_mail) -> None:
+    response = _save(client, fake_wake_mail, every="")
+    assert response.status_code == 200, response.text
+    assert db.get_extension_agent_config(fake_wake_mail.id, fake_wake_mail.agent.id)["every"] == "90"
+    field = next(item for item in response.json()["fields"] if item["key"] == "every")
+    assert field == {
+        "key": "every", "label": "Check every (seconds)", "kind": "number", "required": False,
+        "min": 15, "max": 3600, "default": "90", "value": "90",
+    }
+    assert _save(client, fake_wake_mail, every=" 120 ").status_code == 200
+    assert db.get_extension_agent_config(fake_wake_mail.id, fake_wake_mail.agent.id)["every"] == "120"
+
+
+@pytest.mark.parametrize("raw", ["14", "3601", "1.5", "ten", "-20"])
+def test_a_number_out_of_range_or_not_whole_is_422(client, fake_wake_mail, raw) -> None:
+    response = _save(client, fake_wake_mail, every=raw)
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "error": "CONFIG_INVALID", "message": "Check every (seconds) must be a whole number from 15 to 3600.",
+    }
+    assert db.get_extension_agent_config(fake_wake_mail.id, fake_wake_mail.agent.id) is None
+
+
+def test_a_config_saved_before_the_number_field_reads_its_default(client, fake_wake_mail) -> None:
+    db.set_extension_agent_config(fake_wake_mail.id, fake_wake_mail.agent.id, {
+        "token": _FAKE_SECRET, "address": "reports@contoso.com", "note": "",
+    })
+    fields = client.get(f"{fake_wake_mail.base}/config").json()["fields"]
+    assert next(item for item in fields if item["key"] == "every")["value"] == "90"
+
+
+def test_the_desk_item_carries_the_wake_status(client, fake_wake_mail) -> None:
+    agent_id = fake_wake_mail.agent.id
+    url = f"/api/agents/{agent_id}/extensions"
+    assert _save(client, fake_wake_mail).status_code == 200
+    first = client.get(url).json()[0]
+    assert first["wakes"] is True and first["wake"] is None
+
+    db.record_wake_check(fake_wake_mail.id, agent_id, ok=True, error=None, new_count=2)
+    ok = client.get(url).json()[0]["wake"]
+    assert ok["ok"] is True and ok["error"] is None and ok["last_new_count"] == 2
+    assert ok["checked_at"].endswith("+00:00") and ok["last_new_at"].endswith("+00:00")
+
+    db.record_wake_check(fake_wake_mail.id, agent_id, ok=False, error="Couldn't reach Microsoft 365.", new_count=0)
+    failed = client.get(url).json()[0]["wake"]
+    assert failed["ok"] is False and failed["error"] == "Couldn't reach Microsoft 365."
+    # A failed check keeps when mail last arrived.
+    assert failed["last_new_count"] == 2 and failed["last_new_at"] == ok["last_new_at"]

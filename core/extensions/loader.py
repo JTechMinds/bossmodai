@@ -20,6 +20,7 @@ from core.extensions.contract import (
     SupportsAgentConfig,
     SupportsAgentView,
     SupportsLiveView,
+    SupportsWake,
 )
 from core.extensions.manifest import ExtensionManifest
 from core.extensions.paths import extension_data_dir
@@ -98,7 +99,7 @@ def load_extension(entry: ExtensionEntry) -> Extension:
         ExtensionLoadError: The entry is invalid, the package failed to
             import, it has no ``create``, ``create`` raised, or the instance
             lacks a method its manifest declares (``live_view``,
-            ``agent_config``, ``agent_view``) — that last one also marks the
+            ``agent_config``, ``agent_view``, ``wake``) — that last one also marks the
             extension invalid (see :func:`contract_failure`).
     """
     with _lock:
@@ -158,6 +159,8 @@ def _broken_contract(manifest: ExtensionManifest, instance: object) -> str | Non
         return "manifest declares agent_config but the extension has no verify_agent_config() method"
     if manifest.agent_view is not None and not isinstance(instance, SupportsAgentView):
         return "manifest declares agent_view but the extension has no agent_view()/agent_view_item() methods"
+    if manifest.wake is not None and not isinstance(instance, SupportsWake):
+        return "manifest declares wake but the extension has no poll_wake()/commit_wake()/skip_wake()/describe_wake_error() methods"
     return None
 
 

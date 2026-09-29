@@ -3,7 +3,8 @@
 Loaded by the BossMod extension host (``core.extensions``) only when the
 extension is enabled. Each agent's mailbox (tenant, app, secret, address) is
 per-agent config the host stores wrapped at rest and verifies here on save;
-this module reads it only through ``ctx.read_agent_config``.
+this module reads it only through ``ctx.read_agent_config``. New unread mail
+wakes the agent through the host's wake service (``wake.py``).
 """
 
 from __future__ import annotations
@@ -26,6 +27,7 @@ from core.extensions.contract import (
     ExtensionContext,
     SetupError,
     SetupStatus,
+    WakeBatch,
 )
 from core.models import Agent
 
@@ -33,26 +35,41 @@ from .auth import RestTokenProvider, TokenProvider
 from .commands import NOT_CONFIGURED, MailCommands, Ms365MailDefaults, format_utc
 from .contacts import ContactBook
 from .graph import (
+    CONFIG_FAILED,
     GraphAuthError,
     GraphHttpError,
     GraphMailbox,
     GraphUnreachable,
+    Message,
+    SentMessage,
     describe_graph_error,
     friendly_config_error,
 )
 from .ids import IdMap, IdMapError, UnknownMessageId
+from .wake import MailWake, WakeStore
 
 logger = logging.getLogger(__name__)
 
 _IDS_DIRNAME = "ids"
 _CONTACTS_DIRNAME = "contacts"
+_WAKE_DIRNAME = "wake"
 # Agent ids name files under the data dir, so they must stay plain.
 _AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
-_VIEW_COLUMNS = [
+_VIEW_INBOX = "inbox"
+_VIEW_SENT = "sent"
+_INBOX_COLUMNS = [
     AgentViewColumn(key="subject", label="Subject"),
     AgentViewColumn(key="from", label="From"),
     AgentViewColumn(key="received", label="Received (UTC)"),
 ]
+_SENT_COLUMNS = [
+    AgentViewColumn(key="subject", label="Subject"),
+    AgentViewColumn(key="to", label="To"),
+    AgentViewColumn(key="sent", label="Sent (UTC)"),
+]
+# The operator viewer's sentences (plan E3); the code stays technical.
+VIEW_UNKNOWN_MESSAGE = "That message is no longer listed. Refresh the inbox."
+VIEW_ID_MAP_UNREADABLE = "Couldn't read the saved message list. Refresh the inbox."
 
 
 def create(ctx: ExtensionContext) -> "Ms365MailExtension":
@@ -65,7 +82,7 @@ def create(ctx: ExtensionContext) -> "Ms365MailExtension":
 
 
 class Ms365MailExtension:
-    """The ``mail`` command namespace, per-agent config verification and the inbox view.
+    """The ``mail`` command namespace, per-agent config verification, the inbox/sent view and wake.
 
     Args:
         ctx: Manifest, data dir and the per-agent config reader from the host.
@@ -100,6 +117,13 @@ class Ms365MailExtension:
             id_map_for=self._id_map_for,
             contacts_for=self._contacts_for,
             defaults=self._defaults,
+        )
+        self._wake = MailWake(
+            mailbox_for=self._mailbox_for,
+            id_map_for=self._id_map_for,
+            store_for=lambda agent_id: WakeStore(self._agent_file(_WAKE_DIRNAME, agent_id)),
+            batch_max=self._defaults.wake_batch_max,
+            preview_chars=self._defaults.preview_chars,
         )
 
     # ── host contract ─────────────────────────────────────────────────────
@@ -158,20 +182,31 @@ class Ms365MailExtension:
             raise AgentConfigError(friendly_config_error(exc)) from exc
         return f"Connected to {mailbox.mailbox}"
 
-    def agent_view(self, agent_id: str, *, skip: int, top: int) -> AgentViewPage:
-        """One page of the agent's inbox for the operator (read-only; nothing is marked read).
+    def agent_view(self, agent_id: str, *, view: str, skip: int, top: int) -> AgentViewPage:
+        """One page of the agent's inbox or Sent Items for the operator (read-only; nothing is marked read).
 
         Raises:
-            AgentViewError: No mailbox, a Graph failure, or an unreadable id map.
+            AgentViewError: No mailbox, a Graph failure (a plain sentence), or
+                an unreadable id map.
+            ValueError: ``view`` is not ``inbox`` or ``sent`` (the host
+                refuses any other first).
         """
         mailbox = self._view_mailbox(agent_id)
         try:
-            page = mailbox.list_inbox(top=top, skip=skip, unread_only=False)
-            shorts = self._id_map_for(agent_id).remember(message.id for message in page.messages)
+            if view == _VIEW_INBOX:
+                return self._inbox_page(agent_id, mailbox, skip=skip, top=top)
+            if view == _VIEW_SENT:
+                return self._sent_page(agent_id, mailbox, skip=skip, top=top)
         except (GraphAuthError, GraphUnreachable, GraphHttpError) as exc:
-            raise AgentViewError(*describe_graph_error(exc)) from exc
+            raise _view_graph_error(mailbox.mailbox, exc) from exc
         except IdMapError as exc:
-            raise AgentViewError("ID_MAP_UNREADABLE", str(exc)) from exc
+            logger.warning("Mailbox %s view: id map unreadable: %s", mailbox.mailbox, exc)
+            raise AgentViewError("ID_MAP_UNREADABLE", VIEW_ID_MAP_UNREADABLE) from exc
+        raise ValueError(f"unknown view {view!r}")
+
+    def _inbox_page(self, agent_id: str, mailbox: GraphMailbox, *, skip: int, top: int) -> AgentViewPage:
+        page = mailbox.list_inbox(top=top, skip=skip, unread_only=False)
+        shorts = self._id_map_for(agent_id).remember(message.id for message in page.messages)
         rows = [
             AgentViewRow(
                 id=short,
@@ -184,41 +219,73 @@ class Ms365MailExtension:
             )
             for short, message in zip(shorts, page.messages)
         ]
-        return AgentViewPage(
-            columns=_VIEW_COLUMNS,
-            rows=rows,
-            has_more=page.has_more,
-            caption=f"Inbox of {mailbox.mailbox}",
-        )
+        return AgentViewPage(columns=_INBOX_COLUMNS, rows=rows, has_more=page.has_more, caption=f"Inbox of {mailbox.mailbox}")
 
-    def agent_view_item(self, agent_id: str, item_id: str) -> AgentViewItem:
-        """One message in full for the operator (read-only; it is NOT marked read,
-        so the agent's ``--unread`` queue is unchanged by the operator looking).
+    def _sent_page(self, agent_id: str, mailbox: GraphMailbox, *, skip: int, top: int) -> AgentViewPage:
+        page = mailbox.list_sent(top=top, skip=skip)
+        shorts = self._id_map_for(agent_id).remember(message.id for message in page.messages)
+        rows = [
+            AgentViewRow(
+                id=short,
+                cells={
+                    "subject": message.subject or "(no subject)",
+                    "to": ", ".join(a.display() for a in message.to) or "(none)",
+                    "sent": format_utc(message.sent),
+                },
+            )
+            for short, message in zip(shorts, page.messages)
+        ]
+        return AgentViewPage(columns=_SENT_COLUMNS, rows=rows, has_more=page.has_more, caption=f"Sent from {mailbox.mailbox}")
+
+    def agent_view_item(self, agent_id: str, item_id: str, *, view: str) -> AgentViewItem:
+        """One inbox or sent message in full for the operator (read-only; it is NOT
+        marked read, so the agent's ``--unread`` queue is unchanged by the operator looking).
 
         Raises:
-            AgentViewError: No mailbox, an unknown id, or a Graph failure.
+            AgentViewError: No mailbox, an unknown id, or a Graph failure (a
+                plain sentence).
+            ValueError: ``view`` is not ``inbox`` or ``sent``.
         """
+        if view not in (_VIEW_INBOX, _VIEW_SENT):
+            raise ValueError(f"unknown view {view!r}")
         mailbox = self._view_mailbox(agent_id)
         try:
-            message = mailbox.get_message(self._id_map_for(agent_id).resolve(item_id))
+            graph_id = self._id_map_for(agent_id).resolve(item_id)
+            if view == _VIEW_SENT:
+                return _sent_item(mailbox.get_sent_message(graph_id))
+            return _inbox_item(mailbox.get_message(graph_id))
         except UnknownMessageId as exc:
-            raise AgentViewError("UNKNOWN_MESSAGE_ID", f"{exc} is not a listed message; refresh the inbox") from exc
+            raise AgentViewError("UNKNOWN_MESSAGE_ID", VIEW_UNKNOWN_MESSAGE) from exc
         except IdMapError as exc:
-            raise AgentViewError("ID_MAP_UNREADABLE", str(exc)) from exc
+            logger.warning("Mailbox %s view: id map unreadable: %s", mailbox.mailbox, exc)
+            raise AgentViewError("ID_MAP_UNREADABLE", VIEW_ID_MAP_UNREADABLE) from exc
         except (GraphAuthError, GraphUnreachable, GraphHttpError) as exc:
-            raise AgentViewError(*describe_graph_error(exc)) from exc
-        facts = [
-            ("From", message.sender.display() if message.sender else "(no sender)"),
-            ("To", ", ".join(a.display() for a in message.to) or "(none)"),
-        ]
-        if message.cc:
-            facts.append(("Cc", ", ".join(a.display() for a in message.cc)))
-        facts += [
-            ("Received", f"{format_utc(message.received)} UTC"),
-            ("Status", "Read" if message.is_read else "Unread"),
-            ("Attachments", "Yes" if message.has_attachments else "None"),
-        ]
-        return AgentViewItem(title=message.subject or "(no subject)", facts=facts, body_text=message.body)
+            raise _view_graph_error(mailbox.mailbox, exc) from exc
+
+    # ── wake (host SupportsWake) ──────────────────────────────────────────
+
+    def poll_wake(self, agent_id: str) -> WakeBatch | None:
+        """New unread inbox mail since the agent's committed watermark (see ``wake.MailWake.poll``).
+
+        Raises:
+            GraphAuthError, GraphUnreachable, GraphHttpError, WakeNotConfigured,
+            WakeStateError, IdMapError: the host records ``describe_wake_error``.
+        """
+        return self._wake.poll(agent_id)
+
+    def commit_wake(self, batch: WakeBatch) -> None:
+        """Persist the batch's watermark (see ``wake.MailWake.commit``)."""
+        self._wake.commit(batch)
+
+    def skip_wake(self, agent_id: str) -> None:
+        """Start watching from now, with no Graph call (vacation)."""
+        self._wake.skip(agent_id)
+
+    def describe_wake_error(self, exc: Exception) -> str:
+        """The desk's sentence: a Graph failure through ``friendly_config_error``, anything else ``CONFIG_FAILED``."""
+        if isinstance(exc, (GraphAuthError, GraphUnreachable, GraphHttpError)):
+            return friendly_config_error(exc)
+        return CONFIG_FAILED
 
     # ── per-agent state ───────────────────────────────────────────────────
 
@@ -246,3 +313,36 @@ class Ms365MailExtension:
         if not _AGENT_ID_RE.match(agent_id):
             raise ValueError(f"agent id {agent_id!r} cannot name a file")
         return self._data_dir / dirname / f"{agent_id}.json"
+
+
+def _view_graph_error(mailbox: str, exc: GraphAuthError | GraphUnreachable | GraphHttpError) -> AgentViewError:
+    """The operator's plain sentence; the technical detail goes to the log only."""
+    code, detail = describe_graph_error(exc)
+    logger.warning("Mailbox %s view failed: %s: %s", mailbox, code, detail)
+    return AgentViewError(code, friendly_config_error(exc))
+
+
+def _inbox_item(message: Message) -> AgentViewItem:
+    facts = [
+        ("From", message.sender.display() if message.sender else "(no sender)"),
+        ("To", ", ".join(a.display() for a in message.to) or "(none)"),
+    ]
+    if message.cc:
+        facts.append(("Cc", ", ".join(a.display() for a in message.cc)))
+    facts += [
+        ("Received", f"{format_utc(message.received)} UTC"),
+        ("Status", "Read" if message.is_read else "Unread"),
+        ("Attachments", "Yes" if message.has_attachments else "None"),
+    ]
+    return AgentViewItem(title=message.subject or "(no subject)", facts=facts, body_text=message.body)
+
+
+def _sent_item(message: SentMessage) -> AgentViewItem:
+    facts = [("To", ", ".join(a.display() for a in message.to) or "(none)")]
+    if message.cc:
+        facts.append(("Cc", ", ".join(a.display() for a in message.cc)))
+    facts += [
+        ("Sent", f"{format_utc(message.sent)} UTC"),
+        ("Attachments", "Yes" if message.has_attachments else "None"),
+    ]
+    return AgentViewItem(title=message.subject or "(no subject)", facts=facts, body_text=message.body)

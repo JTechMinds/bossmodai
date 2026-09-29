@@ -18,6 +18,7 @@ from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.meeting_watchdog import meeting_watchdog
 from core.agent_loop.watchdog import watchdog
 from core.extensions.loader import shutdown_loaded_extensions
+from core.extensions.wake_service import extension_wake_watch
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
 from core.world.simulation import simulation
 
@@ -60,8 +61,10 @@ class RuntimeController:
         watchdog.start()
         meeting_watchdog.start()
         channel_idle_watch.start()
+        extension_wake_watch.start()
 
     async def _stop_services(self) -> None:
+        await extension_wake_watch.stop()
         await channel_idle_watch.stop()
         await meeting_watchdog.stop()
         await watchdog.stop()

@@ -146,7 +146,8 @@ def test_the_enabled_set_round_trips_through_the_setting() -> None:
     assert enabled_ids() == frozenset()
     set_enabled("demo-ext", True)
     assert enabled_ids() == frozenset({"demo-ext"})
-    assert json.loads(db.get_settings("extensions")[0].value) == ["demo-ext"]
+    stored = next(item for item in db.get_settings("extensions") if item.key == "extensions_enabled")
+    assert json.loads(stored.value) == ["demo-ext"]
     set_enabled("demo-ext", False)
     assert enabled_ids() == frozenset()
 
@@ -259,7 +260,8 @@ def _agent_config(**overrides: Any) -> dict[str, Any]:
 
 def test_a_manifest_with_agent_config_and_agent_view_is_valid(tmp_path: Path) -> None:
     _write_ext(tmp_path, "per-agent", _manifest(
-        ext_id="per-agent", command="peragent", agent_config=_agent_config(), agent_view={"label": "Open it"},
+        ext_id="per-agent", command="peragent", agent_config=_agent_config(),
+        agent_view={"label": "Open it", "views": [{"key": "inbox", "label": "Inbox"}]},
     ))
     entry = discover(tmp_path, CORE_COMMAND_NAMES).get("per-agent")
     assert entry.valid, entry.invalid_reason
@@ -284,11 +286,14 @@ def test_bad_agent_config_fields_are_invalid(tmp_path: Path, fields: list, fragm
 
 
 def test_an_agent_view_that_needs_config_without_agent_config_is_invalid(tmp_path: Path) -> None:
-    _write_ext(tmp_path, "view-only", _manifest(ext_id="view-only", command="viewonly", agent_view={"label": "Open"}))
+    _write_ext(tmp_path, "view-only", _manifest(
+        ext_id="view-only", command="viewonly", agent_view={"label": "Open", "views": [{"key": "all", "label": "All"}]},
+    ))
     entry = discover(tmp_path, CORE_COMMAND_NAMES).get("view-only")
     assert not entry.valid and "agent_view.requires_config needs an agent_config block" in entry.invalid_reason
     _write_ext(tmp_path, "view-free", _manifest(
-        ext_id="view-free", command="viewfree", agent_view={"label": "Open", "requires_config": False},
+        ext_id="view-free", command="viewfree",
+        agent_view={"label": "Open", "views": [{"key": "all", "label": "All"}], "requires_config": False},
     ))
     assert discover(tmp_path, CORE_COMMAND_NAMES).get("view-free").valid
 
@@ -306,7 +311,7 @@ def test_a_declared_per_agent_capability_without_its_protocol_is_a_contract_fail
     extra: dict[str, Any] = {"agent_config": _agent_config()}
     if "agent_view" in block:
         # The config half is implemented; only the view is missing.
-        extra["agent_view"] = {"label": "Open"}
+        extra["agent_view"] = {"label": "Open", "views": [{"key": "all", "label": "All"}]}
     _write_ext(tmp_path, ext_id, _manifest(ext_id=ext_id, command=ext_id.replace("-", ""), **extra))
     if "agent_view" in block:
         init = tmp_path / ext_id / "__init__.py"
@@ -319,6 +324,92 @@ def test_a_declared_per_agent_capability_without_its_protocol_is_a_contract_fail
     with pytest.raises(ExtensionLoadError, match=method):
         load_extension(entry)
     assert method in contract_failure(ext_id)
+
+
+# ─── agent_view views, number fields and wake ───
+
+
+_NUMBER = {"key": "every", "label": "Every", "kind": "number", "min": 15, "max": 3600, "default": "90", "required": False}
+
+
+@pytest.mark.parametrize("views, fragment", [
+    ([], "views"),
+    ([{"key": "a", "label": "A"}, {"key": "a", "label": "B"}], "duplicate view keys: a"),
+])
+def test_bad_agent_views_are_invalid(tmp_path: Path, views: list, fragment: str) -> None:
+    _write_ext(tmp_path, "bad-views", _manifest(
+        ext_id="bad-views", command="badviews", agent_config=_agent_config(), agent_view={"label": "Open", "views": views},
+    ))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("bad-views")
+    assert not entry.valid and fragment in entry.invalid_reason, entry.invalid_reason
+
+
+@pytest.mark.parametrize("field, fragment", [
+    ({**_NUMBER, "default": None}, "needs a default"),
+    ({**_NUMBER, "default": "10"}, "outside min/max"),
+    ({**_NUMBER, "default": "4000"}, "outside min/max"),
+    ({**_NUMBER, "default": "ninety"}, "not a whole number"),
+    ({**_NUMBER, "min": 100, "max": 50, "default": "60"}, "min is greater than max"),
+    ({"key": "t", "label": "T", "kind": "text", "default": "x"}, "apply only to a number field"),
+])
+def test_a_number_field_needs_a_default_within_bounds(tmp_path: Path, field: dict, fragment: str) -> None:
+    _write_ext(tmp_path, "bad-number", _manifest(
+        ext_id="bad-number", command="badnumber", agent_config=_agent_config(fields=[field]),
+    ))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("bad-number")
+    assert not entry.valid and fragment in entry.invalid_reason, entry.invalid_reason
+
+
+def test_wake_needs_agent_config(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "wake-bare", _manifest(ext_id="wake-bare", command="wakebare", wake={"interval_field": "every"}))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-bare")
+    assert not entry.valid and "wake needs an agent_config block" in entry.invalid_reason
+
+
+@pytest.mark.parametrize("interval_field", ["note", "missing"])
+def test_wake_interval_field_must_name_a_number_field(tmp_path: Path, interval_field: str) -> None:
+    _write_ext(tmp_path, "wake-bad", _manifest(
+        ext_id="wake-bad", command="wakebad",
+        agent_config=_agent_config(fields=[*_agent_config()["fields"], _NUMBER]),
+        wake={"interval_field": interval_field},
+    ))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-bad")
+    assert not entry.valid and "must name a number field of agent_config" in entry.invalid_reason
+
+
+def test_wake_without_its_protocol_is_a_contract_failure(tmp_path: Path) -> None:
+    from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
+
+    _write_ext(tmp_path, "no-wake", _manifest(
+        ext_id="no-wake", command="nowake",
+        agent_config=_agent_config(fields=[*_agent_config()["fields"], _NUMBER]),
+        wake={"interval_field": "every"},
+    ))
+    init = tmp_path / "no-wake" / "__init__.py"
+    init.write_text(init.read_text(encoding="utf-8").replace(
+        "    def shutdown(self):",
+        "    def verify_agent_config(self, values):\n        return 'ok'\n    def shutdown(self):",
+    ), encoding="utf-8")
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("no-wake")
+    assert entry.valid and entry.manifest.wake.interval_field == "every"
+    with pytest.raises(ExtensionLoadError, match="declares wake"):
+        load_extension(entry)
+    assert "poll_wake" in contract_failure("no-wake")
+
+
+def test_agent_config_value_reads_a_declared_default_for_an_absent_key(tmp_path: Path) -> None:
+    from core.extensions.manifest import agent_config_value
+
+    _write_ext(tmp_path, "defaults", _manifest(
+        ext_id="defaults", command="defaults", agent_config=_agent_config(fields=[*_agent_config()["fields"], _NUMBER]),
+    ))
+    spec = discover(tmp_path, CORE_COMMAND_NAMES).get("defaults").manifest.agent_config
+    assert agent_config_value(spec, {"every": "30"}, "every") == "30"
+    assert agent_config_value(spec, {}, "every") == "90"
+    with pytest.raises(KeyError):
+        agent_config_value(spec, {}, "note")
+    with pytest.raises(KeyError):
+        agent_config_value(spec, {}, "undeclared")
 
 
 # ─── setup.ready_requires (R35 amendment) ───

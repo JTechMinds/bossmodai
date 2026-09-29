@@ -7,7 +7,9 @@
  *   - the extension's help text first, as text, one paragraph per blank line;
  *   - one labelled input per field: `secret` through BossModSecretField
  *     (never pre-filled; when one is stored the placeholder says a blank keeps
- *     it), `email` as type=email, `text` as text;
+ *     it), `email` as type=email, `number` as type=number with the server's
+ *     min/max and its default as placeholder (and value until one is saved),
+ *     `text` as text;
  *   - Save verifies on the server before anything is stored. While it runs
  *     the status line says "Verifying connection…"; a refusal shows the
  *     server's message verbatim (e.g. an AADSTS error) and keeps the typing;
@@ -45,15 +47,19 @@ const BossModAgentConfigDialog = (() => {
      * @param {string} options.agentName  Named in the title.
      * @param {() => void} options.onSaved  Called after a successful save or
      *   removal, so the desk can re-read.
+     * @param {() => void} options.onClosed  Called once the dialog closes, however
+     *   it closes, so the desk can re-read state that changed while it was open
+     *   (e.g. the first new-mail check after a save).
      * @returns {{close: () => void}}
      * @throws {Error} When a required option is missing.
      */
     function open(options) {
-        const { extensionId, agentId, agentName, onSaved } = options || {};
+        const { extensionId, agentId, agentName, onSaved, onClosed } = options || {};
         if (!extensionId) throw new Error('[agent-config-dialog] extensionId is required');
         if (!agentId) throw new Error('[agent-config-dialog] agentId is required');
         if (!agentName) throw new Error('[agent-config-dialog] agentName is required');
         if (typeof onSaved !== 'function') throw new Error('[agent-config-dialog] onSaved is required');
+        if (typeof onClosed !== 'function') throw new Error('[agent-config-dialog] onClosed is required');
 
         const body = h('div', { class: 'ext-config' });
         const statusEl = h('p', { class: 'field-hint ext-config-status', role: 'status', 'aria-live': 'polite' });
@@ -68,7 +74,7 @@ const BossModAgentConfigDialog = (() => {
             title: `Settings for ${agentName}`,
             body,
             actions: [],
-            onClose: () => { closed = true; },
+            onClose: () => { closed = true; onClosed(); },
         });
 
         function showError(message) {
@@ -111,6 +117,17 @@ const BossModAgentConfigDialog = (() => {
                 }, COPY.show);
                 inputs[field.key] = { field, input };
                 return h('div', { class: 'field' }, label, h('div', { class: 'ext-config-secret' }, input, reveal));
+            }
+            if (field.kind === 'number') {
+                const input = h('input', {
+                    class: 'field-input', id, type: 'number', step: '1', inputmode: 'numeric', autocomplete: 'off',
+                    min: field.min === null || field.min === undefined ? null : String(field.min),
+                    max: field.max === null || field.max === undefined ? null : String(field.max),
+                    placeholder: field.default, required: field.required ? true : null,
+                });
+                input.value = field.value || '';
+                inputs[field.key] = { field, input };
+                return h('div', { class: 'field' }, label, input);
             }
             const input = h('input', {
                 class: 'field-input', id, type: field.kind === 'email' ? 'email' : 'text',

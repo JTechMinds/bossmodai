@@ -59,8 +59,8 @@ class FakeMailbox:
     def mark_read(self, message_id):
         self.calls.append(("mark_read", message_id))
 
-    def send(self, to, cc, subject, body):
-        self.calls.append(("send", [a.address for a in to], [a.address for a in cc], subject, body))
+    def send(self, to, cc, subject, body_html):
+        self.calls.append(("send", [a.address for a in to], [a.address for a in cc], subject, body_html))
 
     def reply(self, message_id, body, reply_all):
         self.calls.append(("reply", message_id, body, reply_all))
@@ -191,7 +191,7 @@ def test_send_validation_sends_nothing(env, raw, body, code) -> None:
 def test_send_to_addresses_echoes_who_it_went_to(env) -> None:
     result = env.run("mail send a@x.com,b@x.com --cc c@x.com --subject 'Daily report'", "The report.")
     assert result.ok, result.prompt_content
-    assert env.state["mailbox"].calls == [("send", ["a@x.com", "b@x.com"], ["c@x.com"], "Daily report", "The report.")]
+    assert env.state["mailbox"].calls == [("send", ["a@x.com", "b@x.com"], ["c@x.com"], "Daily report", "<div><p>The report.</p>\n</div>")]
     assert "sent to a@x.com, b@x.com; cc c@x.com" in result.prompt_content
 
 
@@ -342,7 +342,7 @@ def test_a_quoted_multi_word_name_in_a_comma_list_with_mixed_cc(env) -> None:
     _seed(env)
     result = env.run('mail send "Alice Doe",new@x.com --cc ops --subject "RCA: login outage"', "RCA text")
     assert result.ok, result.prompt_content
-    assert env.state["mailbox"].calls == [("send", ["alice@contoso.com", "new@x.com"], ["ops@contoso.com"], "RCA: login outage", "RCA text")]
+    assert env.state["mailbox"].calls == [("send", ["alice@contoso.com", "new@x.com"], ["ops@contoso.com"], "RCA: login outage", "<div><p>RCA text</p>\n</div>")]
     assert "sent to Alice Doe <alice@contoso.com>, new@x.com; cc Ops Team <ops@contoso.com>" in result.prompt_content
 
 

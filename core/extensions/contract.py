@@ -17,8 +17,11 @@ refuses an instance that lacks the Protocol its manifest declares:
 - ``agent_config`` → :class:`SupportsAgentConfig` (per-agent settings the
   host stores wrapped at rest and verifies through the extension on save;
   the extension reads them only through ``ExtensionContext.read_agent_config``);
-- ``agent_view`` → :class:`SupportsAgentView` (a read-only per-agent record
-  list plus item detail, opened from the agent's desk);
+- ``agent_view`` → :class:`SupportsAgentView` (read-only per-agent record
+  lists, one per declared view, plus item detail, opened from the agent's desk);
+- ``wake`` → :class:`SupportsWake` (new events per configured agent, polled
+  by the runtime worker's wake service, which wakes the agent with an
+  ``extension_event`` trigger);
 - :class:`SupportsPromptState` needs no manifest flag.
 """
 
@@ -248,20 +251,82 @@ class AgentViewItem(BaseModel):
 
 @runtime_checkable
 class SupportsAgentView(Protocol):
-    """Optional: an extension whose manifest has an ``agent_view`` block implements this."""
+    """Optional: an extension whose manifest has an ``agent_view`` block implements this.
 
-    def agent_view(self, agent_id: str, *, skip: int, top: int) -> AgentViewPage:
-        """Return one page of the agent's records.
+    ``view`` is always one of the manifest's ``agent_view.views`` keys; the
+    host refuses any other before calling.
+    """
+
+    def agent_view(self, agent_id: str, *, view: str, skip: int, top: int) -> AgentViewPage:
+        """Return one page of one of the agent's record lists.
 
         Raises:
             AgentViewError: The read failed.
         """
         ...
 
-    def agent_view_item(self, agent_id: str, item_id: str) -> AgentViewItem:
-        """Return one record in full.
+    def agent_view_item(self, agent_id: str, item_id: str, *, view: str) -> AgentViewItem:
+        """Return one record of that list in full.
 
         Raises:
             AgentViewError: The read failed or ``item_id`` is unknown.
+        """
+        ...
+
+
+class WakeBatch(BaseModel):
+    """New events for one agent, handed from ``poll_wake`` to ``commit_wake``.
+
+    Attributes:
+        agent_id: The agent the events are for.
+        title: One line naming what arrived, e.g. "New email in shared@contoso.com".
+        lines: One line per item, e.g. "[m3f9a21c] Alice Doe <alice@x.com> — Re: Daily report".
+        cursor: Opaque to the host; handed back to ``commit_wake`` unchanged.
+    """
+
+    agent_id: str
+    title: str
+    lines: list[str]
+    cursor: str
+
+
+@runtime_checkable
+class SupportsWake(Protocol):
+    """Optional: an extension whose manifest has a ``wake`` block implements this.
+
+    Two-phase: the host persists the agent's trigger first and commits the
+    batch only after, so a failed enqueue never loses events. Every method
+    runs in the runtime worker, off its event loop, and may block.
+    """
+
+    def poll_wake(self, agent_id: str) -> WakeBatch | None:
+        """Return the events since this agent's committed cursor, or ``None``.
+
+        Must not advance the committed cursor (except to record where
+        watching starts, which delivers nothing and so loses nothing).
+
+        Raises:
+            Exception: The extension's own error types; the host records
+                ``describe_wake_error`` of it and moves on.
+        """
+        ...
+
+    def commit_wake(self, batch: WakeBatch) -> None:
+        """Persist ``batch.cursor`` as this agent's committed cursor."""
+        ...
+
+    def skip_wake(self, agent_id: str) -> None:
+        """Advance this agent's cursor to now without delivering anything (no network call).
+
+        Called instead of ``poll_wake`` while the agent is on vacation, so
+        what arrives meanwhile never wakes it.
+        """
+        ...
+
+    def describe_wake_error(self, exc: Exception) -> str:
+        """Return one plain sentence for the operator about a ``poll_wake`` failure.
+
+        It is shown on the agent's desk, so it must never carry a secret or
+        raw service text.
         """
         ...

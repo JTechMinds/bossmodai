@@ -28,6 +28,7 @@ from core.agent_loop.task_origin_mirrors import (
     named_origin_line,
     persist_unbound_status_line,
 )
+from core.agent_loop.work_binding import bound_task_id
 from core.models import Activity, Agent, Task
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import runtime_events as manager
@@ -217,9 +218,10 @@ def next_owner_mention(agent: Agent) -> str:
     Precedence: the task's requester, then its owner — each only when it is
     not the agent itself and shares the agent's floor — else
     ``@Human Operator``. A teammate who merely shares the thread is never
-    named: they did not ask for the work.
+    named: they did not ask for the work. The bound task is the turn's
+    (``work_binding``): a detached turn has none, so it names the operator.
     """
-    task_id = activity_runtime.get_active_task_id(agent.id)
+    task_id = bound_task_id(agent.id)
     task = db.get_task(task_id) if task_id else None
     if task is not None:
         for party_id in (getattr(task, "requester_id", None), getattr(task, "owner_id", None)):

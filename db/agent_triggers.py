@@ -41,6 +41,7 @@ CASE trigger_type
     WHEN 'channel_response' THEN 6
     WHEN 'session_message' THEN 7
     WHEN 'channel_message' THEN 8
+    WHEN 'extension_event' THEN 8
     WHEN 'watchdog_status_ping' THEN 9
     WHEN 'task_assigned' THEN 10
     WHEN 'activity_resumed' THEN 10
@@ -560,6 +561,53 @@ def fail_agent_trigger(
         [reason, datetime.now(timezone.utc), trigger_id, claim_generation],
         AgentTrigger,
     )
+
+
+def find_queued_extension_event(agent_id: str, extension_id: str) -> AgentTrigger | None:
+    """Return the agent's unclaimed ``extension_event`` from one extension, if any.
+
+    The wake service merges new events into this row rather than stacking a
+    second wake. A claimed row is never returned: its turn has started.
+
+    Args:
+        agent_id: The agent.
+        extension_id: The payload's ``extension_id``.
+
+    Returns:
+        The oldest matching queued trigger, or ``None``.
+    """
+    return fetch_one(
+        f"""
+        SELECT {_TRIGGER_COLUMNS}
+        FROM agent_triggers
+        WHERE agent_id = $1
+          AND trigger_type = 'extension_event'
+          AND status = 'queued'
+          AND json_extract(payload, '$.extension_id') = $2
+        ORDER BY created_at ASC, id ASC
+        LIMIT 1
+        """,
+        [agent_id, extension_id],
+        AgentTrigger,
+    )
+
+
+def update_queued_trigger_payload(trigger_id: str, payload: dict[str, Any]) -> bool:
+    """Replace a still-queued trigger's payload.
+
+    Args:
+        trigger_id: The trigger.
+        payload: The complete new payload.
+
+    Returns:
+        Whether a row changed. ``False`` means the trigger is no longer
+        queued (the dispatcher claimed it in between) or does not exist.
+    """
+    changed = query(
+        "UPDATE agent_triggers SET payload = $1 WHERE id = $2 AND status = 'queued' RETURNING 1",
+        [json.dumps(payload), trigger_id],
+    )
+    return bool(changed)
 
 
 def get_agent_trigger(trigger_id: str) -> AgentTrigger | None:

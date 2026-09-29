@@ -275,7 +275,7 @@ def finish_blocked_origin(
     mention: str | None,
 ) -> None:
     """Wake the tagged next owner. Persist reads ``auto_github_issue``."""
-    from core.agent_loop import activity_runtime
+    from core.agent_loop.work_binding import bound_task_id
 
     posted = bool(result.get("origin_status_messages"))
     origin_line = content if posted else None
@@ -289,7 +289,7 @@ def finish_blocked_origin(
     result["auto_github"] = {
         "title": content,
         "body": content,
-        "task_id": activity_runtime.get_active_task_id(agent.id),
+        "task_id": bound_task_id(agent.id),
         "origin_line": origin_line,
         "next_owner": mention,
     }
@@ -310,11 +310,11 @@ def surface_blocked_origin(
         named_origin_line,
         persist_unbound_status_line,
     )
-    from core.agent_loop import activity_runtime
+    from core.agent_loop.work_binding import bound_task_id
 
     mention = next_owner_mention(agent)
     content = format_blocked_line(why, mention)
-    task_id = activity_runtime.get_active_task_id(getattr(agent, "id", None) or "")
+    task_id = bound_task_id(getattr(agent, "id", None) or "")
     task = db.get_task(task_id) if task_id else None
     if task is not None:
         attach_operator_status_line(
@@ -392,7 +392,7 @@ def _wake_chat_owner(
     content: str,
     posted: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    from core.agent_loop import activity_runtime
+    from core.agent_loop.work_binding import bound_task_id
 
     target = _mentioned_agent(content, author_name=agent.name)
     if target is None or target.id == agent.id:
@@ -401,7 +401,7 @@ def _wake_chat_owner(
 
     if not peers_share_floor(agent.id, target.id):
         return []
-    task_id = activity_runtime.get_active_task_id(agent.id)
+    task_id = bound_task_id(agent.id)
     task = db.get_task(task_id) if task_id else None
     if task is not None:
         return [

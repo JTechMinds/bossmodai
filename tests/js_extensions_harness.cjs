@@ -20,6 +20,7 @@ const NAMES = [
     "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModExtensionsApi",
     "BossModBrowserVisionStatus", "BossModExtensionsLive", "BossModExtensionsDialog",
     "BossModGates", "BossModSecretField", "BossModDataTable", "BossModAgentConfigDialog", "BossModDeskExtensions",
+    "BossModTabs", "BossModFactList", "BossModAgentViewDialog",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -94,6 +95,23 @@ async function advance(ms) {
     }
     now = until;
 }
+// A fake Tabulator for the view dialog: records its options and, like the
+// real one, asks for page 1 as soon as it is built.
+const tabulators = [];
+global.Tabulator = class {
+    constructor(el, opts) {
+        this.el = el;
+        this.opts = opts;
+        this.handlers = {};
+        this.destroyed = false;
+        tabulators.push(this);
+        this.firstPage = opts.ajaxRequestFunc(opts.ajaxURL, {}, { page: 1, size: opts.paginationSize });
+    }
+    on(name, fn) { this.handlers[name] = fn; }
+    setData() { return this.opts.ajaxRequestFunc(this.opts.ajaxURL, {}, { page: 1, size: this.opts.paginationSize }); }
+    destroy() { this.destroyed = true; }
+};
+global.BossModIcons = { paint: () => {} };
 const revoked = [];
 global.URL.revokeObjectURL = (url) => { revoked.push(url); };
 const blobFetches = [];
@@ -122,6 +140,8 @@ const storedConfig = {
         { key: "tenant_id", label: "Tenant ID", kind: "text", required: true, value: "t-1" },
         { key: "client_secret", label: "Client secret", kind: "secret", required: true, set: true },
         { key: "mailbox", label: "Mailbox address", kind: "email", required: true, value: "old@contoso.com" },
+        { key: "check_interval_seconds", label: "Check for new mail every (seconds)", kind: "number", required: false,
+          min: 15, max: 3600, default: "90", value: "90" },
     ],
 };
 let putReply = () => ({
@@ -129,9 +149,34 @@ let putReply = () => ({
     json: async () => ({ detail: { error: "CONFIG_VERIFY_FAILED", message: "The client secret is wrong or has expired. Create a new secret and try again." } }),
 });
 let liveCalls = 0;
+let listReply = [bv];
+let deskReads = 0;
+const viewCalls = [];
+const mailItem = {
+    ...bv, id: "mail", name: "Microsoft 365 Mailbox", command: { name: "mail", summary: "s" }, live_view: false,
+    requires_image_model: false, setup: { state: "not_required", detail: null }, setup_label: null,
+    agent_config: { label: "Microsoft 365 mailbox" },
+    agent_view: { label: "Open inbox", views: [{ key: "inbox", label: "Inbox" }, { key: "sent", label: "Sent" }] },
+};
+const viewPage = (view) => ({
+    columns: [{ key: "subject", label: "Subject" }, { key: view === "sent" ? "to" : "from", label: view === "sent" ? "To" : "From" }],
+    rows: [{ id: `${view}-1`, cells: { subject: `${view} subject` }, emphasis: false }],
+    has_more: false,
+    caption: view === "sent" ? "Sent from reports@contoso.com" : "Inbox of reports@contoso.com",
+});
 global.apiFetch = async (url, init) => {
     const ok = (body) => ({ ok: true, status: 200, json: async () => body });
-    if (url === "/api/extensions") return ok([bv]);
+    if (url === "/api/extensions") return ok(listReply);
+    const viewMatch = url.match(/^\/api\/extensions\/mail\/agents\/a1\/view\?view=(\w+)&skip=(\d+)&top=(\d+)$/);
+    if (viewMatch) {
+        viewCalls.push({ view: viewMatch[1], skip: Number(viewMatch[2]), top: Number(viewMatch[3]) });
+        return ok(viewPage(viewMatch[1]));
+    }
+    const itemMatch = url.match(/^\/api\/extensions\/mail\/agents\/a1\/view\/([\w-]+)\?view=(\w+)$/);
+    if (itemMatch) {
+        viewCalls.push({ item: itemMatch[1], view: itemMatch[2] });
+        return ok({ title: "Opened", facts: [["To", "jordan@contoso.com"]], body_text: "Body" });
+    }
     if (url.endsWith("/live")) {
         liveCalls += 1;
         if (liveReply.kind === "disabled") {
@@ -143,7 +188,7 @@ global.apiFetch = async (url, init) => {
         return ok(liveReply.body);
     }
     if (url.endsWith("/enabled")) return ok({ ...bv, enabled: JSON.parse(init.body).enabled });
-    if (url === "/api/agents/a1/extensions") return ok(deskReply);
+    if (url === "/api/agents/a1/extensions") { deskReads += 1; return ok(deskReply); }
     if (url === "/api/extensions/mail/agents/a1/config") {
         configCalls.push({ method: (init && init.method) || "GET", body: init && init.body ? JSON.parse(init.body) : null });
         if (!init || !init.method) return ok(storedConfig);
@@ -376,17 +421,23 @@ const verdict = {};
     verdict.deskSectionHiddenWithNone = emptyWhileLoading && emptyDesk.isEmpty() && changes >= 2
         && emptyDesk.element.textContent === "";
     emptyDesk.destroy();
-    deskReply = [{ id: "mail", name: "Microsoft 365 Mailbox", config_label: "Microsoft 365 mailbox", view_label: "Open inbox", configured: false, summary: null }];
+    deskReply = [{ id: "mail", name: "Microsoft 365 Mailbox", config_label: "Microsoft 365 mailbox", view_label: "Open inbox", configured: false, summary: null, wakes: true, wake: null }];
     const desk = global.BossModDeskExtensions.createDeskExtensions({ agentId: "a1", agentName: () => "Iris", onChange: () => {} });
     await drain();
     verdict.deskSectionShowsNotSetUp = !desk.isEmpty() && desk.element.textContent.includes("Not set up")
-        && Boolean(desk.element.querySelector("#desk-ext-config-mail")) && !desk.element.querySelector("#desk-ext-view-mail");
+        && Boolean(desk.element.querySelector("#desk-ext-config-mail")) && !desk.element.querySelector("#desk-ext-view-mail")
+        && !desk.element.querySelector(".desk-ext-wake");
 
     // 10. The settings dialog: a blank secret is sent as "", the server's error is shown.
     desk.element.querySelector("#desk-ext-config-mail").click();
     await drain();
     const dialog = layers[layers.length - 1];
     const secretInput = dialog.body.querySelector("#ext-config-client_secret");
+    const numberInput = dialog.body.querySelector("#ext-config-check_interval_seconds");
+    verdict.configDialogRendersTheNumberField = Boolean(numberInput) && numberInput.getAttribute("type") === "number"
+        && numberInput.getAttribute("min") === "15" && numberInput.getAttribute("max") === "3600"
+        && numberInput.getAttribute("placeholder") === "90" && numberInput.value === "90"
+        && dialog.body.querySelector('label[for="ext-config-check_interval_seconds"]').textContent === "Check for new mail every (seconds)";
     verdict.configDialogMasksTheSecret = dialog.options.title === "Settings for Iris" && Boolean(secretInput)
         && secretInput.value === "" && secretInput.getAttribute("placeholder") === "Leave blank to keep the current secret"
         && dialog.body.querySelector("#ext-config-mailbox").getAttribute("type") === "email"
@@ -406,8 +457,87 @@ const verdict = {};
     await drain();
     verdict.configDialogShowsVerified = dialog.body.textContent.includes("Connected to reports@contoso.com")
         && Boolean(dialog.body.querySelector("#ext-config-done"));
+    const sentInterval = configCalls.filter((call) => call.method === "PUT").pop().body.values.check_interval_seconds;
+    verdict.configDialogSendsTheNumber = sentInterval === "90";
+    const readsBeforeClose = deskReads;
+    closeLayer(dialog);
+    await drain();
+    verdict.deskRereadsWhenTheDialogCloses = deskReads === readsBeforeClose + 1;
+    desk.element.querySelector("#desk-ext-config-mail").click();
+    await drain();
+    const reopened = layers[layers.length - 1];
     desk.destroy();
-    verdict.deskDestroyClosesItsDialogs = !layers.includes(dialog);
+    verdict.deskDestroyClosesItsDialogs = !layers.includes(reopened);
+
+    // 11. The desk's wake line: waiting, last checked (+ new), and can't check.
+    const hhmm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+    const configured = { id: "mail", name: "Microsoft 365 Mailbox", config_label: "Microsoft 365 mailbox", view_label: "Open inbox", configured: true, summary: "reports@contoso.com", wakes: true };
+    const deskWith = async (wake) => {
+        deskReply = [{ ...configured, wake }];
+        const d = global.BossModDeskExtensions.createDeskExtensions({ agentId: "a1", agentName: () => "Iris", onChange: () => {} });
+        await drain();
+        const line = d.element.querySelector(".desk-ext-wake");
+        const out = { text: line ? line.textContent : null, tone: line ? line.getAttribute("data-tone") : null, role: line ? line.getAttribute("role") : null, all: d.element.textContent };
+        d.destroy();
+        return out;
+    };
+    const waiting = await deskWith(null);
+    verdict.deskWakeWaiting = waiting.text === "Waiting for first check" && waiting.role === "status" && waiting.all.includes("reports@contoso.com");
+    const checked = await deskWith({ checked_at: "2026-09-29T13:42:10+00:00", ok: true, error: null, last_new_at: "2026-09-29T13:41:00+00:00", last_new_count: 2 });
+    verdict.deskWakeLastChecked = checked.text === `Last checked ${hhmm("2026-09-29T13:42:10+00:00")} · 2 new at ${hhmm("2026-09-29T13:41:00+00:00")}`
+        && checked.tone === null;
+    const quiet = await deskWith({ checked_at: "2026-09-29T13:42:10+00:00", ok: true, error: null, last_new_at: null, last_new_count: null });
+    verdict.deskWakeLastCheckedNothingNew = quiet.text === `Last checked ${hhmm("2026-09-29T13:42:10+00:00")}`;
+    const failed = await deskWith({ checked_at: "2026-09-29T13:42:10+00:00", ok: false, error: "The client secret is wrong or has expired. Create a new secret and try again.", last_new_at: null, last_new_count: null });
+    verdict.deskWakeCantCheck = failed.text === "Can’t check Microsoft 365 mailbox: The client secret is wrong or has expired. Create a new secret and try again."
+        && failed.tone === "alert" && failed.role === "status";
+    deskReply = [{ ...configured, wakes: false, wake: null }];
+    const nonWake = global.BossModDeskExtensions.createDeskExtensions({ agentId: "a1", agentName: () => "Iris", onChange: () => {} });
+    await drain();
+    verdict.deskNoWakeLineForNonWake = !nonWake.element.querySelector(".desk-ext-wake");
+    nonWake.destroy();
+
+    // 12. The view dialog: Inbox | Sent tabs, one table per tab, built when first shown.
+    listReply = [bv, mailItem];
+    global.BossModAgentViewDialog.open({ extensionId: "mail", agentId: "a1", title: "Iris — Open inbox" });
+    await drain();
+    const viewer2 = layers[layers.length - 1];
+    const tabInbox = viewer2.body.querySelector("#agent-view-tab-inbox");
+    const tabSent = viewer2.body.querySelector("#agent-view-tab-sent");
+    const panelInbox = viewer2.body.querySelector("#agent-view-panel-inbox");
+    const panelSent = viewer2.body.querySelector("#agent-view-panel-sent");
+    verdict.viewTabsRendered = Boolean(tabInbox && tabSent) && tabInbox.getAttribute("role") === "tab"
+        && tabInbox.getAttribute("aria-selected") === "true" && tabSent.getAttribute("aria-selected") === "false"
+        && tabInbox.getAttribute("aria-controls") === "agent-view-panel-inbox"
+        && panelInbox.getAttribute("role") === "tabpanel" && panelInbox.getAttribute("aria-labelledby") === "agent-view-tab-inbox"
+        && !panelInbox.hidden && panelSent.hidden;
+    verdict.viewOnlyTheShownTabIsRead = viewCalls.length === 1 && viewCalls[0].view === "inbox" && tabulators.length === 1
+        && tabulators[0].el.getAttribute("aria-label") === "Inbox of reports@contoso.com";
+    tabSent.click();
+    await drain();
+    verdict.viewSentTabBuildsItsOwnTable = !panelSent.hidden && panelInbox.hidden && tabSent.getAttribute("aria-selected") === "true"
+        && viewCalls.filter((call) => call.view === "sent" && call.skip === 0).length === 1 && tabulators.length === 2
+        && tabulators[1].el.getAttribute("aria-label") === "Sent from reports@contoso.com";
+    tabInbox.click();
+    await drain();
+    verdict.viewSwitchingBackReadsNothingNew = tabulators.length === 2 && viewCalls.filter((call) => call.view === "inbox" && !call.item).length === 1;
+    tabSent.click();
+    await drain();
+    tabulators[1].handlers.rowClick({}, { getData: () => ({ id: "sent-1", cells: { subject: "sent subject" } }) });
+    await drain();
+    verdict.viewItemOpensWithItsView = viewCalls.some((call) => call.item === "sent-1" && call.view === "sent")
+        && layers[layers.length - 1].body.textContent.includes("jordan@contoso.com");
+    closeLayer(layers[layers.length - 1]);
+    closeLayer(viewer2);
+    verdict.viewCloseDestroysEveryTable = tabulators.every((t) => t.destroyed);
+
+    listReply = [bv, { ...mailItem, agent_view: { label: "Open inbox", views: [{ key: "inbox", label: "Inbox" }] } }];
+    global.BossModAgentViewDialog.open({ extensionId: "mail", agentId: "a1", title: "Iris — Open inbox" });
+    await drain();
+    const single = layers[layers.length - 1];
+    verdict.viewOneListHasNoTabRow = !single.body.querySelector('[role="tablist"]') && !single.body.querySelector('[role="tabpanel"]')
+        && tabulators.length === 3;
+    closeLayer(single);
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

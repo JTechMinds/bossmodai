@@ -18,6 +18,7 @@ from core.agent_loop.task_origin_mirrors import (
     persist_unbound_status_line,
 )
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
+from core.agent_loop.work_binding import bound_work_activity, is_detached
 from core.bm_cli.managed_writer import ManagedWriteProgress
 from core.default_prompts import load_default_prompt, render_default_prompt
 from core.extensions.registry import get_discovery
@@ -386,7 +387,16 @@ def _build_managed_writer_progress_reporter(
     *,
     task_id: str | None,
 ):
-    """Return a runtime-owned reporter for managed-writer progress updates."""
+    """Return a runtime-owned reporter for managed-writer progress updates.
+
+    Args:
+        agent: The agent running the managed write.
+        task_id: The turn's bound task; ``None`` for a taskless turn.
+
+    The reporter writes progress onto the turn's bound work activity
+    (``work_binding``), so a detached turn still broadcasts progress but
+    never writes the paused work activity's ``detail``.
+    """
     last_detail: str | None = None
     last_mirrored_path: str | None = None
 
@@ -398,7 +408,7 @@ def _build_managed_writer_progress_reporter(
             return
 
         now = datetime.now(timezone.utc)
-        active = activity_runtime.get_active_work_activity(agent.id)
+        active = bound_work_activity(agent.id)
         if active and (task_id is None or active.task_id == task_id):
             db.update_activity(active.id, detail=detail)
 
@@ -612,8 +622,12 @@ async def _finalize_turn(
     outcome: TurnOutcome,
     start: float,
 ) -> TurnOutcome:
-    """Normalize diagnostics, refresh visible status, and return the final turn outcome."""
-    activity_runtime.refresh_agent_status(agent.id)
+    """Normalize diagnostics, refresh visible status, and return the final turn outcome.
+
+    A detached turn (``work_binding.is_detached``) refreshes status without
+    demoting the live task's Soft-block: it did not resume that work.
+    """
+    activity_runtime.refresh_agent_status(agent.id, clear_soft_block=not is_detached(trigger))
     db.update_agent_state(agent.id, last_active_at=datetime.now(timezone.utc))
 
     diag = db.create_diagnostic(

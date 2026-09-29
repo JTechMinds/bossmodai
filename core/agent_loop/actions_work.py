@@ -22,6 +22,7 @@ from core.agent_loop.message_delivery import (
     resolve_peer_message_type,
     source_channel_for_message_type,
 )
+from core.agent_loop.work_binding import bound_activity, bound_task_id, is_detached
 from core.default_prompts import render_default_prompt
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
@@ -42,7 +43,7 @@ async def _handle_work(
     output = action.get("output", "")
     if not output:
         return {"event": "status_changed", "detail": "Empty work output", "agent_name": agent.name}
-    task_id = activity_runtime.get_active_task_id(agent.id)
+    task_id = bound_task_id(agent.id)
     if task_id is None:
         return {"event": "agent_error", "detail": "No active work activity is bound", "agent_name": agent.name}
 
@@ -163,7 +164,7 @@ async def _handle_message(
         to_agent_id = target.id
         to_display = target.name
 
-    active = activity_runtime.get_active_activity(agent.id)
+    active = bound_activity(agent.id)
     if (
         target is not None
         and active is not None
@@ -359,8 +360,22 @@ async def _handle_idle(
     action: dict[str, Any],
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Yield the current turn without changing the active work commitment."""
-    active = activity_runtime.get_active_activity(agent.id)
+    """Yield the current turn without changing the active work commitment.
+
+    In a detached turn (``work_binding.is_detached``, e.g. an extension
+    event) idle only ends the turn: no activity is completed and no status is
+    refreshed, so live work, a conversation or a meeting carries on as it was.
+    That is a decision about how the turn ends, not a lookup, so it stays
+    explicit. The event is the ordinary idle ``status_changed``; the turn
+    loop ends on ``idle`` as a terminal action whatever the event name.
+    """
+    if trigger is not None and is_detached(trigger):
+        return {
+            "event": "status_changed",
+            "detail": f"{agent.name} finished handling an extension event",
+            "agent_name": agent.name,
+        }
+    active = bound_activity(agent.id)
     if active and active.kind == "work":
         return {
             "event": "agent_error",

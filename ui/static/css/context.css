@@ -339,6 +339,9 @@
 /* --muted, not --hint: this line is the state, not metadata. */
 .desk-ext-status { font-size: 11px; color: var(--muted); word-break: break-word; }
 .desk-ext-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+/* The wake health line: metadata in --hint; a failed check in the alert ink. */
+.desk-ext-wake { font-size: 11px; color: var(--hint); word-break: break-word; }
+.desk-ext-wake[data-tone="alert"] { color: var(--alert-ink); }
 
 /* Pinned to the bottom of the column, under a rule: the desk's facts and the
    actions on the agent, below everything that is about the agent's work. */

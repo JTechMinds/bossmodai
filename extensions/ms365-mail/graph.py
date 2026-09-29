@@ -4,8 +4,10 @@ Scope is enforced by construction (plan D3): there is no generic request
 method. Every public method passes a literal suffix to ``_call``, the URL is
 ``graph_base + /users/{mailbox} + suffix``, message ids are quoted with no
 safe characters, and ``_call`` refuses any URL outside this mailbox's root.
-Reads stay under ``/mailFolders/inbox/messages``; the only other endpoint is
-``/sendMail``. ``@odata.nextLink`` is never followed: paging is ``$skip``.
+Reads stay under ``/mailFolders/inbox/messages`` and, for the operator's
+read-only Sent tab only, ``/mailFolders/sentitems/messages`` (agents get no
+sent listing); the only other endpoint is ``/sendMail``. ``@odata.nextLink``
+is never followed: paging is ``$skip``.
 
 BossMod limits itself to this mailbox; the client secret itself is
 tenant-wide and can reach other mailboxes.
@@ -14,7 +16,7 @@ tenant-wide and can reach other mailboxes.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Mapping, Sequence
 from urllib.parse import quote, urlencode
 
@@ -23,6 +25,11 @@ import httpx
 from .auth import AccessToken, GraphAuthError, GraphUnreachable, TokenProvider
 
 _INBOX = "/mailFolders/inbox/messages"
+# "sentitems" is Graph's well-known name for Sent Items (mailFolder resource
+# docs, "Well-known folder names"); it works whatever the mailbox's locale.
+_SENT = "/mailFolders/sentitems/messages"
+_SENT_SUMMARY_FIELDS = "id,subject,toRecipients,sentDateTime,bodyPreview,hasAttachments"
+_SENT_MESSAGE_FIELDS = "id,subject,from,toRecipients,ccRecipients,sentDateTime,hasAttachments,body"
 _SUMMARY_FIELDS = "id,subject,from,receivedDateTime,isRead,bodyPreview,hasAttachments"
 _MESSAGE_FIELDS = "id,subject,from,toRecipients,ccRecipients,receivedDateTime,isRead,hasAttachments,body"
 # Graph refuses $filter + $orderby unless the $orderby property also leads
@@ -41,6 +48,9 @@ __all__ = [
     "InboxPage",
     "Message",
     "MessageSummary",
+    "SentMessage",
+    "SentPage",
+    "SentSummary",
     "describe_graph_error",
     "friendly_config_error",
 ]
@@ -99,6 +109,40 @@ class InboxPage:
 
     messages: list[MessageSummary]
     has_more: bool
+
+
+@dataclass(frozen=True)
+class SentSummary:
+    """One Sent Items row."""
+
+    id: str
+    subject: str
+    to: list[Address]
+    sent: datetime
+    preview: str
+    has_attachments: bool
+
+
+@dataclass(frozen=True)
+class SentPage:
+    """One page of Sent Items, newest first; ``has_more`` when Graph offers a next page."""
+
+    messages: list[SentSummary]
+    has_more: bool
+
+
+@dataclass(frozen=True)
+class SentMessage:
+    """One sent message with its plain-text body."""
+
+    id: str
+    subject: str
+    sender: Address | None
+    to: list[Address]
+    cc: list[Address]
+    sent: datetime
+    has_attachments: bool
+    body: str
 
 
 @dataclass(frozen=True)
@@ -183,6 +227,72 @@ class GraphMailbox:
         has_more = isinstance(payload.get("@odata.nextLink"), str)
         return InboxPage(messages=[_summary(item) for item in items], has_more=has_more)
 
+    def list_new_unread(self, since: datetime, top: int) -> InboxPage:
+        """Return unread inbox messages received at or after ``since``, oldest first.
+
+        ``receivedDateTime`` leads the filter, which also satisfies Graph's
+        rule that an ``$orderby`` property lead the ``$filter``. Graph does not
+        document the precision of ``ge`` against its stored timestamps, so the
+        caller keeps the ids seen at ``since`` and drops them itself.
+
+        Args:
+            since: The earliest ``receivedDateTime`` (timezone-aware).
+            top: Page size (the caller bounds it).
+
+        Raises:
+            ValueError: ``since`` is naive.
+            GraphAuthError, GraphUnreachable, GraphHttpError.
+        """
+        if since.tzinfo is None:
+            raise ValueError("since must be timezone-aware")
+        stamp = since.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        params = {
+            "$select": _SUMMARY_FIELDS,
+            "$filter": f"receivedDateTime ge {stamp} and isRead eq false",
+            "$orderby": "receivedDateTime asc",
+            "$top": str(top),
+        }
+        payload = self._json(self._call("GET", _INBOX, params=params))
+        items = payload.get("value")
+        if not isinstance(items, list):
+            raise _unreadable("the inbox listing has no value array")
+        has_more = isinstance(payload.get("@odata.nextLink"), str)
+        return InboxPage(messages=[_summary(item) for item in items], has_more=has_more)
+
+    def list_sent(self, top: int, skip: int) -> SentPage:
+        """Return one page of Sent Items, newest first (operator view only).
+
+        Raises:
+            GraphAuthError, GraphUnreachable, GraphHttpError.
+        """
+        params = {
+            "$select": _SENT_SUMMARY_FIELDS,
+            "$orderby": "sentDateTime desc",
+            "$top": str(top),
+            "$skip": str(skip),
+        }
+        payload = self._json(self._call("GET", _SENT, params=params))
+        items = payload.get("value")
+        if not isinstance(items, list):
+            raise _unreadable("the sent listing has no value array")
+        has_more = isinstance(payload.get("@odata.nextLink"), str)
+        return SentPage(messages=[_sent_summary(item) for item in items], has_more=has_more)
+
+    def get_sent_message(self, message_id: str) -> SentMessage:
+        """Return one Sent Items message with its body as plain text (operator view only).
+
+        Raises:
+            GraphAuthError, GraphUnreachable, GraphHttpError (404 when it is
+            not in Sent Items).
+        """
+        response = self._call(
+            "GET",
+            f"{_SENT}/{_quoted_id(message_id)}",
+            params={"$select": _SENT_MESSAGE_FIELDS},
+            headers={"Prefer": _TEXT_BODY},
+        )
+        return _sent_message(self._json(response))
+
     def get_message(self, message_id: str) -> Message:
         """Return one inbox message with its body as plain text.
 
@@ -206,8 +316,11 @@ class GraphMailbox:
         """
         self._call("PATCH", f"{_INBOX}/{_quoted_id(message_id)}", json={"isRead": True})
 
-    def send(self, to: Sequence[Address], cc: Sequence[Address], subject: str, body: str) -> None:
-        """Send a new plain-text message from this mailbox (saved to Sent Items).
+    def send(self, to: Sequence[Address], cc: Sequence[Address], subject: str, body_html: str) -> None:
+        """Send a new HTML message from this mailbox (saved to Sent Items).
+
+        Args:
+            body_html: The body, already rendered (``formatting.render_body``).
 
         Raises:
             GraphAuthError, GraphUnreachable, GraphHttpError.
@@ -215,7 +328,7 @@ class GraphMailbox:
         self._call("POST", "/sendMail", json={
             "message": {
                 "subject": subject,
-                "body": {"contentType": "Text", "content": body},
+                "body": {"contentType": "HTML", "content": body_html},
                 "toRecipients": [_recipient(item) for item in to],
                 "ccRecipients": [_recipient(item) for item in cc],
             },
@@ -224,6 +337,10 @@ class GraphMailbox:
 
     def reply(self, message_id: str, body: str, reply_all: bool) -> None:
         """Reply to the sender (or everyone) of one inbox message; ``body`` is the comment.
+
+        Plain text on purpose: Graph documents ``comment`` or ``message.body``
+        (not both), and only the comment is placed above the quoted original;
+        a ``message.body`` replaces the whole body, dropping the thread.
 
         Raises:
             GraphAuthError, GraphUnreachable, GraphHttpError.
@@ -426,6 +543,42 @@ def _summary(item: Any) -> MessageSummary:
         is_read=bool(item.get("isRead")),
         preview=item.get("bodyPreview") or "",
         has_attachments=bool(item.get("hasAttachments")),
+    )
+
+
+def _sent_at(item: dict[str, Any]) -> datetime:
+    raw = _required_str(item, "sentDateTime")
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise _unreadable(f"a message has an unreadable sentDateTime {raw!r}") from exc
+
+
+def _sent_summary(item: Any) -> SentSummary:
+    if not isinstance(item, dict):
+        raise _unreadable("a sent entry is not an object")
+    return SentSummary(
+        id=_required_str(item, "id"),
+        subject=item.get("subject") or "",
+        to=_addresses(item.get("toRecipients")),
+        sent=_sent_at(item),
+        preview=item.get("bodyPreview") or "",
+        has_attachments=bool(item.get("hasAttachments")),
+    )
+
+
+def _sent_message(item: dict[str, Any]) -> SentMessage:
+    body = item.get("body")
+    content = body.get("content") if isinstance(body, dict) else None
+    return SentMessage(
+        id=_required_str(item, "id"),
+        subject=item.get("subject") or "",
+        sender=_address(item.get("from")),
+        to=_addresses(item.get("toRecipients")),
+        cc=_addresses(item.get("ccRecipients")),
+        sent=_sent_at(item),
+        has_attachments=bool(item.get("hasAttachments")),
+        body=content if isinstance(content, str) else "",
     )
 
 

@@ -5,9 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 from core.agent_loop.policies import TriggerPolicy
+from core.agent_loop.work_binding import is_detached
 
 
 _TASK_STATE_ACTIONS = {"waiting", "complete", "blocked", "delegated", "abandoned"}
+# Actions that start a movement or meeting activity, which would pause the
+# live work activity a detached turn must leave untouched.
+_MOVEMENT_MEETING_ACTIONS = {"walkTo", "attendMeeting", "remoteMeeting"}
 
 
 def validate_action_for_turn(
@@ -15,9 +19,32 @@ def validate_action_for_turn(
     policy: TriggerPolicy,
     active_activity_kind: str | None,
     active_task_id: str | None,
+    *,
+    trigger: dict[str, Any],
 ) -> str | None:
-    """Validate an action against the runtime turn context."""
+    """Validate an action against the runtime turn context.
+
+    Args:
+        action: The parsed action.
+        policy: The trigger type's policy.
+        active_activity_kind: Kind of the turn's bound activity, if any.
+        active_task_id: The turn's bound task, if any.
+        trigger: The turn's live trigger. A detached turn
+            (``work_binding.is_detached``) binds no task or activity, and
+            task-state, movement and meeting actions are refused.
+
+    Returns:
+        The refusal message, or ``None`` when the action is valid here.
+    """
     action_name = action.get("action")
+
+    if is_detached(trigger):
+        if action_name in _TASK_STATE_ACTIONS:
+            # A detached turn sees no bound task, and "waiting" without one
+            # would otherwise pass; the live task must not change state from here.
+            return f'"{action_name}" is not available here: your task is paused unchanged; use "idle" when you are done'
+        if action_name in _MOVEMENT_MEETING_ACTIONS:
+            return f'"{action_name}" is not available while handling an extension event.'
 
     if policy.require_work_activity and not active_task_id:
         return "trigger requires an active work activity, but no active task is bound"

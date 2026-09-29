@@ -77,6 +77,7 @@ def test_waiting_without_task_is_not_a_turn_validation_error() -> None:
         policy,
         None,
         None,
+        trigger={"type": "channel_response"},
     )
     assert error is None
 

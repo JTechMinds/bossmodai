@@ -1000,3 +1000,19 @@ CREATE TABLE IF NOT EXISTS extension_agent_configs (
     updated_at   TIMESTAMP DEFAULT current_timestamp,
     PRIMARY KEY (extension_id, agent_id)
 );
+
+-- The last wake check of each (extension, agent) pair (manifest wake), written
+-- by the runtime worker's wake service and read by the app for the desk. error
+-- is the extension's plain sentence for the operator; the technical detail is
+-- only logged. last_new_* change only when a check found something. An agent's
+-- rows are deleted with the agent (db.agents.delete_agent_rows).
+CREATE TABLE IF NOT EXISTS extension_wake_status (
+    extension_id   VARCHAR   NOT NULL,
+    agent_id       VARCHAR   NOT NULL REFERENCES agents(id),
+    checked_at     TIMESTAMP NOT NULL,
+    ok             BOOLEAN   NOT NULL,
+    error          TEXT,
+    last_new_at    TIMESTAMP,
+    last_new_count INTEGER,
+    PRIMARY KEY (extension_id, agent_id)
+);

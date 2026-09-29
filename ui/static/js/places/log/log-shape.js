@@ -57,6 +57,7 @@ const BossModLogShape = (() => {
         activity_resumed: 'Activity Resumed',
         task_assigned: 'Task Assigned',
         social: 'Social',
+        extension_event: 'Extension event',
     });
 
     /** Longest reply (or trigger) preview shown on a collapsed row. */

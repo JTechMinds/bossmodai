@@ -17,6 +17,7 @@ dependencies = [
     "python-multipart>=0.0.32",
     "playwright>=1.63.0",
     "pillow>=12.3.0",
+    "markdown-it-py>=4.0.0",
 ]
 
 [tool.uv]

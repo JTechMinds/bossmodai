@@ -10,6 +10,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.task_origins import stamp_origin_channel_payload
 from core.agent_loop.task_roles import task_assignment_sender
+from core.agent_loop.work_binding import is_detached
 from core.models import Activity, AgentState, Task
 from core.tasking.resolution import OPEN_TASK_STATUSES
 
@@ -76,7 +77,12 @@ def can_dispatch_trigger(
 
 
 def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity | None:
-    """Materialize any runtime activity needed before the turn starts."""
+    """Materialize any runtime activity needed before the turn starts.
+
+    A detached trigger (``work_binding.is_detached``) leaves the live task's
+    Soft-block alone: an extension event arriving is not the agent resuming
+    that work.
+    """
     from core.agent_loop.soft_blocks import clear_soft_block_for_live_work
 
     active = activity_runtime.get_active_activity(agent_id)
@@ -130,7 +136,8 @@ def prepare_trigger_context(agent_id: str, trigger: dict[str, Any]) -> Activity 
             if active and not (active.kind == "assignment" and active.task_id == task.id):
                 return active
             return activity_runtime.start_assignment_activity(agent_id, task)
-    clear_soft_block_for_live_work(agent_id)
+    if not is_detached(trigger):
+        clear_soft_block_for_live_work(agent_id)
     return active
 
 
