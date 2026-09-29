@@ -145,7 +145,7 @@ async def test_channel_reply_while_working_queues_the_resume(monkeypatch: pytest
     )
     _script(
         monkeypatch,
-        ['{"act":"reply","intent":"status","msg":"On it. Executing the 9 fixes now.","data":{"proceed":true},"work_commit":true,"th":"ack"}'],
+        ['{"act":"reply","intent":"status","msg":"On it. Executing the 9 fixes now.","work_commit":true,"th":"ack"}'],
     )
     state = db.get_agent_state(charles.id)
     assert state is not None

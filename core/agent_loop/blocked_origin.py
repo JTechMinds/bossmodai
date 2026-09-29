@@ -2,7 +2,7 @@
 
 Debra's locked order:
 1. Origin line is ``Blocked — {why}. @NextOwner`` (host deny, no progress, …).
-2. ``@NextOwner`` on that line wakes them (or one soft nudge). Tag is not hope.
+2. ``@NextOwner`` on that line wakes them. Tag is not hope.
 3. Auto GH only when there is no next owner and no origin line.
 4. Host-deny after Branch must still post the origin line; suppress_*_broadcast
    must not bury the why.

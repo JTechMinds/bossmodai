@@ -31,7 +31,7 @@ _PAUSE_PHRASE = re.compile(
     r"let'?s\s+stop(?:\s+here)?|"
     r"stop(?:\s+here)?|"
     r"let'?s\s+hold(?:\s+here)?|"
-    r"hold(?:\s+(?:here|on|up))?|"
+    r"hold(?:\s+here)?|"
     r"pause\s+thread"
     r")"
     r"\s*[.!]?\s*$"

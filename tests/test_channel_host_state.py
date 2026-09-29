@@ -147,13 +147,34 @@ def test_pause_and_ack_phrases_stay_narrow() -> None:
     assert is_pause_phrase("Let's pause.")
     assert is_pause_phrase("stop")
     assert is_pause_phrase("hold")
-    assert is_pause_phrase("please hold on")
+    assert is_pause_phrase("hold here")
+    assert is_pause_phrase("let's pause")
+    # "hold on" / "hold up" are ordinary conversation, not Pause.
+    assert not is_pause_phrase("hold on")
+    assert not is_pause_phrase("Hold up!")
+    assert not is_pause_phrase("please hold on")
     assert not is_pause_phrase("stop the deploy")
     assert not is_pause_phrase("let's pause the rollout until the tests are green")
     assert is_ack_phrase("Copy that.")
     assert is_ack_phrase("got it")
     assert not is_ack_phrase("Copy that, but the queue should keep draining")
     assert not is_ack_phrase("I think we should keep the explicit drain")
+
+
+def test_human_hold_on_opens_a_normal_round() -> None:
+    jim, laura, ada, channel = _trio()
+    message = _message(channel.id, "hold on")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert not is_thread_paused(channel.id)
+    assert [item["trigger_type"] for item in triggers] == ["channel_message"]
+    assert db.list_channel_response_rounds(channel.id, status="active")
 
 
 def test_empty_speak_stops_the_snapshot_and_leaves_work_wakes(monkeypatch) -> None:

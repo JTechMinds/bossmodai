@@ -663,7 +663,6 @@ def test_status_next_owners_do_not_bind_work(monkeypatch: pytest.MonkeyPatch) ->
             "workCommit": False,
             "intentKind": "status_request",
             "reply": "Still on the evidence.",
-            "proceedUntagged": True,
             "nextOwners": [laura.id],
         },
         jimothy,
@@ -729,7 +728,6 @@ def test_decision_next_owners_pin_the_share(monkeypatch: pytest.MonkeyPatch) -> 
             "workCommit": False,
             "intentKind": "status_request",
             "reply": "Draft is saved.",
-            "proceedUntagged": True,
             "nextOwners": [laura.id],
         },
         jimothy,
@@ -747,14 +745,21 @@ def test_decision_next_owners_pin_the_share(monkeypatch: pytest.MonkeyPatch) -> 
     assert "@" not in result["channel_message"]["content"]
 
 
-_ECHO_PASS = (
-    "You were nudged. If you would only restate what is already in the thread, pass. New substance only."
-)
+_ECHO_PASS = "If you would only restate what is already in the thread, pass. New substance only."
 
 
 def test_awoken_channel_turn_has_a_soft_pass_line() -> None:
     decision = load_default_prompt("runtime_contract_decision")
     assert decision.count(_ECHO_PASS) == 2
+    # The echo rule stays; the length limit, the "nudged" framing and the
+    # next-owner nudge copy are gone from every thread-wake prompt.
+    trigger_event = load_default_prompt("runtime_block_trigger_event")
+    for text in (decision, trigger_event):
+        assert "One line is enough" not in text
+        assert "You were nudged" not in text
+        assert "data.proceed" not in text
+    assert trigger_event.count("Choose speak or pass. Pass uses observe and does not post to the channel.") == 2
+    assert decision.count("If you need someone specific to act next, @ them by name. Do not invent @everyone.") == 2
     assert _ECHO_PASS not in Path("prompts/system_prompt.md").read_text(encoding="utf-8")
     for path in Path("prompts/personalities").glob("*.md"):
         assert _ECHO_PASS not in path.read_text(encoding="utf-8")
@@ -862,7 +867,6 @@ def test_work_bound_member_named_by_the_router_is_woken_and_work_stays_live(
             "workCommit": False,
             "intentKind": "status_request",
             "reply": "Halfway through; the fixtures section is next.",
-            "proceedUntagged": True,
         },
         laura,
         state,

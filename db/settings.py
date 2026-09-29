@@ -371,23 +371,25 @@ def reconcile_work_commit_prompt_contract() -> None:
     )
 
 
-# The decision contract's resume-open-work ``work_commit`` rule, ``data.task.id``
-# and the new-work-while-busy guidance live in this prompt row. Seeding never
-# overwrites it, so it is moved to the shipped default once per database.
-_WORK_COMMIT_RESUME_PROMPT_KEY = "runtime_contract_decision"
+# The decision contract's resume-open-work ``work_commit`` rule, ``data.task.id``,
+# the new-work-while-busy guidance, and the thread-wake copy without the
+# next-owner nudge or the one-line limit live in these two prompt rows.
+# Seeding never overwrites them, so both move to the shipped defaults once per
+# database.
+_WORK_COMMIT_RESUME_PROMPT_KEYS = ("runtime_contract_decision", "runtime_block_trigger_event")
 _WORK_COMMIT_RESUME_RECONCILED = "work_commit_resume_prompt_reconciled"
 
 
 def reconcile_work_commit_resume_prompt() -> None:
-    """Overwrite the decision contract row with the shipped default once.
+    """Overwrite the decision contract and trigger-event rows with the shipped defaults once.
 
     Same marker-guarded pattern as :func:`reconcile_work_commit_prompt_contract`:
-    the first pass on a database writes the current file-backed default and
-    records the marker; every later pass is a no-op, so operator edits made
-    after it are never touched. Edits made before it are replaced.
+    the first pass on a database writes the current file-backed default for
+    each key and records the marker; every later pass is a no-op, so operator
+    edits made after it are never touched. Edits made before it are replaced.
 
     Raises:
-        RuntimeError: The prompt key has no seeded default.
+        RuntimeError: A prompt key has no seeded default.
     """
     seen = query_one(
         "SELECT key FROM settings WHERE key = $1",
@@ -395,16 +397,16 @@ def reconcile_work_commit_resume_prompt() -> None:
     )
     if seen is not None:
         return
-    seeded = get_seed_setting_default(_WORK_COMMIT_RESUME_PROMPT_KEY)
-    if seeded is None:
-        raise RuntimeError(f"Prompt setting '{_WORK_COMMIT_RESUME_PROMPT_KEY}' has no seeded default")
-    set_setting(
-        _WORK_COMMIT_RESUME_PROMPT_KEY,
-        load_default_prompt(_WORK_COMMIT_RESUME_PROMPT_KEY),
-        seeded[1],
-    )
+    for key in _WORK_COMMIT_RESUME_PROMPT_KEYS:
+        seeded = get_seed_setting_default(key)
+        if seeded is None:
+            raise RuntimeError(f"Prompt setting '{key}' has no seeded default")
+        set_setting(key, load_default_prompt(key), seeded[1])
     set_setting(_WORK_COMMIT_RESUME_RECONCILED, "true", "advanced")
-    logger.info("Reconciled prompt setting %s to the work_commit resume contract", _WORK_COMMIT_RESUME_PROMPT_KEY)
+    logger.info(
+        "Reconciled prompt settings to the work_commit resume and thread-wake contract: %s",
+        ", ".join(_WORK_COMMIT_RESUME_PROMPT_KEYS),
+    )
 
 
 def ensure_local_api_token() -> str:

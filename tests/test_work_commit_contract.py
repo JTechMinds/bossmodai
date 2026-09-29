@@ -393,20 +393,26 @@ def test_shipped_decision_contract_resumes_open_work_and_revises_by_id() -> None
     assert "The one exception is work already active on your Board" not in text
 
 
+_RESUME_KEYS = ("runtime_contract_decision", "runtime_block_trigger_event")
+
+
 def test_resume_prompt_reconcile_runs_once() -> None:
     assert _stored(_RESUME_MARKER) == "true"
-    assert _stored("runtime_contract_decision") == load_default_prompt("runtime_contract_decision")
+    for key in _RESUME_KEYS:
+        assert _stored(key) == load_default_prompt(key)
     db.execute("DELETE FROM settings WHERE key = $1", [_RESUME_MARKER])
-    db.execute(
-        "UPDATE settings SET value = $1 WHERE key = $2",
-        ["old contract text", "runtime_contract_decision"],
-    )
+    for key in _RESUME_KEYS:
+        db.execute("UPDATE settings SET value = $1 WHERE key = $2", ["old prompt text", key])
     seed_defaults()
-    assert _stored("runtime_contract_decision") == load_default_prompt("runtime_contract_decision")
+    for key in _RESUME_KEYS:
+        assert _stored(key) == load_default_prompt(key)
+    assert "One line is enough" not in _stored("runtime_block_trigger_event")
     assert _stored(_RESUME_MARKER) == "true"
-    db.set_setting("runtime_contract_decision", "operator's own contract", "advanced")
+    for key in _RESUME_KEYS:
+        db.set_setting(key, "operator's own text", "advanced")
     seed_defaults()
-    assert _stored("runtime_contract_decision") == "operator's own contract"
+    for key in _RESUME_KEYS:
+        assert _stored(key) == "operator's own text"
 
 
 def _accept_by_id(task_id: str, desc: str) -> dict[str, Any]:

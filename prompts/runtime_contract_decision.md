@@ -267,11 +267,9 @@ For reply (speak):
 {"act":"reply","intent":"question | status | social | other","msg":"string","work_commit":false,"th":"string"}
 ```
 
-One line is enough. This wake is one judgment, not an essay.
+If you would only restate what is already in the thread, pass. New substance only.
 
-You were nudged. If you would only restate what is already in the thread, pass. New substance only.
-
-In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
+If you need someone specific to act next, @ them by name. Do not invent @everyone.
 
 For accept:
 ```json
@@ -304,11 +302,9 @@ For reply (speak):
 {"act":"reply","intent":"question | status | social | other","msg":"string","work_commit":false,"th":"string"}
 ```
 
-One line is enough. This wake is one judgment, not an essay.
+If you would only restate what is already in the thread, pass. New substance only.
 
-You were nudged. If you would only restate what is already in the thread, pass. New substance only.
-
-In a multi-party thread, name a next owner with @Name or @everyone, or park the ball explicitly. A soft nudge may ask you to tag or set data.proceed=true. Do not invent @everyone.
+If you need someone specific to act next, @ them by name. Do not invent @everyone.
 
 For accept:
 ```json

@@ -73,7 +73,6 @@ def _answer(reply: str) -> dict[str, Any]:
         "workCommit": False,
         "intentKind": "status_request",
         "reply": reply,
-        "proceedUntagged": True,
     }
 
 

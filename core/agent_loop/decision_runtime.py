@@ -29,7 +29,6 @@ from core.agent_loop.say_before_actions import (
     should_post_say_before_actions,
 )
 from core.agent_loop.thread_supersede import supersede_stale_thread_turn
-from core.agent_loop.next_owner import maybe_next_owner_nudge
 from core.agent_loop.decision_parse_fail import requeue_commitment
 from core.agent_loop.decision_resume import (
     _complete_assignment_if_present,
@@ -79,9 +78,6 @@ def apply_decision(
 
         if is_verbal_host_access_ask(decision.reply):
             return verbal_host_access_steer(agent)
-        nudge = maybe_next_owner_nudge(agent, trigger, decision)
-        if nudge is not None:
-            return nudge
 
     result = {
         "event": "decision_applied",
