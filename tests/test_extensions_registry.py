@@ -18,6 +18,7 @@ from core.bm_cli.types import CliExecutionContext, ParsedCliCommand
 from core.extensions.cli_bridge import extension_handlers
 from core.extensions.manifest import ManifestError, load_manifest
 from core.extensions.registry import discover, enabled_ids, get_discovery, set_enabled
+from core.extensions.setup_runner import OUT_OF_DATE_DETAIL, read_setup_status
 
 
 def setup_function() -> None:
@@ -210,3 +211,48 @@ def test_a_manifest_declaring_live_view_without_the_method_is_invalid_at_load(tm
     set_enabled("no-live", True)
     result = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["nolive"](_ctx(), _parsed("nolive go"), None)
     assert "EXTENSION_LOAD_FAILED: manifest declares live_view" in result.prompt_content
+
+
+# ─── setup.ready_requires (R35 amendment) ───
+
+
+def _ready(tmp_path: Path, text: str) -> Path:
+    (tmp_path / "ready.json").write_text(text, encoding="utf-8")
+    return tmp_path
+
+
+def test_no_ready_requirements_behave_as_before(tmp_path: Path) -> None:
+    assert read_setup_status(tmp_path, required=True, ready_requires={}).state == "missing"
+    _ready(tmp_path, "not json at all")
+    assert read_setup_status(tmp_path, required=True, ready_requires={}).model_dump() == {"state": "ready", "detail": None}
+
+
+def test_a_ready_file_meeting_the_requirements_is_ready(tmp_path: Path) -> None:
+    _ready(tmp_path, json.dumps({"browser": "153", "browser_kind": "chromium"}))
+    status = read_setup_status(tmp_path, required=True, ready_requires={"browser_kind": "chromium"})
+    assert status.model_dump() == {"state": "ready", "detail": None}
+
+
+@pytest.mark.parametrize("text", [
+    json.dumps({"browser": "153"}),
+    json.dumps({"browser_kind": "chromium-headless-shell"}),
+    json.dumps(["browser_kind", "chromium"]),
+    "{not json",
+])
+def test_a_ready_file_missing_or_differing_or_unreadable_is_out_of_date(tmp_path: Path, text: str) -> None:
+    _ready(tmp_path, text)
+    status = read_setup_status(tmp_path, required=True, ready_requires={"browser_kind": "chromium"})
+    assert status.model_dump() == {
+        "state": "missing",
+        "detail": "Setup needs to run again: the installed version is out of date.",
+    }
+    assert status.detail == OUT_OF_DATE_DETAIL
+
+
+def test_a_manifest_ready_requirement_must_be_strings(tmp_path: Path) -> None:
+    data = _manifest()
+    data["setup"] = {"required": True, "ready_requires": {"browser_kind": 3}}
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ManifestError, match="ready_requires"):
+        load_manifest(path)

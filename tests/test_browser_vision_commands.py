@@ -6,6 +6,7 @@ import importlib
 import io
 import json
 import os
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -27,6 +28,7 @@ ActionOutcome = _host_module.ActionOutcome
 Capture = _host_module.Capture
 DownloadResult = _host_module.DownloadResult
 SessionInfo = _host_module.SessionInfo
+Paced = _host_module.Paced
 WaitOutcome = _host_module.WaitOutcome
 Mark = _marks_module.Mark
 
@@ -81,6 +83,12 @@ class FakeHost:
         # What the next wait_for_change() reports, and where it leaves the page.
         self.next_wait = WaitOutcome(changed=False, elapsed_s=30.0, settled=False)
         self.wait_navigates_to: str | None = None
+        # How long the next pace() says it waited (R33).
+        self.next_pace_s = 0.0
+        # Bot-check signals the next captures carry (R34).
+        self.nav_status: int | None = None
+        self.frame_urls: tuple[str, ...] = ()
+        self.text = ""
 
     def _outcome(self):
         outcome, self.next_outcome = self.next_outcome, ActionOutcome()
@@ -95,6 +103,11 @@ class FakeHost:
                                   url=self.url, window=self.window)
             for agent_id, session_id in self.open.items()
         }
+
+    def pace(self, key):
+        self.calls.append(("pace", key))
+        waited, self.next_pace_s = self.next_pace_s, 0.0
+        return Paced(site=key, waited_s=waited)
 
     def open_session(self, agent_id, viewport, downloads_dir):
         self.calls.append(("open_session", viewport.name, downloads_dir))
@@ -162,7 +175,8 @@ class FakeHost:
     def capture(self, agent_id):
         width, height = self.size
         return Capture(png=_png(width, height), url=self.url, title="Fixture", width=width, height=height,
-                       session=self.sessions()[agent_id], marks=self.marks)
+                       session=self.sessions()[agent_id], marks=self.marks, nav_status=self.nav_status,
+                       frame_urls=self.frame_urls, text=self.text)
 
     def close(self, agent_id):
         self.calls.append(("close",))
@@ -177,7 +191,7 @@ class FakeHost:
 def env(tmp_path: Path):
     install_dir = tmp_path / "install"
     install_dir.mkdir()
-    (install_dir / "ready.json").write_text(json.dumps({"browser": "test"}), encoding="utf-8")
+    (install_dir / "ready.json").write_text(json.dumps({"browser": "test", "browser_kind": "chromium"}), encoding="utf-8")
     host = FakeHost()
     vision = {"value": ("vision-model", True)}
     extension = _PACKAGE.BrowserVisionExtension(
@@ -430,14 +444,23 @@ def test_inline_text_without_a_mark_types_into_the_focus(env) -> None:
     assert not any(call[0] == "click" for call in env["host"].calls)
 
 
-def test_text_in_both_the_body_and_the_command_is_a_usage_error(env) -> None:
+def test_different_text_in_the_body_and_the_command_is_a_usage_error(env) -> None:
+    # R32 accepts identical text in both places, so the error case differs.
     env["run"]("bv open example.com")
-    message = _error(env["run"]("bv type @1 hello", body="hello"))
+    message = _error(env["run"]("bv type @1 hello", body="goodbye"))
     assert message == (
         "USAGE: bv type [@<n>] [--enter] [<text …>] — give the text either in the body or after the command, not both"
     )
     assert _error(env["run"]("bv type @1 --enter")).startswith("USAGE: bv type needs the text")
     assert not any(call[0] in {"click", "type"} for call in env["host"].calls)
+
+
+def test_the_same_text_in_the_body_and_the_command_is_typed_once(env) -> None:
+    """R32: equal after collapsing whitespace, so it is one text, typed as the body gives it."""
+    env["run"]("bv open example.com")
+    typed = env["run"]("bv type @1 --enter 123 Main St,  Miami FL", body="123 Main St, Miami  FL\n")
+    assert typed.ok, typed.prompt_content
+    assert [call for call in env["host"].calls if call[0] == "type"] == [("type", "123 Main St, Miami  FL\n", True)]
 
 
 def test_body_only_typing_is_unchanged(env) -> None:
@@ -1057,3 +1080,132 @@ def test_asking_the_prompt_state_does_not_start_the_browser(tmp_path: Path) -> N
     assert extension.prompt_state(agent) == "Your browser right now: no page open."
     assert extension._host._thread is None and extension._host._loop is None
     assert not any(thread.name == "browser-vision" for thread in threading.enumerate())
+
+
+# ─── polite pacing per site (R33) ───
+
+
+def _paced(host) -> list[str]:
+    return [call[1] for call in host.calls if call[0] == "pace"]
+
+
+def test_only_actions_that_can_reach_the_network_are_paced(env) -> None:
+    run, host = env["run"], env["host"]
+    assert run("bv open https://www.example.com/start").ok
+    assert _paced(host) == ["example.com"]
+    host.calls.clear()
+    for command in ("bv view", "bv zoom 5", "bv zoom reset", "bv point 10 10", "bv point1k 5 5",
+                    "bv scroll down", "bv wait 1", "bv status", "bv type @2 no submit", "bv window phone"):
+        assert run(command).ok, command
+    assert _paced(host) == []
+    for command, body in (("bv click @1", None), ("bv click", None), ("bv click 5", None),
+                          ("bv type @2 --enter", "hi"), ("bv key Enter", None), ("bv select @3 Banana", None),
+                          ("bv back", None)):
+        assert run(command, body).ok, command
+    assert _paced(host) == ["example.com"] * 7
+    assert run("bv close").ok
+    assert _paced(host) == ["example.com"] * 7
+
+
+def test_a_noticeable_wait_is_stated_in_the_result(env) -> None:
+    run, host = env["run"], env["host"]
+    host.next_pace_s = 2.84
+    opened = run("bv open redfin.com")
+    assert "paced 2.8s for redfin.com (polite browsing)" in opened.prompt_content
+    host.next_pace_s = 0.05
+    assert "paced" not in run("bv click @1").prompt_content
+
+
+def test_a_page_without_a_site_is_not_paced(env) -> None:
+    assert env["run"]("bv open about:blank").ok
+    assert env["run"]("bv click @1").ok
+    assert _paced(env["host"]) == []
+
+
+# ─── bot checks and cooldowns (R34) ───
+
+
+def _cooldowns(env) -> dict:
+    return json.loads((env["tmp"] / "data" / "cooldowns.json").read_text(encoding="utf-8"))
+
+
+def test_a_bot_check_says_blocked_and_cools_down_the_requested_site(env) -> None:
+    run, host = env["run"], env["host"]
+    host.nav_status = 429
+    original_goto = host.goto
+
+    def goto_wall(agent_id, url):
+        outcome = original_goto(agent_id, url)
+        host.url = "https://ratelimited.redfin.com/?rl-reason=blocked"
+        return outcome
+
+    host.goto = goto_wall
+    blocked = run("bv open https://www.redfin.com/FL/Miami/sold-homes")
+    assert blocked.ok, blocked.prompt_content
+    assert len(blocked.image_paths) == 1
+    lines = blocked.prompt_content.splitlines()
+    # The BLOCKED line leads the browser section.
+    assert lines[lines.index("BROWSER:") + 1] == (
+        "BLOCKED: redfin.com is showing a bot check (HTTP 429). Stop browsing this site and tell the "
+        "operator; do not retry or switch tools to get around it."
+    )
+    assert blocked.data["status_lines"] == ["Blocked by redfin.com's bot check"]
+    assert list(_cooldowns(env)) == ["redfin.com"]
+
+
+def test_a_site_on_cooldown_is_refused_without_loading_even_by_subdomain(env) -> None:
+    run, host = env["run"], env["host"]
+    host.text = "Are you a\nrobot?"
+    assert "BLOCKED: redfin.com" in run("bv open redfin.com").prompt_content
+    entry = _cooldowns(env)["redfin.com"]
+    at = datetime.fromisoformat(entry["blocked_at"]).astimezone().strftime("%H:%M")
+    until = datetime.fromisoformat(entry["until"]).astimezone().strftime("%H:%M")
+    assert datetime.fromisoformat(entry["until"]) - datetime.fromisoformat(entry["blocked_at"]) == timedelta(minutes=30)
+    host.calls.clear()
+    for url in ("https://www.redfin.com/", "ratelimited.redfin.com"):
+        refused = run(f"bv open {url}")
+        assert _error(refused) == (
+            f"SITE_COOLDOWN: redfin.com showed a bot check at {at}; it can be tried again after {until} (local time)"
+        )
+        assert "status_lines" not in refused.data
+    # The open page is still redfin.com, so its paced actions are refused too.
+    assert _error(run("bv click @1")).startswith("SITE_COOLDOWN: redfin.com")
+    assert [call[0] for call in host.calls if call[0] != "describe"] == []
+    # Another site is untouched.
+    host.text = ""
+    assert run("bv open example.com").ok
+
+
+def test_the_cooldown_survives_a_new_extension_instance(env, tmp_path: Path) -> None:
+    env["host"].frame_urls = ("https://www.google.com/recaptcha/api2/anchor?k=x",)
+    assert "BLOCKED: example.com is showing a bot check (challenge frame from google.com/recaptcha)" in (
+        env["run"]("bv open example.com").prompt_content
+    )
+    host = FakeHost()
+    fresh = _PACKAGE.BrowserVisionExtension(
+        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data"),
+        host=host,
+        install_dir=env["install"],
+        vision_model=lambda agent: ("vision-model", True),
+        downloads_dir=lambda agent: tmp_path / "downloads",
+    )
+    ctx = CliExecutionContext(agent=env["agent"], state=db.get_agent_state(env["agent"].id), cwd="/me")
+    refused = fresh.handle(ctx, ParsedCliCommand(raw="bv open example.com", name="bv", args=("open", "example.com")), None)
+    assert refused.data["error"].startswith("SITE_COOLDOWN: example.com showed a bot check at ")
+    assert host.calls == []
+
+
+def test_a_normal_page_is_not_a_bot_check(env) -> None:
+    env["host"].nav_status = 200
+    env["host"].text = "Robot vacuum review: the best robot for pet hair"
+    opened = env["run"]("bv open example.com")
+    assert "BLOCKED" not in opened.prompt_content
+    assert opened.data["status_lines"] == ["Browsing example.com"]
+    assert not (env["tmp"] / "data" / "cooldowns.json").exists()
+
+
+def test_an_unreadable_cooldown_file_is_an_explicit_error(env) -> None:
+    (env["tmp"] / "data").mkdir(parents=True, exist_ok=True)
+    (env["tmp"] / "data" / "cooldowns.json").write_text("{not json", encoding="utf-8")
+    assert _error(env["run"]("bv open example.com")).startswith("COOLDOWN_FILE_UNREADABLE: ")
+    assert env["host"].calls == []

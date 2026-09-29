@@ -7,10 +7,12 @@ report it without importing the extension.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import threading
 from pathlib import Path
+from typing import Mapping
 
 from core.extensions.contract import (
     READY_FILE,
@@ -26,23 +28,31 @@ from core.extensions.registry import ExtensionEntry, set_enabled
 
 logger = logging.getLogger(__name__)
 
+OUT_OF_DATE_DETAIL = "Setup needs to run again: the installed version is out of date."
+
 
 class SetupAlreadyRunning(Exception):
     """A live process already holds this extension's setup lock."""
 
 
-def read_setup_status(data_dir: Path, *, required: bool) -> SetupStatus:
+def read_setup_status(data_dir: Path, *, required: bool, ready_requires: Mapping[str, str]) -> SetupStatus:
     """Derive setup state from the marker files in ``data_dir``.
 
     Args:
         data_dir: The extension's data dir (may not exist yet).
         required: The manifest's ``setup.required``.
+        ready_requires: The manifest's ``setup.ready_requires``: keys
+            ``ready.json`` must hold with these exact string values.
 
     Returns:
         ``not_required`` when no setup exists; else ``installing`` while a
         live pid holds the lock, ``failed`` for a dead pid ("interrupted") or
-        a recorded error, ``ready`` once ``ready.json`` exists, otherwise
-        ``missing``.
+        a recorded error, ``ready`` once ``ready.json`` exists and meets
+        ``ready_requires``, ``missing`` with ``OUT_OF_DATE_DETAIL`` when it
+        exists but does not (or is not a JSON object), otherwise ``missing``.
+
+    Raises:
+        OSError: ``ready.json`` exists but cannot be read.
     """
     if not required:
         return SetupStatus(state="not_required")
@@ -55,9 +65,27 @@ def read_setup_status(data_dir: Path, *, required: bool) -> SetupStatus:
     error = data_dir / SETUP_ERROR_FILE
     if error.exists():
         return SetupStatus(state="failed", detail=error.read_text(encoding="utf-8").strip() or "Setup failed.")
-    if (data_dir / READY_FILE).exists():
-        return SetupStatus(state="ready")
-    return SetupStatus(state="missing")
+    ready = data_dir / READY_FILE
+    if not ready.exists():
+        return SetupStatus(state="missing")
+    if ready_requires and not _meets(ready, ready_requires):
+        return SetupStatus(state="missing", detail=OUT_OF_DATE_DETAIL)
+    return SetupStatus(state="ready")
+
+
+def _meets(ready: Path, ready_requires: Mapping[str, str]) -> bool:
+    """Return whether ``ready.json`` holds every required key with its exact value.
+
+    Unparseable JSON is an install this version cannot vouch for, so it
+    fails the check (the operator sees "out of date" and re-runs setup).
+    """
+    try:
+        marker = json.loads(ready.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    if not isinstance(marker, dict):
+        return False
+    return all(marker.get(key) == value for key, value in ready_requires.items())
 
 
 def entry_setup_status(entry: ExtensionEntry) -> SetupStatus:
@@ -68,7 +96,8 @@ def entry_setup_status(entry: ExtensionEntry) -> SetupStatus:
     """
     if entry.manifest is None:
         raise ValueError(f"extension {entry.id} has no manifest")
-    return read_setup_status(extension_data_dir(entry.id), required=entry.manifest.setup.required)
+    setup = entry.manifest.setup
+    return read_setup_status(extension_data_dir(entry.id), required=setup.required, ready_requires=setup.ready_requires)
 
 
 def start_setup(entry: ExtensionEntry, *, enable_on_success: bool) -> None:

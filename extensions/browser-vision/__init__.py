@@ -7,6 +7,7 @@ extension is enabled or being set up.
 from __future__ import annotations
 
 import logging
+import random
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -24,6 +25,7 @@ from .commands import (
     agent_downloads_dir,
     routed_vision_model,
 )
+from .cooldowns import CooldownStore
 from .screenshots import ScreenshotStore
 from .sessions import SessionMarkerError, SessionMarkers, pid_alive
 
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 _SHOTS_DIRNAME = "shots"
 _SESSIONS_DIRNAME = "sessions"
+_COOLDOWNS_FILE = "cooldowns.json"
 
 
 def create(ctx: ExtensionContext) -> "BrowserVisionExtension":
@@ -74,6 +77,7 @@ class BrowserVisionExtension:
     ) -> None:
         self._defaults = BrowserVisionDefaults.model_validate(ctx.manifest.defaults)
         self._install_dir = install_dir if install_dir is not None else ctx.data_dir
+        self._ready_requires = ctx.manifest.setup.ready_requires
         self._host: BrowserHostLike = host if host is not None else BrowserHost(
             browsers_path=install.browsers_dir(self._install_dir),
             nav_timeout_ms=self._defaults.nav_timeout_ms,
@@ -82,6 +86,10 @@ class BrowserVisionExtension:
             settle_ms=self._defaults.settle_ms,
             wait_poll_ms=self._defaults.wait_poll_ms,
             wait_settle_ms=self._defaults.wait_settle_ms,
+            pace_min_ms=self._defaults.pace_min_ms,
+            pace_jitter_ms=self._defaults.pace_jitter_ms,
+            rng=random.Random(),
+            page_text_chars=self._defaults.botwall.text_chars,
         )
         # Nothing here starts the browser: BrowserHost creates its thread and
         # loop on the first command, so the app process can construct this
@@ -101,6 +109,9 @@ class BrowserVisionExtension:
             host=self._host,
             shots=self._shots,
             markers=self._markers,
+            # Deliberately never cleared at worker start: a site's block
+            # outlives the process that saw it.
+            cooldowns=CooldownStore(ctx.data_dir / _COOLDOWNS_FILE),
             setup_status=self.setup_status,
             vision_model=vision_model,
             downloads_dir=downloads_dir,
@@ -112,7 +123,7 @@ class BrowserVisionExtension:
 
     def setup_status(self) -> SetupStatus:
         """Return the browser setup state from the install dir's markers."""
-        return install.setup_status(self._install_dir)
+        return install.setup_status(self._install_dir, self._ready_requires)
 
     def run_setup(self, log_path: Path) -> None:
         """Download the browser and probe it (blocking).
@@ -120,7 +131,12 @@ class BrowserVisionExtension:
         Raises:
             core.extensions.contract.SetupError: Download or probe failed.
         """
-        install.run_setup(self._install_dir, log_path, probe_timeout_ms=self._defaults.nav_timeout_ms)
+        install.run_setup(
+            self._install_dir,
+            log_path,
+            probe_timeout_ms=self._defaults.nav_timeout_ms,
+            settle_ms=self._defaults.settle_ms,
+        )
 
     def prompt_state(self, agent: Agent) -> str:
         """Tell the agent where its browser really is (``core.extensions.contract.SupportsPromptState``).

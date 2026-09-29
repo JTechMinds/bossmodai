@@ -38,7 +38,7 @@ def teardown_function() -> None:
 def _mark_ready() -> None:
     data_dir = extension_data_dir(_BV)
     data_dir.mkdir(parents=True, exist_ok=True)
-    (data_dir / "ready.json").write_text(json.dumps({"browser": "test"}), encoding="utf-8")
+    (data_dir / "ready.json").write_text(json.dumps({"browser": "test", "browser_kind": "chromium"}), encoding="utf-8")
 
 
 def _context(agent, contract_kind: str) -> list[dict]:

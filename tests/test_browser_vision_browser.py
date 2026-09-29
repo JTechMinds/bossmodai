@@ -1,14 +1,16 @@
 """Browser Vision against a real headless browser and a local fixture site.
 
 Uses the browser that setup installed for this checkout (read only: the
-binaries under the real extension data dir). Everything the test writes —
-screenshots, downloads — goes to a temp dir. Skipped only when that setup is
-not ready.
+binaries under the real extension data dir), or the install dir named by
+``BOSSMOD_BV_TEST_INSTALL_DIR`` (e.g. a ``run_setup`` temp install).
+Everything the test writes — screenshots, downloads — goes to a temp dir.
+Skipped only when that setup is not ready.
 """
 
 from __future__ import annotations
 
 import io
+import json
 import os
 import re
 import threading
@@ -29,6 +31,8 @@ from core.extensions.registry import get_discovery
 from core.extensions.setup_runner import read_setup_status
 
 _ENTRY = get_discovery().get("browser-vision")
+# An install dir to use instead of the real one (read only either way).
+_INSTALL_DIR_ENV = "BOSSMOD_BV_TEST_INSTALL_DIR"
 
 _PAGE = b"""<!doctype html>
 <html><head><title>fixture</title></head>
@@ -121,11 +125,42 @@ document.getElementById('run').addEventListener('click', () => {
 </script>
 </body></html>
 """.encode("utf-8")
+# R31: a page that adds and removes iframes every 50 ms while it is being
+# captured (as Zillow does while loading), beside a button that stays.
+_CHURN_PAGE = b"""<!doctype html>
+<html><head><title>churn</title></head>
+<body style="margin:0;font:16px sans-serif">
+<button id="stay" style="position:absolute;left:20px;top:20px;width:200px;height:60px">Stay here</button>
+<script>
+setInterval(() => {
+  for (let i = 0; i < 4; i += 1) {
+    const frame = document.createElement('iframe');
+    frame.srcdoc = '<button>inside</button>';
+    frame.style.cssText = 'position:absolute;left:400px;top:' + (20 + i * 60) + 'px;width:200px;height:50px';
+    document.body.appendChild(frame);
+    setTimeout(() => frame.remove(), 20 + i * 5);
+  }
+}, 50);
+</script>
+</body></html>
+"""
+# R34: a rate-limit wall like ratelimited.redfin.com.
+_WALL_PAGE = b"""<!doctype html>
+<html><head><title>Are You a Robot?</title></head>
+<body><h1>Are you a robot?</h1><p>Please verify you are human to continue.</p></body></html>
+"""
 _FILE = b"downloaded fixture contents\n"
 
 
 class _Fixture(BaseHTTPRequestHandler):
+    # Every path served, in order (R34 asserts a refused open never arrives).
+    served: list[str] = []
+
     def do_GET(self) -> None:  # noqa: N802 — http.server's hook name
+        type(self).served.append(self.path)
+        if self.path == "/wall":
+            self._send(429, _WALL_PAGE, {"Content-Type": "text/html"})
+            return
         if self.path == "/":
             body, headers = _PAGE, {"Content-Type": "text/html"}
         elif self.path == "/frame":
@@ -136,6 +171,8 @@ class _Fixture(BaseHTTPRequestHandler):
             body, headers = _PLACES_PAGE, {"Content-Type": "text/html"}
         elif self.path == "/spa":
             body, headers = _SPA_PAGE, {"Content-Type": "text/html; charset=utf-8"}
+        elif self.path == "/churn":
+            body, headers = _CHURN_PAGE, {"Content-Type": "text/html"}
         elif self.path == "/file.txt":
             body, headers = _FILE, {
                 "Content-Type": "text/plain",
@@ -144,7 +181,10 @@ class _Fixture(BaseHTTPRequestHandler):
         else:
             self.send_error(404)
             return
-        self.send_response(200)
+        self._send(200, body, headers)
+
+    def _send(self, status: int, body: bytes, headers: dict[str, str]) -> None:
+        self.send_response(status)
         for key, value in headers.items():
             self.send_header(key, value)
         self.send_header("Content-Length", str(len(body)))
@@ -185,12 +225,18 @@ def browse(tmp_path, monkeypatch):
     """A real Browser Vision extension, a fixture site and a ``bv`` runner.
 
     Yields ``(bv, base_url, downloads_dir, extension)``; ``bv(raw, body)``
-    asserts the command succeeded and returns its result.
+    asserts the command succeeded (``ok=False``: that it failed) and
+    returns its result.
     """
-    install_dir = _installed_browser_dir(monkeypatch)
-    status = read_setup_status(install_dir, required=True)
+    override = os.environ.get(_INSTALL_DIR_ENV)
+    install_dir = Path(override) if override else _installed_browser_dir(monkeypatch)
+    setup = _ENTRY.manifest.setup
+    status = read_setup_status(install_dir, required=setup.required, ready_requires=setup.ready_requires)
     if status.state != "ready":
-        pytest.skip(f"Browser Vision setup is not ready at {install_dir} ({status.state}); run setup via Add → Extensions")
+        pytest.skip(
+            f"Browser Vision setup is not ready at {install_dir} ({status.state}: {status.detail}); "
+            f"run setup via Add → Extensions, or set {_INSTALL_DIR_ENV}"
+        )
     # BrowserHost sets this for its process; restore it after the test.
     monkeypatch.delenv("PLAYWRIGHT_BROWSERS_PATH", raising=False)
 
@@ -200,8 +246,15 @@ def browse(tmp_path, monkeypatch):
 
     downloads = tmp_path / "me" / "downloads"
     package = import_package(_ENTRY)
+    # Every fixture page is one site (127.0.0.1), so the manifest's polite
+    # pacing (2 s + up to 1.5 s per action) would make these flows minutes
+    # long; a short gap still runs the pacing path on every paced action.
+    manifest = _ENTRY.manifest.model_copy(
+        update={"defaults": {**_ENTRY.manifest.defaults, "pace_min_ms": 100, "pace_jitter_ms": 100}},
+    )
+    _Fixture.served = []
     extension = package.BrowserVisionExtension(
-        ExtensionContext(manifest=_ENTRY.manifest, data_dir=tmp_path / "data"),
+        ExtensionContext(manifest=manifest, data_dir=tmp_path / "data"),
         install_dir=install_dir,
         vision_model=lambda agent: ("vision-model", True),
         downloads_dir=lambda agent: downloads,
@@ -209,10 +262,10 @@ def browse(tmp_path, monkeypatch):
     agent = db.create_agent("Iris", role="Researcher")
     ctx = CliExecutionContext(agent=agent, state=db.get_agent_state(agent.id), cwd="/me")
 
-    def bv(raw: str, body: str | None = None):
+    def bv(raw: str, body: str | None = None, *, ok: bool = True):
         tokens = raw.split()
         result = extension.handle(ctx, ParsedCliCommand(raw=raw, name=tokens[0], args=tuple(tokens[1:])), body)
-        assert result.ok, result.prompt_content
+        assert result.ok is ok, result.prompt_content
         return result
 
     try:
@@ -420,3 +473,43 @@ def test_close_ends_the_session_its_screenshots_and_its_live_view(browse, tmp_pa
     assert not shot.parent.exists() and not agent_dir.exists()
     assert not marker.exists()
     assert extension.live_view() == []
+
+
+def test_frames_that_detach_during_a_capture_do_not_fail_it(browse, caplog) -> None:
+    """R31: Zillow-style iframe churn; every capture still succeeds."""
+    bv, base, _downloads, _extension = browse
+
+    with caplog.at_level("WARNING"):
+        opened = bv(f"bv open {base}/churn")
+        assert "title: churn" in opened.prompt_content
+        assert ("button", "Stay here") in [(kind, name) for _n, kind, name in _legend(opened)]
+        for _ in range(15):
+            viewed = bv("bv view")
+            assert ("button", "Stay here") in [(kind, name) for _n, kind, name in _legend(viewed)]
+    skipped = [record.getMessage() for record in caplog.records if "skipped marks in frame" in record.getMessage()]
+    # Reported for the run evidence: how often the race was actually hit.
+    print(f"R31 detached-frame skips during the run: {len(skipped)}", sorted({m.split(" (", 1)[1] for m in skipped}))
+
+
+def test_a_bot_check_is_reported_and_the_site_cooled_down(browse, tmp_path) -> None:
+    """R34: a 429 "Are you a robot?" page gives BLOCKED; the next open never reaches the server."""
+    bv, base, _downloads, _extension = browse
+    host = base.split("://", 1)[1].split(":", 1)[0]
+
+    blocked = bv(f"bv open {base}/wall")
+    lines = blocked.prompt_content.splitlines()
+    assert lines[lines.index("BROWSER:") + 1] == (
+        f"BLOCKED: {host} is showing a bot check (HTTP 429). Stop browsing this site and tell the operator; "
+        "do not retry or switch tools to get around it."
+    )
+    assert "title: Are You a Robot?" in blocked.prompt_content
+    assert len(blocked.image_paths) == 1
+    assert blocked.data["status_lines"] == [f"Blocked by {host}'s bot check"]
+    cooldowns = json.loads((tmp_path / "data" / "cooldowns.json").read_text(encoding="utf-8"))
+    assert list(cooldowns) == [host]
+
+    served = list(_Fixture.served)
+    refused = bv(f"bv open {base}/", ok=False)
+    assert refused.data["error"].startswith(f"SITE_COOLDOWN: {host} showed a bot check at ")
+    assert refused.data["error"].endswith("(local time)")
+    assert _Fixture.served == served

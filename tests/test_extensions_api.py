@@ -50,7 +50,7 @@ def client() -> TestClient:
 def _mark_ready(ext_id: str = _BV) -> None:
     data_dir = extension_data_dir(ext_id)
     data_dir.mkdir(parents=True, exist_ok=True)
-    (data_dir / "ready.json").write_text(json.dumps({"browser": "test"}), encoding="utf-8")
+    (data_dir / "ready.json").write_text(json.dumps({"browser": "test", "browser_kind": "chromium"}), encoding="utf-8")
 
 
 def _item(client: TestClient, ext_id: str = _BV) -> dict:
@@ -72,8 +72,23 @@ def test_list_shows_browser_vision_with_setup_state_and_excluded_agents(client) 
     assert item["command"] == {"name": "bv", "summary": "Browse websites by screenshot + grid."}
     assert item["requires_image_model"] is True
     assert item["setup"] == {"state": "missing", "detail": None}
-    assert item["setup_label"] == "Download browser (~120 MB)"
+    assert item["setup_label"] == "Download browser (~200 MB)"
     assert item["excluded_agents"] == [{"id": blind.id, "name": "Scribe", "model": "text-model"}]
+
+
+def test_an_install_from_before_full_chromium_shows_setup_again(client) -> None:
+    """R35: the card reads ready_requires from the manifest, without importing the extension."""
+    data_dir = extension_data_dir(_BV)
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "ready.json").write_text(json.dumps({"playwright": "1.63.0", "browser": "153.0"}), encoding="utf-8")
+    assert _item(client)["setup"] == {
+        "state": "missing",
+        "detail": "Setup needs to run again: the installed version is out of date.",
+    }
+    response = client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True})
+    assert response.status_code == 409
+    _mark_ready()
+    assert _item(client)["setup"] == {"state": "ready", "detail": None}
 
 
 def test_enabling_before_setup_is_refused(client) -> None:

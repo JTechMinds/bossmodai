@@ -9,6 +9,9 @@ waits for the result.
 One ``BrowserContext`` (cookies, storage, tabs) per agent. The browser starts
 on the first command and a context lives until ``close``, ``shutdown`` (the
 extension was disabled or the worker is stopping) — there is no idle close.
+
+Polite pacing (``pace``) is kept here too, per site across every agent,
+since all of them share the operator's IP and this host is one per process.
 """
 
 from __future__ import annotations
@@ -18,7 +21,9 @@ import concurrent.futures
 import hashlib
 import logging
 import os
+import random
 import threading
+import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,12 +38,16 @@ from playwright.async_api import (
     Frame,
     Page,
     Playwright,
+    Request,
+    Response,
     async_playwright,
 )
 
 from core.attachments import sanitize_file_name
 
+from .install import BROWSER_CHANNEL
 from .marks import Mark, RawMark, place, raw_from_js
+from .sites import matching_site
 from .viewports import ViewportSpec
 
 logger = logging.getLogger(__name__)
@@ -71,6 +80,9 @@ _PAGE_TEXT_JS = """() => {
     walk(document);
     return [document.title, texts.join('\\u0000')];
 }"""
+# The main frame's visible text, cut to a length (bot-check wording lives
+# near the top of the page).
+_MAIN_TEXT_JS = "(limit) => (document.body ? document.body.innerText : '').slice(0, limit)"
 
 T = TypeVar("T")
 
@@ -111,6 +123,12 @@ class Capture:
     session: SessionInfo
     # The page's visible controls at capture time, numbered (see marks.py).
     marks: tuple[Mark, ...] = ()
+    # Bot-check signals (botwall.py): the main document's HTTP status (None
+    # when the page did not come from a response, e.g. about:blank), the
+    # URLs of its child frames, and the start of its visible text.
+    nav_status: int | None = None
+    frame_urls: tuple[str, ...] = ()
+    text: str = ""
 
 
 @dataclass(frozen=True)
@@ -155,6 +173,20 @@ class WaitOutcome:
     downloads: tuple[DownloadResult, ...] = ()
 
 
+@dataclass(frozen=True)
+class Paced:
+    """How long an action waited for its site's polite-browsing turn.
+
+    Attributes:
+        site: The site key the wait was kept under (a parent site when the
+            host is its subdomain, see ``sites.matching_site``).
+        waited_s: Seconds slept; 0 when the site's turn had already come.
+    """
+
+    site: str
+    waited_s: float
+
+
 @dataclass
 class _Session:
     session_id: str
@@ -167,6 +199,9 @@ class _Session:
     pending: list[Download] = field(default_factory=list)
     # Mark number → the frame it was found in, from the latest capture.
     mark_frames: dict[int, Frame] = field(default_factory=dict)
+    # The HTTP status of the page's main document; reset when a new main
+    # document is requested, so a page that came from no response has None.
+    nav_status: int | None = None
 
 
 class BrowserHost:
@@ -182,6 +217,11 @@ class BrowserHost:
         wait_poll_ms: How often ``wait_for_change`` re-reads the page.
         wait_settle_ms: How long a changed page must hold still before
             ``wait_for_change`` calls it settled.
+        pace_min_ms: The least time between two network actions on one site.
+        pace_jitter_ms: The most extra random time added to each gap.
+        rng: Draws the jitter (injectable so tests are deterministic).
+        page_text_chars: How much of the main frame's visible text a
+            capture carries for bot-check wording.
     """
 
     def __init__(
@@ -194,6 +234,10 @@ class BrowserHost:
         settle_ms: int,
         wait_poll_ms: int,
         wait_settle_ms: int,
+        pace_min_ms: int,
+        pace_jitter_ms: int,
+        rng: random.Random,
+        page_text_chars: int,
     ) -> None:
         self._browsers_path = browsers_path
         self._nav_timeout_ms = nav_timeout_ms
@@ -202,6 +246,14 @@ class BrowserHost:
         self._settle_s = settle_ms / 1000
         self._wait_poll_s = wait_poll_ms / 1000
         self._wait_settle_s = wait_settle_ms / 1000
+        self._pace_min_s = pace_min_ms / 1000
+        self._pace_jitter_s = pace_jitter_ms / 1000
+        self._rng = rng
+        self._page_text_chars = page_text_chars
+        # Site key → monotonic time its latest network action was allowed to
+        # start. Read and written by agents' command threads, under its lock.
+        self._pace_lock = threading.Lock()
+        self._last_action_at: dict[str, float] = {}
         # The longest one call can legitimately take: a browser launch (nav
         # timeout), the action, a download it started, and the settle pause.
         self._call_timeout_s = (nav_timeout_ms + action_timeout_ms + download_timeout_ms + settle_ms) / 1000
@@ -236,6 +288,35 @@ class BrowserHost:
         if self._loop is None:
             return {}
         return self._run(self._session_infos)
+
+    def pace(self, key: str) -> Paced:
+        """Wait for the site's turn, then claim it (polite browsing, R33).
+
+        Blocks the calling command thread (not the browser thread, so other
+        agents on other sites are not held up) until
+        ``last + pace_min_ms + uniform(0, pace_jitter_ms)`` of the site, with
+        a fresh random draw each call. The turn is claimed before sleeping,
+        so agents acting on one site at once queue up one gap apart. The
+        first action on a site does not wait.
+
+        Args:
+            key: The site key of the page the action reaches (``sites.site_key``).
+                A subdomain shares the turn of a parent site already paced.
+
+        Returns:
+            The site the turn was kept under and how long this call slept.
+        """
+        with self._pace_lock:
+            site = matching_site(key, self._last_action_at) or key
+            now = time.monotonic()
+            gap = self._pace_min_s + self._rng.uniform(0, self._pace_jitter_s)
+            last = self._last_action_at.get(site)
+            start = now if last is None else max(now, last + gap)
+            self._last_action_at[site] = start
+        wait = start - now
+        if wait > 0:
+            time.sleep(wait)
+        return Paced(site=site, waited_s=wait)
 
     def open_session(self, agent_id: str, viewport: ViewportSpec, downloads_dir: Path) -> None:
         """Create the agent's context (starting the browser) when it has none.
@@ -412,7 +493,10 @@ class BrowserHost:
             # Process-wide, but only this extension drives Playwright here.
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(self._browsers_path)
             self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=True, timeout=self._nav_timeout_ms)
+        # Full Chromium in new headless mode (see install.py), not the shell.
+        self._browser = await self._playwright.chromium.launch(
+            headless=True, channel=BROWSER_CHANNEL, timeout=self._nav_timeout_ms,
+        )
         return self._browser
 
     async def _open_session(self, agent_id: str, viewport: ViewportSpec, downloads_dir: Path) -> None:
@@ -471,10 +555,26 @@ class BrowserHost:
         # A lambda, not ``list.append``: Playwright tags the handler object
         # with an attribute, which a builtin method cannot take.
         page.on("download", lambda download: session.pending.append(download))
+        page.on("request", lambda request: self._on_request(session, page, request))
+        page.on("response", lambda response: self._on_response(session, page, response))
+
+    @staticmethod
+    def _on_request(session: _Session, page: Page, request: Request) -> None:
+        # A new main document is on its way: the old status no longer applies.
+        if page is session.page and request.is_navigation_request() and request.frame is page.main_frame:
+            session.nav_status = None
+
+    @staticmethod
+    def _on_response(session: _Session, page: Page, response: Response) -> None:
+        request = response.request
+        if page is session.page and request.is_navigation_request() and request.frame is page.main_frame:
+            session.nav_status = response.status
 
     def _adopt(self, session: _Session, page: Page) -> None:
         self._watch(session, page)
         session.page = page
+        # The old tab's status says nothing about the new tab's document.
+        session.nav_status = None
 
     def _session(self, agent_id: str) -> _Session:
         session = self._sessions.get(agent_id)
@@ -619,14 +719,18 @@ class BrowserHost:
             raise BrowserActionError("the page has no viewport size")
         png = await session.page.screenshot(type="png", scale="css", timeout=self._action_timeout_ms)
         marks = await self._collect_marks(session, size["width"], size["height"])
+        page = session.page
         return Capture(
             png=png,
-            url=session.page.url,
-            title=await session.page.title(),
+            url=page.url,
+            title=await page.title(),
             width=size["width"],
             height=size["height"],
             session=_info(session),
             marks=marks,
+            nav_status=session.nav_status,
+            frame_urls=tuple(frame.url for frame in page.frames if frame is not page.main_frame),
+            text=await page.main_frame.evaluate(_MAIN_TEXT_JS, self._page_text_chars),
         )
 
     async def _frame_offsets(self, session: _Session) -> list[tuple[Frame, float, float, float, float]]:
@@ -635,7 +739,11 @@ class BrowserHost:
         A child frame's box comes from its element's ``bounding_box()`` (page
         coordinates, for nested frames too) plus the element's border and
         padding, since the frame's own coordinates start at its content box.
-        A frame whose element has no box (hidden, detached) is skipped.
+        A frame whose element has no box (hidden) is skipped. A child frame
+        that detaches between listing and measuring (sites add and remove
+        iframes while loading) is skipped with a warning; it comes back on
+        the next screenshot if it is still there. The main frame is never
+        skipped.
         """
         size = session.page.viewport_size or {"width": 0, "height": 0}
         frames: list[tuple[Frame, float, float, float, float]] = [
@@ -644,11 +752,15 @@ class BrowserHost:
         for frame in session.page.frames:
             if frame is session.page.main_frame:
                 continue
-            element = await frame.frame_element()
-            box = await element.bounding_box()
-            if box is None:
+            try:
+                element = await frame.frame_element()
+                box = await element.bounding_box()
+                if box is None:
+                    continue
+                inset = await element.evaluate(_CONTENT_INSET_JS)
+            except PlaywrightError as exc:
+                logger.warning("Browser Vision: skipped marks in frame %s (%s)", frame.url, exc.message)
                 continue
-            inset = await element.evaluate(_CONTENT_INSET_JS)
             frames.append((
                 frame,
                 box["x"] + inset[0],

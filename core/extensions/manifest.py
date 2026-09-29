@@ -41,10 +41,17 @@ class RequiresSpec(_Strict):
 
 
 class SetupSpec(_Strict):
-    """Whether a one-click setup step (a download) must run before enabling."""
+    """Whether a one-click setup step (a download) must run before enabling.
+
+    ``ready_requires`` names keys ``ready.json`` must hold with exactly these
+    string values for setup to count as ready. An extension raises it when
+    what it installs changes, so an older install reads as out of date and
+    the card offers setup again, without the host importing the extension.
+    """
 
     required: bool
     label: str | None = None
+    ready_requires: dict[str, str] = Field(default_factory=dict)
 
 
 class ExtensionManifest(_Strict):

@@ -7,7 +7,7 @@
     "name": "bv",
     "summary": "Browse websites by screenshot + grid.",
     "usage": "bv open <url> | bv click @<n>|<1-9> | bv point <x> <y> — move the mouse to pixel coordinates in the screenshot (x across, y down, from the top-left corner) | bv point1k <x> <y> — move the mouse using a 0–1000 scale (0,0 is the top-left corner, 1000,1000 the bottom-right), whatever the screenshot size | bv click — click where the mouse is | bv type [@<n>] [--enter] <text> | bv type [@<n>] [--enter] (text in body) | bv select @<n> <option text> | bv zoom <1-9> [<1-9> …]|out|reset | bv view [--marks on|off] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1] | bv window phone|tablet|desktop|widescreen|<W>x<H> | bv key <Key or combo> | bv scroll up|down | bv back | bv wait [seconds] — wait for the page to change and settle (default 30s), then take a new screenshot | bv status | bv close",
-    "help": "Browse a website by looking at screenshots. Every screenshot result states\nits size as image WxH. Marks, pointer coordinates and keypad regions always\nrefer to the most recent screenshot.\n\nAim in this order:\n\n1. Marks. Every screenshot outlines the page's controls (links, buttons,\n   fields, popup suggestion rows, …) with an @n tag, and the result lists\n   them: [@7] button \"Sign in\", [@15] option \"123 Main St\". Act on a mark\n   with @n.\n\n2. Pointing, when what you need has no mark:\n     bv point <x> <y>     move the mouse to pixel coordinates in the screenshot (x across, y down, from the top-left corner)\n     bv point1k <x> <y>   move the mouse using a 0–1000 scale (0,0 is the top-left corner, 1000,1000 the bottom-right), whatever the screenshot size\n     bv click             click where the mouse is\n   The returned screenshot draws the cursor, and the result says what is\n   under it: pointer: (412, 488) px = (322, 610)‰ — hovering option \"…\".\n   Check the cursor and the hovering line before bv click; if the cursor\n   landed off, point again, or switch between point and point1k. Pointing\n   also opens hover menus.\n\n3. The keypad, as the fallback: the view splits 3×3, numbered like a phone\n   keypad (1 2 3 / 4 5 6 / 7 8 9). bv zoom <d> narrows the view to that\n   region (chain them: bv zoom 5 3); bv click <d> clicks the centre of\n   region d of the current view.\n\nEvery click reports what it hit, e.g. clicked button \"Sign in\".\n\nSubcommands:\n  bv open <url>               open a page (a bare host gets https://)\n  bv click @<n>               click mark n\n  bv point <x> <y>            move the mouse to pixel coordinates in the screenshot (x across, y down, from the top-left corner)\n  bv point1k <x> <y>          move the mouse using a 0–1000 scale (0,0 is the top-left corner, 1000,1000 the bottom-right), whatever the screenshot size\n  bv click                    click where the mouse is\n  bv click <1-9>              click the centre of keypad region d\n  bv type @<n> [--enter] <text>   click mark n, then type the text\n  bv type @<n> [--enter]      click mark n, then type the body text\n  bv type [--enter] <text>    type the text into whatever is focused\n  bv type [--enter]           type the body text into whatever is focused\n  bv select @<n> <option>     choose an option of a dropdown mark by its text\n  bv zoom <1-9> [<1-9> …]     zoom into keypad regions, one level each\n  bv zoom out | bv zoom reset back up one level | back to the full page\n  bv view [flags]             take a new screenshot (keeps the zoom)\n      --marks on|off          draw the element marks\n      --grid on|off           draw the keypad lines and digits\n      --grid-color auto|#rrggbb   keypad/mark colour (auto picks contrast)\n      --grid-opacity 0-1      keypad line strength\n  bv window <preset|WxH>      phone, tablet, desktop, widescreen, or e.g. 1024x768\n  bv key <Key or combo>       press a key, e.g. Enter, Tab, Control+A, F5\n  bv scroll up|down           scroll most of a screen\n  bv back                     go back one page\n  bv wait [seconds]           wait for the page to change and settle (default 30s), then take a new screenshot\n  bv status                   url, title, window, view, settings, downloads\n  bv close                    close your browser session\n\nAny action (open, click, type, select, key, scroll, back, wait, window) returns\nthe full page again; view, zoom and point keep the current zoom.\n\nAutocomplete: pick the suggestion's mark; if none, bv key ArrowDown then\nbv key Enter.\nClick into a field before Control+A; without focus it selects the whole page.\n--grid off / --marks off hide the keypad / mark outlines when they cover\nwhat you need to read.\n\nExamples:\n  bv open example.com\n  bv click @7\n  bv type @12 --enter         with body: search words\n  bv type @12 search words --enter\n  bv select @4 Canada\n  bv point 412 488\n  bv point1k 322 610\n  bv click\n  bv zoom 5 3\n  bv click 6\n  bv wait\n\nDownloads land in /me/downloads/ and can be read or edited with the normal CLI."
+    "help": "Browse a website by looking at screenshots. Every screenshot result states\nits size as image WxH. Marks, pointer coordinates and keypad regions always\nrefer to the most recent screenshot.\n\nAim in this order:\n\n1. Marks. Every screenshot outlines the page's controls (links, buttons,\n   fields, popup suggestion rows, …) with an @n tag, and the result lists\n   them: [@7] button \"Sign in\", [@15] option \"123 Main St\". Act on a mark\n   with @n.\n\n2. Pointing, when what you need has no mark:\n     bv point <x> <y>     move the mouse to pixel coordinates in the screenshot (x across, y down, from the top-left corner)\n     bv point1k <x> <y>   move the mouse using a 0–1000 scale (0,0 is the top-left corner, 1000,1000 the bottom-right), whatever the screenshot size\n     bv click             click where the mouse is\n   The returned screenshot draws the cursor, and the result says what is\n   under it: pointer: (412, 488) px = (322, 610)‰ — hovering option \"…\".\n   Check the cursor and the hovering line before bv click; if the cursor\n   landed off, point again, or switch between point and point1k. Pointing\n   also opens hover menus.\n\n3. The keypad, as the fallback: the view splits 3×3, numbered like a phone\n   keypad (1 2 3 / 4 5 6 / 7 8 9). bv zoom <d> narrows the view to that\n   region (chain them: bv zoom 5 3); bv click <d> clicks the centre of\n   region d of the current view.\n\nEvery click reports what it hit, e.g. clicked button \"Sign in\".\n\nSubcommands:\n  bv open <url>               open a page (a bare host gets https://)\n  bv click @<n>               click mark n\n  bv point <x> <y>            move the mouse to pixel coordinates in the screenshot (x across, y down, from the top-left corner)\n  bv point1k <x> <y>          move the mouse using a 0–1000 scale (0,0 is the top-left corner, 1000,1000 the bottom-right), whatever the screenshot size\n  bv click                    click where the mouse is\n  bv click <1-9>              click the centre of keypad region d\n  bv type @<n> [--enter] <text>   click mark n, then type the text\n  bv type @<n> [--enter]      click mark n, then type the body text\n  bv type [--enter] <text>    type the text into whatever is focused\n  bv type [--enter]           type the body text into whatever is focused\n  bv select @<n> <option>     choose an option of a dropdown mark by its text\n  bv zoom <1-9> [<1-9> …]     zoom into keypad regions, one level each\n  bv zoom out | bv zoom reset back up one level | back to the full page\n  bv view [flags]             take a new screenshot (keeps the zoom)\n      --marks on|off          draw the element marks\n      --grid on|off           draw the keypad lines and digits\n      --grid-color auto|#rrggbb   keypad/mark colour (auto picks contrast)\n      --grid-opacity 0-1      keypad line strength\n  bv window <preset|WxH>      phone, tablet, desktop, widescreen, or e.g. 1024x768\n  bv key <Key or combo>       press a key, e.g. Enter, Tab, Control+A, F5\n  bv scroll up|down           scroll most of a screen\n  bv back                     go back one page\n  bv wait [seconds]           wait for the page to change and settle (default 30s), then take a new screenshot\n  bv status                   url, title, window, view, settings, downloads\n  bv close                    close your browser session\n\nAny action (open, click, type, select, key, scroll, back, wait, window) returns\nthe full page again; view, zoom and point keep the current zoom.\n\nAutocomplete: pick the suggestion's mark; if none, bv key ArrowDown then\nbv key Enter.\nClick into a field before Control+A; without focus it selects the whole page.\n--grid off / --marks off hide the keypad / mark outlines when they cover\nwhat you need to read.\n\nExamples:\n  bv open example.com\n  bv click @7\n  bv type @12 --enter         with body: search words\n  bv type @12 search words --enter\n  bv select @4 Canada\n  bv point 412 488\n  bv point1k 322 610\n  bv click\n  bv zoom 5 3\n  bv click 6\n  bv wait\n\nDownloads land in /me/downloads/ and can be read or edited with the normal CLI.\n\nSome sites block automated browsers. If a result says BLOCKED or SITE_COOLDOWN,\nstop using that site, tell the operator, and do not retry or use other tools\n(like curl) to get around it.\nFor property sale prices, public records are better and not blocked: county\nproperty appraiser sites (e.g. Miami-Dade, Broward) and downloadable market\ndata such as Redfin's Data Center.\nBrowsing is paced per site so requests aren't back-to-back; paced lines are\nnormal."
   },
   "prompt": "prompt.md",
   "live_view": true,
@@ -20,7 +20,10 @@
   },
   "setup": {
     "required": true,
-    "label": "Download browser (~120 MB)"
+    "label": "Download browser (~200 MB)",
+    "ready_requires": {
+      "browser_kind": "chromium"
+    }
   },
   "defaults": {
     "window_default": "desktop",
@@ -58,6 +61,37 @@
     "wait_poll_ms": 500,
     "wait_settle_ms": 1000,
     "screenshots_keep": 20,
-    "scroll_fraction": 0.8
+    "scroll_fraction": 0.8,
+    "pace_min_ms": 2000,
+    "pace_jitter_ms": 1500,
+    "botwall": {
+      "statuses": [
+        403,
+        429
+      ],
+      "frame_markers": [
+        "google.com/recaptcha",
+        "recaptcha.net",
+        "hcaptcha.com",
+        "challenges.cloudflare.com",
+        "captcha-delivery.com",
+        "px-captcha",
+        "arkoselabs.com",
+        "funcaptcha.com"
+      ],
+      "text_patterns": [
+        "are you a robot",
+        "verify you are human",
+        "verify you're human",
+        "unusual traffic",
+        "press & hold",
+        "press and hold",
+        "complete the captcha",
+        "checking your browser",
+        "access denied"
+      ],
+      "text_chars": 3000,
+      "cooldown_minutes": 30
+    }
   }
 }

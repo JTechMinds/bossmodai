@@ -15,6 +15,11 @@ Three ways to aim, all resolved against the MOST RECENT screenshot:
   anything the page does not expose as a control).
 
 Any action resets the zoom and returns the full page; ``view`` keeps it.
+
+Actions that can reach the network (open, back, click, type --enter, key,
+select) are paced per site (``BrowserHost.pace``), refused while the site
+is on a bot-check cooldown, and checked for a bot check afterwards
+(``botwall.detect``).
 """
 
 from __future__ import annotations
@@ -40,7 +45,9 @@ from core.llm.routing import select_model_with_source
 from core.models import Agent
 from db.model_capabilities import supports_images
 
-from .browser_host import ActionOutcome, BrowserActionError, Capture, SessionInfo, WaitOutcome
+from .botwall import BotWallRules, detect
+from .browser_host import ActionOutcome, BrowserActionError, Capture, Paced, SessionInfo, WaitOutcome
+from .cooldowns import CooldownStore, CooldownStoreError
 from .grid import (
     GridColor,
     GridStyle,
@@ -59,6 +66,7 @@ from .grid import (
 from .marks import Mark, feedback_line, hover_line, legend_line
 from .screenshots import ScreenshotStore, ShotMeta
 from .sessions import SessionMarker, SessionMarkers
+from .sites import site_key
 from .viewports import ViewportSpec, WindowPreset, resolve_viewport
 
 DOWNLOADS_VIRTUAL_DIR = "/me/downloads"
@@ -82,6 +90,8 @@ _USAGE = (
 # bv point1k: the 0–1000 scale's top end (1000,1000 is the bottom-right corner).
 _POINT1K_MAX = 1000
 _TYPE_USAGE = "USAGE: bv type [@<n>] [--enter] [<text …>]"
+# A pacing wait shorter than this is not worth a line in the result.
+_PACED_NOTE_MIN_S = 0.05
 
 
 class BrowserVisionDefaults(BaseModel):
@@ -110,6 +120,9 @@ class BrowserVisionDefaults(BaseModel):
     wait_settle_ms: int = Field(ge=0)
     screenshots_keep: int = Field(ge=1)
     scroll_fraction: float = Field(gt=0)
+    pace_min_ms: int = Field(ge=0)
+    pace_jitter_ms: int = Field(ge=0)
+    botwall: BotWallRules
 
     @field_validator("grid_color_default")
     @classmethod
@@ -135,6 +148,7 @@ class BrowserHostLike(Protocol):
 
     def has_session(self, agent_id: str) -> bool: ...
     def sessions(self) -> dict[str, SessionInfo]: ...
+    def pace(self, key: str) -> Paced: ...
     def open_session(self, agent_id: str, viewport: ViewportSpec, downloads_dir: Path) -> None: ...
     def goto(self, agent_id: str, url: str) -> ActionOutcome: ...
     def click(self, agent_id: str, x: float, y: float) -> ActionOutcome: ...
@@ -225,6 +239,7 @@ class BrowserVisionCommands:
         host: The browser.
         shots: Where screenshots are written.
         markers: Where each open session's marker is kept (for the live view).
+        cooldowns: Sites under a bot-check cooldown.
         setup_status: Reads the setup state (must be ``ready`` to run).
         vision_model: Returns ``(model, image_capable)`` for an agent.
         downloads_dir: Returns the real folder behind an agent's ``/me/downloads``.
@@ -237,6 +252,7 @@ class BrowserVisionCommands:
         host: BrowserHostLike,
         shots: ScreenshotStore,
         markers: SessionMarkers,
+        cooldowns: CooldownStore,
         setup_status: Callable[[], SetupStatus],
         vision_model: Callable[[Agent], tuple[str | None, bool]] = routed_vision_model,
         downloads_dir: Callable[[Agent], Path] = agent_downloads_dir,
@@ -245,6 +261,7 @@ class BrowserVisionCommands:
         self._host = host
         self._shots = shots
         self._markers = markers
+        self._cooldowns = cooldowns
         self._setup_status = setup_status
         self._vision_model = vision_model
         self._downloads_dir = downloads_dir
@@ -335,6 +352,9 @@ class BrowserVisionCommands:
             return self._error(ctx, parsed, f"BROWSER_ERROR: {exc}")
         except (CommandError, ZoomLimit) as exc:
             return self._error(ctx, parsed, str(exc))
+        except CooldownStoreError as exc:
+            # Before ValueError (its base): this is a broken file, not an argument.
+            return self._error(ctx, parsed, f"COOLDOWN_FILE_UNREADABLE: {exc}")
         except ValueError as exc:
             # The keypad/colour/viewport parsers raise ValueError naming the accepted form.
             return self._error(ctx, parsed, f"INVALID_ARGUMENT: {exc}")
@@ -345,6 +365,10 @@ class BrowserVisionCommands:
         if len(args) != 1:
             raise CommandError("USAGE: bv open <url>")
         url = normalize_url(args[0])
+        # The key of the URL asked for: a wall may be served from another
+        # host (ratelimited.redfin.com), but it is this site that blocked.
+        site = site_key(url)
+        paced = self._gate(site)
         view = self._view_for(ctx.agent.id)
         view.pointer = None
         self._host.open_session(ctx.agent.id, view.window, self._downloads_dir(ctx.agent))
@@ -358,7 +382,7 @@ class BrowserVisionCommands:
             reason = _truncate(str(exc).strip().splitlines()[0] if str(exc).strip() else "navigation failed")
             failed = self._error(ctx, parsed, f"BROWSER_ERROR: {exc}")
             return _with_status_lines(failed, [f"Couldn't open {short_url(url)} — {reason}"])
-        return self._after_action(ctx, parsed, view, outcome, notes=[], announce="always")
+        return self._after_action(ctx, parsed, view, outcome, notes=paced, announce="always", wall_site=site)
 
     def _view(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         flags = _parse_flags(args, _VIEW_FLAGS, "bv view [--marks on|off] [--grid on|off] [--grid-color auto|#rrggbb] [--grid-opacity 0-1]")
@@ -485,26 +509,37 @@ class BrowserVisionCommands:
             # The next screenshot shows where this click went.
             view.pointer = (x, y)
         feedback = feedback_line(self._host.describe(ctx.agent.id, x, y))
+        site = self._current_site(ctx.agent.id)
+        paced = self._gate(site)
         outcome = self._host.click(ctx.agent.id, x, y)
         notes = [f"{feedback} at ({x:.0f}, {y:.0f})"]
         if region_note is not None:
             notes.append(region_note)
-        return self._after_action(ctx, parsed, view, outcome, notes=notes, announce="navigation", clicked=feedback)
+        return self._after_action(
+            ctx, parsed, view, outcome, notes=notes + paced, announce="navigation", clicked=feedback, wall_site=site,
+        )
 
     def _type(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         target, text = parse_type_args(args, body)
+        enter = "--enter" in args
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
         notes: list[str] = []
         clicked: str | None = None
-        if target is not None:
-            x, y = self._mark(view, target).point
+        mark = self._mark(view, target) if target is not None else None
+        # Only a submit (--enter) can reach the network; plain typing is local.
+        site = self._current_site(ctx.agent.id) if enter else None
+        paced = self._gate(site)
+        if mark is not None:
+            x, y = mark.point
             clicked = feedback_line(self._host.describe(ctx.agent.id, x, y))
             notes.append(f"{clicked} at ({x:.0f}, {y:.0f})")
             self._host.click(ctx.agent.id, x, y)
-        outcome = self._host.type_text(ctx.agent.id, text, enter="--enter" in args)
+        outcome = self._host.type_text(ctx.agent.id, text, enter=enter)
         notes.append(f"typed {len(text)} characters")
-        return self._after_action(ctx, parsed, view, outcome, notes=notes, announce="navigation", clicked=clicked)
+        return self._after_action(
+            ctx, parsed, view, outcome, notes=notes + paced, announce="navigation", clicked=clicked, wall_site=site,
+        )
 
     def _select(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) < 2 or not _MARK_RE.match(args[0]):
@@ -515,16 +550,25 @@ class BrowserVisionCommands:
         if mark.kind != "select":
             raise CommandError(f"NOT_A_SELECT: @{mark.n} is a {mark.kind}; use bv click or bv type for it")
         option = " ".join(args[1:])
+        site = self._current_site(ctx.agent.id)
+        paced = self._gate(site)
         outcome = self._host.select(ctx.agent.id, mark.n, mark.point[0], mark.point[1], option)
-        return self._after_action(ctx, parsed, view, outcome, notes=[f'selected "{option}" in @{mark.n}'], announce="navigation")
+        return self._after_action(
+            ctx, parsed, view, outcome, notes=[f'selected "{option}" in @{mark.n}', *paced], announce="navigation",
+            wall_site=site,
+        )
 
     def _key(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) != 1:
             raise CommandError("USAGE: bv key <Key or combo>, e.g. Enter, Tab, Control+A")
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
+        site = self._current_site(ctx.agent.id)
+        paced = self._gate(site)
         outcome = self._host.press(ctx.agent.id, args[0])
-        return self._after_action(ctx, parsed, view, outcome, notes=[f"pressed {args[0]}"], announce="navigation")
+        return self._after_action(
+            ctx, parsed, view, outcome, notes=[f"pressed {args[0]}", *paced], announce="navigation", wall_site=site,
+        )
 
     def _scroll(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         if len(args) != 1 or args[0].lower() not in {"up", "down"}:
@@ -544,9 +588,13 @@ class BrowserVisionCommands:
             raise CommandError("USAGE: bv back")
         view = self._view_for(ctx.agent.id)
         self._require_page(ctx.agent.id)
+        site = self._current_site(ctx.agent.id)
+        paced = self._gate(site)
         view.pointer = None
         outcome = self._host.back(ctx.agent.id)
-        return self._after_action(ctx, parsed, view, outcome, notes=["went back"], announce="navigation")
+        return self._after_action(
+            ctx, parsed, view, outcome, notes=["went back", *paced], announce="navigation", wall_site=site,
+        )
 
     def _wait(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
         """``wait [<seconds>]``: watch the page until it changes and settles, then screenshot.
@@ -621,6 +669,45 @@ class BrowserVisionCommands:
         self._markers.remove(agent_id)
         self._shots.delete_session(agent_id, session_id)
 
+    def _current_site(self, agent_id: str) -> str | None:
+        """The site key of the agent's open page (``None`` for about:blank and the like).
+
+        Raises:
+            CommandError: ``NO_PAGE`` when the agent has no session.
+        """
+        session = self._host.sessions().get(agent_id)
+        if session is None:
+            raise CommandError('NO_PAGE: run "bv open <url>" first')
+        return site_key(session.url)
+
+    def _gate(self, site: str | None) -> list[str]:
+        """Let an action that can reach ``site`` go ahead: cooldown first, then pacing.
+
+        A page with no site (``None``: about:blank, file:, data:) reaches no
+        server, so it is neither refused nor paced.
+
+        Returns:
+            The result note for a noticeable pacing wait, e.g.
+            ``paced 2.8s for redfin.com (polite browsing)``, else nothing.
+
+        Raises:
+            CommandError: ``SITE_COOLDOWN`` while the site (or a parent
+                site) is on a bot-check cooldown; nothing was loaded.
+            CooldownStoreError: The cooldown file is unreadable.
+        """
+        if site is None:
+            return []
+        cooldown = self._cooldowns.active(site)
+        if cooldown is not None:
+            raise CommandError(
+                f"SITE_COOLDOWN: {cooldown.site} showed a bot check at {_local_hhmm(cooldown.blocked_at)}; "
+                f"it can be tried again after {_local_hhmm(cooldown.until)} (local time)"
+            )
+        paced = self._host.pace(site)
+        if paced.waited_s <= _PACED_NOTE_MIN_S:
+            return []
+        return [f"paced {paced.waited_s:.1f}s for {paced.site} (polite browsing)"]
+
     def _view_for(self, agent_id: str) -> _AgentView:
         with self._lock:
             view = self._views.get(agent_id)
@@ -669,10 +756,13 @@ class BrowserVisionCommands:
         notes: list[str],
         announce: Announce = "never",
         clicked: str | None = None,
+        wall_site: str | None = None,
     ) -> BossModCliResult:
         """An action changed the page: back to the full view, then screenshot."""
         view.reset_zoom()
-        return self._screenshot(ctx, parsed, view, outcome, notes=notes, announce=announce, clicked=clicked)
+        return self._screenshot(
+            ctx, parsed, view, outcome, notes=notes, announce=announce, clicked=clicked, wall_site=wall_site,
+        )
 
     def _screenshot(
         self,
@@ -684,8 +774,14 @@ class BrowserVisionCommands:
         notes: list[str],
         announce: Announce = "never",
         clicked: str | None = None,
+        wall_site: str | None = None,
     ) -> BossModCliResult:
         """Capture, render, store and describe the current view.
+
+        ``wall_site`` is set after an action that can navigate: the site the
+        action was aimed at. If this capture is a bot check (``botwall``),
+        the result leads with a ``BLOCKED`` line, the operator's status line
+        says so instead of ``Browsing``, and ``wall_site`` goes on cooldown.
 
         ``announce`` decides the operator status lines (``data["status_lines"]``,
         posted by core like task lines): ``"always"`` says ``Browsing <url>``
@@ -743,7 +839,9 @@ class BrowserVisionCommands:
         )
         self._record_session(ctx.agent.id, capture.session)
 
-        lines = [
+        blocked = self._check_wall(capture, wall_site)
+        lines = [] if blocked is None else [blocked]
+        lines += [
             f"url: {capture.url}",
             f"title: {capture.title}",
             f"viewport: {capture.width}x{capture.height}",
@@ -758,7 +856,9 @@ class BrowserVisionCommands:
         lines += [legend_line(mark) for mark in capture.marks]
         lines += notes
         status_lines: list[str] = []
-        if announce == "always" or (announce == "navigation" and capture.url != previous_url):
+        if blocked is not None:
+            status_lines.append(f"Blocked by {wall_site}'s bot check")
+        elif announce == "always" or (announce == "navigation" and capture.url != previous_url):
             status_lines.append(f"Browsing {short_url(capture.url)}")
         view.last_url = capture.url
         summary = f"{parsed.raw} → {short_url(capture.url)}"
@@ -790,6 +890,25 @@ class BrowserVisionCommands:
             cwd=ctx.cwd,
         )
         return dataclasses.replace(result, image_paths=(str(path),), summary=summary)
+
+    def _check_wall(self, capture: Capture, wall_site: str | None) -> str | None:
+        """Return the ``BLOCKED`` line when ``capture`` is a bot check, putting the site on cooldown.
+
+        Raises:
+            CooldownStoreError: The cooldown file is unreadable.
+            OSError: The cooldown file cannot be written.
+        """
+        if wall_site is None:
+            return None
+        rules = self._defaults.botwall
+        reason = detect(capture.nav_status, list(capture.frame_urls), capture.title, capture.text, rules)
+        if reason is None:
+            return None
+        self._cooldowns.block(wall_site, rules.cooldown_minutes)
+        return (
+            f"BLOCKED: {wall_site} is showing a bot check ({reason}). Stop browsing this site and tell "
+            "the operator; do not retry or switch tools to get around it."
+        )
 
     def _error(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, message: str) -> BossModCliResult:
         return error_result(parsed.raw, message, cwd=ctx.cwd)
@@ -835,7 +954,8 @@ def parse_type_args(args: tuple[str, ...], body: str | None) -> tuple[str | None
     ``--enter`` may appear anywhere and is not part of the text. A leading
     ``@n`` (after dropping ``--enter``) is the mark to click first. The text
     is the command body when there is one, otherwise the remaining args
-    joined with single spaces.
+    joined with single spaces. The same text in both places (equal once
+    runs of whitespace are collapsed) is typed once, as the body gives it.
 
     Args:
         args: The tokens after ``type``.
@@ -845,15 +965,15 @@ def parse_type_args(args: tuple[str, ...], body: str | None) -> tuple[str | None
         ``(target, text)``: the ``@n`` token or ``None``, and the text to type.
 
     Raises:
-        CommandError: Text given both in the body and after the command, or
-            given nowhere.
+        CommandError: Different text given in the body and after the
+            command, or text given nowhere.
     """
     rest = [arg for arg in args if arg != "--enter"]
     target = rest.pop(0) if rest and _MARK_RE.match(rest[0]) else None
     inline = " ".join(rest)
     # None and "" both mean no body.
     in_body = body or ""
-    if in_body and inline:
+    if in_body and inline and " ".join(in_body.split()) != " ".join(inline.split()):
         raise CommandError(f"{_TYPE_USAGE} — give the text either in the body or after the command, not both")
     if not in_body and not inline:
         raise CommandError("USAGE: bv type needs the text to type, in the body or after the command")
@@ -917,6 +1037,11 @@ def short_url(url: str) -> str:
     if "://" in text:
         text = text.split("://", 1)[1]
     return _truncate(text.rstrip("/") or text)
+
+
+def _local_hhmm(moment: datetime) -> str:
+    """``HH:MM`` of an aware time in this machine's local zone (what the operator reads)."""
+    return moment.astimezone().strftime("%H:%M")
 
 
 def _truncate(text: str) -> str:
