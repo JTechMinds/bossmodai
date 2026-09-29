@@ -385,6 +385,73 @@ def ensure_live_work_continuation(agent_id: str) -> dict[str, Any] | None:
     )
 
 
+_NEXT_WORK_RESUME_REASON = "Your previous work ended. Resume this paused task."
+# Wakes that already carry the agent to its next work. Queued only: the
+# turn ending the work holds its own claimed trigger while this runs.
+_NEXT_WORK_TRIGGER_TYPES = ["activity_resumed", "task_assigned"]
+
+
+def next_work_after_end(agent_id: str, *, ended_task_id: str | None) -> list[dict[str, Any]]:
+    """Return the wake that picks up the agent's next work after work ended.
+
+    The one habit the runtime guarantees; which work comes next is the
+    agent's own judgment when it accepts or defers. When work ends (done,
+    waiting, blocked, delegated, abandoned), pick up what was paused, then
+    what was queued:
+
+    - nothing while the agent still has an active work activity, or already
+      has a queued ``activity_resumed`` / ``task_assigned`` wake;
+    - else its paused work: an own ``pending`` task with a paused work
+      activity, oldest pause first, resumed through ``requeue_commitment``;
+    - else its queue: the oldest own ``pending`` task with no paused work,
+      presented again as a ``task_assigned`` wake.
+
+    ``waiting``, ``blocked`` and ``stalled`` tasks are never picked: they
+    wait on someone else. It runs only when work ends, not after every turn,
+    so an agent that defers again is not re-nagged.
+
+    Args:
+        agent_id: The agent whose work just ended.
+        ended_task_id: The task that ended; never picked, even if it is
+            still ``pending``.
+
+    Returns:
+        ``trigger_requests``-shaped specs, or ``[]``.
+    """
+    if activity_runtime.get_active_work_activity(agent_id) is not None:
+        return []
+    if db.has_queued_trigger_matching(agent_id, trigger_types=_NEXT_WORK_TRIGGER_TYPES):
+        return []
+    pending = [
+        task
+        for task in db.list_tasks(assigned_to=agent_id, status="pending")
+        if task.id != ended_task_id
+    ]
+    paused: list[tuple[Any, Task]] = []
+    queued: list[Task] = []
+    for task in pending:
+        activity = db.get_resumable_work_activity(agent_id, task.id)
+        if activity is not None:
+            paused.append((activity.updated_at, task))
+        else:
+            queued.append(task)
+    if paused:
+        agent = db.get_agent(agent_id)
+        if agent is None:
+            logger.warning("next work after end skipped: agent %s not found", agent_id)
+            return []
+        paused.sort(key=lambda item: item[0])
+        # Local: decision_parse_fail imports this module on its way in.
+        from core.agent_loop.decision_parse_fail import requeue_commitment
+
+        return requeue_commitment(agent, paused[0][1], resume_reason=_NEXT_WORK_RESUME_REASON)
+    if not queued:
+        return []
+    queued.sort(key=lambda task: task.created_at)
+    wake = assignment_wake_trigger(queued[0])
+    return [wake] if wake is not None else []
+
+
 def plan_arrival_follow_up(agent_id: str, resumed_activity: Activity | None, room_name: str) -> list[dict[str, Any]]:
     """Plan the next turn after movement finishes."""
     if resumed_activity is None:

@@ -19,7 +19,7 @@ import pytest
 import db
 from core import config
 from core.agent_loop import activity_runtime, channel_idle_check
-from core.agent_loop.channel_host import note_channel_work, pause_thread
+from core.agent_loop.channel_host import pause_thread
 from core.agent_loop.channel_idle_check import (
     IdleWake,
     build_idle_check_messages,
@@ -273,17 +273,6 @@ def test_paused_thread_does_not_judge(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _no_judge(monkeypatch)
     _charles_case(channel, harley, charles)
     pause_thread(channel.id)
-    assert check_channel(channel.id, now=_later()) == []
-    assert calls["n"] == 0
-
-
-def test_work_hold_does_not_judge(monkeypatch: pytest.MonkeyPatch) -> None:
-    harley, charles, brian, channel = _team()
-    _enable_system_ai()
-    calls = _no_judge(monkeypatch)
-    _charles_case(channel, harley, charles)
-    task = _channel_task(assignee_id=brian.id, channel_id=channel.id, title="M2.2 TDD")
-    note_channel_work(channel.id, agent_id=brian.id, task_id=task.id)
     assert check_channel(channel.id, now=_later()) == []
     assert calls["n"] == 0
 

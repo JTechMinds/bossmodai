@@ -1,8 +1,9 @@
-"""Talk / Work / Paused host brakes. No identity-model calls."""
+"""Talk / Paused host brakes, and work binds that are not gates. No identity-model calls."""
 
 from __future__ import annotations
 
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -17,14 +18,20 @@ from core.agent_loop.channel_host import (
     pause_thread,
     resume_thread,
     shape_follow_up_speak,
-    work_holds_talk,
 )
 from core.agent_loop.channel_round_plan import DISPATCH_FANOUT, DISPATCH_ROUNDS
-from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
+from core.agent_loop.channel_rounds import (
+    advance_channel_round,
+    begin_channel_response,
+    finalize_channel_response,
+    start_channel_peer_round,
+)
+from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.task_origin_mirrors import persist_origin_status_line
 from core.messaging import route_human_channel_message
 from db import channel_host as host_db
+from db.crud import execute
 from db import channel_response_rounds as channel_round_db
 from db.settings import reconcile_factory_round_cap
 from tests._router_fakes import route_reply, speak_reply
@@ -432,7 +439,7 @@ def test_restarting_the_conversation_resumes_without_opening_from_resume_alone()
     assert not is_thread_paused(channel.id)
 
 
-def test_narrow_dup_ack_stops_and_a_real_reply_does_not() -> None:
+def test_two_acks_leave_the_next_pending_member_awake() -> None:
     jim, laura, ada, channel = _trio()
     message = _message(channel.id, "Where are we?")
     triggers = start_channel_peer_round(
@@ -444,39 +451,17 @@ def test_narrow_dup_ack_stops_and_a_real_reply_does_not() -> None:
         channel_name=channel.name,
     )
     base = _base(channel, message)
-    order = _queue_ids(triggers[0]["payload"]["round_id"])
+    round_id = triggers[0]["payload"]["round_id"]
+    order = _queue_ids(round_id)
     assert order[0] == jim.id
     second, third = order[1], order[2]
-    progress = _finish(triggers[0]["payload"]["round_id"], jim.id, base, spoke=True, text="Copy that.")
+    progress = _finish(round_id, jim.id, base, spoke=True, text="Got it.")
     assert progress["trigger_requests"][0]["agent_id"] == second
-    progress = _finish(
-        progress["trigger_requests"][0]["payload"]["round_id"],
-        second,
-        base,
-        spoke=True,
-        text="Copy that",
-    )
-    assert progress["trigger_requests"] == []
-
-    message = _message(channel.id, "Where are we now?")
-    triggers = start_channel_peer_round(
-        channel_id=channel.id,
-        message_id=message.id,
-        content=message.content,
-        from_name="Human Operator",
-        author_type="human",
-        channel_name=channel.name,
-    )
-    base = _base(channel, message)
-    progress = _finish(triggers[0]["payload"]["round_id"], jim.id, base, spoke=True, text="Copy that.")
-    progress = _finish(
-        progress["trigger_requests"][0]["payload"]["round_id"],
-        second,
-        base,
-        spoke=True,
-        text="I disagree — the drain should stay explicit for this design.",
-    )
-    assert progress["trigger_requests"][0]["agent_id"] == third
+    progress = _finish(round_id, second, base, spoke=True, text="Got it.")
+    assert [item["agent_id"] for item in progress["trigger_requests"]] == [third]
+    assert "ack_streak" not in host_db.get_channel_host_state(channel.id)
+    candidate = db.get_channel_response_candidate(round_id=round_id, agent_id=third)
+    assert candidate is not None and candidate.status == "queued"
 
 
 def test_substantive_rounds_are_not_stopped_by_the_old_cap_of_four(monkeypatch) -> None:
@@ -514,7 +499,7 @@ def test_substantive_rounds_are_not_stopped_by_the_old_cap_of_four(monkeypatch) 
     assert int(wake["payload"]["round_index"]) >= 5
 
 
-def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> None:
+def test_work_bind_keeps_peer_talk_and_origin_lines_do_not_ping() -> None:
     jim, laura, _ada, channel = _trio()
     message = _message(channel.id, "Please take the notes.")
     triggers = start_channel_peer_round(
@@ -525,6 +510,9 @@ def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> No
         author_type="human",
         channel_name=channel.name,
     )
+    round_id = triggers[0]["payload"]["round_id"]
+    order = _queue_ids(round_id)
+    assert order[0] == jim.id
     state = db.get_agent_state(jim.id)
     assert state is not None
     result = apply_decision(
@@ -541,7 +529,7 @@ def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> No
             "type": "channel_message",
             "channel_id": channel.id,
             "channel_name": channel.name,
-            "round_id": triggers[0]["payload"]["round_id"],
+            "round_id": round_id,
             "source_message_id": message.id,
             "content": message.content,
             "from_name": "Human Operator",
@@ -549,11 +537,15 @@ def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> No
             "dispatch_mode": DISPATCH_ROUNDS,
         },
     )
-    kinds = [item.get("trigger_type") for item in result["trigger_requests"]]
-    assert "activity_resumed" in kinds
-    assert "channel_message" not in kinds
-    assert work_holds_talk(channel.id)
-    assert start_channel_peer_round(
+    # Taking the task was Jim's turn. The next member still gets theirs.
+    wakes = [(item.get("trigger_type"), item.get("agent_id")) for item in result["trigger_requests"]]
+    assert ("activity_resumed", jim.id) in wakes
+    assert ("channel_message", order[1]) in wakes
+    assert set(host_db.get_channel_host_state(channel.id)) & {"work_agent_id", "work_task_id"} == set()
+    meta = channel_round_db.get_channel_round_meta(round_id)
+    assert [pair["agent_id"] for pair in meta["work_binds"]] == [jim.id]
+    # A peer can still open Talk while Jim works.
+    peer_wakes = start_channel_peer_round(
         channel_id=channel.id,
         message_id=message.id,
         content="I have a thought.",
@@ -561,10 +553,13 @@ def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> No
         author_type="agent",
         from_agent=laura.id,
         channel_name=channel.name,
-    ) == []
+        exclude_agent_ids={laura.id},
+    )
+    assert peer_wakes
     _queue_work(jim.id, channel.id)
     assert _work_still_queued(jim.id)
 
+    # An origin status line is transcript only: it opens no round.
     task = next(item for item in db.list_tasks(assigned_to=jim.id) if item.title == "Write the notes")
     rounds_before = len(db.list_channel_response_rounds(channel.id))
     posted = persist_origin_status_line(
@@ -574,54 +569,11 @@ def test_work_bind_ends_peer_talk_and_speak_worthy_reentry_does_not_ping() -> No
         kind="completion",
     )
     assert posted.get("channel_message")
-    assert not work_holds_talk(channel.id)
     assert len(db.list_channel_response_rounds(channel.id)) == rounds_before
     assert _work_still_queued(jim.id)
 
-    # Prose without a task does not close peer Talk.
-    message = _message(channel.id, "What do you think?")
-    triggers = start_channel_peer_round(
-        channel_id=channel.id,
-        message_id=message.id,
-        content=message.content,
-        from_name="Human Operator",
-        author_type="human",
-        channel_name=channel.name,
-    )
-    state = db.get_agent_state(jim.id)
-    assert state is not None
-    result = apply_decision(
-        {
-            "decision": "answer",
-            "workCommit": False,
-            "intentKind": "status_request",
-            "reply": "The drain should stay ordered for this design.",
-            "proceedUntagged": True,
-        },
-        jim,
-        state,
-        {
-            "type": "channel_message",
-            "channel_id": channel.id,
-            "channel_name": channel.name,
-            "round_id": triggers[0]["payload"]["round_id"],
-            "source_message_id": message.id,
-            "content": message.content,
-            "from_name": "Human Operator",
-            "author_type": "human",
-            "dispatch_mode": DISPATCH_ROUNDS,
-        },
-    )
-    order = _queue_ids(triggers[0]["payload"]["round_id"])
-    assert order[0] == jim.id
-    wakes = [
-        (item.get("trigger_type"), item.get("agent_id"))
-        for item in result["trigger_requests"]
-    ]
-    assert wakes == [("channel_message", order[1])]
 
-
-def test_work_bind_stops_fanout_peer_queues() -> None:
+def test_work_bind_keeps_fanout_peer_queues() -> None:
     jim, laura, ada, channel = _trio()
     message = _message(channel.id, "@everyone ship the notes")
     triggers = start_channel_peer_round(
@@ -644,7 +596,6 @@ def test_work_bind_stops_fanout_peer_queues() -> None:
             source_channel="channel",
             payload=dict(item["payload"]),
         )
-    _queue_work(jim.id, channel.id)
     state = db.get_agent_state(jim.id)
     assert state is not None
     result = apply_decision(
@@ -671,15 +622,237 @@ def test_work_bind_stops_fanout_peer_queues() -> None:
     )
     kinds = [item.get("trigger_type") for item in result["trigger_requests"]]
     assert "activity_resumed" in kinds
-    assert "channel_message" not in kinds
-    assert work_holds_talk(channel.id)
-    assert db.list_channel_response_rounds(channel.id, status="active") == []
+    # Jim taking a task cancels nobody: the round stays open for the others.
+    assert [row.id for row in db.list_channel_response_rounds(channel.id, status="active")] == [round_id]
     queued = db.list_queued_triggers(limit=20)
-    assert not any(
-        item.trigger_type == "channel_message" and item.agent_id in {laura.id, ada.id}
+    assert {
+        item.agent_id
         for item in queued
+        if item.trigger_type == "channel_message"
+    } == {laura.id, ada.id}
+    for agent_id in (laura.id, ada.id):
+        candidate = db.get_channel_response_candidate(round_id=round_id, agent_id=agent_id)
+        assert candidate is not None and candidate.status == "pending"
+    assert set(host_db.get_channel_host_state(channel.id)) & {"work_agent_id", "work_task_id"} == set()
+
+
+def _fanout_reply(agent_id: str, trigger: dict[str, Any], text: str) -> list[dict[str, Any]]:
+    """Run one fan-out member's speak through the real shared-reply queue."""
+    agent = db.get_agent(agent_id)
+    assert agent is not None
+    _queued, active_now = begin_channel_response(agent, trigger)
+    assert active_now
+    db.create_channel_message(
+        channel_id=trigger["channel_id"],
+        author_type="agent",
+        author_agent_id=agent_id,
+        author_name=agent.name,
+        content=text,
+        source_channel="channel",
     )
-    assert _work_still_queued(jim.id)
+    finishing = {**trigger, "type": "channel_response", "spoken_text": text}
+    return finalize_channel_response(agent_id=agent_id, trigger=finishing, responded=True)
+
+
+def test_fanout_reply_naming_a_peer_opens_one_routed_follow_up(monkeypatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    routes: list[str] = []
+
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        user = next(item["content"] for item in messages if item.get("role") == "user")
+        routes.append(user)
+        return speak_reply(messages, [ada.id])
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "@everyone ship the notes")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    assert triggers[0]["payload"]["dispatch_mode"] == DISPATCH_FANOUT
+    by_agent = {item["agent_id"]: {**item["payload"], "type": "channel_message"} for item in triggers}
+    assert _fanout_reply(jim.id, by_agent[jim.id], "Notes are drafted.") == []
+    assert _fanout_reply(laura.id, by_agent[laura.id], "Links are in.") == []
+    assert routes == []
+    follow = _fanout_reply(ada.id, by_agent[ada.id], "@Jim can you review the notes?")
+    # Only the finisher that completed the round routes it, once.
+    assert len(routes) == 1
+    assert "@Jim can you review the notes?" in routes[0]
+    assert [(item["trigger_type"], item["agent_id"]) for item in follow] == [("channel_message", ada.id)]
+    payload = follow[0]["payload"]
+    assert payload["dispatch_mode"] == DISPATCH_ROUNDS
+    assert payload["round_index"] == 2
+    fanout_round = triggers[0]["payload"]["round_id"]
+    assert db.get_channel_response_round(fanout_round).status == "completed"
+    assert payload["round_id"] != fanout_round
+
+
+def test_settled_fanout_replies_open_nothing(monkeypatch) -> None:
+    jim, laura, ada, channel = _trio()
+    _enable_system_ai()
+    calls = {"n": 0}
+
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        calls["n"] += 1
+        return speak_reply(messages, [])
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "@everyone ship the notes")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    by_agent = {item["agent_id"]: {**item["payload"], "type": "channel_message"} for item in triggers}
+    assert _fanout_reply(jim.id, by_agent[jim.id], "Notes shipped.") == []
+    assert _fanout_reply(laura.id, by_agent[laura.id], "Done on my side.") == []
+    assert _fanout_reply(ada.id, by_agent[ada.id], "Done here too.") == []
+    # One route plus its one empty-speak repair, then the snapshot stops.
+    assert calls["n"] == 2
+    assert db.list_channel_response_rounds(channel.id, status="active") == []
+    assert len(db.list_channel_response_rounds(channel.id)) == 1
+
+
+def test_second_active_round_does_not_stop_the_first() -> None:
+    jim, laura, ada, channel = _trio()
+    message = _message(channel.id, "Where are we?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    round_id = triggers[0]["payload"]["round_id"]
+    order = _queue_ids(round_id)
+    # An agent share opens its own round on another line mid-conversation.
+    other = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="agent",
+        author_agent_id=laura.id,
+        author_name=laura.name,
+        content="Sharing the draft.",
+        source_channel="channel",
+    )
+    assert start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=other.id,
+        content=other.content,
+        from_name=laura.name,
+        author_type="agent",
+        from_agent=laura.id,
+        exclude_agent_ids={laura.id},
+        channel_name=channel.name,
+    )
+    assert len(db.list_channel_response_rounds(channel.id, status="active")) == 2
+    progress = _finish(round_id, order[0], _base(channel, message), spoke=True, text="On track for Friday.")
+    assert [item["agent_id"] for item in progress["trigger_requests"]] == [order[1]]
+
+
+async def test_exhausted_channel_turn_releases_its_seat(monkeypatch) -> None:
+    jim, laura, ada, channel = _trio()
+
+    async def _quiet(**_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_activity", _quiet)
+    message = _message(channel.id, "Where are we?")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    round_id = triggers[0]["payload"]["round_id"]
+    order = _queue_ids(round_id)
+    row = db.create_agent_trigger(
+        agent_id=order[0],
+        trigger_type="channel_message",
+        source_channel="channel",
+        payload=dict(triggers[0]["payload"]),
+    )
+    claimed = db.claim_trigger(row.id)
+    assert claimed is not None
+    agent = db.get_agent(order[0])
+    assert agent is not None
+    payload = {
+        **triggers[0]["payload"],
+        "type": "channel_message",
+        "trigger_id": claimed.id,
+        "claim_generation": claimed.claim_generation,
+    }
+    await TurnDispatcher()._exhaust_failed_trigger(agent=agent, trigger=payload, failure_detail="model down")
+    assert db.get_agent_trigger(claimed.id).status == "failed"
+    seat = db.get_channel_response_candidate(round_id=round_id, agent_id=order[0])
+    assert seat is not None and seat.status == "observed"
+    queued = [item for item in db.list_queued_triggers(limit=20) if item.trigger_type == "channel_message"]
+    assert [item.agent_id for item in queued] == [order[1]]
+
+
+def test_orphaned_round_closes_and_a_live_round_stays() -> None:
+    jim, laura, ada, channel = _trio()
+    first = _message(channel.id, "Where are we?")
+    dead = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=first.id,
+        content=first.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    dead_round = dead[0]["payload"]["round_id"]
+    second = _message(channel.id, "And the notes?")
+    live = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=second.id,
+        content=second.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    live_round = live[0]["payload"]["round_id"]
+    db.create_agent_trigger(
+        agent_id=live[0]["agent_id"],
+        trigger_type="channel_message",
+        source_channel="channel",
+        payload=dict(live[0]["payload"]),
+    )
+    # Both rounds so far are old; the next one is fresh and has no trigger
+    # yet, as when the app has created it but not persisted its wakes.
+    for round_id in (dead_round, live_round):
+        execute(
+            "UPDATE channel_response_rounds SET created_at = $1 WHERE id = $2",
+            ["2026-01-01 00:00:00", round_id],
+        )
+    third = _message(channel.id, "And the budget?")
+    fresh = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=third.id,
+        content=third.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    fresh_round = fresh[0]["payload"]["round_id"]
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=300)
+    assert db.close_orphaned_channel_rounds(created_before=cutoff) == 1
+    assert db.get_channel_response_round(dead_round).status == "completed"
+    assert {
+        candidate.status for candidate in db.list_channel_response_candidates(dead_round)
+    } == {"observed"}
+    assert db.get_channel_response_round(live_round).status == "active"
+    assert db.get_channel_response_round(fresh_round).status == "active"
 
 
 def test_factory_round_cap_bump_leaves_a_custom_value() -> None:

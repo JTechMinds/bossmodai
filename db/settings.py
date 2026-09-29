@@ -266,6 +266,7 @@ def seed_defaults() -> None:
     reconcile_factory_max_tokens()
     reconcile_factory_cli_default_policy()
     reconcile_work_commit_prompt_contract()
+    reconcile_work_commit_resume_prompt()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -368,6 +369,42 @@ def reconcile_work_commit_prompt_contract() -> None:
         "Reconciled prompt settings to the work_commit contract: %s",
         ", ".join(_WORK_COMMIT_PROMPT_KEYS),
     )
+
+
+# The decision contract's resume-open-work ``work_commit`` rule, ``data.task.id``
+# and the new-work-while-busy guidance live in this prompt row. Seeding never
+# overwrites it, so it is moved to the shipped default once per database.
+_WORK_COMMIT_RESUME_PROMPT_KEY = "runtime_contract_decision"
+_WORK_COMMIT_RESUME_RECONCILED = "work_commit_resume_prompt_reconciled"
+
+
+def reconcile_work_commit_resume_prompt() -> None:
+    """Overwrite the decision contract row with the shipped default once.
+
+    Same marker-guarded pattern as :func:`reconcile_work_commit_prompt_contract`:
+    the first pass on a database writes the current file-backed default and
+    records the marker; every later pass is a no-op, so operator edits made
+    after it are never touched. Edits made before it are replaced.
+
+    Raises:
+        RuntimeError: The prompt key has no seeded default.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_WORK_COMMIT_RESUME_RECONCILED],
+    )
+    if seen is not None:
+        return
+    seeded = get_seed_setting_default(_WORK_COMMIT_RESUME_PROMPT_KEY)
+    if seeded is None:
+        raise RuntimeError(f"Prompt setting '{_WORK_COMMIT_RESUME_PROMPT_KEY}' has no seeded default")
+    set_setting(
+        _WORK_COMMIT_RESUME_PROMPT_KEY,
+        load_default_prompt(_WORK_COMMIT_RESUME_PROMPT_KEY),
+        seeded[1],
+    )
+    set_setting(_WORK_COMMIT_RESUME_RECONCILED, "true", "advanced")
+    logger.info("Reconciled prompt setting %s to the work_commit resume contract", _WORK_COMMIT_RESUME_PROMPT_KEY)
 
 
 def ensure_local_api_token() -> str:

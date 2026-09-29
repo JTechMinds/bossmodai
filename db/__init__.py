@@ -156,6 +156,7 @@ from db.channels import (
 )
 from db.channel_response_rounds import (
     activate_next_channel_response_candidate,
+    close_orphaned_channel_rounds,
     create_channel_response_candidate,
     create_channel_response_round,
     get_channel_response_round_for_source,
@@ -469,6 +470,7 @@ __all__ = [
     "get_channel_response_round_for_source",
     "list_channel_response_rounds",
     "activate_next_channel_response_candidate",
+    "close_orphaned_channel_rounds",
     "get_active_responding_channel_candidate",
     "get_channel_response_candidate",
     "get_channel_response_round",

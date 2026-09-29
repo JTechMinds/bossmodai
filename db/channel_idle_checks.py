@@ -5,9 +5,8 @@ engine state, kept apart from ``channel_host_state`` because
 ``save_channel_host_state`` rewrites every column and ``copy_stay`` /
 ``restore_stay`` snapshot it. A missing row is an unchecked thread.
 
-``woken_agent_ids`` needs no agent-delete cleanup (unlike
-``channel_host_state.work_agent_id``): the ids are only compared against
-live candidates, so a deleted agent's id is inert.
+``woken_agent_ids`` needs no agent-delete cleanup: the ids are only
+compared against live candidates, so a deleted agent's id is inert.
 """
 
 from __future__ import annotations

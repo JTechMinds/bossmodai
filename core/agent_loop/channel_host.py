@@ -1,7 +1,8 @@
-"""Host-owned Talk, Work, and Paused rules for one shared thread.
+"""Host-owned Talk and Paused rules for one shared thread.
 
-System AI may choose who speaks. These rules decide when the snapshot
-stops. They do not cancel off-thread work wakes.
+System AI chooses who speaks. The operator's Pause is the only host stop
+for Talk; work bound on the thread is a router fact, never a gate. These
+rules do not cancel off-thread work wakes.
 """
 
 from __future__ import annotations
@@ -13,8 +14,6 @@ from typing import Any
 import db
 from db import channel_host as host_db
 
-# Two consecutive clear acks end the snapshot. A substantive line resets it.
-DUP_ACK_LIMIT = 2
 # Two consecutive passes or router stay-outs demote that member.
 PASS_DEMOTE_AFTER = 2
 
@@ -22,23 +21,6 @@ PAUSE_KIND = "thread_paused"
 RESUME_KIND = "thread_resumed"
 PAUSE_LINE = "Thread paused. Resume by restarting the conversation."
 RESUME_LINE = "Thread resumed."
-
-# Origin lines that put the working agent back in the thread without a
-# Talk ping or a made-up human snapshot.
-SPEAK_WORTHY_ORIGIN_KINDS = frozenset(
-    {
-        "completion",
-        "waiting",
-        "stalled",
-        "blocked_claim",
-        "blocked_peer_handoff",
-        "blocked_no_task",
-        "blocked_no_progress",
-        "blocked_host_deny",
-        "blocked_shell_executor",
-        "blocked_nest_git",
-    }
-)
 
 _PAUSE_PHRASE = re.compile(
     r"(?is)^\s*(?:please\s+)?"
@@ -95,26 +77,6 @@ def is_thread_paused(channel_id: str) -> bool:
     return bool(host_db.get_channel_host_state(channel_id)["paused"])
 
 
-def work_holds_talk(channel_id: str) -> bool:
-    """Return whether a board commitment has closed peer Talk."""
-    state = host_db.get_channel_host_state(channel_id)
-    return bool(state["work_agent_id"] or state["work_task_id"])
-
-
-def blocks_peer_round(channel_id: str, *, author_type: str) -> bool:
-    """Return whether this author must not open a Talk round.
-
-    Paused blocks every round open. Human restart clears Pause in
-    ``prepare_human_channel_message`` before this check. Peers also stay
-    silent while a board commitment holds Talk.
-    """
-    if is_thread_paused(channel_id):
-        return True
-    if (author_type or "") != "human" and work_holds_talk(channel_id):
-        return True
-    return False
-
-
 def prepare_human_channel_message(channel_id: str, content: str) -> PreparedHumanTurn:
     """Apply Pause or Resume before a human line opens Talk.
 
@@ -160,8 +122,8 @@ def resume_thread(channel_id: str) -> dict[str, Any] | None:
 def note_human_snapshot(channel_id: str, mention_ids: list[str]) -> None:
     """Reset Talk counters for a new human line and remember human @ ids.
 
-    Human @ ids are protected from demotion for this snapshot. Work silence
-    ends because a new human ask reopens Talk. Pause is not cleared here.
+    Human @ ids are protected from demotion for this snapshot. Work binds
+    carried from the previous snapshot are cleared. Pause is not cleared here.
     """
     token = (channel_id or "").strip()
     if not token:
@@ -178,60 +140,7 @@ def note_human_snapshot(channel_id: str, mention_ids: list[str]) -> None:
     state["pass_streaks"] = {}
     state["demoted_ids"] = []
     state["protected_ids"] = protected
-    state["ack_streak"] = 0
-    state["work_agent_id"] = ""
-    state["work_task_id"] = ""
     host_db.save_channel_host_state(state)
-
-
-def note_channel_work(channel_id: str, *, agent_id: str, task_id: str) -> None:
-    """Close peer Talk because one agent bound a real board task.
-
-    Does not delete that agent's work wakes. Callers stop the Talk queue
-    separately via :func:`talk_closed`.
-    """
-    token = (channel_id or "").strip()
-    agent = (agent_id or "").strip()
-    task = (task_id or "").strip()
-    if not token or not agent or not task:
-        return
-    state = host_db.get_channel_host_state(token)
-    state["work_agent_id"] = agent
-    state["work_task_id"] = task
-    host_db.save_channel_host_state(state)
-
-
-def release_work_hold(channel_id: str, *, agent_id: str, task_id: str) -> None:
-    """End work silence because this agent's commitment on the thread ended (done, waiting, delegated, blocked, Needs).
-
-    The hold clears only when the holder and task match. This does not
-    open a Talk round and does not invent a human snapshot.
-    """
-    token = (channel_id or "").strip()
-    if not token:
-        return
-    from core.agent_loop.channel_work_bind import live_work_binds
-
-    # Drop binds whose work has left pending/accepted/active. A still-live
-    # owner stays on the round until a new human snapshot.
-    live_work_binds(token)
-    state = host_db.get_channel_host_state(token)
-    if not state["work_agent_id"] and not state["work_task_id"]:
-        return
-    holder = (agent_id or "").strip()
-    task = (task_id or "").strip()
-    if state["work_agent_id"] and holder and state["work_agent_id"] != holder:
-        return
-    if state["work_task_id"] and task and state["work_task_id"] != task:
-        return
-    state["work_agent_id"] = ""
-    state["work_task_id"] = ""
-    host_db.save_channel_host_state(state)
-
-
-def talk_closed(channel_id: str) -> bool:
-    """Return whether peer Talk must not continue on this thread."""
-    return is_thread_paused(channel_id) or work_holds_talk(channel_id)
 
 
 def record_channel_turn(
@@ -239,17 +148,21 @@ def record_channel_turn(
     *,
     spoke: bool,
     speaker_id: str,
-    spoken_text: str,
-) -> bool:
-    """Update pass and ack counters. True means dup-ack ends the snapshot."""
+) -> None:
+    """Update pass counters for one finished channel turn.
+
+    A speak resets every pass streak and lifts demotion; a pass counts
+    toward demoting the speaker. An empty ``speaker_id`` records nothing.
+    Whether a line was an echo or a no-op is the router's call, not a
+    counter here.
+    """
     speaker = (speaker_id or "").strip()
     if not speaker:
-        return False
+        return
     if spoke:
         note_speak(channel_id)
-        return note_ack(channel_id, spoken_text)
+        return
     note_pass(channel_id, speaker)
-    return False
 
 
 def note_pass(channel_id: str, agent_id: str) -> None:
@@ -299,20 +212,6 @@ def note_speak(channel_id: str) -> None:
     state["pass_streaks"] = {}
     state["demoted_ids"] = []
     host_db.save_channel_host_state(state)
-
-
-def note_ack(channel_id: str, spoken_text: str) -> bool:
-    """Count consecutive clear acks. A non-ack speak resets the streak."""
-    token = (channel_id or "").strip()
-    if not token:
-        return False
-    state = host_db.get_channel_host_state(token)
-    if is_ack_phrase(spoken_text):
-        state["ack_streak"] = int(state["ack_streak"]) + 1
-    else:
-        state["ack_streak"] = 0
-    host_db.save_channel_host_state(state)
-    return int(state["ack_streak"]) >= DUP_ACK_LIMIT
 
 
 def shape_follow_up_speak(

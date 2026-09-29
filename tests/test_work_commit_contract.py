@@ -18,6 +18,7 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.decision_contract import (
     REPLY_WORK_COMMIT_REQUIRED,
+    TASK_ID_NOT_OPEN,
     WORK_COMMIT_CANNOT_START,
     WORK_COMMIT_STARTS_NOTHING,
     ConversationDecision,
@@ -317,3 +318,231 @@ def test_a_later_operator_edit_survives_the_next_run() -> None:
     seed_defaults()
     reconcile_work_commit_prompt_contract()
     assert _stored("runtime_contract_decision") == "operator's own contract"
+
+
+def test_committed_reply_resumes_paused_work_with_no_task_on_the_trigger() -> None:
+    agent = db.create_agent("Brad", role="Engineer")
+    waiting = _task(agent.id, title="BV cursor test: guest appraisal flow")
+    activity_runtime.activate_work_activity(agent.id, waiting, task_status="active")
+    activity_runtime.pause_active_work(agent.id, "Waiting on hotfixes.", task_status="waiting")
+    assert activity_runtime.get_active_work_activity(agent.id) is None
+    trigger = _human_chat("Made some hotfixes. Let's try running an appraisal.")
+    decision = ConversationDecision.model_validate(
+        {"decision": "answer", "intentKind": "work_request", "reply": "Picking it back up now.", "workCommit": True}
+    )
+    assert (
+        validate_decision_for_trigger(
+            decision,
+            trigger_type="human_chat",
+            active_task_id=None,
+            has_live_work=False,
+            agent_id=agent.id,
+            trigger=trigger,
+        )
+        is None
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    result = apply_decision(decision.model_dump(), agent, state, trigger)
+    resumes = [item for item in result["trigger_requests"] if item.get("trigger_type") == "activity_resumed"]
+    assert [item["task_id"] for item in resumes] == [waiting.id]
+    live = activity_runtime.get_active_work_activity(agent.id)
+    assert live is not None and live.task_id == waiting.id
+
+
+def test_committed_reply_with_no_open_task_fails_with_the_new_copy() -> None:
+    agent = db.create_agent("Brad", role="Engineer")
+    decision = ConversationDecision.model_validate(
+        {"decision": "answer", "intentKind": "work_request", "reply": "On it.", "workCommit": True}
+    )
+    error = validate_decision_for_trigger(
+        decision,
+        trigger_type="human_chat",
+        active_task_id=None,
+        has_live_work=False,
+        agent_id=agent.id,
+        trigger=_human_chat(),
+    )
+    assert error == WORK_COMMIT_STARTS_NOTHING
+    assert "you have no open task to continue" in error
+    assert "do not say you are starting work" in error
+    assert "starts nothing — this is your only turn" not in error
+
+
+_RESUME_MARKER = "work_commit_resume_prompt_reconciled"
+
+
+def test_shipped_decision_contract_resumes_open_work_and_revises_by_id() -> None:
+    text = load_default_prompt("runtime_contract_decision")
+    assert "`true` when this reply commits to continuing your own open work (active, paused, or waiting)." in text
+    assert "On your own waiting or blocked task's thread" not in text
+    assert "`true` with no active work starts nothing" not in text
+    assert '"id":"string (one of your open task ids, to revise that task)"' in text
+    assert "When new work arrives: if it changes a task you already have, accept it with that task's id" in text
+    assert "the runtime will pause the older task automatically" not in text
+    channel_block = text.split("{{elseif trigger.type = 'channel_message'}}", 1)[1].split("{{elseif", 1)[0]
+    assert "ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline | defer" in channel_block
+    dm_block = text.split("{{if trigger.type = 'human_chat'}}", 1)[1].split("{{elseif", 1)[0]
+    dm_defer = dm_block.split("For defer:", 1)[1]
+    assert '"act":"defer"' in dm_defer
+    assert '"data":{"task":{"title":"string","desc":"string"}}' in dm_defer
+    assert (
+        "The one exception is your own open work (active, paused, or waiting): the runtime continues it "
+        "after you answer when you set `work_commit` true."
+    ) in text
+    assert "The one exception is work already active on your Board" not in text
+
+
+def test_resume_prompt_reconcile_runs_once() -> None:
+    assert _stored(_RESUME_MARKER) == "true"
+    assert _stored("runtime_contract_decision") == load_default_prompt("runtime_contract_decision")
+    db.execute("DELETE FROM settings WHERE key = $1", [_RESUME_MARKER])
+    db.execute(
+        "UPDATE settings SET value = $1 WHERE key = $2",
+        ["old contract text", "runtime_contract_decision"],
+    )
+    seed_defaults()
+    assert _stored("runtime_contract_decision") == load_default_prompt("runtime_contract_decision")
+    assert _stored(_RESUME_MARKER) == "true"
+    db.set_setting("runtime_contract_decision", "operator's own contract", "advanced")
+    seed_defaults()
+    assert _stored("runtime_contract_decision") == "operator's own contract"
+
+
+def _accept_by_id(task_id: str, desc: str) -> dict[str, Any]:
+    raw = (
+        '{"act":"accept","intent":"work","msg":"Revising that task.","commit":"work",'
+        f'"data":{{"task":{{"id":"{task_id}","desc":"{desc}"}}}},"th":"revise"}}'
+    )
+    parsed = parse_direct_turn_response(raw)
+    assert parsed["decision"] == "accept", parsed
+    return parsed
+
+
+def test_accept_with_a_task_id_revises_and_resumes_that_task() -> None:
+    agent = db.create_agent("Charles", role="Engineer")
+    first = _task(agent.id, title="Write the notes")
+    activity_runtime.activate_work_activity(agent.id, first, task_status="active")
+    second = _task(agent.id, title="Fix the build")
+    activity_runtime.activate_work_activity(agent.id, second, task_status="active")
+    assert db.get_task(first.id).status == "pending"
+    assert db.get_resumable_work_activity(agent.id, first.id) is not None
+    tasks_before = len(db.list_tasks(assigned_to=agent.id))
+
+    parsed = _accept_by_id(first.id, "Cover the Q3 numbers too.")
+    assert parsed["taskId"] == first.id
+    decision = ConversationDecision.model_validate(parsed)
+    trigger = _human_chat("Charles, the notes should cover Q3 too.")
+    assert (
+        validate_decision_for_trigger(
+            decision,
+            trigger_type="human_chat",
+            active_task_id=second.id,
+            has_live_work=True,
+            agent_id=agent.id,
+            trigger=trigger,
+        )
+        is None
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    apply_decision(parsed, agent, state, trigger)
+    assert len(db.list_tasks(assigned_to=agent.id)) == tasks_before
+    revised = db.get_task(first.id)
+    assert revised.description == "Cover the Q3 numbers too."
+    assert any(
+        event.content == "Revised: Cover the Q3 numbers too."
+        for event in db.list_task_events(first.id)
+    )
+    live = activity_runtime.get_active_work_activity(agent.id)
+    assert live is not None and live.task_id == first.id
+    assert db.get_resumable_work_activity(agent.id, second.id) is not None
+
+
+def test_task_id_must_be_one_of_your_open_tasks() -> None:
+    agent = db.create_agent("Charles", role="Engineer")
+    other = db.create_agent("Debra", role="Analyst")
+    theirs = _task(other.id, title="Debra's review")
+    closed = _task(agent.id, title="Old notes")
+    transition_task(closed.id, "accepted", reason="test", actor="test")
+    transition_task(closed.id, "complete", reason="test", actor="test")
+    for task_id in (theirs.id, closed.id, "no-such-task"):
+        decision = ConversationDecision.model_validate(_accept_by_id(task_id, "More scope."))
+        error = validate_decision_for_trigger(
+            decision,
+            trigger_type="human_chat",
+            active_task_id=None,
+            has_live_work=False,
+            agent_id=agent.id,
+            trigger=_human_chat(),
+        )
+        assert error == TASK_ID_NOT_OPEN, task_id
+    own = _task(agent.id, title="Current notes")
+    deferred = ConversationDecision.model_validate(
+        {
+            "decision": "defer",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "reply": "Later.",
+            "taskId": own.id,
+        }
+    )
+    error = validate_decision_for_trigger(
+        deferred,
+        trigger_type="human_chat",
+        active_task_id=None,
+        has_live_work=False,
+        agent_id=agent.id,
+        trigger=_human_chat(),
+    )
+    assert error == 'data.task.id is only valid on act "accept" with commit "work"'
+
+
+def test_defer_on_a_thread_intake_turn_queues_a_pending_task() -> None:
+    agent = db.create_agent("Harley", role="Planner")
+    peer = db.create_agent("Jimothy", role="Engineer")
+    channel = db.create_channel(name="Crew", member_agent_ids=[agent.id, peer.id], created_by=agent.id)
+    message = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="Harley, draft the Q4 plan when you can.",
+        source_channel="channel",
+    )
+    from core.agent_loop.channel_rounds import start_channel_peer_round
+
+    wakes = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    wake = next(item for item in wakes if item["agent_id"] == agent.id)
+    trigger = {**wake["payload"], "type": "channel_message"}
+    decision = ConversationDecision.model_validate(
+        {
+            "decision": "defer",
+            "intentKind": "work_request",
+            "commitmentKind": "work",
+            "reply": "Queued; I'll start it after my current task.",
+            "taskTitle": "Draft the Q4 plan",
+        }
+    )
+    assert (
+        validate_decision_for_trigger(
+            decision,
+            trigger_type="channel_message",
+            active_task_id=None,
+            has_live_work=False,
+            agent_id=agent.id,
+            trigger=trigger,
+        )
+        is None
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    apply_decision(decision.model_dump(), agent, state, trigger)
+    deferred = [task for task in db.list_tasks(assigned_to=agent.id) if task.title == "Draft the Q4 plan"]
+    assert [task.status for task in deferred] == ["pending"]

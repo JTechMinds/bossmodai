@@ -267,3 +267,97 @@ async def test_skipped_resume_is_not_requeued_forever() -> None:
 
     assert db.get_agent_trigger(row.id).status == "completed"
     assert _resumes(agent.id, task.id) == []
+
+
+def _done_evidence(agent_id: str) -> None:
+    db.create_bm_cli_event(
+        agent_id=agent_id,
+        command="cat /projects/review.md",
+        content_present=False,
+        executor="virtual",
+        cwd_before="/",
+        cwd_after="/",
+        policy_tier="read",
+        decision="allowed",
+        exit_code=0,
+        result_kind="read",
+        stdout_preview="ok",
+        stderr_preview=None,
+        changed_paths=None,
+        trigger_type="activity_resumed",
+    )
+
+
+def _set_created_at(task_id: str, when: str) -> None:
+    db.execute("UPDATE tasks SET created_at = $1 WHERE id = $2", [when, task_id])
+
+
+@pytest.mark.asyncio
+async def test_done_resumes_paused_work_before_an_older_pending_task() -> None:
+    from core.agent_loop.actions import execute_action
+    from core.agent_loop.activity_scheduler import next_work_after_end
+
+    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, model_work="test/mock")
+    queued = _task(agent.id, title="Older queued work")
+    _set_created_at(queued.id, "2026-01-01 00:00:00")
+    paused = _task(agent.id, title="Paused work")
+    activity_runtime.activate_work_activity(agent.id, paused, task_status="active")
+    current = _task(agent.id, title="Urgent fix")
+    activity_runtime.activate_work_activity(agent.id, current, task_status="active")
+    assert db.get_task(paused.id).status == "pending"
+    assert db.get_resumable_work_activity(agent.id, paused.id) is not None
+    # Still working: the habit does nothing.
+    assert next_work_after_end(agent.id, ended_task_id=None) == []
+
+    _done_evidence(agent.id)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    result = await execute_action(
+        {
+            "action": "complete",
+            "summary": "Fixed the build.",
+            "doneClaim": {"type": "proof", "ev": "build log shows green"},
+        },
+        agent,
+        state,
+    )
+    assert result["event"] == "status_changed"
+    assert db.get_task(current.id).status == "complete"
+    nxt = [
+        (item.get("trigger_type"), item.get("task_id"))
+        for item in result["trigger_requests"]
+        if item.get("agent_id") == agent.id
+    ]
+    assert nxt == [("activity_resumed", paused.id)]
+    live = activity_runtime.get_active_work_activity(agent.id)
+    assert live is not None and live.task_id == paused.id
+    assert db.get_task(queued.id).status == "pending"
+
+
+def test_next_work_picks_the_oldest_queued_task_and_never_a_waiting_one() -> None:
+    from core.agent_loop.activity_scheduler import next_work_after_end
+
+    agent = db.create_agent("Harley", role="Planner", desk_x=1, desk_y=1, model_work="test/mock")
+    waiting = _task(agent.id, title="Waiting on Debra")
+    activity_runtime.activate_work_activity(agent.id, waiting, task_status="active")
+    activity_runtime.pause_active_work(agent.id, "Waiting on Debra.", task_status="waiting")
+    assert next_work_after_end(agent.id, ended_task_id=None) == []
+
+    newer = _task(agent.id, title="Newer queued work")
+    older = _task(agent.id, title="Older queued work")
+    _set_created_at(older.id, "2026-01-01 00:00:00")
+    _set_created_at(newer.id, "2026-01-02 00:00:00")
+    wakes = next_work_after_end(agent.id, ended_task_id=None)
+    assert [(item["trigger_type"], item["task_id"]) for item in wakes] == [("task_assigned", older.id)]
+    # The ended task is never the next one, and an already-queued wake is not doubled.
+    assert [
+        item["task_id"] for item in next_work_after_end(agent.id, ended_task_id=older.id)
+    ] == [newer.id]
+    db.create_agent_trigger(
+        agent_id=agent.id,
+        trigger_type="task_assigned",
+        source_channel="work",
+        payload={},
+        task_id=older.id,
+    )
+    assert next_work_after_end(agent.id, ended_task_id=None) == []

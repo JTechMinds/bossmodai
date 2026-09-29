@@ -19,6 +19,7 @@ from core.agent_loop.activity_scheduler import (
     plan_arrival_follow_up,
     prepare_trigger_context,
 )
+from core.agent_loop.channel_rounds import release_channel_seat
 from core.agent_loop.loop import run_turn
 from core.llm.call_budget import (
     Lane,
@@ -77,7 +78,12 @@ class TurnDispatcher:
         self._wake_event = asyncio.Event()
         self._active_turns: dict[str, asyncio.Task[Any]] = {}
         self._turn_lanes: dict[str, Lane] = {}
-        self._queue_notices: list[dict[str, Any]] = []
+        # None means "not evaluated this pass" (runtime Pause): painted
+        # Queued rows are left as they are instead of being retracted.
+        self._queue_notices: list[dict[str, Any]] | None = []
+        # Queued rows this dispatcher has painted, keyed (agent_id, channel_id)
+        # -> agent_name, so a waiter whose trigger vanished gets its idle.
+        self._painted_queued: dict[tuple[str, str | None], str] = {}
         self._social_timers: dict[str, asyncio.TimerHandle] = {}
 
     def start(self) -> None:
@@ -89,6 +95,13 @@ class TurnDispatcher:
         recovered = db.requeue_stale_triggers(claim_timeout, force=True)
         if recovered:
             logger.warning("Requeued %d stale claimed triggers", recovered)
+        # After the requeue, so recovered triggers count as live: a round
+        # with no queued or claimed trigger can never advance again. Rounds
+        # younger than the claim timeout are left alone: the app process may
+        # not have persisted their wakes yet.
+        db.close_orphaned_channel_rounds(
+            created_before=datetime.now(timezone.utc) - timedelta(seconds=claim_timeout),
+        )
         self._running = True
         self._task = asyncio.create_task(self._loop())
         logger.info("Turn dispatcher started")
@@ -313,6 +326,7 @@ class TurnDispatcher:
                 claim_generation,
             )
             return
+        self._release_channel_seat(agent.id, trigger)
 
         task = self._resolve_stuck_task(agent.id, trigger)
         if task is not None:
@@ -407,6 +421,16 @@ class TurnDispatcher:
             trigger=trigger,
             failure_detail=normalized_detail,
         )
+
+    def _release_channel_seat(self, agent_id: str, trigger: dict[str, Any]) -> None:
+        """Free a failed channel turn's round seat and queue what the round does next.
+
+        Call only after ``fail_agent_trigger`` succeeded: the turn will never
+        finish, so its round would otherwise wait on it forever.
+        """
+        wakes = release_channel_seat(agent_id, trigger)
+        if wakes:
+            self._enqueue_result_triggers({"trigger_requests": wakes})
 
     def _enqueue_result_triggers(self, result: dict[str, Any]) -> None:
         """Persist any follow-up triggers emitted by a successful turn."""
@@ -554,21 +578,23 @@ class TurnDispatcher:
 
         agent = db.get_agent(candidate.agent_id)
         if not agent:
-            db.fail_agent_trigger(
+            if db.fail_agent_trigger(
                 candidate.id,
                 "Agent not found",
                 claim_generation=candidate.claim_generation,
-            )
+            ) is not None:
+                self._release_channel_seat(candidate.agent_id, payload)
             return False
         # Backstop: enqueue already refuses a vacationer, but a row written
         # before they went home, or by a path that bypasses enqueue, must
         # still never start a turn.
         if is_on_vacation(agent):
-            db.fail_agent_trigger(
+            if db.fail_agent_trigger(
                 candidate.id,
                 VACATION_DENY,
                 claim_generation=candidate.claim_generation,
-            )
+            ) is not None:
+                self._release_channel_seat(agent.id, payload)
             return False
 
         try:
@@ -607,19 +633,21 @@ class TurnDispatcher:
         policy = get_trigger_policy(candidate.trigger_type)
         state = activity_runtime.refresh_agent_status(agent.id)
         if state is None:
-            db.fail_agent_trigger(
+            if db.fail_agent_trigger(
                 candidate.id,
                 "Agent state not found",
                 claim_generation=candidate.claim_generation,
-            )
+            ) is not None:
+                self._release_channel_seat(agent.id, payload)
             return False
 
         if policy.require_work_activity and not activity_runtime.get_active_task_id(agent.id):
-            db.fail_agent_trigger(
+            if db.fail_agent_trigger(
                 candidate.id,
                 "Trigger requires active work activity",
                 claim_generation=candidate.claim_generation,
-            )
+            ) is not None:
+                self._release_channel_seat(agent.id, payload)
             activity_runtime.refresh_agent_status(agent.id)
             return False
 
@@ -646,6 +674,7 @@ class TurnDispatcher:
         """
         self._queue_notices = []
         if _runtime_is_paused():
+            self._queue_notices = None
             return None
         eligible = []
         for trigger in db.list_queued_triggers(limit=100):
@@ -739,8 +768,39 @@ class TurnDispatcher:
             budget.release(lane)
 
     async def _emit_queue_notices(self) -> None:
+        """Retract Queued rows that no longer wait, then paint the current ones.
+
+        The dispatcher owns every Queued row it paints. A painted waiter
+        whose trigger was deleted, run elsewhere, or moved channels gets one
+        ``idle`` presence and a Busy-line re-sync. An agent that holds a lane
+        (claimed this pass, or mid-turn) is skipped and its key is carried
+        forward, so a row it has in another thread is retracted by a later
+        emit once its turn ends. Retracting before painting leaves an agent
+        that moved channels ``queued`` in the new one. ``None`` notices mean the
+        claim pass did not run (runtime Pause), so nothing is retracted.
+        """
         notices = self._queue_notices
         self._queue_notices = []
+        if notices is None:
+            return
+        current: dict[tuple[str, str | None], str] = {}
+        for notice in notices:
+            current[(str(notice["agent_id"]), notice.get("channel_id"))] = str(notice["agent_name"])
+        carried: dict[tuple[str, str | None], str] = {}
+        for key, agent_name in self._painted_queued.items():
+            agent_id, channel_id = key
+            if key in current:
+                continue
+            if agent_id in self._active_turns or agent_id in self._turn_lanes:
+                carried[key] = agent_name
+                continue
+            await self._broadcast_presence(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                phase="idle",
+                channel_id=channel_id,
+            )
+            await emit_queue_visibility(agent_id)
         for notice in notices:
             await self._broadcast_presence(
                 agent_id=str(notice["agent_id"]),
@@ -749,6 +809,7 @@ class TurnDispatcher:
                 channel_id=notice.get("channel_id"),
                 ahead=int(notice["ahead"]),
             )
+        self._painted_queued = {**carried, **current}
 
     async def _broadcast_presence(
         self,
@@ -890,6 +951,10 @@ class TurnDispatcher:
                     phase="idle",
                     channel_id=channel_id,
                 )
+                # This idle already cleared that row. A Queued row this agent
+                # still has in another channel stays painted, so the next
+                # emit retracts it.
+                self._painted_queued.pop((agent.id, channel_id), None)
             self._release_turn_lane(agent.id)
             try:
                 await close_provider_sessions(allow_inflight=0)

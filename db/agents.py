@@ -335,7 +335,6 @@ def delete_agent_rows(agent_id: str) -> bool:
         # a thread the agent started stays; round order already falls back to
         # the first member when the creator is gone (channel_rounds._lead_id)
         execute("UPDATE channels SET created_by = NULL WHERE created_by = $1", [agent_id])
-        execute("UPDATE channel_host_state SET work_agent_id = NULL WHERE work_agent_id = $1", [agent_id])
         # clear shared-meeting authored references and queue membership
         execute("UPDATE meeting_session_messages SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
         execute("UPDATE meeting_sessions SET created_by_agent_id = NULL WHERE created_by_agent_id = $1", [agent_id])
@@ -414,10 +413,6 @@ _ORPHAN_STATEMENTS: tuple[tuple[str, str], ...] = (
     ("tasks.requester_id", "UPDATE tasks SET requester_id = NULL WHERE {missing:requester_id} RETURNING 1"),
     ("channels.created_by", "UPDATE channels SET created_by = NULL WHERE {missing:created_by} RETURNING 1"),
     (
-        "channel_host_state.work_agent_id",
-        "UPDATE channel_host_state SET work_agent_id = NULL WHERE {missing:work_agent_id} RETURNING 1",
-    ),
-    (
         "meeting_session_meta.host_agent_id",
         "UPDATE meeting_session_meta SET host_agent_id = NULL WHERE {missing:host_agent_id} RETURNING 1",
     ),
@@ -433,7 +428,7 @@ def purge_orphan_agent_rows(non_agent_ids: Iterable[str]) -> dict[str, int]:
     after it has cancelled the open tasks such ids own. The rules match
     ``delete_agent_rows``: private rows (diagnostics and their steps, DMs,
     meeting participation, thread membership, response candidates) are
-    deleted; shared rows (tasks, threads, host state, meeting hosts) keep
+    deleted; shared rows (tasks, threads, meeting hosts) keep
     their row with the id set to NULL. NULL is never an orphan, and neither is any value in
     ``non_agent_ids`` (``HUMAN_SENDER_ID`` and the like), which are senders
     and requesters that were never agents.

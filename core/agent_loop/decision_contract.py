@@ -79,13 +79,15 @@ _ALLOWED_ACTS_BY_TRIGGER = {
     "watchdog_status_ping": ("reply",),
 }
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
-_SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline")
+_SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline", "defer")
 
 REPLY_WORK_COMMIT_REQUIRED = 'reply requires "work_commit": true or false'
 WORK_COMMIT_STARTS_NOTHING = (
-    '"work_commit": true on a reply starts nothing — this is your only turn. '
-    'Use act "accept" with commit "work" (and data.task for new work), or set work_commit false.'
+    '"work_commit": true continues work on your Board, and you have no open task to continue. '
+    'To start new work, use act "accept" with commit "work" and data.task. '
+    "Otherwise set work_commit false and do not say you are starting work."
 )
+TASK_ID_NOT_OPEN = "data.task.id must be one of your open tasks (see MY OPEN TASKS)"
 WORK_COMMIT_CANNOT_START = "you cannot start work from this turn; set work_commit false."
 
 class DelegatedWorkItem(BaseModel):
@@ -139,6 +141,9 @@ class ConversationDecision(BaseModel):
     detail: str | None = None
     taskTitle: str | None = None
     taskDescription: str | None = None
+    # ``data.task.id``: one of the agent's own open tasks, to revise and
+    # continue it instead of creating a new one (accept + work only).
+    taskId: str | None = None
     deliverables: list[DeliverableSpec] | None = None
     executionPlan: WorkExecutionPlan | None = None
     proceedUntagged: bool = False
@@ -335,7 +340,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         task = {}
     if not isinstance(task, dict):
         raise ValueError('"data.task" must be an object when provided')
-    extra_task = set(task) - {"title", "desc", "outs"}
+    extra_task = set(task) - {"id", "title", "desc", "outs"}
     if extra_task:
         raise ValueError(f'unexpected data.task keys: {", ".join(sorted(extra_task))}')
     plan = data.get("plan") or {}
@@ -357,6 +362,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "detail": data.get("detail"),
         "taskTitle": task.get("title"),
         "taskDescription": task.get("desc"),
+        "taskId": task.get("id"),
         "deliverables": _normalize_outs(task.get("outs")),
         "executionPlan": _normalize_work_plan(plan),
         "proceedUntagged": _as_bool(data.get("proceed")),
@@ -544,6 +550,12 @@ def validate_decision_for_trigger(
     } and decision.decision != "observe" and not (decision.reply and decision.reply.strip()):
         return 'conversation turns require a non-empty "reply" unless you choose "observe"'
 
+    if decision.taskId is not None:
+        if not (decision.decision == "accept" and decision.commitmentKind == "work"):
+            return 'data.task.id is only valid on act "accept" with commit "work"'
+        if not _task_is_open_for(decision.taskId, agent_id):
+            return TASK_ID_NOT_OPEN
+
     if decision.decision == "cancel":
         if active_task_id is None:
             return 'cancel is only valid when there is an active task to close'
@@ -608,13 +620,14 @@ def validate_decision_for_trigger(
             return 'peer messages are conversational only; use explicit task assignment instead of creating durable work from coworker chat'
         if trigger_type == "meeting_invite":
             return 'meeting invites are coordination only; accept/decline the meeting and use tasks for durable work'
-        if decision.decision in {"accept", "defer"} and not (decision.taskTitle and decision.taskTitle.strip()):
+        if (
+            decision.decision in {"accept", "defer"}
+            and decision.taskId is None
+            and not (decision.taskTitle and decision.taskTitle.strip())
+        ):
             return 'conversation work requests must provide a non-empty "taskTitle"'
         if decision.executionPlan is not None and trigger_type == "peer_message":
             return 'peer messages are conversational only; delegated work plans belong on accepted task work, not coworker chat'
-
-    if trigger_type in {"session_message", "channel_message"} and decision.decision == "defer":
-        return 'shared-message intake turns may observe, reply, accept, clarify, or decline; defer only after you are actively replying'
 
     if decision.decision == "answer" and decision.workCommit:
         return _work_commit_error(
@@ -636,12 +649,20 @@ def _work_commit_error(
 ) -> str | None:
     """Return why a reply's ``work_commit: true`` is invalid, or ``None``.
 
-    A reply is the agent's only round: nothing runs after it unless work is
-    already live (the runtime continues that) or the reply is on the
-    agent's own open task (``apply_decision`` requeues exactly that task).
-    Anywhere ``accept`` is allowed, new work must be accepted instead.
+    ``work_commit: true`` continues the agent's own open work. It is valid
+    when work is already live (the runtime continues that) or when the
+    agent has an open task to resume: paused work first, then any open
+    assigned task (``activity_runtime.resolve_live_wake_task``);
+    ``apply_decision`` requeues it. With nothing open, a turn that could
+    ``accept`` must accept new work instead, and any other turn cannot
+    start work unless the trigger itself names the agent's open task.
     """
     if has_live_work:
+        return None
+    # Local: activity_runtime's import chain (core.tasking -> next_owner) imports this module.
+    from core.agent_loop.activity_runtime import resolve_live_wake_task
+
+    if resolve_live_wake_task(agent_id) is not None:
         return None
     if _accept_allowed(trigger_type, trigger):
         return WORK_COMMIT_STARTS_NOTHING
@@ -671,4 +692,17 @@ def _trigger_task_is_open_for(trigger: dict[str, Any] | None, agent_id: str) -> 
     if not isinstance(task_id, str) or not task_id.strip():
         return False
     task = db.get_task(task_id)
+    return task is not None and task.assigned_to == agent_id and task.status in OPEN_TASK_STATUSES
+
+
+def _task_is_open_for(task_id: str, agent_id: str) -> bool:
+    """Return whether ``task_id`` names an open task assigned to ``agent_id``."""
+    # Local: db and tasking import this module on their way in.
+    import db
+    from core.tasking.resolution import OPEN_TASK_STATUSES
+
+    token = (task_id or "").strip()
+    if not token:
+        return False
+    task = db.get_task(token)
     return task is not None and task.assigned_to == agent_id and task.status in OPEN_TASK_STATUSES

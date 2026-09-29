@@ -15,7 +15,7 @@ from core.agent_loop.task_origins import (
 from core.agent_loop.task_roles import default_task_owner_id, task_requester_id_for_trigger
 from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
-from core.tasking.service import create_or_bind_subtask, create_or_bind_task
+from core.tasking.service import append_task_event, create_or_bind_subtask, create_or_bind_task
 
 
 def _ambiguous_match_feedback(
@@ -94,12 +94,19 @@ def _resolve_or_create_work_task(
     trigger: dict[str, Any],
     decision: ConversationDecision,
 ):
-    """Return the accepted work task, creating it for direct chat requests."""
+    """Return the accepted work task, creating it for direct chat requests.
+
+    A task wake binds its own task. An accept that names one of the agent's
+    open tasks (``data.task.id``) binds that task instead of creating one;
+    see :func:`_bind_named_task`. Anything else creates or binds by title.
+    """
     if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
         if task is None:
             raise ValueError("Assigned task no longer exists")
         return {"task": task}
+    if decision.taskId:
+        return _bind_named_task(agent, trigger, decision)
 
     created_by = agent.id
     if trigger.get("type") == "human_chat":
@@ -166,6 +173,40 @@ def _resolve_or_create_work_task(
         ),
         agent_name=agent.name,
     )
+
+def _bind_named_task(
+    agent: Agent,
+    trigger: dict[str, Any],
+    decision: ConversationDecision,
+) -> dict[str, Any]:
+    """Bind the open task the agent named with ``data.task.id``, revising it if asked.
+
+    ``validate_decision_for_trigger`` already checked that the id names an
+    open task assigned to this agent. A non-empty ``desc`` that differs from
+    the stored description replaces it and is recorded on the task thread
+    as a revision. The accept path then activates the task: it resumes
+    paused work, or pauses a different current task.
+
+    Raises:
+        ValueError: The task vanished after validation.
+    """
+    task_id = str(decision.taskId or "").strip()
+    task = db.get_task(task_id)
+    if task is None:
+        raise ValueError(f"Named task {task_id} no longer exists")
+    description = (decision.taskDescription or "").strip()
+    if description and description != (task.description or "").strip():
+        task = db.update_task(task.id, description=description) or task
+        append_task_event(
+            task_id=task.id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="comment",
+            content=f"Revised: {description}",
+            source_trigger_id=trigger.get("trigger_id"),
+        )
+    return {"task": task}
 
 def _ensure_deferred_task(
     agent: Agent,

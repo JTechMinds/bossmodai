@@ -194,7 +194,7 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
 
 
 def _apply_migrations(con: SQLiteCompatConnection) -> None:
-    """Apply additive column migrations for existing databases."""
+    """Apply column migrations (mostly additive) for existing databases."""
     _ensure_source_keyed_sticky_slots(con)
     _create_task_events_table_if_missing(con)
     _ensure_agent_state_status_values(con)
@@ -316,6 +316,11 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "channel_response_rounds", "work_bind_ids",
         "TEXT NOT NULL DEFAULT '[]'",
     )
+    # Retired thread host state: the work hold and the dup-ack streak were
+    # transient gates, so dropping them loses nothing.
+    _drop_column_if_present(con, "channel_host_state", "work_agent_id")
+    _drop_column_if_present(con, "channel_host_state", "work_task_id")
+    _drop_column_if_present(con, "channel_host_state", "ack_streak")
     _add_column_if_missing(
         con, "channels", "cli_auto_approve",
         "INTEGER NOT NULL DEFAULT 0",
@@ -568,6 +573,21 @@ def _add_column_if_missing(
     if column not in columns:
         con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
         logger.info("Migration: added column %s.%s", table, column)
+
+
+def _drop_column_if_present(con: SQLiteCompatConnection, table: str, column: str) -> None:
+    """Drop a retired column from an existing table if it is still there.
+
+    The counterpart of :func:`_add_column_if_missing`. Needs SQLite 3.35+
+    (``ALTER TABLE … DROP COLUMN``). Only for columns with no index, key or
+    constraint on them; SQLite raises ``OperationalError`` otherwise, and
+    that error is left to surface.
+    """
+    result = con.execute(f"PRAGMA table_info({table})")
+    columns = {row[1] for row in result.fetchall()}
+    if column in columns:
+        con.execute(f"ALTER TABLE {table} DROP COLUMN {column}")
+        logger.info("Migration: dropped column %s.%s", table, column)
 
 
 def _ensure_floors(con: SQLiteCompatConnection) -> None:

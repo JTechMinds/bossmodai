@@ -11,7 +11,6 @@ import pytest
 import db
 from core import config
 from core.agent_loop import activity_runtime
-from core.agent_loop.channel_host import work_holds_talk
 from core.agent_loop.channel_round_plan import DISPATCH_ROUNDS
 from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.agent_loop.decision_contract import parse_direct_turn_response
@@ -32,6 +31,7 @@ from core.bm_cli.results import BossModCliResult
 from core.llm.client import LLMResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
+from db import channel_response_rounds as channel_round_db
 
 
 def setup_function() -> None:
@@ -171,7 +171,9 @@ def test_channel_accept_posts_say_before_work_bind(monkeypatch: pytest.MonkeyPat
     assert order == ["work"]
     assert result.get("channel_message")
     assert "I'll ship the notes." in (result["channel_message"].get("content") or "")
-    assert work_holds_talk(channel.id)
+    # The bind is a router fact on the round, not a hold on the thread.
+    meta = channel_round_db.get_channel_round_meta(triggers[0]["payload"]["round_id"])
+    assert meta["work_bind_ids"] == [agent.id]
 
 
 @pytest.mark.asyncio

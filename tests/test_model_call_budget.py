@@ -446,3 +446,198 @@ def test_send_does_not_paint_thinking_before_a_lane() -> None:
     assert "phase === 'queued'" in thread
     assert "Queued (${ahead} ahead)" in transcript
     assert "Queued (${ahead} ahead)" in desk
+
+
+def _presence_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
+    """Record (surface, agent_id, phase) for every desk and thread presence."""
+    phases: list[tuple[str, str, str]] = []
+
+    async def _desk(**kwargs: object) -> None:
+        phases.append(("desk", str(kwargs.get("agent_id")), str(kwargs.get("phase"))))
+
+    async def _channel(**kwargs: object) -> None:
+        phases.append(("channel", str(kwargs.get("agent_id")), str(kwargs.get("phase"))))
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _desk)
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_channel_presence", _channel)
+    return phases
+
+
+def _busy_syncs(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Record which agents the dispatcher re-synced the Busy line for."""
+    synced: list[str] = []
+
+    async def _sync(agent_id: str) -> dict[str, object]:
+        synced.append(agent_id)
+        return {"action": "noop", "agent_id": agent_id}
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.emit_queue_visibility", _sync)
+    return synced
+
+
+def _painted_waiter(monkeypatch: pytest.MonkeyPatch):
+    """Ada holds the room's live speak; Bea is painted Queued behind her."""
+    _set_knob("4")
+    ada = _agent("Ada")
+    bea = _agent("Bea")
+    room = db.create_channel(name="Room", member_agent_ids=[ada.id, bea.id])
+    _enqueue(ada.id, channel_id=room.id, when="2026-01-01 00:00:01")
+    bea_row = _enqueue(bea.id, channel_id=room.id, when="2026-01-01 00:00:02")
+    assert bea_row is not None
+    dispatcher = TurnDispatcher()
+    first = dispatcher._claim_available_trigger()
+    assert first is not None and first.agent_id == ada.id
+    assert dispatcher._claim_available_trigger() is None
+    return dispatcher, ada, bea, room, first, bea_row
+
+
+@pytest.mark.asyncio
+async def test_deleted_waiter_gets_exactly_one_idle_and_its_busy_line_resynced(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phases = _presence_log(monkeypatch)
+    synced = _busy_syncs(monkeypatch)
+    dispatcher, _ada, bea, _room, _first, bea_row = _painted_waiter(monkeypatch)
+    await dispatcher._emit_queue_notices()
+    assert ("channel", bea.id, "queued") in phases
+    assert ("desk", bea.id, "queued") in phases
+
+    # The round closed and deleted Bea's wake before it ran.
+    execute("DELETE FROM agent_triggers WHERE id = $1", [bea_row.id])
+    assert dispatcher._claim_available_trigger() is None
+    await dispatcher._emit_queue_notices()
+    assert dispatcher._claim_available_trigger() is None
+    await dispatcher._emit_queue_notices()
+
+    bea_idle = [item for item in phases if item[1] == bea.id and item[2] == "idle"]
+    assert sorted(bea_idle) == [("channel", bea.id, "idle"), ("desk", bea.id, "idle")]
+    assert synced == [bea.id]
+
+
+@pytest.mark.asyncio
+async def test_waiter_claimed_next_gets_thinking_and_no_retraction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phases = _presence_log(monkeypatch)
+    synced = _busy_syncs(monkeypatch)
+
+    async def _done(*_args: object, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(result={}, trigger_status="completed")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _done)
+    dispatcher, ada, bea, room, first, _bea_row = _painted_waiter(monkeypatch)
+    await dispatcher._emit_queue_notices()
+
+    db.complete_agent_trigger(first.id, claim_generation=first.claim_generation)
+    dispatcher._release_turn_lane(ada.id)
+    opened = dispatcher._claim_available_trigger()
+    assert opened is not None and opened.agent_id == bea.id
+    await dispatcher._emit_queue_notices()
+    assert [item for item in phases if item[1] == bea.id and item[2] == "idle"] == []
+    assert synced == []
+
+    state = db.get_agent_state(bea.id)
+    assert state is not None
+    await dispatcher._run_trigger(
+        bea,
+        state,
+        {
+            "type": opened.trigger_type,
+            "trigger_id": opened.id,
+            "task_id": opened.task_id,
+            "source_channel": opened.source_channel,
+            "claim_generation": opened.claim_generation,
+            "channel_id": room.id,
+            "content": "go",
+        },
+    )
+    bea_channel = [item[2] for item in phases if item[0] == "channel" and item[1] == bea.id]
+    # The only idle is the turn's own end, after thinking.
+    assert bea_channel == ["queued", "thinking", "idle"]
+    assert not any(key[0] == bea.id for key in dispatcher._painted_queued)
+
+
+@pytest.mark.asyncio
+async def test_pause_does_not_retract_queued_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    phases = _presence_log(monkeypatch)
+    synced = _busy_syncs(monkeypatch)
+    dispatcher, _ada, bea, room, _first, bea_row = _painted_waiter(monkeypatch)
+    await dispatcher._emit_queue_notices()
+
+    db.set_setting("runtime_control_state", "paused", "advanced")
+    config.reload()
+    execute("DELETE FROM agent_triggers WHERE id = $1", [bea_row.id])
+    assert dispatcher._claim_available_trigger() is None
+    await dispatcher._emit_queue_notices()
+    assert [item for item in phases if item[2] == "idle"] == []
+    assert synced == []
+    assert (bea.id, room.id) in dispatcher._painted_queued
+
+
+@pytest.mark.asyncio
+async def test_row_in_another_thread_is_retracted_after_the_agents_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    phases = _presence_log(monkeypatch)
+    synced = _busy_syncs(monkeypatch)
+
+    async def _done(*_args: object, **_kwargs: object) -> TurnOutcome:
+        return TurnOutcome(result={}, trigger_status="completed")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _done)
+    _set_knob("4")
+    ada = _agent("Ada")
+    bea = _agent("Bea")
+    cy = _agent("Cy")
+    room_x = db.create_channel(name="Room X", member_agent_ids=[ada.id, bea.id])
+    room_y = db.create_channel(name="Room Y", member_agent_ids=[cy.id, bea.id])
+    _enqueue(ada.id, channel_id=room_x.id, when="2026-01-01 00:00:01")
+    cy_row = _enqueue(cy.id, channel_id=room_y.id, when="2026-01-01 00:00:02")
+    bea_x = _enqueue(bea.id, channel_id=room_x.id, when="2026-01-01 00:00:03")
+    _enqueue(bea.id, channel_id=room_y.id, when="2026-01-01 00:00:04")
+    assert cy_row is not None and bea_x is not None
+    dispatcher = TurnDispatcher()
+    assert dispatcher._claim_available_trigger().agent_id == ada.id
+    cy_claim = dispatcher._claim_available_trigger()
+    assert cy_claim is not None and cy_claim.agent_id == cy.id
+    assert dispatcher._claim_available_trigger() is None
+    await dispatcher._emit_queue_notices()
+    assert set(dispatcher._painted_queued) == {(bea.id, room_x.id), (bea.id, room_y.id)}
+
+    # Cy posts in Y; Bea's Y wake is claimed while X is still held behind Ada.
+    db.complete_agent_trigger(cy_claim.id, claim_generation=cy_claim.claim_generation)
+    dispatcher._release_turn_lane(cy.id)
+    opened = dispatcher._claim_available_trigger()
+    assert opened is not None and opened.agent_id == bea.id
+    # X's round closes during Bea's turn, deleting her X wake.
+    execute("DELETE FROM agent_triggers WHERE id = $1", [bea_x.id])
+    assert dispatcher._claim_available_trigger() is None
+    await dispatcher._emit_queue_notices()
+    assert ("channel", bea.id, "idle") not in phases
+    assert (bea.id, room_x.id) in dispatcher._painted_queued
+
+    state = db.get_agent_state(bea.id)
+    assert state is not None
+    await dispatcher._run_trigger(
+        bea,
+        state,
+        {
+            "type": opened.trigger_type,
+            "trigger_id": opened.id,
+            "task_id": opened.task_id,
+            "source_channel": opened.source_channel,
+            "claim_generation": opened.claim_generation,
+            "channel_id": room_y.id,
+            "content": "go",
+        },
+    )
+    idle_before = len([item for item in phases if item == ("channel", bea.id, "idle")])
+    synced_before = synced.count(bea.id)
+    assert dispatcher._claim_available_trigger() is None
+    await dispatcher._emit_queue_notices()
+    idle_after = len([item for item in phases if item == ("channel", bea.id, "idle")])
+    # One idle closed the Y turn; the next emit retracts the stale X row.
+    assert (idle_before, idle_after) == (1, 2)
+    assert dispatcher._painted_queued == {}
+    # The retraction also re-syncs Bea's Busy line once.
+    assert synced.count(bea.id) == synced_before + 1

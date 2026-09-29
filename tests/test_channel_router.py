@@ -1,4 +1,4 @@
-"""System AI channel routes: fail-closed JSON, speak cap, engine pass."""
+"""System AI channel routes: fail-closed JSON, whole speak list, engine pass."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from core.agent_loop.channel_round_plan import (
     mention_ids_in_order,
 )
 from core.agent_loop.channel_router import (
-    ROUTER_SPEAK_CAP,
+    REROUTE_ECHO_ROUTE,
     build_router_messages,
     finalize_router_lists,
     RouterLine,
@@ -110,8 +110,7 @@ def _ordered(round_id: str) -> list[str]:
     ]
 
 
-def test_speak_cap_and_stall_defaults_stay_put() -> None:
-    assert ROUTER_SPEAK_CAP == 2
+def test_stall_defaults_stay_put() -> None:
     assert config.get("system_ai_timeout_seconds") == "180"
     assert config.get("system_ai_max_tokens") == "6144"
     assert config.get("max_concurrent_agent_turns") == "2"
@@ -144,19 +143,17 @@ def test_parser_rejects_invented_keys_and_unknown_numbers() -> None:
     speak, stay = finalize_router_lists(
         ["jim", "laura", "ada"],
         forced_ids=[],
-        speak=["ada", "laura", "jim"],
-        cap=ROUTER_SPEAK_CAP,
+        speak=["ada", "laura"],
     )
     assert speak == ["ada", "laura"]
     assert stay == ["jim"]
 
 
-def test_human_mentions_stay_first_and_are_not_dropped_for_the_cap() -> None:
+def test_human_mentions_stay_first_and_the_model_list_is_kept_whole() -> None:
     speak, stay = finalize_router_lists(
         ["jim", "laura", "ada"],
         forced_ids=["laura", "ada", "jim"],
         speak=["jim"],
-        cap=ROUTER_SPEAK_CAP,
     )
     assert speak == ["laura", "ada", "jim"]
     assert stay == []
@@ -165,10 +162,49 @@ def test_human_mentions_stay_first_and_are_not_dropped_for_the_cap() -> None:
         ["jim", "laura", "ada"],
         forced_ids=["laura"],
         speak=["ada", "jim"],
-        cap=ROUTER_SPEAK_CAP,
     )
-    assert speak == ["laura", "ada"]
-    assert stay == ["jim"]
+    assert speak == ["laura", "ada", "jim"]
+    assert stay == []
+
+
+def test_router_naming_all_six_members_wakes_six_forced_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    names = ["Brad", "Brian", "Charles", "Sarah", "Harley", "Jimothy"]
+    agents = [
+        db.create_agent(name, role="Eng", desk_x=index + 1, desk_y=1, model_work="identity-big")
+        for index, name in enumerate(names)
+    ]
+    channel = db.create_channel(
+        name="Crew",
+        member_agent_ids=[agent.id for agent in agents],
+        created_by=agents[0].id,
+    )
+    _enable_system_ai()
+    model_order = [agent.id for agent in reversed(agents)]
+
+    def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
+        return speak_reply(messages, model_order)
+
+    monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
+    message = _message(channel.id, "@Sarah and each of you: create a task for your area.")
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    sarah = agents[3]
+    round_id = triggers[0]["payload"]["round_id"]
+    expected = [sarah.id] + [agent_id for agent_id in model_order if agent_id != sarah.id]
+    assert _ordered(round_id) == expected
+    assert [item["agent_id"] for item in triggers] == [sarah.id]
+    statuses = _statuses(round_id)
+    assert statuses[sarah.id] == "queued"
+    assert all(statuses[agent_id] == "pending" for agent_id in expected[1:])
+    assert channel_round_db.get_channel_round_meta(round_id)["stepped_out"] == []
 
 
 def test_prompt_lists_specialty_pending_mentions_and_sticky() -> None:
@@ -193,7 +229,14 @@ def test_prompt_lists_specialty_pending_mentions_and_sticky() -> None:
     assert '"speak"' in blob
     assert "stay_out" not in blob
     assert "exactly one list" not in blob
-    assert f"at most {ROUTER_SPEAK_CAP}" in blob
+    assert "at most" not in blob
+    assert "cap" not in blob
+    assert "speak is ordered. Name everyone who should talk now and no one else." in blob
+    assert (
+        "An ask to every member ('each of you', 'everyone', 'all of you', '@all', 'team, each…') "
+        "addresses every member: name all of them."
+    ) in blob
+    assert "An ask for one volunteer ('can someone…', 'anyone…') addresses the member whose role fits best" in blob
     assert "role summary" in blob
     assert "left out of this slice is not finished" in blob
 
@@ -1004,7 +1047,6 @@ def test_named_plan_longer_than_the_slice_wakes_one_at_a_time(
     assert _statuses(round_id)[jim.id] == "queued"
     assert _statuses(round_id)[laura.id] == "pending"
     assert _statuses(round_id)[ada.id] == "pending"
-    assert ROUTER_SPEAK_CAP == 2
 
 
 def test_later_route_names_someone_the_first_slice_left_out(
@@ -1304,7 +1346,12 @@ def test_reroute_prompt_states_echo_fail_closed() -> None:
     assert "if unsure whether they would add new substance, leave them out" in blob
     assert "do not wake an already-spoke member to restate what the thread already shows" in blob
     assert "An empty speak array is the stop when nobody is addressed and nobody has new substance" in blob
-    assert "Leave work-bound members out of speak" in blob
+    assert "Leave work-bound members out of speak" not in blob
+    assert "Leave work-bound members out of speak" not in REROUTE_ECHO_ROUTE
+    assert (
+        "Being work-bound never excludes a member: wake them when the latest line addresses them; "
+        "their work resumes after they answer."
+    ) in blob
     plain, _numbers = build_router_messages(
         members=[{"id": "jim", "name": "Jim", "role": "PM"}],
         latest_message="Where are we?",

@@ -12,7 +12,7 @@ Answer naturally, like a competent employee would.
 TURN MODEL
 
 - This decision turn is your only round. `reply`, `clarify`, `decline`, and `observe` end your turn, and nothing runs after it.
-- The one exception is work already active on your Board: the runtime continues it automatically after you answer.
+- The one exception is your own open work (active, paused, or waiting): the runtime continues it after you answer when you set `work_commit` true.
 - To start new work, `accept` with `commit="work"` in this same object. Saying you will start in `say` does not start anything.
 
 Return exactly one JSON object.
@@ -21,9 +21,8 @@ Do not combine conversation fields and CLI fields in the same object.
 Operator-visible chat is `say` (alias `msg`). Board / tools / CLI live in `actions` or the compact `act`/`data` object. Empty `actions` is valid on a 1:1 status wake. Raw prose is not a turn result. `say` alone never marks work Done or Blocked.
 Every `reply` (including the say-only envelope) must carry boolean `work_commit`. `work_commit` is not Board Done.
 - `false` for status, questions, answers, acknowledgements, and finished reports.
-- `true` only when this reply commits to continuing work that is already active on your Board; the runtime continues it after you reply.
-- `true` with no active work starts nothing. Where `accept` is allowed, use act `accept` with commit `work` (and `data.task` for new work) instead.
-- On your own waiting or blocked task's thread, where `accept` is not allowed, `true` re-queues exactly that task.
+- `true` when this reply commits to continuing your own open work (active, paused, or waiting). The runtime resumes it after you reply.
+- To start new work, use accept.
 Optional top-level `next_owners` is an array of agent ids who should act next. Ids only. An @ in the message is not required.
 
 {{if trigger.type = 'human_chat'}}
@@ -43,7 +42,7 @@ For reply:
 
 For accept:
 ```json
-{"act":"accept","intent":"work | meeting | break | move | other","msg":"string","commit":"work | meeting | break | conversation","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":{"title":"string","desc":"string","outs":[{"type":"file","path":"string","desc":"string | null"}]},"plan":{"mode":"self | delegate | mixed","children":[{"who":"string | null","aid":"string | null","task":"child task object with title/desc/optional outs"}]}},"th":"string"}
+{"act":"accept","intent":"work | meeting | break | move | other","msg":"string","commit":"work | meeting | break | conversation","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":{"id":"string (one of your open task ids, to revise that task)","title":"string","desc":"string","outs":[{"type":"file","path":"string","desc":"string | null"}]},"plan":{"mode":"self | delegate | mixed","children":[{"who":"string | null","aid":"string | null","task":"child task object with title/desc/optional outs"}]}},"th":"string"}
 ```
 
 For clarify or decline:
@@ -58,7 +57,7 @@ For cancel:
 
 For defer:
 ```json
-{"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}
+{"act":"defer","intent":"work | other","msg":"string","commit":"work","data":{"task":{"title":"string","desc":"string"}},"th":"string"}
 ```
 {{elseif trigger.type = 'watchdog_status_ping'}}
 ALLOWED conversation act FOR THIS TURN: reply
@@ -194,7 +193,7 @@ For defer:
 {"act":"defer","intent":"work | other","msg":"string","commit":"work","th":"string"}
 ```
 {{elseif trigger.type = 'session_message'}}
-ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline | defer
 
 Use one of these shapes:
 
@@ -210,15 +209,20 @@ For reply:
 
 For accept:
 ```json
-{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
+{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept, including optional id (one of your open task ids, to revise that task)","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
 ```
 
 For clarify or decline:
 ```json
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
+```
+
+For defer (queue the work to start after your current work ends):
+```json
+{"act":"defer","intent":"work","msg":"string","commit":"work","data":{"task":{"title":"string","desc":"string"}},"th":"string"}
 ```
 {{elseif trigger.type = 'session_response'}}
-ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline | defer
 
 Use one of these shapes:
 
@@ -234,15 +238,20 @@ For reply:
 
 For accept:
 ```json
-{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
+{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept, including optional id (one of your open task ids, to revise that task)","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
 ```
 
 For clarify or decline:
 ```json
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
+```
+
+For defer (queue the work to start after your current work ends):
+```json
+{"act":"defer","intent":"work","msg":"string","commit":"work","data":{"task":{"title":"string","desc":"string"}},"th":"string"}
 ```
 {{elseif trigger.type = 'channel_message'}}
-ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline | defer
 
 Use one of these shapes:
 
@@ -266,15 +275,20 @@ In a multi-party thread, name a next owner with @Name or @everyone, or park the 
 
 For accept:
 ```json
-{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
+{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept, including optional id (one of your open task ids, to revise that task)","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
 ```
 
 For clarify or decline:
 ```json
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
+```
+
+For defer (queue the work to start after your current work ends):
+```json
+{"act":"defer","intent":"work","msg":"string","commit":"work","data":{"task":{"title":"string","desc":"string"}},"th":"string"}
 ```
 {{elseif trigger.type = 'channel_response'}}
-ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | clarify | decline | defer
 
 Use one of these shapes:
 
@@ -298,12 +312,17 @@ In a multi-party thread, name a next owner with @Name or @everyone, or park the 
 
 For accept:
 ```json
-{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
+{"act":"accept","intent":"meeting | move | break | work | other","msg":"string","commit":"conversation | meeting | break | work","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":"same work-task object as human_chat accept, including optional id (one of your open task ids, to revise that task)","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
 ```
 
 For clarify or decline:
 ```json
 {"act":"clarify | decline","intent":"question | status | meeting | work | move | break | social | other","msg":"string","th":"string"}
+```
+
+For defer (queue the work to start after your current work ends):
+```json
+{"act":"defer","intent":"work","msg":"string","commit":"work","data":{"task":{"title":"string","desc":"string"}},"th":"string"}
 ```
 {{else}}
 ALLOWED conversation act FOR THIS TURN: reply | accept | clarify | decline | defer | observe
@@ -353,10 +372,7 @@ TURN GUIDANCE
 - A plain status reply should describe current work naturally without trying to restate the underlying work commitment in JSON.
 - `intent="status"` means a live current-state question. Use the AUTHORITATIVE COMMUNICATION SNAPSHOT when present. Use CLI only if the snapshot still lacks the needed fact.
 - For `watchdog_status_ping`, reply with a concise current status update. The runtime will keep the task active and queue work resumption after your reply.
-- When a human changes or redirects work while another task is active, first decide whether they clearly want to replace the active commitment.
-- If the replacement is explicit, accept the new work; the runtime will pause the older task automatically.
-- If it is unclear whether the current task should continue or be replaced, ask a clarifying question before switching tasks.
-- If a human clearly says to stop the current active task without replacing it, use `cancel`.
+- When new work arrives: if it changes a task you already have, accept it with that task's id (data.task.id). If you are idle, accept and start. If you are busy and it is more urgent than your current work, accept it; your current work pauses and resumes when you finish. If it can wait, defer it; it starts when your current work ends. If you cannot tell which matters more, ask the requester. If a human clearly says to stop the current task without replacing it, use `cancel`.
 - Treat revisions to finished work as new follow-up work, not as if the completed task were still active.
 - Distinguish active work from completed work; prior-work questions do not replace the current active task.
 - For task status, owned/delegated work, or task follow-up context, use the board/thread commands when needed:

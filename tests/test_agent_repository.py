@@ -196,7 +196,6 @@ def _seed_footprint(ada_id: str, bob_id: str) -> dict[str, Any]:
         "channel_response_rounds", channel_id=channel.id, source_message_id=line["id"], status="active",
     )
     _row("channel_response_candidates", round_id=channel_round["id"], agent_id=ada_id, status="pending")
-    _row("channel_host_state", channel_id=channel.id, work_agent_id=ada_id)
 
     session = _row(
         "meeting_sessions", room_id="room-1", title="Sync", status="active", created_by_agent_id=ada_id,
@@ -322,10 +321,6 @@ def test_delete_removes_private_rows_and_detaches_shared_history() -> None:
         row = db.query_one(f"SELECT {column} AS value FROM {table} WHERE id = $1", [row_id])
         assert row is not None, table
         assert row["value"] is None, (table, column)
-    host = db.query_one(
-        "SELECT work_agent_id FROM channel_host_state WHERE channel_id = $1", [seeded["channel"]],
-    )
-    assert host is not None and host["work_agent_id"] is None
     for task_id in (seeded["open_task"], seeded["done_task"]):
         task = db.get_task(task_id)
         assert task is not None
@@ -968,7 +963,6 @@ def test_orphan_purge_applies_the_delete_rules_once(caplog: pytest.LogCaptureFix
             created_by=HUMAN_SENDER_ID, requester_id=HUMAN_SENDER_ID,
         )
         ghost_thread = _row("channels", name="Old", kind="manual", status="active", created_by=_GHOST)
-        _row("channel_host_state", channel_id=channel.id, work_agent_id=_GHOST)
         _row(
             "meeting_session_meta", session_id=session["id"], host_agent_id=_GHOST,
             meeting_mode="room", phase="active",
@@ -993,7 +987,6 @@ def test_orphan_purge_applies_the_delete_rules_once(caplog: pytest.LogCaptureFix
         "tasks.owner_id": 1,
         "tasks.requester_id": 1,
         "channels.created_by": 1,
-        "channel_host_state.work_agent_id": 1,
         "meeting_session_meta.host_agent_id": 1,
     }
     assert len([r for r in caplog.records if r.name == "core.agent_repository"]) == 1

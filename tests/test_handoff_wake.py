@@ -20,8 +20,9 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.channel_router import build_router_messages
-from core.agent_loop.channel_host import note_channel_work, note_human_snapshot, work_holds_talk
-from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
+from core.agent_loop.channel_host import note_human_snapshot
+from core.agent_loop.channel_rounds import start_channel_peer_round
+from core.agent_loop.channel_work_bind import live_work_bind_ids, record_round_work_bind
 from core.agent_loop.decision_contract import parse_decision
 from core.agent_loop.decision_runtime import apply_decision
 from core.default_prompts import load_default_prompt
@@ -29,7 +30,6 @@ from core.models.message import HUMAN_SENDER_ID
 from core.tasking.board import next_board_owner_id
 from core.tasking.service import create_or_bind_task
 from core.tasking.transitions import transition_task
-from db import channel_host as host_db
 from db import channel_response_rounds as channel_round_db
 from tests._router_fakes import route_reply
 
@@ -118,6 +118,14 @@ def _channel_wakes(result: dict[str, Any]) -> list[dict[str, Any]]:
     ]
 
 
+def _queue(round_id: str) -> list[str]:
+    candidates = sorted(
+        db.list_channel_response_candidates(round_id),
+        key=lambda candidate: (candidate.queue_position or 9999, candidate.created_at),
+    )
+    return [candidate.agent_id for candidate in candidates]
+
+
 def _work_wakes(result: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         item
@@ -142,9 +150,18 @@ def _script(monkeypatch: pytest.MonkeyPatch, replies: list[str]) -> dict[str, in
 
 
 def _hold(channel, agent, task) -> None:
-    """Reproduce "accepted in the thread": this agent's work holds Talk."""
-    note_channel_work(channel.id, agent_id=agent.id, task_id=task.id)
-    assert work_holds_talk(channel.id)
+    """Reproduce "accepted in the thread": this agent's work is bound on a round."""
+    message = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="Please take it.",
+        source_channel="channel",
+    )
+    round_row = db.create_channel_response_round(channel_id=channel.id, source_message_id=message.id)
+    record_round_work_bind(round_row.id, agent_id=agent.id, task_id=task.id)
+    channel_round_db.complete_channel_response_round(round_row.id)
+    assert agent.id in live_work_bind_ids(channel.id)
 
 
 async def _done(
@@ -194,16 +211,17 @@ def test_router_prompt_is_intent_first() -> None:
     )
     assert "A member who is only referred to ('per Brian's spec', 'Brian said') is not addressed." in blob
     assert (
-        "An open ask to the group ('can someone…', 'anyone…', '@all', 'team,') addresses the members "
-        "whose role fits the ask: name the best fit, or two when the ask spans two roles. When the ask is "
-        "to help or review a member, the helpers are addressed; wake the member being helped too only when "
-        "the line also asks them to act."
+        "An ask for one volunteer ('can someone…', 'anyone…') addresses the member whose role fits best, "
+        "or two when it spans two roles. An ask to every member ('each of you', 'everyone', 'all of you', "
+        "'@all', 'team, each…') addresses every member: name all of them. When the ask is to help or review "
+        "a member, the helpers are addressed; wake the member being helped too only when the line also asks "
+        "them to act."
     ) in blob
     assert "Recent thread" in blob
     assert "Latest message from" in blob
     assert "Board next: laura | Laura" in blob
     assert '"speak"' in blob and "stay_out" not in blob
-    assert "at most 2" in blob
+    assert "at most" not in blob
 
 
 def test_next_owners_parses_on_the_decision_envelope() -> None:
@@ -331,11 +349,11 @@ async def test_done_after_channel_accept_opens_the_handoff_round(monkeypatch: py
     )
     assert round_row is not None
     assert wakes[0]["payload"]["round_id"] == round_row.id
-    assert not work_holds_talk(channel.id)
+    assert jimothy.id not in live_work_bind_ids(channel.id)
 
 
 @pytest.mark.asyncio
-async def test_delegate_after_channel_accept_releases_the_hold_and_routes(
+async def test_delegate_after_channel_accept_settles_the_bind_and_routes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _jim, laura, jimothy, channel = _trio()
@@ -367,11 +385,11 @@ async def test_delegate_after_channel_accept_releases_the_hold_and_routes(
     )
     assert round_row is not None
     assert wakes[0]["payload"]["round_id"] == round_row.id
-    assert not work_holds_talk(channel.id)
+    assert jimothy.id not in live_work_bind_ids(channel.id)
 
 
 @pytest.mark.asyncio
-async def test_waiting_after_channel_accept_releases_the_hold(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_waiting_after_channel_accept_settles_the_bind(monkeypatch: pytest.MonkeyPatch) -> None:
     jim, _laura, jimothy, channel = _trio()
     _enable_system_ai()
     calls = _script(monkeypatch, [[jim.id]])
@@ -402,7 +420,7 @@ async def test_waiting_after_channel_accept_releases_the_hold(monkeypatch: pytes
         is not None
     )
     assert [item["agent_id"] for item in _channel_wakes(result)] == [jim.id]
-    assert not work_holds_talk(channel.id)
+    assert jimothy.id not in live_work_bind_ids(channel.id)
 
 
 @pytest.mark.asyncio
@@ -490,7 +508,16 @@ async def test_board_next_owner_wakes_with_no_chat_syntax(monkeypatch: pytest.Mo
     assert calls["n"] == 1
     assert "Board next:" in calls["last"]
     assert "Who speaks next?" not in calls["last"]
+    # The card is handed to Laura as Work, so she is not also pinned in Talk.
+    # She stays on the router's Work-bound list; this router named no one.
     assert _channel_wakes(completed) == []
+    rounds = db.list_channel_response_rounds(channel.id)
+    assert len(rounds) == 1
+    meta = channel_round_db.get_channel_round_meta(rounds[0].id)
+    assert meta["work_bind_ids"] == [laura.id]
+    assert laura.id not in meta["pinned_ids"]
+    assert "Work-bound:" in calls["last"]
+    assert "| Laura" in calls["last"].split("Work-bound:", 1)[1]
     work = _work_wakes(completed)
     assert [item["agent_id"] for item in work] == [laura.id]
     assert work[0]["task_id"] == nxt.task.id
@@ -558,7 +585,13 @@ async def test_next_owners_pending_card_is_a_work_bind(monkeypatch: pytest.Monke
     )
     assert calls["n"] == 1
     assert "Who speaks next?" not in calls["last"]
-    assert all(item["agent_id"] != laura.id for item in _channel_wakes(completed))
+    # next_owners hands Laura her card as Work: one Work wake, no Talk pin.
+    # The router named her second, so she speaks in the router's order.
+    talk = _channel_wakes(completed)
+    assert [item["agent_id"] for item in talk] == [jim.id]
+    round_id = talk[0]["payload"]["round_id"]
+    assert _queue(round_id) == [jim.id, laura.id]
+    assert laura.id not in channel_round_db.get_channel_round_meta(round_id)["pinned_ids"]
     work = _work_wakes(completed)
     assert [item["agent_id"] for item in work] == [laura.id]
     assert work[0]["task_id"] == audit.task.id
@@ -566,14 +599,21 @@ async def test_next_owners_pending_card_is_a_work_bind(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
-async def test_done_work_bind_leaves_other_speakers_on_talk(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_done_work_bind_keeps_the_owner_and_other_speakers_on_talk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     jim, laura, jimothy, channel = _trio()
     _enable_system_ai()
     _script(monkeypatch, [[jim.id, laura.id]])
     nxt = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
     assert nxt.task is not None
     _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
-    assert [item["agent_id"] for item in _channel_wakes(completed)] == [jim.id]
+    # Laura gets her card once, as Work; in Talk she is not forced first.
+    talk = _channel_wakes(completed)
+    assert [item["agent_id"] for item in talk] == [jim.id]
+    round_id = talk[0]["payload"]["round_id"]
+    assert _queue(round_id) == [jim.id, laura.id]
+    assert laura.id not in channel_round_db.get_channel_round_meta(round_id)["pinned_ids"]
     work = _work_wakes(completed)
     assert [item["agent_id"] for item in work] == [laura.id]
     assert work[0]["task_id"] == nxt.task.id
@@ -760,9 +800,11 @@ def test_channel_accept_records_a_sticky_work_bind() -> None:
             "dispatch_mode": "rounds",
         },
     )
-    kinds = [item.get("trigger_type") for item in result["trigger_requests"]]
-    assert "channel_message" not in kinds
     round_id = triggers[0]["payload"]["round_id"]
+    # Taking the task was Jim's turn; the round moves on to the next member.
+    wakes = [(item.get("trigger_type"), item.get("agent_id")) for item in result["trigger_requests"]]
+    assert ("activity_resumed", jim.id) in wakes
+    assert [agent_id for kind, agent_id in wakes if kind == "channel_message"] == [_queue(round_id)[1]]
     meta = channel_round_db.get_channel_round_meta(round_id)
     assert meta["work_bind_ids"] == [jim.id]
     task_id = meta["work_binds"][0]["task_id"]
@@ -772,61 +814,60 @@ def test_channel_accept_records_a_sticky_work_bind() -> None:
     assert db.get_task(task_id).status == "accepted"
 
 
-@pytest.mark.asyncio
-async def test_work_bind_stays_out_across_later_talk_slices(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_work_bound_member_named_by_the_router_is_woken_and_work_stays_live(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     jim, laura, jimothy, channel = _trio()
-    ada = db.create_agent("Ada", role="QA", desk_x=4, desk_y=1, model_work="identity-big")
-    db.add_channel_members(channel.id, [ada.id])
     _enable_system_ai()
     prompts: list[str] = []
-    replies = [
-        [jim.id, laura.id],
-        [laura.id, ada.id],
-        [laura.id],
-    ]
 
     def _route(messages: list[dict[str, str]], **_kwargs: Any) -> str:
         prompts.append("\n".join(item.get("content") or "" for item in messages))
-        if len(prompts) > len(replies):
-            raise AssertionError("router was called more times than scripted")
-        return route_reply(messages, replies[len(prompts) - 1])
+        return route_reply(messages, [laura.id])
 
     monkeypatch.setattr("core.agent_loop.channel_router.complete_text", _route)
-    audit = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
-    assert audit.task is not None
-    _task, completed = await _done(jimothy, channel, follow_up="Draft is saved.")
-    assert [item["agent_id"] for item in _channel_wakes(completed)] == [jim.id]
-    assert [item["agent_id"] for item in _work_wakes(completed)] == [laura.id]
-    first_id = _channel_wakes(completed)[0]["payload"]["round_id"]
-    assert channel_round_db.get_channel_round_meta(first_id)["work_bind_ids"] == [laura.id]
-    db.mark_channel_candidate_responded(round_id=first_id, agent_id=jim.id)
-    progress = advance_channel_round(
-        _channel_wakes(completed)[0]["payload"],
-        spoke=True,
-        speaker_id=jim.id,
-        spoken_text="The plan is filed.",
+    creation = _channel_task(assignee_id=laura.id, channel_id=channel.id, title="Review the draft")
+    assert creation.task is not None
+    _hold(channel, laura, creation.task)
+    live = activity_runtime.activate_work_activity(laura.id, creation.task)
+    assert live is not None
+    # A colleague asks the working agent something mid-shift.
+    share = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="agent",
+        author_agent_id=jim.id,
+        author_name=jim.name,
+        content="Laura, how far along is the review?",
+        source_channel="channel",
     )
-    assert [item["agent_id"] for item in progress["trigger_requests"]] == [ada.id]
-    follow_id = progress["trigger_requests"][0]["payload"]["round_id"]
-    assert follow_id != first_id
-    assert channel_round_db.get_channel_round_meta(follow_id)["work_bind_ids"] == [laura.id]
-    assert laura.id not in host_db.get_channel_host_state(channel.id)["pass_streaks"]
-    assert "Work-bound:" in prompts[1]
-    assert "| Laura" in prompts[1].split("Work-bound:", 1)[1]
-    assert laura.id not in prompts[1]
-    assert "if unsure whether they would add new substance, leave them out" in prompts[1]
-    transition_task(
-        audit.task.id,
-        "blocked",
-        reason="Needs a different pass.",
-        actor="BossMod",
+    triggers = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=share.id,
+        content=share.content,
+        from_name=jim.name,
+        author_type="agent",
+        exclude_agent_ids={jim.id},
+        from_agent=jim.id,
     )
-    db.mark_channel_candidate_responded(round_id=follow_id, agent_id=ada.id)
-    progress = advance_channel_round(
-        progress["trigger_requests"][0]["payload"],
-        spoke=True,
-        speaker_id=ada.id,
-        spoken_text="New question on the fixture.",
+    assert [(item["trigger_type"], item["agent_id"]) for item in triggers] == [("channel_message", laura.id)]
+    assert "Work-bound:" in prompts[0]
+    assert "| Laura" in prompts[0].split("Work-bound:", 1)[1]
+    assert laura.id not in prompts[0]
+    assert "Being work-bound never excludes a member" in prompts[0]
+    state = db.get_agent_state(laura.id)
+    assert state is not None
+    apply_decision(
+        {
+            "decision": "answer",
+            "workCommit": False,
+            "intentKind": "status_request",
+            "reply": "Halfway through; the fixtures section is next.",
+            "proceedUntagged": True,
+        },
+        laura,
+        state,
+        {**triggers[0]["payload"], "type": "channel_message"},
     )
-    assert [item["agent_id"] for item in progress["trigger_requests"]] == [laura.id]
-    assert channel_round_db.get_channel_round_meta(follow_id)["work_bind_ids"] == []
+    still = activity_runtime.get_active_work_activity(laura.id)
+    assert still is not None and still.id == live.id
+    assert db.get_task(creation.task.id).status in {"accepted", "active"}

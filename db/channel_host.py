@@ -1,4 +1,4 @@
-"""BossMod AI — Host-owned Talk / Work / Paused state for one thread.
+"""BossMod AI — Host-owned Talk / Paused state for one thread.
 
 The row is engine state. It is not a model hint. A missing row is Talk
 with empty counters.
@@ -12,10 +12,7 @@ from typing import Any
 
 from db.crud import execute, query_one
 
-_COLUMNS = (
-    "channel_id, paused, pass_streaks, demoted_ids, protected_ids, "
-    "ack_streak, work_agent_id, work_task_id, updated_at"
-)
+_COLUMNS = "channel_id, paused, pass_streaks, demoted_ids, protected_ids, updated_at"
 
 
 def get_channel_host_state(channel_id: str) -> dict[str, Any]:
@@ -36,9 +33,6 @@ def get_channel_host_state(channel_id: str) -> dict[str, Any]:
         "pass_streaks": _json_map(row.get("pass_streaks")),
         "demoted_ids": _json_ids(row.get("demoted_ids")),
         "protected_ids": _json_ids(row.get("protected_ids")),
-        "ack_streak": _int(row.get("ack_streak")),
-        "work_agent_id": _text(row.get("work_agent_id")),
-        "work_task_id": _text(row.get("work_task_id")),
     }
 
 
@@ -52,9 +46,6 @@ def save_channel_host_state(state: dict[str, Any]) -> dict[str, Any]:
     streaks = json.dumps(dict(state.get("pass_streaks") or {}))
     demoted = json.dumps(list(state.get("demoted_ids") or []))
     protected = json.dumps(list(state.get("protected_ids") or []))
-    ack = _int(state.get("ack_streak"))
-    work_agent = _text(state.get("work_agent_id")) or None
-    work_task = _text(state.get("work_task_id")) or None
     existing = query_one(
         "SELECT channel_id FROM channel_host_state WHERE channel_id = $1",
         [channel_id],
@@ -63,12 +54,11 @@ def save_channel_host_state(state: dict[str, Any]) -> dict[str, Any]:
         execute(
             """
             INSERT INTO channel_host_state (
-                channel_id, paused, pass_streaks, demoted_ids, protected_ids,
-                ack_streak, work_agent_id, work_task_id, updated_at
+                channel_id, paused, pass_streaks, demoted_ids, protected_ids, updated_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            VALUES ($1, $2, $3, $4, $5, $6)
             """,
-            [channel_id, paused, streaks, demoted, protected, ack, work_agent, work_task, now],
+            [channel_id, paused, streaks, demoted, protected, now],
         )
     else:
         execute(
@@ -78,13 +68,10 @@ def save_channel_host_state(state: dict[str, Any]) -> dict[str, Any]:
                 pass_streaks = $3,
                 demoted_ids = $4,
                 protected_ids = $5,
-                ack_streak = $6,
-                work_agent_id = $7,
-                work_task_id = $8,
-                updated_at = $9
+                updated_at = $6
             WHERE channel_id = $1
             """,
-            [channel_id, paused, streaks, demoted, protected, ack, work_agent, work_task, now],
+            [channel_id, paused, streaks, demoted, protected, now],
         )
     return get_channel_host_state(channel_id)
 
@@ -96,9 +83,6 @@ def _empty(channel_id: str) -> dict[str, Any]:
         "pass_streaks": {},
         "demoted_ids": [],
         "protected_ids": [],
-        "ack_streak": 0,
-        "work_agent_id": "",
-        "work_task_id": "",
     }
 
 

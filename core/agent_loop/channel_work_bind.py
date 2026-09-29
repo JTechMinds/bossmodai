@@ -2,8 +2,10 @@
 
 The engine records who is bound to live work. It does not compare talk
 text. A bind stays until that work leaves pending, accepted, or active,
-or a new human snapshot clears the channel. System AI may still guess
-whether an unbound mouth would only echo.
+or a new human snapshot clears the channel. Binds are router facts, not a
+gate: a work-bound member is still woken when the router names them, and
+their work resumes after they answer. System AI may still guess whether a
+mouth would only echo.
 """
 
 from __future__ import annotations
@@ -16,7 +18,7 @@ LIVE_WORK_BIND_STATUSES = frozenset({"pending", "accepted", "active"})
 
 
 def bind_is_live(task_id: str) -> bool:
-    """Return whether this task still holds a Talk bind.
+    """Return whether this task still holds a work bind.
 
     An unknown task id stays bound until a human snapshot clears it.
     A missing task row has already left the board.

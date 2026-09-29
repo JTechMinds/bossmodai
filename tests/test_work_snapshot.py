@@ -482,3 +482,57 @@ async def test_wait_feedback_keeps_the_turn_alive_until_the_wait_is_valid(monkey
     assert "data.msg" in prompts[1][-1]["content"]
     assert outcome.trigger_status == "completed"
     assert db.get_task(task.id).status == "waiting"
+
+
+def _thread_wake_behind_a_live_speaker(agent_id: str, *, live: bool) -> Any:
+    """Queue a thread wake for ``agent_id``; ``live`` puts a peer mid-draft there first.
+
+    Returns the peer's claimed trigger, or ``None`` when ``live`` is false.
+    """
+    peer = db.create_agent("Debra", role="PM", desk_x=2, desk_y=1, model_work="test/mock")
+    room = db.create_channel(name="Room", member_agent_ids=[agent_id, peer.id])
+    claimed = None
+    if live:
+        drafting = db.create_agent_trigger(
+            agent_id=peer.id,
+            trigger_type="channel_message",
+            source_channel="channel",
+            payload={"content": "Status?", "channel_id": room.id},
+        )
+        claimed = db.claim_trigger(drafting.id)
+        assert claimed is not None
+        assert db.channel_peer_snapshot_is_drafting(room.id)
+    db.create_agent_trigger(
+        agent_id=agent_id,
+        trigger_type="channel_message",
+        source_channel="channel",
+        payload={"content": "Charles, status?", "channel_id": room.id},
+    )
+    return claimed
+
+
+@pytest.mark.asyncio
+async def test_held_thread_wake_does_not_end_the_work_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task, _activity = _working_agent()
+    claimed = _thread_wake_behind_a_live_speaker(agent.id, live=True)
+
+    def _free_the_room(call: int) -> None:
+        # The live speaker posts during step 2; the held wake can run after it.
+        if call == 2:
+            db.complete_agent_trigger(claimed.id, claim_generation=claimed.claim_generation)
+
+    prompts = _script(monkeypatch, [_STATUS_STEP, _BOARD_STEP], on_call=_free_the_room)
+    state = db.get_agent_state(agent.id)
+    await run_turn(agent, state, _resume_trigger(task.id))
+    # Step 1 kept going while the wake was held; step 2 yielded once it could run.
+    assert len(prompts) == 2
+
+
+@pytest.mark.asyncio
+async def test_thread_wake_with_no_live_speaker_ends_the_work_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task, _activity = _working_agent()
+    _thread_wake_behind_a_live_speaker(agent.id, live=False)
+    prompts = _script(monkeypatch, [_STATUS_STEP])
+    state = db.get_agent_state(agent.id)
+    await run_turn(agent, state, _resume_trigger(task.id))
+    assert len(prompts) == 1

@@ -15,16 +15,14 @@ Stay-out is not asked of the model: it is every member left out of
 uses the existing drain order and each member gets a normal soft-judge
 turn.
 
-``ROUTER_SPEAK_CAP`` (default 2) is how short one route's next slice
-should be. Operator @ ids, and any other ids the caller marks as
-required (structured ``next_owners``, Board next-card owners), stay
-first and are never removed to meet the cap. When those required ids
-already fill the cap, no further id is taken from the capped ``speak``
-list. Ids the model omits are stay_out on that decision. The cap is not
-a permanent skip: a plan the model ordered as 1…N still runs one at a
-time, and someone left out of this slice can be named when the route
-runs again. Stay-out with nothing left to do is an engine pass: no
-identity-model turn.
+Required ids stay first; the model's speak list is kept whole. Operator
+@ ids, and any other ids the caller marks as required (structured
+``next_owners``, Board next-card owners), lead ``speak``, followed by
+every member the model named, in the model's order. Ids the model omits
+are stay_out on that decision. Stay-out is not a permanent skip: a plan
+the model ordered as 1…N still runs one at a time, and someone left out
+of this slice can be named when the route runs again. Stay-out with
+nothing left to do is an engine pass: no identity-model turn.
 
 A Done/handoff route, and an agent-line route, whose parsed ``speak`` is
 empty and which has no required pin, gets one repair completion ("who
@@ -46,10 +44,6 @@ from core.llm.system_completion import complete_text, system_ai_is_configured
 
 logger = logging.getLogger(__name__)
 
-# Speakers taken from one System AI ``speak`` list after required @ ids.
-# Required @ ids are not dropped to satisfy this number. Default 2 stops
-# a route from waking the whole channel into essays.
-ROUTER_SPEAK_CAP = 2
 ROUTER_KEYS = frozenset({"speak"})
 
 _LATEST_MESSAGE_CHARS = 800
@@ -74,13 +68,14 @@ AGENT_LINE_ROUTE = (
 REROUTE_ECHO_ROUTE = (
     "Already spoke lists members who already took a turn on this operator message. "
     "Work-bound lists members on live work. "
+    "Being work-bound never excludes a member: wake them when the latest line addresses them; "
+    "their work resumes after they answer. "
     "Already spoke never excludes a member the latest message addresses: if it hands them work, "
     "answers their question, or gives them the go-ahead they asked for, wake them even though they "
     "spoke before. "
     "For members the latest message does not address, do not wake an already-spoke member to restate "
     "what the thread already shows; if unsure whether they would add new substance, leave them out. "
-    "An empty speak array is the stop when nobody is addressed and nobody has new substance. "
-    "Leave work-bound members out of speak."
+    "An empty speak array is the stop when nobody is addressed and nobody has new substance."
 )
 
 
@@ -140,8 +135,7 @@ def plan_channel_route(
     cannot drop them.
 
     The model answers with per-call member numbers, mapped back to ids
-    here. ``stay_out`` on the plan is the complement of the capped speak
-    list. No completion, or a rejected payload, logs a warning and
+    here. ``stay_out`` on the plan is the complement of the speak list. No completion, or a rejected payload, logs a warning and
     returns the drain order.
 
     ``already_spoke_ids`` and ``work_bind_ids`` are engine facts for a
@@ -207,7 +201,6 @@ def plan_channel_route(
         universe,
         forced_ids=pinned,
         speak=parsed,
-        cap=ROUTER_SPEAK_CAP,
     )
     kept_pins = [agent_id for agent_id in pinned if agent_id in set(speak)]
     return RoundPlan(
@@ -247,16 +240,17 @@ def finalize_router_lists(
     *,
     forced_ids: list[str],
     speak: list[str],
-    cap: int,
 ) -> tuple[list[str], list[str]]:
-    """Pin required ids first, then fill ``speak`` up to ``cap``.
+    """Pin required ids first, then every other id the model named, in its order.
 
-    Required ids are kept even when they exceed ``cap``. Everyone else in
+    Ids outside ``member_ids`` and duplicates are dropped. Everyone else in
     ``member_ids`` is stay_out, including ids the model omitted.
+
+    Returns:
+        ``(speak, stay_out)``.
     """
     universe = _unique(member_ids)
     allowed = set(universe)
-    limit = cap if cap >= 1 else 1
     forced: list[str] = []
     for agent_id in forced_ids:
         if agent_id in allowed and agent_id not in forced:
@@ -266,10 +260,7 @@ def finalize_router_lists(
     for agent_id in speak:
         if agent_id in allowed and agent_id not in forced_set and agent_id not in rest:
             rest.append(agent_id)
-    if len(forced) >= limit:
-        chosen = forced
-    else:
-        chosen = forced + rest[: limit - len(forced)]
+    chosen = forced + rest
     chosen_set = set(chosen)
     stay_out = [agent_id for agent_id in universe if agent_id not in chosen_set]
     return chosen, stay_out
@@ -423,7 +414,9 @@ def build_router_messages(
         "A member is addressed when the line hands them work, asks them something, or names them "
         "as next ('Next up: Brian…', 'Brian, can you…', 'waiting on Brian'): wake them. "
         "A member who is only referred to ('per Brian's spec', 'Brian said') is not addressed. "
-        "An open ask to the group ('can someone…', 'anyone…', '@all', 'team,') addresses the members whose role fits the ask: name the best fit, or two when the ask spans two roles. When the ask is to help or review a member, the helpers are addressed; wake the member being helped too only when the line also asks them to act. "
+        "An ask for one volunteer ('can someone…', 'anyone…') addresses the member whose role fits best, or two when it spans two roles. "
+        "An ask to every member ('each of you', 'everyone', 'all of you', '@all', 'team, each…') addresses every member: name all of them. "
+        "When the ask is to help or review a member, the helpers are addressed; wake the member being helped too only when the line also asks them to act. "
         "Use Recent thread to resolve pronouns and 'me' / 'you' from the Latest message author. "
         "Status lines show who is already working. "
         "When one handoff needs two related members in sequence (e.g. an author then a reviewer), "
@@ -436,10 +429,8 @@ def build_router_messages(
         'for example {"speak": [2, 1]}. '
         "Leave everyone who should not talk out of speak. "
         'Order in "speak" is the order they should talk. '
-        f"speak is ordered and short (at most {ROUTER_SPEAK_CAP} numbers after the pending @ members). "
-        "Pending @ members are required in speak and must come first, even when that "
-        f"makes speak longer than {ROUTER_SPEAK_CAP}. "
-        "Do not add anyone else past that cap once pending @ members are included. "
+        "speak is ordered. Name everyone who should talk now and no one else. "
+        "Pending @ members are required in speak and must come first. "
         "Someone left out of this slice is not finished: a later route can name them if they still need to act. "
         "An empty speak array ends the snapshot only when no one needs to act next. "
         "Do not add keys or numbers that are not in Members."

@@ -5,7 +5,7 @@ in this thread owe work they are not doing". This check runs once per
 quiet period. A thread is due when its newest line is older than the
 delay, nothing is in flight for it (no active round, no queued or claimed
 trigger aimed at it, no live work on a task that reports to it), it is not
-paused or held by work, and that newest line was not already checked. Any
+paused, and that newest line was not already checked. Any
 new line re-arms it; there are no timers to cancel. A thread quiet longer
 than the max age is dormant and is not judged.
 
@@ -40,7 +40,7 @@ from typing import Any
 import db
 from core import config
 from core.agent_loop import activity_runtime
-from core.agent_loop.channel_host import talk_closed
+from core.agent_loop.channel_host import is_thread_paused
 from core.agent_loop.channel_rounds import (
     open_idle_check_round,
     ordered_channel_members,
@@ -247,7 +247,7 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
     """Judge one quiet thread and return the private wake triggers to enqueue.
 
     Returns ``[]`` with nothing written when the thread is not due: no line,
-    closed to Talk, something in flight for it (see :func:`_thread_in_flight`),
+    paused, something in flight for it (see :func:`_thread_in_flight`),
     delay not elapsed, dormant past the max age, newest line already checked,
     or no free model-call lane.
 
@@ -267,7 +267,7 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
     latest = db.get_latest_channel_message(channel_id)
     if latest is None:
         return []
-    if talk_closed(channel_id):
+    if is_thread_paused(channel_id):
         return []
     members = ordered_channel_members(channel_id, set())
     member_ids = [member["id"] for member in members]

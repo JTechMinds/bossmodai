@@ -267,18 +267,16 @@ CREATE TABLE IF NOT EXISTS channel_response_rounds (
     work_bind_ids     TEXT NOT NULL DEFAULT '[]'
 );
 
--- Host-owned Talk / Paused state for one thread. Work silence is the
--- work_agent_id / work_task_id pair. Pass streaks and demotions are host
--- counters, not model vibes. Missing row means Talk with empty counters.
+-- Host-owned Talk / Paused state for one thread. Pass streaks and
+-- demotions are host counters, not model vibes. Work bound on the thread
+-- is a router fact, not host state. Missing row means Talk with empty
+-- counters.
 CREATE TABLE IF NOT EXISTS channel_host_state (
     channel_id     VARCHAR PRIMARY KEY REFERENCES channels(id),
     paused         INTEGER NOT NULL DEFAULT 0,
     pass_streaks   TEXT NOT NULL DEFAULT '{}',
     demoted_ids    TEXT NOT NULL DEFAULT '[]',
     protected_ids  TEXT NOT NULL DEFAULT '[]',
-    ack_streak     INTEGER NOT NULL DEFAULT 0,
-    work_agent_id  VARCHAR,
-    work_task_id   VARCHAR,
     updated_at     TIMESTAMP DEFAULT current_timestamp
 );
 

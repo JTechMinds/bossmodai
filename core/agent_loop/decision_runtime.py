@@ -50,7 +50,6 @@ from core.agent_loop.decision_work_plan import (
     _resolve_work_execution_plan,
     _should_queue_initial_work_resume,
 )
-from core.agent_loop.channel_host import note_channel_work, stop_active_talk_rounds
 from core.agent_loop.channel_work_bind import record_round_work_bind
 from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.models import Agent, AgentState
@@ -391,19 +390,22 @@ def _requeue_declared_commitment(
     agent: Agent,
     trigger: dict[str, Any],
 ) -> None:
-    """Requeue exactly the trigger's task after a reply declared ``work_commit``.
+    """Requeue the agent's own open task after a reply declared ``work_commit``.
 
-    ``validate_decision_for_trigger`` only lets ``work_commit: true`` through
-    with no live work when the trigger's task is open and assigned to this
-    agent (a reply on its own waiting or blocked task, where accept is not
-    allowed), so the task is resolved from the trigger alone.
+    Validation only lets ``work_commit: true`` through with no live work when
+    the agent has an open task. That is the trigger's ``task_id`` when it is
+    this agent's open task, else ``activity_runtime.resolve_live_wake_task``
+    (paused work first, then the first open assigned task); a trigger task
+    owned by someone else is not this agent's to resume.
 
     Raises:
-        ValueError: The trigger does not name an open task of this agent;
-            validation should have rejected the decision.
+        ValueError: No open task of this agent resolves; validation should
+            have rejected the decision.
     """
     task_id = trigger.get("task_id")
     task = db.get_task(task_id) if isinstance(task_id, str) and task_id.strip() else None
+    if task is None or task.assigned_to != agent.id or not activity_runtime.is_live_work_task(task):
+        task = activity_runtime.resolve_live_wake_task(agent.id)
     if task is None or task.assigned_to != agent.id or not activity_runtime.is_live_work_task(task):
         raise ValueError("work_commit reply reached apply_decision without an open task of this agent")
     queued = {
@@ -417,10 +419,10 @@ def _requeue_declared_commitment(
 
 
 def _note_channel_work_bind(agent: Agent, trigger: dict[str, Any], decision: ConversationDecision, task: Any) -> None:
-    """End peer Talk when this channel turn bound a real board task.
+    """Record this agent's work bind on the round so the router sees it.
 
-    Prose with no task does not qualify. The work resume already queued on
-    ``trigger_requests`` is left in place.
+    Prose with no task does not qualify. The bind is a router fact, not a
+    gate; the work resume already queued on ``trigger_requests`` stays.
     """
     if decision.commitmentKind != "work":
         return
@@ -434,8 +436,6 @@ def _note_channel_work_bind(agent: Agent, trigger: dict[str, Any], decision: Con
     round_id = str(trigger.get("round_id") or "").strip()
     if round_id:
         record_round_work_bind(round_id, agent_id=agent.id, task_id=task_id)
-    note_channel_work(channel_id, agent_id=agent.id, task_id=task_id)
-    stop_active_talk_rounds(channel_id)
 
 
 def summarize_decision(decision_payload: dict[str, Any]) -> str:

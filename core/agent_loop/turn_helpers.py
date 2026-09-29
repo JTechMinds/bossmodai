@@ -108,9 +108,20 @@ def _build_continuation_instruction(
         detail=detail,
     )
 
+_CHANNEL_INTERRUPT_TYPES = frozenset({"channel_message", "channel_response"})
+
+
 def _has_pending_interrupts(agent_id: str) -> bool:
-    """Return whether queued interrupt-style triggers are waiting for the agent."""
-    return db.has_queued_trigger_matching(
+    """Return whether a queued interrupt could run now if this work turn yielded.
+
+    Direct, peer, meeting, follow-up and watchdog wakes always count. A
+    thread wake counts only when its thread has no live speaker: one the
+    dispatcher is holding behind another member's draft
+    (``channel_peer_snapshot_is_drafting``) could not run yet, and ending
+    the work turn for it would only freeze and re-queue the work every
+    step. The dispatcher's next pass interrupts once the speaker slot frees.
+    """
+    if db.has_queued_trigger_matching(
         agent_id,
         trigger_types=[
             "human_chat",
@@ -118,11 +129,32 @@ def _has_pending_interrupts(agent_id: str) -> bool:
             "task_follow_up",
             "session_message",
             "session_response",
-            "channel_message",
-            "channel_response",
             "watchdog_status_ping",
         ],
-    )
+    ):
+        return True
+    for row in db.list_agent_triggers(agent_id, status="queued", limit=20):
+        if str(row.get("trigger_type") or "") not in _CHANNEL_INTERRUPT_TYPES:
+            continue
+        channel_id = _queued_channel_id(row.get("payload"))
+        if not channel_id or not db.channel_peer_snapshot_is_drafting(channel_id):
+            return True
+    return False
+
+
+def _queued_channel_id(raw: Any) -> str:
+    """Return the ``channel_id`` a queued thread wake names, or ``""``.
+
+    Same decode as ``dispatcher._trigger_channel_id``: a payload that is
+    not a JSON object names no channel.
+    """
+    try:
+        payload = json.loads(raw) if isinstance(raw, str) and raw else (raw or {})
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("channel_id") or "").strip()
 
 def _serialize_trace_value(value: Any) -> str | None:
     """Serialize structured trace content for persistence."""
