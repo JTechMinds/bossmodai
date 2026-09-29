@@ -5,7 +5,8 @@ const BossModConversation = (() => {
     const NO_CONVERSATION_REASON = 'Pick someone from the roster to start talking.';
 
     /** @param {object} deps store, bus, api, navigate, needs, drafts (Map), cache (a transcript
-     *   cache); optional openDesk, browserView. drafts/cache are the caller's so a draft outlives destroy(). */
+     *   cache); optional openDesk `(agentId, path?) => void` (the desk modal), browserView.
+     *   drafts/cache are the caller's so a draft outlives destroy(). */
     function createConversation(deps) {
         const { store, bus, api, navigate, needs, openDesk, browserView, drafts, cache } = deps || {};
         if (!store) throw new Error('[conversation] deps.store is required');
@@ -26,7 +27,9 @@ const BossModConversation = (() => {
                 && typeof BossModTaskDeliverables.openDeliverablePath === 'function') {
                 return BossModTaskDeliverables.openDeliverablePath(api, path, agentId || '');
             }
-            if (typeof openDesk === 'function') openDesk(path);
+            // The deliverable opener is not loaded: the desk of the agent who
+            // wrote it, opened on the path. A desk needs an owner.
+            if (typeof openDesk === 'function' && agentId) openDesk(agentId, path);
             return undefined;
         }
         cardCtx.openDeliverable = openDeliverable;

@@ -93,15 +93,18 @@ def test_agent_click_offers_chat_and_desk_through_the_shared_routes() -> None:
     """A click on the floor or the org chart asks where to go; it hosts nothing.
 
     The Office used to open a whole conversation in a slide-out. Now it raises
-    a small dialog of doors, and each door is the roster's own route — so
-    "Open chat" and "View desk" mean one thing everywhere in the app.
+    a small dialog of doors, and each door is the roster's own — the shared
+    conversation route, and the one desk modal every place gets as
+    `ctx.openDesk` — so "Open chat" and "View desk" mean one thing everywhere
+    in the app. The desk opens over the Office; nothing navigates to Chat.
     """
     place = _read("office-place.js")
     actions = _read("agent-actions.js")
     assert place.count("onAgentClick: openAgentActions") == 2  # map and org chart
     assert "BossModOfficeAgentActions.open({" in place
     assert "BossModAgentRoutes.openConversation(routes, agent.id, 'agent')" in place
-    assert "BossModAgentRoutes.openDesk(routes, agent.id)" in place
+    assert "onViewDesk: () => ctxRef.openDesk(agent.id)," in place
+    assert "BossModAgentRoutes.openDesk" not in place
     assert "BossModConversation" not in place, "the Office hosts no conversation now"
     assert "slideOver" not in place
     for internal in CONVERSATION_INTERNALS:

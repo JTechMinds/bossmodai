@@ -4,8 +4,9 @@
  *
  * Four properties: a click raises ONE small dialog for that agent with the
  * doors in it; each door closes the dialog and lands exactly where the
- * roster's same door lands; it is not a form, so an outside click closes it;
- * and the routes refuse bad input rather than writing a half-state.
+ * roster's same door lands — the conversation route, and the injected desk
+ * modal; it is not a form, so an outside click closes it; and the routes
+ * refuse bad input rather than writing a half-state.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -32,14 +33,18 @@ async function main() {
     const navigations = [];
     const store = BossModStore.createStore({
         place: "office", conversationId: null, conversationKind: null,
-        contextMode: null, deskAgentId: null,
     });
     const routes = { store, navigate: (placeId) => navigations.push(placeId) };
+    // The desk is ctx.openDesk: the shell's one desk modal, which opens over
+    // the Office. Recorded here, because what it draws is the context
+    // harness's subject.
+    const desksOpened = [];
+    const openDesk = (agentId) => desksOpened.push(agentId);
     const panels = () => documentStub.body.querySelectorAll(".modal-panel");
     const openFor = () => BossModOfficeAgentActions.open({
         agent: jim,
         onOpenChat: () => BossModAgentRoutes.openConversation(routes, jim.id, "agent"),
-        onViewDesk: () => BossModAgentRoutes.openDesk(routes, jim.id),
+        onViewDesk: () => openDesk(jim.id),
     });
 
     // 1. One dialog, named for the agent, both doors in it, the first focused.
@@ -58,13 +63,13 @@ async function main() {
         && store.getState().conversationKind === "agent"
         && navigations.join(",") === "chat";
 
-    // 3. View desk: the context column's desk for that agent, Chat reached.
+    // 3. View desk: the dialog goes, and that agent's desk opens — over the
+    // Office, with no trip to Chat.
     openFor();
     await documentStub.body.querySelector("#office-agent-view-desk").dispatchClick();
     const viewDeskRoutesToTheDesk = panels().length === 0
-        && store.getState().contextMode === "desk"
-        && store.getState().deskAgentId === "agent-jim"
-        && navigations.join(",") === "chat,chat";
+        && desksOpened.join(",") === "agent-jim"
+        && navigations.join(",") === "chat";
 
     // 4. Not a form: an outside click closes it, scrim and all.
     openFor();
@@ -75,7 +80,7 @@ async function main() {
     // 5. Already in Chat: the store switches and navigation does NOT remount it.
     store.setState({ place: "chat" });
     BossModAgentRoutes.openConversation(routes, "agent-deb", "agent");
-    const routesDoNotRenavigateInsideChat = navigations.length === 2
+    const routesDoNotRenavigateInsideChat = navigations.length === 1
         && store.getState().conversationId === "agent-deb";
 
     // 6. Refusals, not silent no-ops.

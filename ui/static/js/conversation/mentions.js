@@ -32,11 +32,19 @@ const BossModMentions = (() => {
     /**
      * Inject the live roster and the two navigation actions.
      *
-     * Tests pass callbacks. The Chat place passes `store` + `navigate` and
-     * reuses the rail's Focus / Desk writes so a mention cannot invent a
-     * third way to open either one. `null` clears the binding.
+     * Tests pass callbacks. The Chat place passes `store` + `navigate`, which
+     * Open Chat reuses as the rail's conversation write, and `onViewDesk`,
+     * which is the one desk modal every door opens — so a mention cannot
+     * invent a third way to open either one. `null` clears the binding.
      *
      * @param {object|null} deps
+     * @param {object} [deps.store]  Read for the live roster.
+     * @param {(placeId: string) => void} [deps.navigate]
+     * @param {() => object[]} [deps.getAgents]  A roster source for tests.
+     * @param {(agent: object) => void} [deps.onOpenChat]
+     * @param {(agent: object) => void} [deps.onViewDesk]  View Desk. There is
+     *   no fallback: without it, View Desk throws when chosen.
+     * @param {(agent: object) => void} [deps.onMentionAgain]
      * @returns {void}
      */
     function configure(deps) {
@@ -259,15 +267,17 @@ const BossModMentions = (() => {
         if (configured.navigate && store.getState().place !== 'chat') configured.navigate('chat');
     }
 
+    /**
+     * View Desk, from a mention's menu: the injected desk opener.
+     *
+     * @param {object} agent  The live hire the mention resolved to.
+     * @returns {void}
+     * @throws {Error} When no `onViewDesk` is configured: a menu action that
+     *   silently does nothing is worse than one that says why it cannot.
+     */
     function viewDesk(agent) {
-        if (configured.onViewDesk) {
-            configured.onViewDesk(agent);
-            return;
-        }
-        const store = configured.store;
-        if (!store || !agent) return;
-        store.setState({ contextMode: 'desk', deskAgentId: agent.id, deskPath: null });
-        if (configured.navigate && store.getState().place !== 'chat') configured.navigate('chat');
+        if (!configured.onViewDesk) throw new Error('[mentions] onViewDesk is not configured');
+        configured.onViewDesk(agent);
     }
 
     function mentionAgain(agent) {

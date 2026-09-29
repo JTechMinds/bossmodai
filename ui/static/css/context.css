@@ -1,7 +1,8 @@
-/* BossMod AI — the context column on Chat: the office summary and the agent
-   desk. Colour comes from tokens.css; no value is hardcoded here that a token
-   already names. Seat and avatar backgrounds are the agent's own colour, set
-   inline from the roster because it is data, not theme. */
+/* BossMod AI — the context column on Chat, which holds the office summary,
+   and the agent desk modal, whose Desk block below styles it. Colour comes
+   from tokens.css; no value is hardcoded here that a token already names.
+   Seat and avatar backgrounds are the agent's own colour, set inline from the
+   roster because it is data, not theme. */
 
 .app-context {
   overflow-y: auto;
@@ -76,19 +77,6 @@
    bordered box around nothing while it is empty. Same rule
    `.needs-bar-error:empty` carries in conversation.css. */
 .context-error:empty { display: none; }
-
-/* The way back out of a desk. Composes .btn.btn-sm, so it is the raised,
-   pressable control every other button in the app is — and .btn[data-tooltip]
-   squares it off around the glyph.
-
-   `align-self` is the whole of what this rule adds. .desk-body is a flex
-   column and stretches its children, so the button spanned all 280px and read
-   as a banner across the top of the panel rather than as a control; the arrow
-   was a `←` typed into the label, which is why it could not line up with
-   anything either. */
-.desk-back { align-self: flex-start; color: var(--muted); }
-.desk-back:hover { color: var(--ink); }
-.desk-back svg { width: 14px; height: 14px; }
 
 /* ─── Mini office ───
  *
@@ -195,248 +183,151 @@
 
 /* ─── Desk ───
  *
- * Three levels, not one. The desk stacked eight blocks at the same visual
- * weight and the operator read the result as slapped together; what follows is
- * the hierarchy that replaced it.
- *
- *   1. .desk-profile — who this is, closed by a rule.
- *   2. .desk-section — the work, each under its own label with its action
- *      right-aligned on the label's row.
- *   3. .desk-footer  — pinned to the bottom: quiet facts and quiet actions.
- *
- * The panel fills the column so the footer has a bottom to be pinned to; a
- * taller desk simply scrolls.
+ * The desk MODAL (context/desk-dialog.js over context/desk-panel.js): a panel
+ * whose body is two columns — the work (Tasks, Files) and, in the aside, who
+ * the agent is (About, Details, Notes, Extensions). Every control it uses is
+ * a shared one — .btn.btn-sm, .header-icon-btn, .status-pill, .fact-list,
+ * .callout, .menu-action — so what is left here is layout and the rows.
  */
 
-.desk-panel { display: flex; flex-direction: column; min-height: 100%; }
+/* The panel body's own scroller: overlays.css makes a panel's .modal-body a
+   non-scrolling column, and content brings its scroller, as .task-detail
+   does. */
+.desk { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
 
-.desk-body { display: flex; flex-direction: column; flex: 1 1 auto; gap: 14px; }
+/* Every section here is a flex box, and an author `display` outranks the UA's
+   [hidden] — the Extensions section hides itself while there is nothing to
+   list. Same guard .task-detail carries. */
+.desk [hidden] { display: none !important; }
 
-.desk-section { display: flex; flex-direction: column; gap: 6px; }
+.desk-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--desk-aside);
+  align-items: start;
+  gap: 24px;
+}
 
-/* The label and its action share one baseline; the action is pushed right
-   rather than the label padded, so a long label cannot shove it off. */
-.desk-section-head {
+/* A narrow window stacks them, who the agent is first. */
+@media (max-width: 900px) {
+  .desk-grid { grid-template-columns: minmax(0, 1fr); }
+  .desk-aside { order: -1; }
+}
+
+.desk-main,
+.desk-aside { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+
+.desk-section { display: flex; flex-direction: column; gap: 8px; }
+
+/* The task detail's section voice (.task-detail-section-head): sentence case,
+   muted, 12px — so the two panel modals read as one family. The action is
+   pushed right rather than the label padded. */
+.desk-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.desk-section-head > h3 { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.desk-section-action { display: inline-flex; align-items: center; font-size: 12px; }
+.desk-section-action svg { width: 14px; height: 14px; }
+
+/* The title row's avatar: a lead, so it keeps its size beside a long name. */
+.desk-lead { display: inline-flex; flex: 0 0 auto; }
+
+/* About: the role, the status, the description, and the contract. */
+.desk-about-block { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.desk-role { margin: 0; font-size: 13px; font-weight: 500; color: var(--ink); }
+.desk-about { align-self: stretch; font-size: 13px; color: var(--muted); }
+.desk-about .clamped-more { font-size: 12px; }
+
+/* The done/fail contract, collapsed: reference material read once. The amber
+   only appears once it has been asked for. */
+.desk-contract { align-self: stretch; }
+.desk-contract > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+/* Inline, beside the disclosure marker and the words: the base reset makes
+   every svg a block, which stacked marker, glyph and label on three lines. */
+.desk-contract > summary svg { display: inline-block; width: 14px; height: 14px; margin-right: 6px; vertical-align: text-bottom; }
+.desk-contract[open] > summary { margin-bottom: 8px; }
+
+/* The rows every section lists. One card treatment: the hairline, the control
+   radius, the panel ground, and the stronger hairline under the pointer. */
+.desk-tasks,
+.desk-notes,
+.desk-entries { display: flex; flex-direction: column; gap: 6px; }
+
+.desk-task,
+.desk-note,
+.desk-entry,
+.desk-ext {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
-}
-
-.desk-section-title {
-  margin: 0;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: var(--hint);
-}
-
-/* Composes .btn-link from controls.css: accent ink, no border, no box. */
-.desk-section-action { margin-left: auto; font-size: 11px; }
-
-/* ONE block that answers "who is this", closed by a rule so everything below
-   reads as a separate question. */
-.desk-profile {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--line);
-}
-
-.desk-profile-head { display: flex; align-items: center; gap: 8px; }
-
-.desk-name { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
-.desk-role { margin: 0; font-size: 12px; color: var(--muted); }
-.desk-about { margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; }
-
-.desk-state-pill {
-  align-self: flex-start;
-  padding: 2px 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 999px;
-  background: var(--bg);
-  font-size: 11px;
-  color: var(--muted);
-}
-
-/* The done/fail contract, collapsed. It is reference material the operator
-   reads once; at full amber volume above the task list it outranked the task
-   it qualifies. The summary is quiet and the amber only appears once it has
-   been asked for. */
-.desk-contract { margin: -4px 0 0; }
-
-.desk-contract-summary {
-  color: var(--hint);
-  font-size: 11px;
-  cursor: pointer;
-}
-
-.desk-contract[open] .desk-contract-summary { margin-bottom: 6px; }
-
-.desk-bar {
-  margin: 0;
+  width: 100%;
+  min-width: 0;
   padding: 8px 10px;
-  border: 1px solid var(--amber);
-  border-radius: var(--r);
-  background: var(--amber);
-  color: var(--amber-ink);
-  font-size: 11px;
-  line-height: 1.5;
-}
-
-.desk-task {
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--bg);
-}
-
-.desk-task-title { margin: 0; font-size: 12px; font-weight: 500; color: var(--ink); }
-.desk-task-status { margin: 2px 0 0; font-size: 11px; color: var(--hint); }
-
-.desk-task-blocked {
-  margin: 4px 0 0;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--alert);
-}
-
-.desk-notes { display: flex; flex-direction: column; gap: 4px; }
-
-.desk-note {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  /* SC 2.5.8: the row is the target, so the row carries the floor. */
-  min-height: 24px;
-  padding: 6px 8px;
   border: 1px solid var(--line);
   border-radius: var(--r);
   background: var(--panel);
   text-align: left;
+  font-size: 13px;
+  color: var(--ink);
 }
 
-.desk-note:hover { border-color: var(--line-strong); }
+.desk-task:hover,
+.desk-note:hover,
+.desk-entry:hover { border-color: var(--line-strong); }
 
-.desk-note-title { font-size: 12px; font-weight: 500; color: var(--ink); word-break: break-word; }
-.desk-note-meta { font-size: 11px; color: var(--hint); }
+.desk-note svg,
+.desk-entry svg,
+.desk-ext > svg { width: 14px; height: 14px; flex: none; color: var(--hint); }
 
-/* The Extensions section (context/desk-extensions.js): one card per
-   per-agent extension, the .desk-note card treatment, with its actions. */
-.desk-ext-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
-.desk-ext {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--panel);
-}
-.desk-ext-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.desk-ext-name { font-size: 12px; font-weight: 500; color: var(--ink); word-break: break-word; }
-/* --muted, not --hint: this line is the state, not metadata. */
-.desk-ext-status { font-size: 11px; color: var(--muted); word-break: break-word; }
-.desk-ext-actions { display: flex; flex-wrap: wrap; gap: 6px; }
-/* The wake health line: metadata in --hint; a failed check in the alert ink. */
-.desk-ext-wake { font-size: 11px; color: var(--hint); word-break: break-word; }
-.desk-ext-wake[data-tone="alert"] { color: var(--alert-ink); }
-
-/* Pinned to the bottom of the column, under a rule: the desk's facts and the
-   actions on the agent, below everything that is about the agent's work. */
-.desk-footer {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: auto;
-  padding-top: 10px;
-  border-top: 1px solid var(--line);
-}
-
-.desk-meta { margin: 0; font-size: 11px; color: var(--hint); word-break: break-word; }
-
-/* Label left, value right. --hint on --panel measures 4.83:1. */
-.desk-kv {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  margin: 0;
-  font-size: 11px;
-  color: var(--hint);
-}
-
-.desk-kv-value { font-weight: 500; color: var(--ink); word-break: break-all; }
-
-.desk-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 4px; }
-
-/* Composes .btn-link: text, not four equal boxes competing with the content
-   above them. base.css keeps the 24px minimum target (SC 2.5.8) on every
-   button, so losing the border does not lose the target. */
-.desk-action { font-size: 12px; font-weight: 500; }
-
-.desk-action.danger { color: var(--alert); }
-.desk-action:disabled { opacity: 0.55; pointer-events: none; }
+.desk-task-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-task .status-pill { flex: none; }
 
 /* ─── Desk files ─── */
 
-.desk-files { display: flex; flex-direction: column; gap: 6px; }
+.desk-files { display: flex; flex-direction: column; gap: 8px; }
 
-.desk-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-size: 11px; }
+/* The crumbs, then the tools pushed to the far end of the same row. */
+.desk-files-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.desk-files-tools { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.desk-files-tools svg { width: 14px; height: 14px; }
+.desk-files-recovery { display: flex; flex-wrap: wrap; gap: 6px; }
 
+.desk-crumbs { display: flex; flex-wrap: wrap; align-items: center; min-width: 0; font-size: 12px; }
+
+/* --accent is 4.51:1 on --bg and clears more on the white --panel the desk
+   is painted on (tokens.css); the crumb the operator is in is plain ink,
+   because it is not a link to anywhere new. */
 .desk-crumb {
-  padding: 2px 4px;
-  border: 1px solid transparent;
-  border-radius: var(--r);
-  background: transparent;
-  color: var(--accent);
-  font-size: 11px;
-}
-
-.desk-crumb-sep { color: var(--hint); }
-
-/* Where the folder on screen leads. Quiet links composing .btn-link, spaced
-   like a row of links rather than a row of boxes. */
-.desk-files-controls { display: flex; flex-wrap: wrap; gap: 12px; }
-
-.desk-files-link { font-size: 11px; }
-
-/* The folder being shown. Not a section title: the panel already labels this
-   section, and two uppercase headings in a row was half of why the desk read
-   as unstructured. */
-.desk-files-path {
-  margin: 0;
-  font-size: 11px;
-  color: var(--hint);
-  word-break: break-all;
-}
-
-.desk-files-btn {
+  display: inline-flex;
+  align-items: center;
   min-height: 24px;
-  padding: 3px 8px;
-  border: 1px solid var(--line-control);
+  padding: 0 6px;
   border-radius: var(--r);
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 11px;
-  font-weight: 500;
+  color: var(--accent);
 }
 
-.desk-entries { display: flex; flex-direction: column; gap: 4px; }
+.desk-crumb:hover { background: var(--bg); }
+.desk-crumb[aria-current] { color: var(--ink); font-weight: 500; }
+.desk-crumb svg { width: 14px; height: 14px; }
+.desk-crumbs > .desk-crumb-sep { width: 12px; height: 12px; color: var(--hint); }
 
-.desk-entry {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px;
-  border: 1px solid var(--line);
-  border-radius: var(--r);
-  background: var(--panel);
-  text-align: left;
-}
+/* One line: glyph, name, size, time. The name gives way before the meta. */
+.desk-entry { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto auto; }
+.desk-entry-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-entry-meta { font-size: 11px; color: var(--hint); white-space: nowrap; }
 
-.desk-entry-name { font-size: 12px; font-weight: 500; color: var(--ink); word-break: break-all; }
-.desk-entry-meta { font-size: 11px; color: var(--hint); word-break: break-all; }
+/* ─── Desk notes and extensions ─── */
+
+.desk-note-text { display: flex; flex-direction: column; min-width: 0; }
+.desk-note-title { font-weight: 500; word-break: break-word; }
+.desk-note-meta { font-size: 11px; color: var(--hint); }
+
+.desk-ext-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.desk-ext-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.desk-ext-name { font-weight: 500; word-break: break-word; }
+/* --muted, not --hint: this line is the state, not metadata. */
+.desk-ext-status { font-size: 11px; color: var(--muted); word-break: break-word; }
+.desk-ext-actions { display: flex; flex: none; gap: 6px; }
+/* The wake health line: metadata in --hint; a failed check in the alert ink. */
+.desk-ext-wake { font-size: 11px; color: var(--hint); word-break: break-word; }
+.desk-ext-wake[data-tone="alert"] { color: var(--alert-ink); }
 
 .desk-opener-options { display: flex; flex-direction: column; gap: 6px; }
 

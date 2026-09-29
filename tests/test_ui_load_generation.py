@@ -36,23 +36,25 @@ def test_select_and_panel_loads_use_shared_generation() -> None:
 
 
 def test_selecting_another_agent_invalidates_the_previous_desk_loads() -> None:
-    """agent-context.js's selectGeneration, re-pointed to the context column.
+    """agent-context.js's selectGeneration, re-pointed to the desk modal.
 
     The dock-era view kept one selected agent and one generation, and bumped it
     on select, deselect, and create so a slow response for the previous agent
-    could not paint over the new one. The column expresses the same guarantee
-    structurally: switching agents unmounts the whole desk before mounting the
-    next, and every sub-view invalidates its own generation as it goes. That is
-    stronger than the predicate it replaces, not weaker — nothing survives the
-    switch to be guarded in the first place.
+    could not paint over the new one. The desk dialog expresses the same
+    guarantee structurally: opening another agent's desk closes the open one —
+    whose close destroys its panel — BEFORE the next is built, and every
+    sub-view invalidates its own generation as it goes. That is stronger than
+    the predicate it replaces, not weaker — nothing survives the switch to be
+    guarded in the first place.
     """
-    column = _read("context/context-column.js")
-    apply_body = column.split("function apply() {", 1)[1]
-    assert "unmountView();" in apply_body
-    assert apply_body.index("unmountView();") < apply_body.index("view = build(mode, agentId);")
-    assert "if (view) view.destroy();" in column
-    # Keyed on the agent, so selecting someone else really is a switch.
-    assert "const key = `${mode}:${agentId || ''}`;" in column
+    dialog = _read("context/desk-dialog.js")
+    open_body = dialog.split("function open(agentId, path) {", 1)[1]
+    assert "close();" in open_body
+    assert open_body.index("close();") < open_body.index("BossModDeskPanel.createDeskPanel({")
+    close_hook = dialog.split("onClose: () => {", 1)[1].split("},", 1)[0]
+    assert "entry.panel.destroy();" in close_hook
+    # A late callback from a desk that has closed cannot close the next one.
+    assert "const closeThis = () => { if (current === entry) close(); };" in dialog
 
     for name in ("context/desk-files.js", "context/desk-tasks.js", "context/desk-actions.js"):
         source = _read(name)

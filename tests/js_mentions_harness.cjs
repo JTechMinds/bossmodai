@@ -223,6 +223,23 @@ async function main() {
     await menu3.element.querySelector("#mention-again").dispatchClick();
     if (mentionedAgain !== "joey") fail("mentionAgain", mentionedAgain);
 
+    // View Desk has no fallback: unconfigured, it says so rather than doing
+    // nothing. The desk is the injected modal, never a store write here.
+    Mentions.configure({ getAgents: () => LIVE });
+    let viewDeskRefusesUnconfigured = false;
+    try {
+        Mentions.viewDesk(JOEY);
+    } catch (err) {
+        viewDeskRefusesUnconfigured = /onViewDesk is not configured/.test(String(err && err.message));
+    }
+    if (!viewDeskRefusesUnconfigured) fail("viewDeskRefusesUnconfigured", "no throw");
+    Mentions.configure({
+        getAgents: () => LIVE,
+        onOpenChat: (agent) => { openedChat = agent.id; },
+        onViewDesk: (agent) => { viewedDesk = agent.id; },
+        onMentionAgain: (agent) => { mentionedAgain = agent.id; },
+    });
+
     const dead = Pills.openMenu({
         agent: { id: "bea", name: "Bea" },
         agents: LIVE,
@@ -513,6 +530,7 @@ async function main() {
         menuActions: labels,
         openChat: openedChat,
         viewDesk: viewedDesk,
+        viewDeskRefusesUnconfigured,
         mentionAgain: mentionedAgain,
         failClosedFired: dead === null,
         noHardJumpOnClick: true,

@@ -1,12 +1,14 @@
 /**
- * Node harness: the context column's mode switch and its teardown.
+ * Node harness: the context column, the desk modal, and their teardown.
  *
  * Invoked by tests/test_ui_context.py. Not a browser bundle.
  *
  * It mounts the real Chat place against the real modules, because the property
  * that matters — the column does not outlive a navigation away from Chat — is
  * a property of how those two are wired together, and a stub for either half
- * would prove nothing about it.
+ * would prove nothing about it. The desk is the real desk dialog
+ * (context/desk-dialog.js), injected as `ctx.openDesk` the way the shell
+ * injects it, so every door this drives opens the modal the app opens.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -113,7 +115,7 @@ documentStub.createElement = (tag) => {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
@@ -140,7 +142,9 @@ const NAMES = [
     "BossModAgentAddPane", "BossModAgentDialogSlot",
     "BossModFloorScope",
     "BossModAgentEdit", "BossModAgentsDialog", "BossModDeskPanel",
-    "BossModContextColumn",
+    // The desk's task rows wear the Tasks place's status labels, and its Chat
+    // tool is the one conversation route; both are read at call time.
+    "BossModTasksColumns", "BossModAgentRoutes", "BossModDeskDialog",
     // The chat place hands agent conversations the Browser Vision screen.
     "BossModExtensionsApi", "BossModBrowserVisionStatus", "BossModExtensionsLive",
     // The desk panel's Extensions section (read at call time, so after it).
@@ -185,7 +189,16 @@ global.apiFetch = (...args) => api(...args);
 // here opens that tab, so it stands in with the shape the dialog places.
 global.BossModMarketplace = {
     createPane() {
-        return { element: global.BossModDom.h("div", { class: "market-host" }), activate() {} };
+        // The pane's title-row chevron, hidden as the real one is while no
+        // pack is open.
+        const lead = global.BossModDom.h("span", { class: "market-lead-stub" });
+        lead.hidden = true;
+        return {
+            element: global.BossModDom.h("div", { class: "market-host" }),
+            lead,
+            activate() {},
+            deactivate() {},
+        };
     },
 };
 
@@ -302,6 +315,9 @@ const creates = [];
 // CREATE, and the only way to prove that scoping is to watch an edit that
 // would have tripped it reach the server anyway.
 const updates = [];
+// What GET /api/tasks/board answers for Jim: one task, so the desk's Tasks
+// section has a row to click. Everyone else carries nothing.
+const JIM_TASK = { id: "t1", title: "Write TDD specs", status: "complete" };
 // What GET /api/agents/{id} answers, shaped as the server's `Agent`: the desk
 // footer reads the workspace and model off it, and Remove reads the NAME its
 // warning is about.
@@ -370,6 +386,10 @@ function api(url, init) {
         if (!createSucceeds) return jsonResponse({ detail: "Name already taken" }, 409);
         return jsonResponse({ id: `new-${creates.length}` });
     }
+    if (String(url).startsWith("/api/tasks/board")) {
+        const scoped = /agent_id=a1&scope=self/.test(String(url));
+        return jsonResponse({ sections: { closed: scoped ? [JIM_TASK] : [] } });
+    }
     if (url.startsWith("/api/needs")) {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
     }
@@ -432,8 +452,6 @@ async function main() {
         placeParams: {},
         conversationId: null,
         conversationKind: null,
-        contextMode: "office",
-        deskAgentId: null,
         roster: [],
         threads: [],
         rosterQuery: "",
@@ -458,14 +476,27 @@ async function main() {
     documentStub.body.append(contextEl);
 
     const navigated = [];
+    const navigate = (placeId, params) => navigated.push({ placeId, params });
+    // The shell builds ONE desk dialog and hands its `open` to every place as
+    // ctx.openDesk; so does this.
+    const desk = global.BossModDeskDialog.createDeskDialog({ store, bus, api, navigate });
     const ctx = {
         store,
         bus,
         api,
         needs,
         contextEl,
-        navigate: (placeId, params) => navigated.push({ placeId, params }),
+        openDesk: desk.open,
+        navigate,
     };
+
+    const modals = () => documentStub.body.querySelectorAll(".modal-panel");
+    /** The open desk modal, or undefined. Marked for its stylesheet. */
+    const deskModal = () => modals().find((node) => node.getAttribute("data-dialog") === "desk");
+    /** A node inside the desk modal. */
+    const inDesk = (selector) => deskModal().querySelector(selector);
+    const deskText = (selector) => deskModal().querySelectorAll(selector)
+        .map((node) => node.textContent).join(" ");
 
     const chat = global.BossModPlaces.get("chat");
     chat.mount(placeEl, ctx);
@@ -529,11 +560,12 @@ async function main() {
     //
     // The roster still answers "who is around", so the panel falls back to the
     // occupied-rooms view it had before. Blanking it would lose the people
-    // along with the rooms, which is the worse of the two failures.
+    // along with the rooms, which is the worse of the two failures. The summary
+    // reads the map once per build, so Chat is remounted to build a new one.
 
     mapFails = true;
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
-    store.setState({ contextMode: "office" });
+    chat.unmount();
+    chat.mount(placeEl, ctx);
     await drain();
     const degraded = roomNames();
     const degradedError = contextEl.querySelectorAll(".context-error")
@@ -547,120 +579,184 @@ async function main() {
     }
     // Back to a working floor plan for everything below.
     mapFails = false;
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
-    store.setState({ contextMode: "office" });
+    chat.unmount();
+    chat.mount(placeEl, ctx);
     await drain();
 
-    // ─── 2. A seat opens that agent's desk ───
+    // ─── 2. A seat opens that agent's desk, as a modal ───
 
     const ada = seats().filter((seat) => seat.getAttribute("data-agent-id") === "a3")[0];
     if (!ada) throw new Error("the off-map agent lost their seat on the rebuilt panel");
     await ada.dispatchClick();
-    if (store.getState().contextMode !== "desk" || store.getState().deskAgentId !== "a3") {
-        throw new Error("clicking a seat must open that agent's desk");
-    }
-    const seatOpensDesk = true;
-
-    // ─── 3. The column switches modes, one view at a time ───
-
-    if (contextEl.querySelectorAll(".mini-office").length !== 0) {
-        throw new Error("the outgoing view must be unmounted before the incoming one mounts");
-    }
-    if (contextEl.querySelectorAll(".desk-panel").length !== 1) {
-        throw new Error("desk mode must mount exactly one desk view");
-    }
-    store.setState({ contextMode: "office" });
-    if (contextEl.querySelectorAll(".desk-panel").length !== 0) {
-        throw new Error("switching back must unmount the desk view");
-    }
-    if (contextEl.querySelectorAll(".mini-office").length !== 1) {
-        throw new Error("office mode must mount exactly one summary");
-    }
-
-    // Switching back and forth must not accumulate subscriptions. Measured in
-    // the same mode at both ends: the two views hold different numbers of
-    // subscriptions, so a cross-mode comparison would prove nothing.
-    const officeSubscribers = store.subscriberCount();
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
-    store.setState({ contextMode: "office" });
-    store.setState({ contextMode: "desk", deskAgentId: "a2" });
-    store.setState({ contextMode: "office" });
-    if (store.subscriberCount() !== officeSubscribers) {
-        throw new Error(
-            `mode switching leaks subscriptions: ${officeSubscribers} -> ${store.subscriberCount()}`
-        );
-    }
-    // Switching between two agents' desks must swap the view, not stack it.
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
-    store.setState({ contextMode: "desk", deskAgentId: "a2" });
-    if (contextEl.querySelectorAll(".desk-panel").length !== 1) {
-        throw new Error("a desk-to-desk switch must leave exactly one view mounted");
-    }
-    store.setState({ contextMode: "office" });
-    const switchesModes = true;
-
-    // ─── 3b. Notes read the agent's workspace, not a column ───
-
-    const notes = () => contextEl.querySelectorAll(".desk-note");
-    const noteTitles = () => contextEl.querySelectorAll(".desk-note-title")
-        .map((node) => node.textContent);
-
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
     await drain();
+    const seatOpensDesk = Boolean(deskModal())
+        && deskModal().getAttribute("data-size") === "panel"
+        && deskModal().getAttribute("aria-label") === "Ada"
+        && documentStub.body.children.indexOf(deskModal()) !== -1;
+    if (!seatOpensDesk) {
+        throw new Error("clicking a seat must open that agent's desk as a panel modal");
+    }
 
-    // ─── 3a. The reorganised desk lost nothing ───
+    // ─── 3. The column holds the office summary and nothing else ───
     //
-    // Task 7 moved eight blocks: identity into one group closed by a rule, the
-    // sections under labelled headers with their actions on those headers, the
-    // amber contract into a disclosure, and the folder buttons and the footer
-    // actions down to quiet links. "Nothing was deleted" is a claim about what
-    // RENDERS, so it is read off the built panel — a source check would pass
-    // while a block sat in a branch that never runs.
-    const deskText = (selector) => contextEl.querySelectorAll(selector)
-        .map((node) => node.textContent).join(" ");
-    const sectionLabels = contextEl.querySelectorAll(".desk-section-title")
-        .map((node) => node.textContent);
+    // The desk used to be the column's second view. It is a modal over the
+    // app now, so opening one leaves the summary where it is.
+
+    const columnHoldsOnlyTheOffice = contextEl.querySelectorAll(".mini-office").length === 1
+        && contextEl.querySelectorAll(".desk").length === 0
+        && contextEl.querySelectorAll(".modal-panel").length === 0;
+    if (!columnHoldsOnlyTheOffice) {
+        throw new Error("the context column must hold only the office summary");
+    }
+    // One desk at a time: opening another closes the first rather than
+    // stacking a second modal.
+    desk.open("a1");
+    await drain();
+    const deskModals = () => modals().filter((node) => node.getAttribute("data-dialog") === "desk");
+    const oneDeskAtATime = deskModals().length === 1
+        && deskModal().getAttribute("aria-label") === "Jim";
+    if (!oneDeskAtATime) {
+        throw new Error(`a second desk must replace the first, got ${deskModals().length}`);
+    }
+    // Opening and closing desks must not accumulate subscriptions. Measured
+    // with no desk open at both ends.
+    desk.close();
+    await drain();
+    const closedSubscribers = store.subscriberCount();
+    const closedBusSubscribers = bus.subscriberCount();
+    desk.open("a1");
+    desk.open("a2");
+    await drain();
+    desk.close();
+    await drain();
+    const deskDrainsOnClose = modals().length === 0
+        && store.subscriberCount() === closedSubscribers
+        && bus.subscriberCount() === closedBusSubscribers;
+    if (!deskDrainsOnClose) {
+        throw new Error(`the desk leaks subscriptions: store ${closedSubscribers} -> `
+            + `${store.subscriberCount()}, bus ${closedBusSubscribers} -> ${bus.subscriberCount()}`);
+    }
+
+    // ─── 3a. The desk lost nothing in the move ───
+    //
+    // "Nothing was deleted" is a claim about what RENDERS, so it is read off
+    // the built modal — a source check would pass while a block sat in a
+    // branch that never runs.
+
+    desk.open("a1");
+    await drain();
+    const sectionLabels = deskModal().querySelectorAll(".desk-section-head")
+        .map((node) => node.children[0].textContent);
+    const aboutPill = inDesk(".desk-about-block").querySelector(".status-pill");
     const deskFields = {
-        name: deskText(".desk-name").includes("Jim"),
+        // The name is the modal's title now, and the face its lead.
+        name: deskModal().querySelector(".modal-title").textContent === "Jim"
+            && Boolean(deskModal().querySelector(".modal-head").querySelector(".desk-lead")
+                .querySelector(".avatar")),
         role: deskText(".desk-role").includes("Engineer"),
         about: deskText(".desk-about").includes("Keeps the build green."),
-        status: deskText(".desk-state-pill").trim().length > 0,
-        // The contract copy AND the value, inside the disclosure that now
-        // holds them rather than above the task list.
-        contract: contextEl.querySelectorAll(".desk-contract").length === 1
+        status: Boolean(aboutPill) && aboutPill.textContent.trim().length > 0,
+        // The contract copy AND the value, inside the disclosure that holds
+        // them, in the shared warn callout.
+        contract: deskModal().querySelectorAll(".desk-contract").length === 1
+            && inDesk(".desk-contract").querySelector(".callout").getAttribute("data-tone") === "warn"
             && deskText(".desk-bar").includes("What done looks like for this agent:")
             && deskText(".desk-bar").includes("Good: tests pass."),
         tasks: sectionLabels.includes("Tasks")
-            && contextEl.querySelectorAll(".desk-tasks").length === 1,
+            && deskModal().querySelectorAll(".desk-tasks").length === 1,
         files: sectionLabels.includes("Files")
-            && contextEl.querySelectorAll(".desk-files").length === 1,
-        // The desk's own facts: the workspace it was given and the model it runs.
-        desk: deskText(".desk-kv").includes("Workspace")
-            && deskText(".desk-kv").includes("jim-workspace")
-            && deskText(".desk-kv").includes("Model"),
+            && deskModal().querySelectorAll(".desk-files").length === 1,
+        // The desk's own facts, on the shared fact list: the workspace it was
+        // given and the model it runs.
+        desk: sectionLabels.includes("Details")
+            && deskText(".fact-list").includes("Workspace")
+            && deskText(".fact-list").includes("jim-workspace")
+            && deskText(".fact-list").includes("Model"),
         notes: sectionLabels.includes("Notes")
-            && contextEl.querySelectorAll(".desk-notes").length === 1,
+            && deskModal().querySelectorAll(".desk-notes").length === 1,
     };
     const lost = Object.keys(deskFields).filter((field) => !deskFields[field]);
     if (lost.length) {
         throw new Error(`the desk lost ${lost.join(", ")}; sections `
-            + `${sectionLabels.join("/")} footer "${deskText(".desk-kv")}"`);
+            + `${sectionLabels.join("/")} details "${deskText(".fact-list")}"`);
     }
-    // Every action that was a bordered button is still a control, just a quiet
-    // one — and "See all" now belongs to the Tasks header rather than floating
-    // under the list.
-    const seeAll = contextEl.querySelectorAll(".desk-section-action");
+    // "See all" belongs to the Tasks header.
+    const seeAll = deskModal().querySelectorAll(".desk-section-action");
     if (seeAll.length !== 1 || seeAll[0].textContent !== "See all") {
         throw new Error(`Tasks owes its header a "See all", got ${seeAll.length}`);
     }
-    const footerActions = contextEl.querySelectorAll(".desk-action")
-        .map((node) => node.textContent);
-    if (footerActions.join("|") !== "Edit role|Diagnostics|Reset runtime|Remove") {
-        throw new Error(`the footer lost an action: ${footerActions.join("|")}`);
+    // The actions on the agent are the HEAD's: Chat and Edit role as tools,
+    // and the other three behind the `⋯`, the destructive two marked.
+    const head = deskModal().querySelector(".modal-head");
+    const headTools = head.querySelector(".modal-tools").querySelectorAll("button")
+        .map((node) => node.getAttribute("aria-label"));
+    const toolsAreInTheHead = headTools.join("|") === "Open chat|Edit role|Desk options"
+        && deskModal().querySelector(".modal-body").querySelectorAll(".desk-action").length === 0;
+    if (!toolsAreInTheHead) {
+        throw new Error(`the desk's head must carry its tools, got ${headTools.join("|")}`);
+    }
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const menuRows = head.querySelectorAll(".menu-action");
+    const optionsMenuHoldsTheRest = menuRows.map((node) => node.textContent).join("|")
+            === "Diagnostics|Reset runtime|Remove agent"
+        && menuRows.map((node) => node.getAttribute("data-tone") || "").join("|") === "|danger|danger"
+        && inDesk("#desk-options").getAttribute("aria-expanded") === "true";
+    if (!optionsMenuHoldsTheRest) {
+        throw new Error(`the ⋯ must hold Diagnostics, Reset runtime and Remove agent, got `
+            + menuRows.map((node) => node.textContent).join("|"));
     }
     // The contract is CLOSED until the operator asks for it.
-    if (contextEl.querySelector(".desk-contract").hasAttribute("open")) {
+    if (inDesk(".desk-contract").hasAttribute("open")) {
         throw new Error("the contract must be a disclosure, not a standing alert");
+    }
+
+    // Diagnostics opens the Log filtered to this agent — and the desk closes
+    // first, because the operator asked to go somewhere else. The Log reads
+    // `agentId` (as Metrics sends it); `agentFilter` is the Tasks param.
+    const navigatedBefore = navigated.length;
+    await head.querySelector("#desk-diagnostics").dispatchClick();
+    await drain();
+    const diagnosticsNav = navigated.slice(navigatedBefore);
+    const diagnosticsFiltersTheLog = diagnosticsNav.length === 1
+        && diagnosticsNav[0].placeId === "log"
+        && JSON.stringify(diagnosticsNav[0].params) === JSON.stringify({ agentId: "a1" })
+        && modals().length === 0;
+    if (!diagnosticsFiltersTheLog) {
+        throw new Error(`Diagnostics must close the desk and open the Log with { agentId }, got `
+            + `${JSON.stringify(diagnosticsNav)} with ${modals().length} dialogs`);
+    }
+
+    // A task row is a way into the task, and "See all" into the agent's list;
+    // both leave the desk behind them.
+    desk.open("a1");
+    await drain();
+    const taskRow = inDesk(".desk-task");
+    const taskRowIsAButtonWithTheSharedPill = Boolean(taskRow)
+        && taskRow.tagName === "BUTTON"
+        && taskRow.getAttribute("data-task-id") === "t1"
+        && taskRow.querySelector(".status-pill").getAttribute("data-status") === "complete"
+        && taskRow.querySelector(".status-pill").textContent === "Complete";
+    if (!taskRowIsAButtonWithTheSharedPill) {
+        throw new Error("a desk task must be a button wearing the shared status pill");
+    }
+    await taskRow.dispatchClick();
+    await drain();
+    const taskNav = navigated[navigated.length - 1];
+    const taskRowOpensTheTask = taskNav.placeId === "tasks"
+        && JSON.stringify(taskNav.params) === JSON.stringify({ taskId: "t1" })
+        && modals().length === 0;
+    desk.open("a1");
+    await drain();
+    await inDesk(".desk-section-action").dispatchClick();
+    await drain();
+    const allNav = navigated[navigated.length - 1];
+    const seeAllOpensTheAgentsTasks = allNav.placeId === "tasks"
+        && JSON.stringify(allNav.params) === JSON.stringify({ agentFilter: "a1" })
+        && modals().length === 0;
+    if (!taskRowOpensTheTask || !seeAllOpensTheAgentsTasks) {
+        throw new Error(`a task row and See all must close the desk and open Tasks, got `
+            + `${JSON.stringify(taskNav)} ${JSON.stringify(allNav)}`);
     }
 
     // ─── Remove says what a delete destroys, and whose ───
@@ -669,30 +765,21 @@ async function main() {
     // the delete had started removing both. What the operator reads is the
     // dialog, so the dialog is what is read here: the agent by name, the
     // tasks it cancels, and the back-up instruction — and never the promise.
-    const deskFooterAction = (label) => contextEl.querySelectorAll(".desk-action")
-        .find((node) => node.textContent === label);
-    const openPanels = () => documentStub.body.querySelectorAll(".modal-panel");
-
-    // Diagnostics opens the Log filtered to this agent. The Log reads
-    // `agentId` (as Metrics sends it); `agentFilter` is the Tasks param and
-    // left the Log unfiltered.
-    const navigatedBefore = navigated.length;
-    await deskFooterAction("Diagnostics").dispatchClick();
+    // It is a LAYER over the desk, so the desk is still there under it.
+    const openRemove = async () => {
+        await inDesk("#desk-options").dispatchClick();
+        await drain();
+        await deskModal().querySelector("#desk-remove").dispatchClick();
+        await drain();
+    };
+    desk.open("a1");
     await drain();
-    const diagnosticsNav = navigated.slice(navigatedBefore);
-    const diagnosticsFiltersTheLog = diagnosticsNav.length === 1
-        && diagnosticsNav[0].placeId === "log"
-        && JSON.stringify(diagnosticsNav[0].params) === JSON.stringify({ agentId: "a1" });
-    if (!diagnosticsFiltersTheLog) {
-        throw new Error(`Diagnostics must open the Log with { agentId }, got ${JSON.stringify(diagnosticsNav)}`);
-    }
-
-    await deskFooterAction("Remove").dispatchClick();
-    await drain();
-    const removeDialog = openPanels()
+    await openRemove();
+    const removeDialog = modals()
         .find((panel) => panel.textContent.includes("Remove this agent?"));
     const removeText = removeDialog ? removeDialog.textContent : "";
-    const removeWarnsWhatIsDeleted = openPanels().length === 1
+    const removeWarnsWhatIsDeleted = modals().length === 2
+        && Boolean(deskModal())
         && removeText.includes("Deleting Jim permanently deletes their files")
         && removeText.includes("cancels their open tasks")
         && removeText.includes("back up anything you need")
@@ -703,42 +790,86 @@ async function main() {
     await removeDialog.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
         .find((btn) => btn.textContent === "Cancel").dispatchClick();
     await drain();
-    if (openPanels().length !== 0) throw new Error("Cancel must close the Remove dialog");
+    if (modals().length !== 1 || !deskModal()) {
+        throw new Error("Cancel must close the Remove dialog and leave the desk");
+    }
 
     // Before the detail read lands there is no name, so there is no dialog:
-    // the footer says why and asks again, and once the name is in, Remove
-    // opens the warning that names them.
+    // the Details section says why and asks again, and once the name is in,
+    // Remove opens the warning that names them.
     let releaseAgentDetail = null;
     heldAgentDetail = { promise: new Promise((resolve) => { releaseAgentDetail = resolve; }) };
-    store.setState({ contextMode: "office" });
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    desk.open("a1");
     await drain();
-    await deskFooterAction("Remove").dispatchClick();
-    await drain();
-    const footerErrors = () => contextEl.querySelector(".desk-footer")
+    await openRemove();
+    const detailErrors = () => inDesk(".desk-details-block")
         .querySelectorAll(".context-error").map((node) => node.textContent).join(" ");
-    const removeWaitsForTheName = openPanels().length === 0
-        && footerErrors().includes("haven’t loaded yet");
+    const removeWaitsForTheName = modals().length === 1
+        && detailErrors().includes("haven’t loaded yet");
     if (!removeWaitsForTheName) {
         throw new Error(`Remove before the name loads must not open a dialog, got `
-            + `${openPanels().length} dialogs, footer "${footerErrors()}"`);
+            + `${modals().length} dialogs, details "${detailErrors()}"`);
     }
     heldAgentDetail = null;
     releaseAgentDetail(jsonResponse(AGENT_DETAIL));
     await drain();
-    await deskFooterAction("Remove").dispatchClick();
-    await drain();
-    const removeOpensOnceTheNameIsIn = footerErrors() === ""
-        && openPanels().length === 1
-        && openPanels()[0].textContent.includes("Deleting Jim permanently deletes");
+    await openRemove();
+    const removeOpensOnceTheNameIsIn = detailErrors() === ""
+        && modals().length === 2
+        && modals()[1].textContent.includes("Deleting Jim permanently deletes");
     if (!removeOpensOnceTheNameIsIn) {
-        throw new Error(`Remove must open once the name loads, got ${openPanels().length} `
-            + `dialogs, footer "${footerErrors()}"`);
+        throw new Error(`Remove must open once the name loads, got ${modals().length} `
+            + `dialogs, details "${detailErrors()}"`);
     }
-    await openPanels()[0].querySelectorAll(".modal-actions")[0].querySelectorAll("button")
-        .find((btn) => btn.textContent === "Cancel").dispatchClick();
+    // Confirmed, the DELETE lands and the desk of someone deleted closes.
+    await modals()[1].querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+        .find((btn) => btn.textContent === "Remove agent").dispatchClick();
     await drain();
+    const removeClosesTheDesk = modals().length === 0;
+    if (!removeClosesTheDesk) {
+        throw new Error(`a removed agent's desk must close, got ${modals().length} dialogs`);
+    }
 
+    // ─── The roster is the desk's source of truth while it is open ───
+    //
+    // A rename retitles the modal; an agent deleted elsewhere closes it rather
+    // than leaving "Loading…" on screen forever.
+    desk.open("a1");
+    await drain();
+    store.setState({ roster: ROSTER.map((row) => (row.id === "a1" ? { ...row, name: "James" } : row)) });
+    await drain();
+    const aRenameRetitlesTheDesk = deskModal().querySelector(".modal-title").textContent === "James"
+        && deskModal().getAttribute("aria-label") === "James";
+    store.setState({ roster: ROSTER.filter((row) => row.id !== "a1") });
+    await drain();
+    const anAgentGoneFromTheRosterClosesTheDesk = modals().length === 0;
+    store.setState({ roster: ROSTER });
+    await drain();
+    if (!aRenameRetitlesTheDesk || !anAgentGoneFromTheRosterClosesTheDesk) {
+        throw new Error(`the desk must follow the roster: renamed ${aRenameRetitlesTheDesk}, `
+            + `closed on removal ${anAgentGoneFromTheRosterClosesTheDesk}`);
+    }
+
+    // ─── Chat, from the head ───
+    desk.open("a1");
+    await drain();
+    await inDesk("#desk-chat").dispatchClick();
+    await drain();
+    const chatToolOpensTheConversation = modals().length === 0
+        && store.getState().conversationId === "a1"
+        && store.getState().conversationKind === "agent";
+    if (!chatToolOpensTheConversation) {
+        throw new Error("the desk's Chat tool must close the desk and open the conversation");
+    }
+
+    // ─── 3b. Notes read the agent's workspace, not a column ───
+
+    const notes = () => deskModal().querySelectorAll(".desk-note");
+    const noteTitles = () => deskModal().querySelectorAll(".desk-note-title")
+        .map((node) => node.textContent);
+
+    desk.open("a1");
+    await drain();
     const askedFor = requestLog.filter((entry) => entry.agentId === "a1" && entry.path === "/me/notes");
     const readsTheWorkspace = askedFor.length > 0;
     if (!readsTheWorkspace) {
@@ -751,18 +882,20 @@ async function main() {
     }
     const listsNewestFirst = true;
 
-    // A note opens the ONE viewer. No second implementation, and the desk
-    // browser stays where the operator left it.
+    // A note opens the ONE viewer — as a layer over the desk. No second
+    // implementation, and the desk browser stays where the operator left it.
     await notes()[0].dispatchClick();
     await drain();
-    // The viewer is a modal now, so it is known by what it holds: the one
-    // panel whose body is the file view.
-    const opensSharedViewer = documentStub.body.querySelectorAll(".modal-panel")
-        .filter((panel) => panel.querySelectorAll(".file-view").length === 1).length === 1;
+    // The viewer is known by what it holds: the one panel whose body is the
+    // file view.
+    const opensSharedViewer = modals()
+        .filter((panel) => panel.querySelectorAll(".file-view").length === 1).length === 1
+        && Boolean(deskModal());
     if (!opensSharedViewer) {
-        throw new Error("clicking a note must open the shared file viewer");
+        throw new Error("clicking a note must open the shared file viewer over the desk");
     }
     BossModFileViewer.close();
+    await drain();
 
     // A subfolder is handed to the desk browser, which is the thing that
     // navigates. Listing it and doing nothing would be a dead control.
@@ -771,14 +904,24 @@ async function main() {
     const folderRow = requestLog.filter((entry) => entry.path === "/me/notes/archive");
     if (!folderRow.length) throw new Error("a notes subfolder must open in the desk browser");
 
+    // A desk opened on a path — a deliverable, a note's desk path — puts its
+    // file browser there rather than at the root.
+    const before = requestLog.length;
+    desk.open("a1", "/me/reports");
+    await drain();
+    const opensOnThePathItWasGiven = requestLog.slice(before)
+        .some((entry) => entry.agentId === "a1" && entry.path === "/me/reports");
+    if (!opensOnThePathItWasGiven) {
+        throw new Error("a desk opened on a path must browse that path");
+    }
+
     // ─── An agent who has written nothing gets the empty state, not an error ───
 
-    store.setState({ contextMode: "office" });
-    store.setState({ contextMode: "desk", deskAgentId: "a3" });
+    desk.open("a3");
     await drain();
     // Scoped to the Notes section: Tasks and Files have empty states of their
     // own, and a cross-section query would let one stand in for another.
-    const notesSection = () => contextEl.querySelector(".desk-notes");
+    const notesSection = () => inDesk(".desk-notes");
     const notesText = (selector) => notesSection().querySelectorAll(selector)
         .map((n) => n.textContent);
     const emptyCopy = notesText(".context-empty");
@@ -798,8 +941,7 @@ async function main() {
 
     // ─── A real failure is still a real failure ───
 
-    store.setState({ contextMode: "office" });
-    store.setState({ contextMode: "desk", deskAgentId: "a2" });
+    desk.open("a2");
     await drain();
     const errorNodes = notesText(".context-error");
     const failureSurfaces = errorNodes.some((text) => text.includes("Notes could not be loaded."))
@@ -808,20 +950,18 @@ async function main() {
     if (!failureSurfaces) {
         throw new Error(`a 500 must surface an error with a retry, got ${JSON.stringify(errorNodes)}`);
     }
-    store.setState({ contextMode: "office" });
+    desk.close();
+    await drain();
 
     // ─── 3c. Hire and Edit are the same centred dialog ───
     //
-    // The column hosted the form for one of the two flows and the desk swapped
-    // itself out for the other, so a source check would not notice if only one
-    // of them had moved. Driven from the desk's own footer control, because
-    // "what the operator clicks" is the claim.
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    // Driven from the desk's own head tool, because "what the operator
+    // clicks" is the claim.
+    desk.open("a1");
     await drain();
 
-    const modals = () => documentStub.body.querySelectorAll(".modal-panel");
-    const panelModal = () => modals().filter(
-        (node) => node.getAttribute("data-size") === "panel")[0];
+    /** The Edit role layer, known by its name: the desk is a panel too. */
+    const editModal = () => modals().find((node) => node.getAttribute("aria-label") === "Edit role");
     // Creating is the Agents dialog's Add agent tab now: a takeover, marked
     // for its stylesheet, and the only modal that carries that mark.
     const agentsModal = () => modals().filter(
@@ -829,18 +969,17 @@ async function main() {
     const openAddAgent = () => global.BossModAgentsDialog.open({ store, tab: "add" });
     // The frame's ✕ — the only exit on step one, whose footer row is empty.
     const closeByX = (dialog) => dialog.querySelector(".modal-close").dispatchClick();
-    if (modals().length !== 0) throw new Error("nothing should be open yet");
+    if (modals().length !== 1) throw new Error("only the desk should be open yet");
 
-    const editAction = contextEl.querySelectorAll(".desk-action")
-        .filter((node) => node.textContent === "Edit role")[0];
-    if (!editAction) throw new Error("the desk footer must offer Edit role");
+    const editAction = inDesk("#desk-edit");
+    if (!editAction) throw new Error("the desk head must offer Edit role");
     await editAction.dispatchClick();
     await drain();
 
-    const opened = panelModal();
+    const opened = editModal();
     const editOpensThePanelModal = Boolean(opened)
         && opened.getAttribute("role") === "dialog"
-        && opened.getAttribute("aria-label") === "Edit role"
+        && opened.getAttribute("data-size") === "panel"
         && Boolean(opened.querySelector("#agent-form"))
         // The edit flow keeps its remove path.
         && Boolean(opened.querySelector("#btn-delete-agent"));
@@ -849,14 +988,16 @@ async function main() {
             + `${opened && opened.getAttribute("data-size")} `
             + `form ${Boolean(opened && opened.querySelector("#agent-form"))}`);
     }
-    // It floats over the app, not inside the 320px column that used to host it.
+    // It floats over the app as a LAYER over the desk, not inside the column
+    // — and the desk it was opened from is still mounted underneath, hidden.
     const modalIsAttachedToTheBodyNotTheColumn =
         documentStub.body.children.indexOf(opened) !== -1
         && contextEl.querySelectorAll(".modal-panel").length === 0
-        // ...and the desk it was opened from is still mounted underneath.
-        && contextEl.querySelectorAll(".desk-panel").length === 1;
+        && Boolean(deskModal()) && deskModal().hidden === true
+        && opened.querySelector(".modal-back").hidden === false
+        && opened.querySelector(".modal-back").getAttribute("aria-label") === "Back to Jim";
     if (!modalIsAttachedToTheBodyNotTheColumn) {
-        throw new Error("the dialog must float over the app, leaving the desk mounted");
+        throw new Error("the dialog must be a layer over the desk, leaving the desk mounted");
     }
     // The form is inside the SCROLLING body, and the dismissal outside it.
     const modalBody = opened.querySelectorAll(".modal-body")[0];
@@ -912,40 +1053,39 @@ async function main() {
     await deleteDialog.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
         .find((btn) => btn.textContent === "Keep it").dispatchClick();
     await drain();
-    if (modals().length !== 1 || panelModal() !== opened) {
-        throw new Error(`Keep it must leave only the edit dialog open, got ${modals().length}`);
+    if (modals().length !== 2 || editModal() !== opened) {
+        throw new Error(`Keep it must leave the edit dialog over the desk, got ${modals().length}`);
     }
 
     // Dismissing puts the desk back in front and repaints it. BY NAME: the
     // first action in the row is Save as template, which opens a layer.
     await pinnedAction(opened, "Cancel").dispatchClick();
     await drain();
-    const closingTheModalRestoresTheDesk = modals().length === 0
-        && contextEl.querySelectorAll(".desk-panel").length === 1
-        && contextEl.querySelectorAll(".desk-name")
-            .map((n) => n.textContent).join("").includes("Jim");
+    const closingTheModalRestoresTheDesk = modals().length === 1
+        && Boolean(deskModal()) && deskModal().hidden === false
+        && deskText(".desk-role").includes("Engineer");
     if (!closingTheModalRestoresTheDesk) {
         throw new Error(`closing must leave the desk showing, got `
             + `${modals().length} dialogs`);
     }
 
-    // One at a time. The rail's Hire row is reachable while a desk's Edit
-    // dialog is up, and the form's identity is per render — but two stacked
-    // agent dialogs would still fight over Escape and the focus trap, and two
-    // live `#agent-form`s would let one primary submit the other's draft.
-    // The Hire door is the Agents dialog now; it hands back the Edit dialog
-    // that holds the one-form slot and builds nothing of its own.
+    // One at a time. Two stacked agent dialogs would fight over Escape and the
+    // focus trap, and two live `#agent-form`s would let one primary submit the
+    // other's draft. The Hire door is the Agents dialog now; it hands back the
+    // Edit dialog that holds the one-form slot and builds nothing of its own.
     await editAction.dispatchClick();
     await drain();
-    const first = panelModal();
+    const first = editModal();
     const handedBack = openAddAgent();
     await drain();
-    const onlyOneDialogAtATime = modals().length === 1 && panelModal() === first
+    const onlyOneDialogAtATime = modals().length === 2 && editModal() === first
         && agentsModal() === undefined && typeof handedBack.close === "function";
     if (!onlyOneDialogAtATime) {
         throw new Error(`a second dialog must not stack, got ${modals().length}`);
     }
     await pinnedAction(first, "Cancel").dispatchClick();
+    await drain();
+    desk.close();
     await drain();
 
     // Creating is the Agents dialog's Add agent tab: the same centred modal
@@ -1062,7 +1202,6 @@ async function main() {
     await closeByX(hire);
     await drain();
     if (modals().length !== 0) throw new Error("the hire dialog must close");
-    store.setState({ contextMode: "office" });
 
     // ─── 3d. "Set All" reaches the five it writes to, AFTER publication ───
     //
@@ -1113,8 +1252,16 @@ async function main() {
     }
     createSucceeds = false;
     if (modals().length !== 0) throw new Error("a successful create must close the dialog");
-    store.setState({ contextMode: "office", deskAgentId: null });
-    await drain();
+    // A create opens the new agent's CONVERSATION and nothing else: a desk
+    // springing open over the chat the operator just landed in would block
+    // it, and the desk is one click away on the conversation's lamp.
+    const createOpensTheConversationOnly = store.getState().conversationId === "new-1"
+        && store.getState().conversationKind === "agent"
+        && deskModal() === undefined;
+    if (!createOpensTheConversationOnly) {
+        throw new Error(`a create must open the conversation and no desk, got `
+            + `${store.getState().conversationId} with ${modals().length} dialogs`);
+    }
 
     // ─── 3e. A connections read that answers an ERROR still renders a form ───
     //
@@ -1126,12 +1273,11 @@ async function main() {
     // operator was then told the whole editor had failed to load, which is a
     // different and much worse story than "you have none configured".
     connectionsFail = true;
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    desk.open("a1");
     await drain();
-    contextEl.querySelectorAll(".desk-action")
-        .filter((node) => node.textContent === "Edit role")[0].dispatchClick();
+    await inDesk("#desk-edit").dispatchClick();
     await drain();
-    const degradedForm = panelModal();
+    const degradedForm = editModal();
     const feedbackLine = degradedForm.querySelector("#agent-save-feedback");
     const degradedPrimary = documentStub.querySelector("#agent-form-submit");
     const aFailedConnectionsReadStillRendersTheForm =
@@ -1159,7 +1305,8 @@ async function main() {
         .querySelectorAll("button").find((b) => b.textContent === "Cancel").dispatchClick();
     await drain();
     connectionsFail = false;
-    store.setState({ contextMode: "office" });
+    desk.close();
+    await drain();
 
     // ─── 3e². A read that REJECTS costs its OWN list and nothing else ───
     //
@@ -1223,8 +1370,6 @@ async function main() {
     }
     personalitiesFail = false;
     createSucceeds = false;
-    store.setState({ contextMode: "office", deskAgentId: null });
-    await drain();
 
     // ─── 3f. The quick layout: the guard, and the fan-out it lets through ───
     //
@@ -1349,8 +1494,6 @@ async function main() {
     }
     createSucceeds = false;
     if (modals().length !== 0) throw new Error("a successful create must close the dialog");
-    store.setState({ contextMode: "office", deskAgentId: null });
-    await drain();
 
     // ─── 3g. The fifth route: refused at the create, not at a control ───
     //
@@ -1564,8 +1707,6 @@ async function main() {
     await drain();
     connectionsEmpty = false;
     createSucceeds = false;
-    store.setState({ contextMode: "office", deskAgentId: null });
-    await drain();
 
     // ─── 3h. The refusal is CREATE-only; an edit with five nulls still saves ───
     //
@@ -1575,12 +1716,11 @@ async function main() {
     // losing every other edit they came to make — so EDIT stays permissive and
     // the guarantee sits only where the agent is brought into being.
     updates.length = 0;
-    store.setState({ contextMode: "desk", deskAgentId: "a1" });
+    desk.open("a1");
     await drain();
-    contextEl.querySelectorAll(".desk-action")
-        .filter((node) => node.textContent === "Edit role")[0].dispatchClick();
+    await inDesk("#desk-edit").dispatchClick();
     await drain();
-    const editing = panelModal();
+    const editing = editModal();
     const editingForm = editing.querySelector("#agent-form");
     for (const key of MODEL_KEYS) {
         editingForm.querySelector(`select[name="${key}"]`).value = "";
@@ -1588,16 +1728,18 @@ async function main() {
     editingForm.querySelector('input[name="name"]').value = "Jim";
     await documentStub.querySelector("#agent-form-submit").dispatchClick();
     await drain();
+    // The save closes the edit layer and leaves the desk it was opened from.
     const anEditWithNoConnectionStillSaves = updates.length === 1
         && updates[0].id === "a1"
         && MODEL_KEYS.every((key) => updates[0].body[key] === null)
-        && modals().length === 0;
+        && editModal() === undefined
+        && modals().length === 1 && Boolean(deskModal());
     if (!anEditWithNoConnectionStillSaves) {
         throw new Error(`an edit must never be refused for having no connection, got `
             + `${updates.length} updates ${JSON.stringify(updates[0] || {})} `
             + `${modals().length} modals`);
     }
-    store.setState({ contextMode: "office", deskAgentId: null });
+    desk.close();
     await drain();
 
     // ─── 3i. Recreating a RECENT agent, through the real form ───
@@ -1741,8 +1883,6 @@ async function main() {
     createSucceeds = false;
     personalities = [];
     snapshots = [];
-    store.setState({ contextMode: "office", deskAgentId: null });
-    await drain();
 
     // ─── 4. Navigating away from Chat takes the column with it ───
 
@@ -1777,7 +1917,20 @@ async function main() {
         keptOptionCarriesThePrompt,
         recreateSavesAsACreateWithTheKeptPrompt,
         aMatchedPromptIsJustThatPersonality,
-        switchesModes,
+        columnHoldsOnlyTheOffice,
+        oneDeskAtATime,
+        deskDrainsOnClose,
+        toolsAreInTheHead,
+        optionsMenuHoldsTheRest,
+        taskRowIsAButtonWithTheSharedPill,
+        taskRowOpensTheTask,
+        seeAllOpensTheAgentsTasks,
+        removeClosesTheDesk,
+        aRenameRetitlesTheDesk,
+        anAgentGoneFromTheRosterClosesTheDesk,
+        chatToolOpensTheConversation,
+        opensOnThePathItWasGiven,
+        createOpensTheConversationOnly,
         drainsOnDestroy,
         rendersUnknownRoom,
         drawsEveryMappedRoom,

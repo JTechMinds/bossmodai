@@ -16,7 +16,7 @@ const BossModChatPlace = (() => {
 
     let store = null;
     let conversation = null;
-    let contextColumn = null;
+    let miniOffice = null; // The context column's one view: the office summary.
     let contextEl = null;
     let bodyEl = null;
     let container = null;
@@ -71,9 +71,9 @@ const BossModChatPlace = (() => {
 
         /**
          * @param {HTMLElement} el
-         * @param {object} ctx  `{ store, bus, api, needs, contextEl, navigate }`
-         *   from the shell. Chat is the only place with a context column, so it
-         *   is the only place that fills `ctx.contextEl`.
+         * @param {object} ctx  `{ store, bus, api, needs, contextEl, openDesk,
+         *   navigate }` from the shell. Chat alone fills `ctx.contextEl`, with
+         *   the office summary; `openDesk` is the one desk modal.
          * @returns {void}
          */
         mount(el, ctx) {
@@ -88,7 +88,8 @@ const BossModChatPlace = (() => {
             el.append(h('h1', { class: 'visually-hidden', tabindex: '-1' }, 'Chat'), bodyEl);
 
             if (typeof BossModMentions !== 'undefined') {
-                BossModMentions.configure({ store: ctx.store, navigate: ctx.navigate });
+                BossModMentions.configure({ store: ctx.store, navigate: ctx.navigate,
+                    onViewDesk: (agent) => ctx.openDesk(agent.id) });
             }
 
             conversation = BossModConversation.createConversation({
@@ -98,19 +99,18 @@ const BossModChatPlace = (() => {
                 navigate: ctx.navigate,
                 needs: ctx.needs,
                 drafts, cache: transcriptCache,
-                // A desk path from a note, or an agent id from the chrome.
-                openDesk: (target) => BossModContextColumn.openDeskFrom(ctx.store, target),
+                // `(agentId, path?)`: the lamp, and a deliverable's desk.
+                openDesk: ctx.openDesk,
                 // The Browser Vision screen button in an agent's header.
                 browserView: BossModExtensionsLive.headerCapability(),
             });
 
-            contextColumn = BossModContextColumn.createContextColumn({
-                el: ctx.contextEl,
-                store: ctx.store,
-                bus: ctx.bus,
-                api: ctx.api,
-                navigate: ctx.navigate,
+            // The column's one view: the desk that was its second is a modal.
+            clear(contextEl);
+            miniOffice = BossModMiniOffice.createMiniOffice({
+                store: ctx.store, api: ctx.api, navigate: ctx.navigate, openDesk: ctx.openDesk,
             });
+            contextEl.append(miniOffice.element);
 
             disposers.push(store.subscribe((s) => s.conversationId, applyConversation));
             disposers.push(store.subscribe((s) => s.conversationKind, applyConversation));
@@ -130,10 +130,10 @@ const BossModChatPlace = (() => {
             if (conversation) conversation.destroy();
             conversation = null;
             if (typeof BossModMentions !== 'undefined') BossModMentions.configure(null);
-            // The column must not survive a navigation away from Chat: the
+            // The summary must not survive a navigation away from Chat: the
             // shell hides the element, but the subscriptions would leak.
-            if (contextColumn) contextColumn.destroy();
-            contextColumn = null;
+            if (miniOffice) miniOffice.destroy();
+            miniOffice = null;
             if (contextEl) clear(contextEl);
             contextEl = null;
             if (container) clear(container);

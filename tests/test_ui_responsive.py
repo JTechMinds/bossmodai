@@ -129,6 +129,8 @@ def test_no_gesture_only_controls() -> None:
     """
     payload = _harness()
     assert payload["openersAreNamedButtons"] is True
+    # The column is the office summary alone; its opener says so.
+    assert payload["contextOpenerSaysOffice"] is True
     assert payload["presentsTheLiveColumn"] is True
     assert payload["onePanelAtATime"] is True
     assert payload["restoresColumnOrder"] is True

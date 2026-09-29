@@ -129,6 +129,8 @@ def test_modal_accessibility_contract() -> None:
         # (backdropClickDoesNotDismiss above), a caller may pass true, and a
         # function is asked at click time so a viewer can refuse mid-edit.
         "headIsFirstAndOrdered": True,
+        # The ‹ is the one back control every modal shares, and it is painted.
+        "backIsTheSharedControl": True,
         "panelSizeIsDeclared": True,
         "closeButtonTakesFocusWhenNothingElseCan": True,
         "closeLabelNamesTheDialog": True,

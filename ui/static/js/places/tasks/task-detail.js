@@ -63,7 +63,7 @@ const BossModTaskDetail = (() => {
                 SECTIONS.statusLine(task),
                 SECTIONS.facts(task, { tasks, colorOf, onNavigate }),
                 SECTIONS.callout(task, { onOpenChat }),
-                instructions,
+                instructions ? instructions.element : null,
                 SECTIONS.deliverables(task, children, api),
                 SECTIONS.subtasks(children, onNavigate),
                 SECTIONS.doneContract(task),
@@ -134,7 +134,7 @@ const BossModTaskDetail = (() => {
 
         // Measured once the modal is on screen, which is the first moment the
         // instructions have a height to compare against.
-        if (instructions) SECTIONS.measureClamp(instructions);
+        if (instructions) instructions.measure();
         BossModIcons.paint(panel.element, 'task-detail');
 
         return { close: panel.close };

@@ -4,13 +4,15 @@
  * Spec 10. The layout itself is CSS: three breakpoints in shell.css decide
  * which columns are in the grid. What CSS cannot do is give the operator a way
  * back to a column it has removed, and that is all this module is — a ☰ button
- * for the roster below 768px and a Desk button for the context column below
- * 1200px.
+ * for the roster below 768px and an Office button for the context column below
+ * 1200px. The context column holds the office summary and nothing else now
+ * (the desk is its own modal), so the button is named for what it opens: a
+ * "Desk" button that opened no desk would be a control that lies.
  *
  * Both open the column that is already mounted, by MOVING it into
  * core/overlays.js's modal and putting it back on close. Rebuilding it
- * would throw away whatever the operator had open — the desk folder they had
- * navigated to, the roster search they had typed — and would need a second
+ * would throw away whatever the operator had open — the roster search they
+ * had typed, the floor plan the summary had loaded — and would need a second
  * copy of every view. There is one roster and one context column at every
  * width; only where they sit changes.
  *
@@ -39,8 +41,8 @@ const BossModResponsive = (() => {
      * @param {HTMLElement} deps.placeEl    #app-place, the anchor both columns
      *   are restored around.
      * @param {HTMLElement} deps.contextEl  #app-context.
-     * @param {object} deps.store           Application store; the Desk button
-     *   is offered only where a context column exists (Chat).
+     * @param {object} deps.store           Application store; the Office
+     *   button is offered only where a context column exists (Chat).
      * @returns {() => void} disposer — closes anything open, restores both
      *   columns to the grid, and drains every listener.
      * @throws {Error} When any dependency is missing. A drawer button with no
@@ -118,19 +120,19 @@ const BossModResponsive = (() => {
             onclick: () => present(rosterEl, 'People and threads'),
         }, h('i', { 'data-lucide': 'menu', 'aria-hidden': 'true' }));
 
-        const deskButton = h('button', {
-            class: 'responsive-desk-btn',
+        const contextButton = h('button', {
+            class: 'responsive-context-btn',
             type: 'button',
-            'aria-label': 'Open the context column',
-            onclick: () => present(contextEl, 'Context'),
+            'aria-label': 'Open the office summary',
+            onclick: () => present(contextEl, 'Office'),
         }, h('i', { 'data-lucide': 'panel-right', 'aria-hidden': 'true' }),
-            h('span', { class: 'responsive-btn-label' }, 'Desk'));
+            h('span', { class: 'responsive-btn-label' }, 'Office'));
 
         headerEl.prepend(menuButton);
-        headerEl.append(deskButton);
+        headerEl.append(contextButton);
         BossModIcons.paint(headerEl, 'responsive');
 
-        // The Desk button is offered on Chat alone, because Chat is the only
+        // The Office button is offered on Chat alone, because Chat is the only
         // place with a context column to open (spec 3.1). A button that opens
         // an empty panel is the control-that-does-nothing this project keeps
         // deleting.
@@ -138,11 +140,11 @@ const BossModResponsive = (() => {
             (s) => s.place,
             (placeId) => {
                 const place = BossModPlaces.get(placeId);
-                deskButton.classList.toggle('is-available', place.hasContext === true);
+                contextButton.classList.toggle('is-available', place.hasContext === true);
                 if (place.hasContext !== true && open) closeOpen();
             }));
         const startPlace = BossModPlaces.get(store.getState().place);
-        deskButton.classList.toggle('is-available', startPlace.hasContext === true);
+        contextButton.classList.toggle('is-available', startPlace.hasContext === true);
 
         // Widening the window puts the column back in the grid. Leaving the
         // modal up over a layout that already has room for it would show the
@@ -163,7 +165,7 @@ const BossModResponsive = (() => {
             closeOpen();
             disposers.splice(0).forEach((off) => off());
             menuButton.remove();
-            deskButton.remove();
+            contextButton.remove();
         };
     }
 

@@ -423,9 +423,15 @@ global.BossModMarketplace = {
         // can tell which pane holds the keyboard.
         const element = h("div", { class: "market-host" },
             h("input", { id: "market-find", type: "search" }));
+        // The pane's title-row chevron: hidden, as the real one is while no
+        // pack is open, so it never competes with Add agent's own.
+        const lead = h("span", { class: "market-lead-stub" });
+        lead.hidden = true;
         return {
             element,
+            lead,
             activate() { marketActivations += 1; },
+            deactivate() {},
             refreshLibrary() { marketRefreshes += 1; return Promise.resolve(); },
         };
     },
@@ -586,7 +592,13 @@ async function main() {
         // In the head, never in the body or the row: the body is emptied by a
         // failed build and the row is rebuilt on every step swap.
         && Boolean(dialog().querySelector(".modal-head").querySelector("#agent-add-back"))
-        && footer().querySelector("#agent-add-back") === null;
+        && footer().querySelector("#agent-add-back") === null
+        // The frame's one back control, the same shape as every layer's ‹:
+        // bordered, icon-only, named twice by one string.
+        && ["btn", "btn-sm", "step-back"].every((name) => find("#agent-add-back").classList.contains(name))
+        && find("#agent-add-back").getAttribute("data-tooltip")
+            === find("#agent-add-back").getAttribute("aria-label")
+        && Boolean(find("#agent-add-back").querySelector('[data-lucide="chevron-left"]'));
     // Step one's row is EMPTY now: no primary (there is no form for it to
     // submit), no `Browse marketplace` (the Marketplace is the tab beside this
     // one), and no Cancel (the frame's ✕ is the exit on every tab).

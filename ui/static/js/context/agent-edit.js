@@ -8,7 +8,8 @@
  * re-export — nothing outside reached it through here, and a second name for
  * one function is a seam that is not there. What it owns beyond the dialog is
  * the wiring the dock-era host did: a save closes the form and leaves the
- * operator where they were, and a delete falls the column back to the office.
+ * operator where they were, and a delete tells the host (`onDeleted`), which
+ * closes the desk the agent was shown in.
  *
  * EDIT ONLY, and one step: the full form for an agent that exists. Creating
  * one is the Agents dialog's Add agent tab (context/agents-dialog.js over
@@ -48,9 +49,10 @@ const BossModAgentEdit = (() => {
      * Open an agent's role form as a centred dialog.
      *
      * @param {object} deps
-     * @param {object} deps.store  Application store. A delete writes the
-     *   context column back to the office.
      * @param {object} deps.agent  The roster row to edit.
+     * @param {() => void} [deps.onDeleted]  Called once the form's Delete has
+     *   landed, before this dialog closes: whatever showed the agent — the
+     *   desk this was opened from — cannot stay open on someone deleted.
      * @param {() => void} [deps.onClosed]  Called once after the dialog closes,
      *   however it closed — a save, a delete, Cancel, or Esc. Not called at
      *   all when another agent dialog already holds the slot: nothing opened.
@@ -59,13 +61,15 @@ const BossModAgentEdit = (() => {
      *   dialog's handle — handing back the open one is the only answer that
      *   neither stacks two traps nor throws away a draft nobody asked to
      *   discard.
-     * @throws {Error} When store or agent is missing. There is no create path
+     * @throws {Error} When agent is missing. There is no create path
      *   here any more, so a missing agent is a caller that wanted the Agents
      *   dialog, and saying so beats opening a form that would create.
      */
     function openAgentModal(deps) {
-        const { store, agent, onClosed } = deps || {};
-        if (!store) throw new Error('[agent-edit] deps.store is required');
+        // No store: the only thing this ever wrote into it was the context
+        // column's desk keys on a delete, and the desk is a modal now whose
+        // owner hears about a delete through `onDeleted`.
+        const { agent, onClosed, onDeleted } = deps || {};
         if (!agent) {
             throw new Error('[agent-edit] deps.agent is required: creating an agent is '
                 + 'the Agents dialog\'s (context/agents-dialog.js)');
@@ -142,7 +146,7 @@ const BossModAgentEdit = (() => {
 
         function onDelete() {
             if (destroyed) return;
-            store.setState({ contextMode: 'office', deskAgentId: null, deskPath: null });
+            if (onDeleted) onDeleted();
             modal.close();
         }
 

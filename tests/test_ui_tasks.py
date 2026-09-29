@@ -46,7 +46,7 @@ DETAIL_MODULES = [
     JS / "core" / "dom.js", JS / "core" / "avatar.js", JS / "core" / "format.js",
     JS / "core" / "specialty.js", JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
-    JS / "core" / "fact-list.js",
+    JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-deliverables.js",
     TASKS / "task-events.js", TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
 ]

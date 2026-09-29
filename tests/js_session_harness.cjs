@@ -19,7 +19,8 @@ const S = BossModSession;
 const PLACES = ["chat", "office", "tasks", "files", "metrics", "log"];
 const ctx = { places: PLACES, agentIds: ["a1"], threadIds: ["t1"] };
 
-// Only the six allowed keys persist.
+// Only the five allowed keys persist. `contextMode` is not one of them any
+// more: the desk is a modal, and transient UI does not survive a reload.
 S.save({
     place: "tasks", conversationId: "a1", conversationKind: "agent",
     contextMode: "desk", railCollapsed: true,
@@ -28,8 +29,9 @@ S.save({
 });
 const raw = JSON.parse(global.localStorage.getItem("bossmod_ui"));
 if ("roster" in raw || "needs" in raw) throw new Error("only whitelisted keys may persist");
+if ("contextMode" in raw) throw new Error("the desk's old column mode must not persist");
 if (Object.keys(raw).sort().join(",") !==
-    "contextMode,conversationId,conversationKind,currentFloorId,place,railCollapsed") {
+    "conversationId,conversationKind,currentFloorId,place,railCollapsed") {
     throw new Error(`unexpected persisted keys: ${Object.keys(raw).join(",")}`);
 }
 
@@ -41,20 +43,20 @@ if (restored.place !== "tasks" || restored.conversationId !== "a1") {
 
 // A conversation for a deleted agent falls back to the empty state.
 S.save({ place: "chat", conversationId: "ghost", conversationKind: "agent",
-         contextMode: "office", railCollapsed: false });
+         railCollapsed: false });
 restored = S.validate(S.load(), ctx);
 if (restored.conversationId !== null) throw new Error("stale agent id must be dropped");
 if (restored.conversationKind !== null) throw new Error("kind must clear with the id");
 
 // A thread that no longer exists is dropped too.
 S.save({ place: "chat", conversationId: "t9", conversationKind: "thread",
-         contextMode: "office", railCollapsed: false });
+         railCollapsed: false });
 restored = S.validate(S.load(), ctx);
 if (restored.conversationId !== null) throw new Error("stale thread id must be dropped");
 
 // An unknown place falls back to chat.
 S.save({ place: "nowhere", conversationId: null, conversationKind: null,
-         contextMode: "office", railCollapsed: false });
+         railCollapsed: false });
 restored = S.validate(S.load(), ctx);
 if (restored.place !== "chat") throw new Error("unknown place must fall back to chat");
 
@@ -68,9 +70,14 @@ if (afterCorrupt.place !== "chat" || afterCorrupt.conversationId !== null) {
 // A partial object gets full defaults, not undefined holes.
 global.localStorage.setItem("bossmod_ui", JSON.stringify({ place: "log" }));
 const partial = S.validate(S.load(), ctx);
-for (const key of ["place", "conversationId", "conversationKind", "contextMode", "railCollapsed", "currentFloorId"]) {
+for (const key of ["place", "conversationId", "conversationKind", "railCollapsed", "currentFloorId"]) {
     if (!(key in partial)) throw new Error(`restored object missing ${key}`);
 }
+// A blob saved before the desk became a modal still carries `contextMode`;
+// load() reads only the persisted keys, so it never reaches the store.
+global.localStorage.setItem("bossmod_ui", JSON.stringify({ place: "chat", contextMode: "desk" }));
+const legacy = S.validate(S.load(), ctx);
+if ("contextMode" in legacy) throw new Error("an old blob's contextMode must be ignored");
 if (partial.place !== "log") throw new Error("valid partial key must survive");
 
 process.stdout.write(JSON.stringify({

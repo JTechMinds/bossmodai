@@ -125,7 +125,10 @@ const BossModDeskExtensions = (() => {
 
         function row(item) {
             const nameId = `desk-ext-name-${item.id}`;
+            // One row: the glyph, the name and state on the left, the actions
+            // on the right.
             return h('li', { class: 'desk-ext', 'aria-labelledby': nameId },
+                h('i', { 'data-lucide': 'puzzle', 'aria-hidden': 'true' }),
                 h('div', { class: 'desk-ext-main' },
                     h('span', { class: 'desk-ext-name', id: nameId }, item.name),
                     h('span', { class: 'desk-ext-status' },
@@ -152,7 +155,7 @@ const BossModDeskExtensions = (() => {
                 element.append(
                     h('p', { class: 'context-error', role: 'alert' }, message || COPY.failed),
                     h('button', {
-                        class: 'desk-files-btn', type: 'button', id: 'desk-ext-retry',
+                        class: 'btn btn-sm', type: 'button', id: 'desk-ext-retry',
                         onclick: () => { void refresh(); },
                     }, COPY.retry));
             } else if (status === 'ready' && items.length) {
@@ -160,6 +163,8 @@ const BossModDeskExtensions = (() => {
             } else if (status === 'initial') {
                 element.append(h('p', { class: 'context-skeleton' }, COPY.loading));
             }
+            // Rebuilt per read, so this section paints its own glyphs.
+            BossModIcons.paint(element, 'desk-extensions');
             onChange();
         }
 

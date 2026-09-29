@@ -405,7 +405,7 @@ async function main() {
     const rail = documentStub.createElement("aside");
     documentStub.body.append(rail);
     const unmountRoster = BossModRoster.mount(rail, {
-        store, bus, apiFetch: api, navigate: noop, onHire: noop,
+        store, bus, apiFetch: api, navigate: noop, openDesk: noop, onHire: noop,
     });
     await tick();
 

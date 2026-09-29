@@ -58,9 +58,15 @@ const destroy = BossModResponsive.mount({
 });
 
 const menu = header.querySelector(".responsive-menu-btn");
-const desk = header.querySelector(".responsive-desk-btn");
+// The context column holds the office summary and nothing else, so its
+// opener is named for that: a "Desk" button that opened no desk would lie.
+const desk = header.querySelector(".responsive-context-btn");
 if (!menu) throw new Error("no drawer button was inserted into the header");
 if (!desk) throw new Error("no context button was inserted into the header");
+const contextOpenerSaysOffice = desk.getAttribute("aria-label") === "Open the office summary"
+    && desk.querySelector(".responsive-btn-label").textContent === "Office"
+    && header.querySelectorAll(".responsive-desk-btn").length === 0;
+if (!contextOpenerSaysOffice) throw new Error("the context opener must say Office, not Desk");
 
 // ─── 1. Both openers are real, named buttons ───
 
@@ -102,7 +108,8 @@ if (!panel.querySelector(".modal-close")) throw new Error("the panel must be dis
 
 await_(desk.dispatchClick());
 const panels = documentStub.body.querySelectorAll(".responsive-panel");
-const onePanelAtATime = panels.length === 1 && panels[0].contains(context);
+const onePanelAtATime = panels.length === 1 && panels[0].contains(context)
+    && panels[0].getAttribute("aria-label") === "Office";
 if (!onePanelAtATime) throw new Error(`expected one panel holding the context, got ${panels.length}`);
 // Opening the second put the first back where the grid expects it: roster,
 // place — appending blindly would have left the roster to the RIGHT of centre.
@@ -136,7 +143,7 @@ const widenClosesThePanel =
     && layout.children.map((c) => c.className).join("|") === "app-roster|app-place|app-context";
 if (!widenClosesThePanel) throw new Error("crossing the breakpoint must return the column to the grid");
 
-// ─── 5. The Desk button is only offered where a context column exists ───
+// ─── 5. The Office button is only offered where a context column exists ───
 
 if (!desk.classList.contains("is-available")) throw new Error("Chat has a context column");
 const noContextPlace = BossModPlaces.PLACE_IDS.find(
@@ -145,7 +152,7 @@ if (!noContextPlace) throw new Error("every place claims a context column");
 store.setState({ place: noContextPlace });
 const hiddenWhereThereIsNoContext = !desk.classList.contains("is-available");
 if (!hiddenWhereThereIsNoContext) {
-    throw new Error(`the Desk button is offered on ${noContextPlace}, which has no context column`);
+    throw new Error(`the Office button is offered on ${noContextPlace}, which has no context column`);
 }
 
 destroy();
@@ -156,6 +163,7 @@ if (header.querySelectorAll(".responsive-menu-btn").length !== 0) {
 process.stdout.write(JSON.stringify({
     ok: true,
     openersAreNamedButtons,
+    contextOpenerSaysOffice,
     presentsTheLiveColumn,
     onePanelAtATime,
     restoresColumnOrder,

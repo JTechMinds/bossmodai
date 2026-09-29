@@ -87,9 +87,22 @@ def test_messages_linkify_pills_and_a_click_opens_the_menu() -> None:
 
 
 def test_chat_place_configures_focus_and_desk_the_rail_already_uses() -> None:
+    """Open Chat is the rail's conversation write; View Desk is the desk modal.
+
+    A mention cannot invent a third way to open either. View Desk has no
+    store-writing fallback any more: unconfigured, it throws rather than
+    silently doing nothing.
+    """
     place = _read(JS / "places" / "chat" / "chat-place.js")
-    assert "BossModMentions.configure({ store: ctx.store, navigate: ctx.navigate })" in place
+    configure = place.split("BossModMentions.configure({", 1)[1].split("});", 1)[0]
+    assert "store: ctx.store," in configure
+    assert "navigate: ctx.navigate" in configure
+    assert "onViewDesk: (agent) => ctx.openDesk(agent.id)" in configure
     assert "BossModMentions.configure(null)" in place
+    mentions = _read(CONVERSATION / "mentions.js")
+    view = mentions.split("function viewDesk(agent) {", 1)[1].split("\n    }\n", 1)[0]
+    assert "throw new Error('[mentions] onViewDesk is not configured');" in view
+    assert "setState" not in view
 
 
 def test_mention_css_is_soft_and_sits_on_the_text_line() -> None:
@@ -189,6 +202,7 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
         "menuActions": ["Open Chat", "View Desk", "Mention again"],
         "openChat": "joey",
         "viewDesk": "joey",
+        "viewDeskRefusesUnconfigured": True,
         "mentionAgain": "joey",
         "failClosedFired": True,
         "noHardJumpOnClick": True,

@@ -446,13 +446,18 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert note.index("'data-desk-path': deskPath") < note.index(
         "typeof ctx.openDeliverable === 'function'"
     )
-    # Phase 2A did not inject it; Phase 2B does, with the context column. The
-    # assertion is inverted rather than deleted: it was correct for 2A and is
-    # now correct in the opposite direction, and the property it guards — the
-    # affordance and its capability ship together — is the same either way.
+    # Phase 2A did not inject it; Phase 2B does. The assertion is inverted
+    # rather than deleted: it was correct for 2A and is now correct in the
+    # opposite direction, and the property it guards — the affordance and its
+    # capability ship together — is the same either way. The capability is the
+    # shell's desk modal now, `(agentId, path?)`, passed straight through.
     place = _read(JS / "places" / "chat" / "chat-place.js")
-    assert "openDesk:" in place, "Phase 2B injects openDesk from the Chat place"
-    assert "BossModContextColumn.openDeskFrom(" in place
+    assert "openDesk: ctx.openDesk," in place, "the Chat place injects the desk modal"
+    assert "BossModContextColumn" not in place
+    # The desk fallback opens the AUTHOR's desk on the path, so a note with no
+    # author renders no link rather than a link to nobody's desk.
+    assert "(typeof ctx.openDesk === 'function' && Boolean(noteAgentId))" in note
+    assert "ctx.openDesk(agentId, filePath);" in note
     controller = _read(CONVERSATION / "conversation.js")
     assert "openDeliverable" in controller
     assert "BossModTaskDeliverables.openDeliverablePath" in controller

@@ -77,7 +77,7 @@ const BossModAgentsDialog = (() => {
      *
      * @param {object} deps
      * @param {object} deps.store  Application store. A create writes the new
-     *   agent's conversation and desk into it.
+     *   agent's conversation into it.
      * @param {'add'|'marketplace'} deps.tab  The tab to open on — the menu
      *   door the operator used.
      * @returns {{close: () => void, select: (tab: string) => void}|{close: () => void}}
@@ -151,6 +151,9 @@ const BossModAgentsDialog = (() => {
             panels.add.hidden = id !== 'add';
             panels.marketplace.hidden = id !== 'marketplace';
             if (id === 'add') {
+                // The marketplace's back chevron shares the title row; it is
+                // put away before the Add agent pane may show its own.
+                market.deactivate();
                 addPane.activate();
                 return;
             }
@@ -190,9 +193,13 @@ const BossModAgentsDialog = (() => {
         const modal = BossModOverlays.createModal({
             title: TITLE,
             body: h('div', { class: 'agents-body' }, panels.add, panels.marketplace),
-            // The Add agent pane's `‹` back to its picker, on the title row.
-            // Hidden until its form step is up, and whenever its tab is away.
-            lead: addPane.lead,
+            // Each pane's `‹`, on the title row: Add agent's back to its
+            // picker, the Marketplace's back from a pack to its grid. Both are
+            // the frame's one back control, each hidden unless its pane is up
+            // and has somewhere to go back to, so at most one ever shows. The
+            // wrapper is `display: contents` (overlays.css), so the head's
+            // spacing is the same as for a single lead.
+            lead: h('span', { class: 'modal-lead' }, addPane.lead, market.lead),
             // Where the Office keeps Map | Org: the right end of the head.
             tools: [tabs.element],
             // One size for both tabs, so a tab switch never resizes the box
@@ -219,7 +226,7 @@ const BossModAgentsDialog = (() => {
         // measure are this dialog's, not every takeover's.
         modal.element.setAttribute('data-dialog', 'agents');
         addPane.attach(modal);
-        // The chevron, the two tabs' marks and both panes' magnifiers are
+        // Both chevrons, the two tabs' marks and both panes' magnifiers are
         // lucide placeholders until the panel is mounted, and createModal has
         // just mounted it. Scoped to this panel, never the document.
         BossModIcons.paint(modal.element, 'agents-dialog');

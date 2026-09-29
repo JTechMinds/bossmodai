@@ -1,5 +1,5 @@
 /**
- * BossMod AI — the desk browser in the context column.
+ * BossMod AI — the Files section of an agent's desk.
  *
  * Ported from agent-context.js. Two things changed and both are deliberate:
  * the DOM is built with BossModDom.h rather than assembled from markup
@@ -98,74 +98,107 @@ const BossModDeskFiles = (() => {
         }
 
         /**
-         * Where to go from the folder on screen.
+         * One icon-only control on the toolbar: the head's icon-button shape,
+         * named twice — accessible name and tooltip — by one string.
          *
-         * Quiet links, not bordered buttons: at the desk root these are
-         * `Projects`, `Open Folder` and `Refresh`, and three equal boxes
-         * outweighed the files they act on. They stay HERE beside the
-         * breadcrumbs because every one is scoped to the path on screen.
+         * @param {string} id  Kept from the link era, so tests and focus can
+         *   still address each control by name.
+         * @param {string} icon  A lucide name.
+         * @param {string} label
+         * @param {() => void} onclick
+         * @returns {HTMLElement}
+         */
+        function toolButton(id, icon, label, onclick) {
+            return h('button', {
+                class: 'header-icon-btn desk-files-tool',
+                id,
+                type: 'button',
+                'aria-label': label,
+                'data-tooltip': label,
+                onclick,
+            }, h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }));
+        }
+
+        /**
+         * Where to go from the folder on screen, right of the crumbs.
+         *
+         * Icons, not the four blue words (`Projects / Open Folder / Refresh /
+         * Up`) that used to sit on their own line: each is scoped to the path
+         * on screen, so they share the crumbs' row. The root switch keeps a
+         * word beside its glyph, because it names WHERE it goes.
          *
          * @param {string} path
          * @returns {HTMLElement}
          */
-        function controlsRow(path) {
+        function controls(path) {
             const goingToProjects = !String(path).startsWith('/projects');
             const rootTarget = goingToProjects ? '/projects' : ROOT_PATH;
-            const rootLabel = goingToProjects ? 'Projects' : 'My Desk';
-            const row = h('div', { class: 'desk-files-controls' });
-
+            const row = h('div', { class: 'desk-files-tools' });
+            if (TOP_PATHS.indexOf(path) === -1) {
+                row.append(toolButton('desk-open-parent-btn', 'corner-left-up', 'Up one folder',
+                    () => { void open(parentDeskPath(path)); }));
+            }
+            if (path && path !== '/') {
+                row.append(toolButton('desk-open-folder-btn', 'folder-open', 'Open folder', () => {
+                    void BossModDeskOpener.openFolder({
+                        api,
+                        agentId,
+                        path,
+                        onError: (message) => renderError(path, message),
+                    });
+                }));
+            }
+            row.append(toolButton('desk-refresh-btn', 'refresh-cw', 'Refresh',
+                () => { void open(path); }));
             row.append(h('button', {
-                class: 'btn-link desk-files-link',
+                class: 'btn btn-sm',
                 id: 'desk-root-switch-btn',
                 type: 'button',
                 'data-path': rootTarget,
                 onclick: () => { void open(rootTarget); },
-            }, rootLabel));
-
-            if (TOP_PATHS.indexOf(path) === -1) {
-                row.append(h('button', {
-                    class: 'btn-link desk-files-link',
-                    id: 'desk-open-parent-btn',
-                    type: 'button',
-                    onclick: () => { void open(parentDeskPath(path)); },
-                }, 'Up'));
-            }
-            if (path && path !== '/') {
-                row.append(h('button', {
-                    class: 'btn-link desk-files-link',
-                    id: 'desk-open-folder-btn',
-                    type: 'button',
-                    onclick: () => {
-                        void BossModDeskOpener.openFolder({
-                            api,
-                            agentId,
-                            path,
-                            onError: (message) => renderError(path, message),
-                        });
-                    },
-                }, 'Open Folder'));
-            }
-            row.append(h('button', {
-                class: 'btn-link desk-files-link',
-                id: 'desk-refresh-btn',
-                type: 'button',
-                onclick: () => { void open(path); },
-            }, 'Refresh'));
+            },
+                h('i', { 'data-lucide': goingToProjects ? 'folder-kanban' : 'lamp-desk', 'aria-hidden': 'true' }),
+                goingToProjects ? 'Projects' : 'My desk'));
             return row;
         }
 
+        /**
+         * The folder path as crumbs. The root crumb is a house rather than the
+         * API's `/` label, and the separators are chevrons — `/ / me` was the
+         * root's slash and a typed separator in a row.
+         *
+         * @param {Array<{label: string, path: string}>} crumbs
+         * @returns {HTMLElement}
+         */
         function breadcrumbs(crumbs) {
-            const row = h('div', { class: 'desk-crumbs' });
-            (Array.isArray(crumbs) ? crumbs : []).forEach((crumb, index) => {
-                if (index > 0) row.append(h('span', { class: 'desk-crumb-sep' }, '/'));
+            const list = Array.isArray(crumbs) ? crumbs : [];
+            const row = h('nav', { class: 'desk-crumbs', 'aria-label': 'Folder path' });
+            list.forEach((crumb, index) => {
+                if (index > 0) {
+                    row.append(h('i', {
+                        class: 'desk-crumb-sep', 'data-lucide': 'chevron-right', 'aria-hidden': 'true',
+                    }));
+                }
+                const isRoot = crumb.path === '/';
+                const isLast = index === list.length - 1;
                 row.append(h('button', {
                     class: 'desk-crumb',
                     type: 'button',
                     'data-path': crumb.path,
+                    'aria-label': isRoot ? 'Workspace root' : null,
+                    'aria-current': isLast ? 'page' : null,
                     onclick: () => { void open(crumb.path); },
-                }, String(crumb.label)));
+                }, isRoot
+                    ? h('i', { 'data-lucide': 'house', 'aria-hidden': 'true' })
+                    : String(crumb.label)));
             });
             return row;
+        }
+
+        /** A row's glyph: a folder, a text document, or any other file. */
+        function entryIcon(entry) {
+            if (entry.is_dir === true) return 'folder';
+            return /\.(md|txt)$/i.test(String(entry.name || '')) ? 'file-text' : 'file';
         }
 
         function entryList(entries) {
@@ -177,6 +210,10 @@ const BossModDeskFiles = (() => {
             const list = h('div', { class: 'desk-entries' });
             entries.forEach((entry) => {
                 const isDir = entry.is_dir === true;
+                const name = String(entry.name);
+                // One line: the glyph, the name, then the size and the time.
+                // The full path is the crumbs' job; repeating it under every
+                // name is what wrapped a narrow row into "outpu / t".
                 list.append(h('button', {
                     class: 'desk-entry',
                     type: 'button',
@@ -184,9 +221,12 @@ const BossModDeskFiles = (() => {
                     'data-is-dir': isDir ? '1' : '0',
                     onclick: () => { void open(entry.path); },
                 },
-                    h('span', { class: 'desk-entry-name' }, String(entry.name)),
+                    h('i', { 'data-lucide': entryIcon(entry), 'aria-hidden': 'true' }),
+                    h('span', { class: 'desk-entry-name', title: name }, name),
                     h('span', { class: 'desk-entry-meta' },
-                        entry.category ? `${entry.path} · ${entry.category}` : String(entry.path))));
+                        isDir ? '' : BossModFormat.formatFileSize(entry.size_bytes)),
+                    h('span', { class: 'desk-entry-meta' },
+                        BossModFormat.formatRelativeTime(entry.updated_at))));
             });
             return list;
         }
@@ -195,12 +235,13 @@ const BossModDeskFiles = (() => {
             const path = String(payload.path || ROOT_PATH);
             clear(element);
             element.append(
-                // The folder being shown, not a second section header: the
-                // panel already labels this section "Files".
-                h('p', { class: 'desk-files-path' }, String(payload.name || 'Desk')),
-                breadcrumbs(payload.breadcrumbs),
-                controlsRow(path),
+                h('div', { class: 'desk-files-bar' },
+                    breadcrumbs(payload.breadcrumbs),
+                    controls(path)),
                 entryList(payload.entries));
+            // Rebuilt per folder, so the glyphs are painted per folder. Scoped
+            // to this browser, and the painter is idempotent.
+            BossModIcons.paint(element, 'desk-files');
         }
 
         function renderError(failedPath, message) {
@@ -209,19 +250,20 @@ const BossModDeskFiles = (() => {
             element.append(
                 h('p', { class: 'context-error', role: 'alert' },
                     `${message} Path: ${safePath}`),
-                h('div', { class: 'desk-files-controls' },
+                h('div', { class: 'desk-files-recovery' },
                     h('button', {
-                        class: 'desk-files-btn',
+                        class: 'btn btn-sm',
                         id: 'desk-error-back-btn',
                         type: 'button',
                         onclick: () => { void open(parentDeskPath(safePath)); },
                     }, 'Back'),
                     h('button', {
-                        class: 'desk-files-btn',
+                        class: 'btn btn-sm',
                         id: 'desk-error-refresh-btn',
                         type: 'button',
                         onclick: () => { void open(safePath); },
                     }, 'Refresh')));
+            BossModIcons.paint(element, 'desk-files');
         }
 
         /**

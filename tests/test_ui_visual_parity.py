@@ -936,27 +936,26 @@ def test_one_button_vocabulary_and_it_is_flat() -> None:
 def test_the_way_out_of_a_desk_is_a_control_not_a_banner() -> None:
     """`← The office` was a full-width .btn with the arrow typed into its label.
 
-    .desk-body is a flex column and stretches its children, so it spanned all
-    280px and read as a banner across the top of the panel. It is the same
-    icon-only button every other glyph control in the window is now, and the
-    only thing the surface adds is that it stops stretching.
+    .desk-body was a flex column that stretched its children, so the control
+    spanned all 280px and read as a banner across the top of the panel. It
+    became an icon-only button in the body, and now it is not in the body at
+    all: the desk is a modal, and the way out of a modal is the frame's own —
+    its ✕, and the shared ‹ (core/overlays.js `backButton()`) when the desk is
+    a layer over something else. No banner, and no desk-private way back.
     """
     js = _read(JS / "context/desk-panel.js")
-    assert "const BACK_LABEL = 'Back to the office';" in js
-    assert "'aria-label': BACK_LABEL" in js
-    assert "'data-tooltip': BACK_LABEL" in js
-    assert "'data-lucide': 'chevron-left'" in js
-    assert "class: 'btn btn-sm desk-back'" in js
+    assert "BACK_LABEL" not in js
+    assert "desk-back" not in js
     assert "The office" not in _code(js)
     assert "context-link" not in _code(js)
-    # Nothing else in this column sweeps for placeholders, so the view paints
-    # its own subtree — the same rule context/mini-office.js follows.
+    # The desk paints its own subtree once; the sections that rebuild paint
+    # their own glyphs as they rebuild.
     assert "BossModIcons.paint(element, 'desk-panel')" in js
+    dialog = _read(JS / "context/desk-dialog.js")
+    assert "BossModOverlays.createModal({" in dialog
 
     css = _read(CSS / "context.css")
-    back = css.split(".desk-back {", 1)[1].split("}", 1)[0]
-    assert "align-self: flex-start" in back
-    assert "color: var(--muted)" in back
+    assert ".desk-back" not in css
     # The class its one caller left behind went with it.
     assert ".context-link" not in css
 

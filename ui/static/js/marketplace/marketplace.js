@@ -14,11 +14,10 @@
  * to open, and reopened itself behind when the takeover's `✕` was pressed —
  * the one `✕` in the app that meant "back" instead of "close everything", and
  * a marketplace opened from the rail menu had no way to Add agent at all. The
- * dialog owns the frame, its `✕` and the tabs now; this owns the host element
- * and everything drawn in it. Three things cross that seam: two callbacks the
- * dialog hands in — a template the operator wants to start an agent from, and
- * "the library just changed" — and `refreshLibrary`, which is that same
- * sentence said the other way, for a row the Add agent tab saved.
+ * dialog owns the frame, its `✕` and the tabs; this owns the host element, all
+ * drawn in it, and the `lead` the dialog puts on its title row (the way back
+ * from a pack). Callbacks cross the seam both ways: a template to start an
+ * agent from and "the library just changed" in, `refreshLibrary` out.
  *
  * The pane holds TWO views and this owns which one is up: the browse grid,
  * and — once a card is picked — marketplace-detail.js's full-width reading
@@ -57,13 +56,12 @@ const BossModMarketplace = (() => {
      * @param {() => void} deps.onLibraryChanged  Called after a successful
      *   install or uninstall, once the local library has been re-read, so the
      *   Add agent picker can re-read it too. Never after a failure.
-     * @returns {{element: HTMLElement, activate: () => void,
-     *   refreshLibrary: () => Promise<void>}} `element` is the `.market-host`
-     *   to place. `activate` is "this pane is on screen": the first call
-     *   starts the first load, and every later call does nothing — the pane
-     *   keeps its catalog, its scroll and its open pack across a tab switch
-     *   rather than reading them all again. `refreshLibrary` is the other
-     *   tab telling this one that the library gained a row.
+     * @returns {{element: HTMLElement, lead: HTMLElement, activate: () => void,
+     *   deactivate: () => void, refreshLibrary: () => Promise<void>}}
+     *   `element` is the `.market-host`; `lead` the title row's `#market-back`,
+     *   shown only while this tab is up with a pack open. `activate` is "on
+     *   screen" (the first call starts the one load); `deactivate`, the other
+     *   tab taking the head; `refreshLibrary`, a row the other tab saved.
      * @throws {Error} When either callback is missing. A bridge that answers
      *   to nobody is a button that does nothing, and a silent one.
      */
@@ -77,6 +75,17 @@ const BossModMarketplace = (() => {
         const host = BossModDom.h('div', { class: 'market-host' });
         /** Set by the first activate(); the catalog is read once, lazily. */
         let started = false;
+        /** Whether this pane is the visible tab; the other one shares the head. */
+        let active = false;
+        // Back from a pack to the grid: the frame's one back control, on the
+        // dialog's TITLE ROW, not a blue `‹` scrolling with the detail.
+        const lead = BossModOverlays.backButton({ label: 'Back to the marketplace',
+            onBack: () => handlers.onBack(), id: 'market-back' });
+        /** Shown only while this tab is up and the detail is on screen (the
+         *  view's own test: a failed read keeps the grid whatever `detailOpen`). */
+        function syncLead() {
+            lead.hidden = !(active && state.detailOpen && state.selected && state.status !== 'failed');
+        }
         const state = {
             status: 'loading', categories: [], templates: [],
             // Every catalog row that did not become a card, flat and keyed by
@@ -108,6 +117,7 @@ const BossModMarketplace = (() => {
                 .find((item) => item.key === state.selectedId) || null;
             VIEW.render(host, state, handlers);
             state.focusRequest = null;
+            syncLead();
         }
 
         async function load() {
@@ -272,6 +282,7 @@ const BossModMarketplace = (() => {
                 rerender();
             },
             // The selection survives: the grid marks the card that was read.
+            // Reached from the title row's chevron (`lead`).
             onBack() {
                 state.focusRequest = state.cardFocus || '#market-find';
                 Object.assign(state, { detailOpen: false, pendingUninstall: null });
@@ -373,11 +384,13 @@ const BossModMarketplace = (() => {
         rerender();
         return {
             element: host,
+            lead,
             activate() {
-                if (started) return;
-                started = true;
-                void load();
+                active = true;
+                syncLead();
+                if (!started) { started = true; void load(); }
             },
+            deactivate() { active = false; syncLead(); },
             refreshLibrary,
         };
     }

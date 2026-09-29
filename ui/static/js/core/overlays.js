@@ -23,6 +23,12 @@
  * — a modal opened from a modal is a layer in the same frame, never a second
  * dialog on top, and the scrim leaves with the last layer: a scrim outliving
  * its last layer bricks the app.
+ *
+ * It also owns the ONE BACK CONTROL (backButton()). A layer's ‹, the Add
+ * agent form's chevron and the marketplace detail's way back used to be three
+ * looks built in three places; the frame builds the shape now, and a surface
+ * only says when it has somewhere to go back to. That is why this module
+ * paints its own head (core/icons.js loads ahead of it).
  */
 const BossModOverlays = (() => {
     const { h, clear } = BossModDom;
@@ -32,6 +38,45 @@ const BossModOverlays = (() => {
 
     /** The sizes the stylesheet knows. Anything else renders as 'default'. */
     const SIZES = ['panel', 'takeover'];
+
+    /**
+     * The ONE way back, wherever a modal offers one.
+     *
+     * A layer's ‹, the Add agent form's chevron and the marketplace detail's
+     * way back to its grid were three controls with three looks — a typed
+     * glyph, a bordered chevron and an accent-blue character in the body. The
+     * frame owns the shape now and every surface asks for it here; a surface
+     * only decides WHEN it has somewhere to go back to.
+     *
+     * `.btn.btn-sm.step-back` with a lucide `chevron-left`: the bordered,
+     * icon-only control controls.css squares off through `.btn[data-tooltip]`.
+     * The glyph is a placeholder until someone paints the head it sits in —
+     * createModal paints its own head, and a caller that builds a lead paints
+     * its dialog the way it already does.
+     *
+     * @param {object} options
+     * @param {string} options.label  The accessible name AND the tooltip — one
+     *   string, never two — and it has to say where the control goes.
+     * @param {() => void} options.onBack  What going back means here.
+     * @param {string} [options.id]  A stable id for tests and focus hand-back.
+     * @returns {HTMLButtonElement} The button; the caller places and hides it.
+     * @throws {Error} When `label` is empty or `onBack` is not a function: a
+     *   nameless control or a back that goes nowhere is worse than none.
+     */
+    function backButton({ label, onBack, id } = {}) {
+        if (typeof label !== 'string' || !label.trim()) {
+            throw new Error('[overlays] backButton needs a label');
+        }
+        if (typeof onBack !== 'function') throw new Error('[overlays] backButton needs onBack');
+        return h('button', {
+            class: 'btn btn-sm step-back',
+            type: 'button',
+            id: id || null,
+            'aria-label': label,
+            'data-tooltip': label,
+            onclick: onBack,
+        }, h('i', { 'data-lucide': 'chevron-left', 'aria-hidden': 'true' }));
+    }
 
     /**
      * The open modal LAYERS, base first. One frame is on screen at a time: a
@@ -47,7 +92,13 @@ const BossModOverlays = (() => {
     function relabel() {
         layers.forEach((layer, index) => {
             layer.back.hidden = index === 0;
-            if (index > 0) layer.back.setAttribute('aria-label', `Back to ${layers[index - 1].title}`);
+            if (index > 0) {
+                // The name and the tooltip are one string (backButton()), so
+                // both follow the layer beneath.
+                const label = `Back to ${layers[index - 1].title}`;
+                layer.back.setAttribute('aria-label', label);
+                layer.back.setAttribute('data-tooltip', label);
+            }
         });
     }
 
@@ -196,8 +247,9 @@ const BossModOverlays = (() => {
         // The frame's own exit, on every dialog: it closes every layer, back to
         // the base screen. `.header-icon-btn` is the app's one icon button
         // (shell.css) — the bell's and the gear's shape, not a fifth geometry.
-        // A glyph, not a lucide placeholder: this module paints nothing and
-        // depends on nothing but the DOM helpers and the focus rule.
+        // The ✕ stays a typed glyph; the ‹ below is a lucide chevron because
+        // it is the ONE back control every dialog shares (backButton()), and
+        // this module paints the head it builds once the panel is mounted.
         const closeButton = h('button', {
             class: 'header-icon-btn modal-close',
             type: 'button',
@@ -206,12 +258,13 @@ const BossModOverlays = (() => {
         }, '\u2715');
 
         // ‹ — back one layer, which is what Esc does too. Built on every panel
-        // and hidden on the base, so the head row never changes shape.
-        const back = h('button', {
-            class: 'header-icon-btn modal-back',
-            type: 'button',
-            onclick: () => close(),
-        }, '‹');
+        // and hidden on the base, so the head row never changes shape. The
+        // shared back control, marked `modal-back` so the frame's own ‹ can be
+        // told from a caller's lead (the `.modal-head [hidden]` guard covers
+        // both). setAttribute, not classList: a harness fake need not carry
+        // a classList for a string the markup already holds.
+        const back = backButton({ label: 'Back', onBack: () => close() });
+        back.setAttribute('class', `${back.getAttribute('class')} modal-back`);
 
         // Kept by name: setTitle renames it in place.
         const titleNode = h('h2', { class: 'modal-title' }, title);
@@ -299,6 +352,10 @@ const BossModOverlays = (() => {
         relabel();
         BossModOverlayFocus.mountOverlay(element, onKeydown);
         document.body.append(element);
+        // The ‹ chevron is a placeholder until painted. Scoped to the head this
+        // call built, and the painter is idempotent, so a caller's lead or
+        // tools painted again by its own dialog-wide paint are unaffected.
+        BossModIcons.paint(head, 'overlays');
         // A FORM dialog starts in the form. Round four pinned the primary last
         // and this focused the last action, so opening Hire put the keyboard on
         // `Create Agent` and Enter submitted an empty form. The test is what the
@@ -333,5 +390,5 @@ const BossModOverlays = (() => {
         return { close, element, setActions, setTitle };
     }
 
-    return { createModal };
+    return { backButton, createModal };
 })();

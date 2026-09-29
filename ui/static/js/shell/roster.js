@@ -25,11 +25,16 @@ const BossModRoster = (() => {
      * @param {object} deps.bus
      * @param {Function} deps.apiFetch                Authenticated request helper.
      * @param {(placeId: string, params?: object) => void} deps.navigate
+     * @param {(agentId: string) => void} deps.openDesk  Opens an agent's desk
+     *   modal (context/desk-dialog.js) — the one desk door every surface uses.
      * @param {() => void} deps.onHire                Starts the agent-create flow.
      * @returns {() => void} disposer — drains every subscription.
+     * @throws {Error} When openDesk is not a function: a row's Desk action
+     *   would otherwise fail only when clicked.
      */
     function mount(el, deps) {
-        const { store, bus, apiFetch, navigate, onHire } = deps;
+        const { store, bus, apiFetch, navigate, openDesk: openDeskModal, onHire } = deps;
+        if (typeof openDeskModal !== 'function') throw new Error('[roster] deps.openDesk is required');
         const disposers = [];
 
         clear(el);
@@ -100,13 +105,14 @@ const BossModRoster = (() => {
             h('div', { class: 'roster-body' }, people.element, threads.element, errorEl),
             hire);
 
-        /** The roster's doors are the app's doors: see shell/agent-routes.js. */
+        /** The roster's doors are the app's doors: a conversation is
+         *  shell/agent-routes.js's, and a desk is the injected desk modal. */
         function openConversation(id, kind) {
             BossModAgentRoutes.openConversation({ store, navigate }, id, kind);
         }
 
         function openDesk(agentId) {
-            BossModAgentRoutes.openDesk({ store, navigate }, agentId);
+            openDeskModal(agentId);
         }
 
         function reportError(message, err) {

@@ -134,9 +134,11 @@
    this head IS that row. Lucide's unsized 24px outweighed the ✕ beside it. */
 .modal-tools .header-icon-btn svg { width: 14px; height: 14px; }
 
-/* ‹ — back one layer. The ✕'s shape; the chevron glyph needs a size step to
-   read at the same weight as the ✕ beside it. */
-.modal-back { flex: 0 0 auto; font-size: 20px; line-height: 1; }
+/* A lead is sometimes more than one control — the Agents dialog puts both of
+   its panes' back chevrons in one wrapper, and at most one is showing. The
+   wrapper must not become a flex item of its own, or the head's gap would
+   open around an empty box; `contents` hands its children to the head row. */
+.modal-lead { display: contents; }
 
 /* The lead control is put away with the `hidden` PROPERTY, and `.btn` sets
    `display: inline-flex` — an author declaration, which outranks the UA's
@@ -854,6 +856,12 @@
 /* An action already in flight. Same treatment .btn[disabled] carries, so a
    dead control reads the same wherever it is. */
 .menu-action:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* A destructive row — the desk's Reset runtime and Remove agent. The ink
+   marks it, as it marked the desk's red text links, and the glyph follows
+   the ink. --alert measures 4.57:1 on --bg, the row's hover ground. */
+.menu-action[data-tone="danger"] { color: var(--alert); }
+.menu-action[data-tone="danger"] svg { color: currentColor; }
 
 /* A dropdown's rows (core/menu-select.js): the label takes the room, so the
    chosen row's check sits at the far end, and a long name ellipsizes rather

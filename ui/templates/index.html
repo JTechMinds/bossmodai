@@ -148,6 +148,9 @@
          inertly and sanitises against an allowlist; every surface that renders
          markdown loads after it. -->
     <script src="{{ static_url('js/core/markdown.js') }}"></script>
+    <!-- Markdown clamped to six lines with a measured "show more": the task
+         detail's instructions and the agent desk's description. -->
+    <script src="{{ static_url('js/core/clamped-markdown.js') }}"></script>
     <!-- One click interceptor for http(s) anchors. The Tauri webview does not
          honour target=_blank, so transcript and composer links share this
          instead of each growing a handler. -->
@@ -393,13 +396,16 @@
     <script src="{{ static_url('js/context/mini-office.js') }}"></script>
     <script src="{{ static_url('js/context/agent-edit.js') }}"></script>
     <script src="{{ static_url('js/context/agents-dialog.js') }}"></script>
+    <!-- The Tasks place's column map and status labels: pure data, loaded
+         ahead of the desk, whose task rows wear the same status pill. -->
+    <script src="{{ static_url('js/places/tasks/tasks-columns.js') }}"></script>
     <script src="{{ static_url('js/context/desk-files.js') }}"></script>
     <script src="{{ static_url('js/context/desk-notes.js') }}"></script>
     <script src="{{ static_url('js/context/desk-tasks.js') }}"></script>
     <script src="{{ static_url('js/context/desk-actions.js') }}"></script>
     <script src="{{ static_url('js/context/desk-extensions.js') }}"></script>
     <script src="{{ static_url('js/context/desk-panel.js') }}"></script>
-    <script src="{{ static_url('js/context/context-column.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-dialog.js') }}"></script>
 
     <script src="{{ static_url('js/places/chat/chat-place.js') }}"></script>
 
@@ -413,9 +419,8 @@
     <script src="{{ static_url('js/places/office/agent-actions.js') }}"></script>
     <script src="{{ static_url('js/places/office/office-place.js') }}"></script>
 
-    <!-- Tasks: the column map first, then the data layer over it, then the
-         views, then the place that wires them together. -->
-    <script src="{{ static_url('js/places/tasks/tasks-columns.js') }}"></script>
+    <!-- Tasks: the data layer over the column map (which loads with the desk,
+         above), then the views, then the place that wires them together. -->
     <script src="{{ static_url('js/places/tasks/tasks-data.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-grid.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/task-card.js') }}"></script>

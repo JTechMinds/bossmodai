@@ -13,7 +13,7 @@
  * on every keystroke without losing the word being typed. Every control that
  * can be clicked and then rebuilt therefore carries an id, and onCategory and
  * onSelect are each handed their own so the state module can ask for that node
- * back — which is how the detail's `‹` returns the keyboard to the card it
+ * back — which is how the title row's `‹` returns the keyboard to the card it
  * was opened from. The rail and the cards NUMBER their rows rather than naming
  * them after the pack: a category id and a pack id are both catalog data, and
  * remote text has no business in a selector string.
@@ -265,7 +265,7 @@ const BossModMarketplaceView = (() => {
      *   holding it; `browseScroll` is the browse view's reading position, read
      *   and written here because this is what destroys and rebuilds it.
      * @param {object} handlers  onQuery, onCategory, onSelect, onSection,
-     *   onBack, onRetry, onToggleUrl, onUrlChange, onInstallUrl,
+     *   onRetry, onToggleUrl, onUrlChange, onInstallUrl,
      *   onInstall, onUseTemplate, onUninstall, onUninstallConfirm,
      *   onUninstallCancel, onTrustConfirm, onTrustCancel.
      * @returns {void}

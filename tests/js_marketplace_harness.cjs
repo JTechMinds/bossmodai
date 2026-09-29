@@ -540,10 +540,18 @@ function mountMarket() {
         onUseTemplate: (template) => { used.push(template); },
         onLibraryChanged: () => { libraryChanges += 1; },
     });
+    // The pane's back chevron goes where the Agents dialog puts it: on the
+    // frame's title row, as the lead.
     const modal = global.BossModOverlays.createModal({
-        title: "Agents", body: pane.element, size: "takeover", actions: [],
+        title: "Agents", body: pane.element, size: "takeover", actions: [], lead: pane.lead,
     });
     return { close: modal.close, pane };
+}
+
+/** The way back from a pack to the grid: the pane's lead, on the title row. */
+function backControl() {
+    const panel = global.document.body.querySelector(".modal-panel");
+    return panel ? panel.querySelector(".modal-head").querySelector("#market-back") : null;
 }
 
 /** Mounted and activated: the Marketplace tab, up. Nothing awaited. */
@@ -910,17 +918,28 @@ async function main() {
     // Left on Handoff, which is nobody's first section: the next pack opened
     // has to prove it starts at the top of its OWN contract.
     await click(sectionTabs()[2]);
-    // The visible word is gone and the announced name is not: the bar holds two
-    // glyph-only controls, `‹` and `✕`, and `Back` beside the chevron said less
-    // than the label already does. Still a real button, still named, and the
-    // mark is aria-hidden so it cannot be announced as punctuation.
-    const back = host().querySelector("#market-back");
-    verdict.backIsAGlyphThatStillSaysWhereItGoes = back.tagName === "BUTTON"
-        && back.textContent === "‹"
-        && !back.textContent.includes("Back")
+    // The visible word is gone and the announced name is not. The control is
+    // the frame's ONE back control on the title row now — the bordered
+    // `.btn.btn-sm.step-back` with a lucide chevron, the same as Add agent's
+    // and every layer's — not a blue `‹` inside the scrolling detail. Still a
+    // real button, still named, and the mark is aria-hidden so it cannot be
+    // announced as punctuation.
+    const back = backControl();
+    const backMark = back && back.querySelector('[data-lucide="chevron-left"]');
+    verdict.backIsAGlyphThatStillSaysWhereItGoes = Boolean(back) && back.tagName === "BUTTON"
+        && back.hidden === false
+        && ["btn", "btn-sm", "step-back"].every((name) => back.classList.contains(name))
+        && back.textContent === ""
         && back.getAttribute("aria-label") === "Back to the marketplace"
-        && back.querySelector(".market-detail-back-mark")
-            .getAttribute("aria-hidden") === "true";
+        && back.getAttribute("data-tooltip") === "Back to the marketplace"
+        && Boolean(backMark) && backMark.getAttribute("aria-hidden") === "true"
+        && host().querySelector("#market-back") === null;
+    // It belongs to the pane that is up: another tab taking the head puts it
+    // away, and coming back to the open pack brings it back.
+    handle.pane.deactivate();
+    const hiddenWhileAway = back.hidden === true;
+    handle.pane.activate();
+    verdict.backFollowsTheTab = hiddenWhileAway && back.hidden === false;
     // A stale install: `Update` is the actionable thing, so it keeps the slot.
     const lead = host().querySelector("#market-install");
     verdict.updateKeepsThePrimary = lead.textContent === "Update"
@@ -944,7 +963,9 @@ async function main() {
         return Boolean(link) && link.getAttribute("rel") === "noopener noreferrer"
             && link.getAttribute("href") === "https://github.com/JTechMinds";
     })();
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
+    // The grid has nowhere to go back to, so the chevron is put away with it.
+    verdict.backHidesWithTheGrid = backControl().hidden === true;
     verdict.backRestoresTheBrowseView = count(".market-card") === 3
         && host().querySelector(".market-body").scrollTop === 120
         && railRow("All").getAttribute("aria-current") === "true";
@@ -1011,7 +1032,7 @@ async function main() {
         && used[0].id === "t-test-writer"
         && used[0].pack_id === "test-writer"
         && used[0].source === "catalog";
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     verdict.installFlipsCardState = cardState("test-writer") === "Installed";
 
     // ── Installed rail row lists the URL install the catalog cannot show.
@@ -1058,7 +1079,7 @@ async function main() {
     await click(host().querySelector("#market-uninstall-confirm"));
     verdict.uninstallKeepsACatalogCardsDetail = Boolean(host().querySelector("#market-detail"))
         && host().querySelector("#market-install").textContent === "Install";
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     verdict.backAfterUninstallLandsSomewhereReal = count(".market-card") === 2
         && global.document.activeElement === host().querySelector("#market-find");
 
@@ -1077,7 +1098,7 @@ async function main() {
     await click(trust);
     verdict.trustReissuesWithConfirm = lastInstall.confirm === true
         && lastInstall.url === "https://github.com/acme/packs/new.yaml";
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     verdict.urlInstallLands = texts(".market-card-title").includes("Imported Agent");
 
     // ── The frame's ✕ dismisses the takeover from the detail too, and it is
@@ -1154,7 +1175,7 @@ async function main() {
     //    first heading comes back as `description.preamble` ALONGSIDE the
     //    mission — the two are not alternatives — and only the mission was
     //    ever printed. Both are drawn now, in the order they are read.
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     verdict.emptyPreambleDrawsNoIntro = emptyPreambleDetail
         && cardFor("thin-pack").querySelectorAll(".market-card-intro").length === 0;
     const introCard = cardFor("intro-pack")
@@ -1176,7 +1197,7 @@ async function main() {
     //    pack is the file that gets installed, so its own words outrank the
     //    row's: `intro-pack` carries BOTH and its preamble wins — in full,
     //    not cut to the one line the route had room to send.
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     const summaryCard = cardFor("summary-pack")
         .querySelectorAll(".market-card-intro, .market-card-desc");
     verdict.cardReadsTheIndexSummaryWhereThePackIsSilent = summaryCard.length === 2
@@ -1277,7 +1298,7 @@ async function main() {
     await click(cardFor("code-auditor"));
     verdict.theRefusalFollowsIntoTheDetail = count(".market-detail-note") === 1
         && host().querySelector(".market-detail-note").textContent === refusedNote;
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     await click(railRow("All"));
 
     // ── A read that FAILS drops the catalog it just lost. It did not: the rail
@@ -1361,7 +1382,7 @@ async function main() {
     failWrites = true;
     await click(host().querySelector("#market-install"));
     const installRefused = Boolean(host().querySelector(".market-error"));
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     await click(cardFor("feature-planner"));
     await click(host().querySelector("#market-uninstall"));
     await click(host().querySelector("#market-uninstall-confirm"));
@@ -1460,7 +1481,7 @@ async function main() {
         && strip.textContent.includes("only on this machine")
         && host().querySelector("#market-uninstall-confirm").textContent === "Delete";
     // ...and a pack keeps its own wording.
-    await click(host().querySelector("#market-back"));
+    await click(backControl());
     await click(cardFor("code-auditor"));
     verdict.aPackIsStillUninstalled =
         host().querySelector("#market-uninstall").textContent === "Uninstall";

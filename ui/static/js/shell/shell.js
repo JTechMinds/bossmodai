@@ -25,11 +25,6 @@ const BossModShell = (() => {
         placeParams: {},
         conversationId: null,
         conversationKind: null,
-        contextMode: 'office',
-        deskAgentId: null,
-        // Where the desk's file browser opens. Set from a note's desk_path so
-        // "Open in Desk" lands on the file, not on the desk root.
-        deskPath: null,
         roster: [],
         threads: [],
         rosterQuery: '',
@@ -86,6 +81,16 @@ const BossModShell = (() => {
         // for the life of the page; the interceptor does not navigate the
         // webview.
         BossModExternalOpen.install();
+        // The one desk opener, a modal over whatever place is up. Built before
+        // the navigator because every place reaches it through ctx.openDesk;
+        // its own navigation resolves `shell` at call time, which is after the
+        // navigator below exists.
+        const desk = BossModDeskDialog.createDeskDialog({
+            store,
+            bus,
+            api: apiFetch,
+            navigate: (placeId, params) => shell.navigate(placeId, params),
+        });
         const shell = BossModNavigator.createNavigator({
             store,
             bus,
@@ -93,6 +98,7 @@ const BossModShell = (() => {
             api: apiFetch,
             needs,
             contextEl: contextElement,
+            openDesk: desk.open,
         });
         const navigate = (placeId, params) => shell.navigate(placeId, params);
 
@@ -130,6 +136,7 @@ const BossModShell = (() => {
             bus,
             apiFetch,
             navigate,
+            openDesk: desk.open,
             // The row opens a MENU, not the dialog: the create form stopped
             // being the only door when templates got a library. Chat first,
             // because a successful create opens the new agent's conversation.
@@ -213,7 +220,6 @@ const BossModShell = (() => {
             threadIds: [],
         });
         store.setState({
-            contextMode: startup.contextMode,
             railCollapsed: startup.railCollapsed,
             currentFloorId: startup.currentFloorId,
         });

@@ -649,7 +649,7 @@ body[data-view="settings"] #main-layout { display: none; }
    borders, the fixed track width) rather than restyling a copy. */
 
 .responsive-menu-btn,
-.responsive-desk-btn {
+.responsive-context-btn {
   display: none;
   align-items: center;
   justify-content: center;
@@ -664,7 +664,7 @@ body[data-view="settings"] #main-layout { display: none; }
 }
 
 .responsive-menu-btn:hover,
-.responsive-desk-btn:hover { background: var(--bg); color: var(--ink); }
+.responsive-context-btn:hover { background: var(--bg); color: var(--ink); }
 
 /* A column presented in a modal is no longer a grid track: it fills the
    modal's body edge to edge and drops the border that separated it from the
@@ -696,7 +696,7 @@ body[data-view="settings"] #main-layout { display: none; }
 
   #main-layout > .app-context { display: none; }
 
-  .responsive-desk-btn.is-available { display: inline-flex; }
+  .responsive-context-btn.is-available { display: inline-flex; }
 }
 
 /* ─── <768px — one column, a roster drawer, and a bottom tab bar ─── */

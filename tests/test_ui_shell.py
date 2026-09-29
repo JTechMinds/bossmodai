@@ -30,6 +30,9 @@ def test_navigate_lifecycle_and_leak_guard() -> None:
         "focusesHeading": True,
         "noBusLeakAfter20Swaps": True,
         "containsMountErrors": True,
+        # Every place gets the one desk modal as ctx.openDesk, and the
+        # navigator refuses to exist without it.
+        "handsEveryPlaceTheDeskOpener": True,
     }
 
 

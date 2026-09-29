@@ -73,7 +73,18 @@ BossModPlaces.register("tasks", {
     unmount() { order.push("unmount:tasks"); },
 });
 
-const shell = BossModNavigator.createNavigator({ store, bus, container, api: () => {} });
+// The desk modal every place reaches as ctx.openDesk; required, so a place
+// can never render a desk door that fails only at the click.
+const openDesk = () => {};
+let refusedWithoutDesk = false;
+try {
+    BossModNavigator.createNavigator({ store, bus, container, api: () => {} });
+} catch (err) {
+    refusedWithoutDesk = /openDesk is required/.test(String(err && err.message));
+}
+if (!refusedWithoutDesk) throw new Error("createNavigator must refuse a missing openDesk");
+const shell = BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openDesk });
+if (shell.getCtx().openDesk !== openDesk) throw new Error("ctx.openDesk must be the injected opener");
 
 shell.navigate("chat");
 shell.navigate("tasks");
@@ -132,4 +143,5 @@ process.stdout.write(JSON.stringify({
     focusesHeading: true,
     noBusLeakAfter20Swaps: true,
     containsMountErrors: true,
+    handsEveryPlaceTheDeskOpener: true,
 }));

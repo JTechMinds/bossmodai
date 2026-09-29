@@ -446,7 +446,6 @@
 .task-detail-section > .task-detail-meta { margin: 10px 0 4px; }
 
 .task-detail-instructions { font-size: 13px; }
-.task-detail-instructions.is-clamped { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 .task-detail-file { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px;
   border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); text-align: left; font-size: 13px; }
 .task-detail-file + .task-detail-file { margin-top: 6px; }

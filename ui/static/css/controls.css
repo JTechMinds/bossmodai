@@ -209,12 +209,17 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .btn-sm { min-height: 24px; padding: 4px 10px; font-size: 12px; }
 
-/* ICON-ONLY, wherever it appears: the `⋯`, Desk, the desk's back arrow, and
+/* ICON-ONLY, wherever it appears: the `⋯`, Desk, every back chevron, and
    the rename pair. No text to pad around, so .btn-sm's 10px sides would make a
    glyph rattle in a wide box. Keyed on the attribute the views set exactly
    when they drop a label for a tooltip, so an icon-only button cannot arrive
    shaped like a text one with the word missing. */
 .btn[data-tooltip] { padding-inline: 6px; }
+
+/* THE way back (core/overlays.js backButton()): a layer's ‹, the Add agent
+   form's and the marketplace detail's. One glyph size for all of them, so the
+   three can never drift back into three looks. */
+.step-back svg { width: 14px; height: 14px; }
 
 /* --panel measures 4.83:1 on --accent and 6.36:1 on --accent-deep, so the
    label clears AA at every row of the ramp — see tokens.css. */
@@ -508,6 +513,14 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 .fact-label { color: var(--muted); }
 .fact-value { display: flex; align-items: center; gap: 6px; margin: 0; min-width: 0; word-break: break-word; }
 @media (max-width: 640px) { .fact-list[data-pairs="2"] { grid-template-columns: auto 1fr; } }
+
+/* ─── Clamped markdown ───
+ *
+ * Six lines until core/clamped-markdown.js has measured whether the text
+ * overflows. Promoted from the task detail's instructions when the agent
+ * desk's description became the second surface to need it.
+ */
+.clamped-md > .is-clamped { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* ─── Empty slot ───
  *

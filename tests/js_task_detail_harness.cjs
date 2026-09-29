@@ -33,6 +33,9 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates",
     "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModFactList",
+    // The instructions' clamp is the shared component the desk's description
+    // uses too; it renders through the stubbed BossModMarkdown above.
+    "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskDetailSections", "BossModTaskDetail",
 ];
@@ -192,22 +195,27 @@ async function main() {
     if (!instructionsUseMarkdown) fail("the instructions did not go through BossModMarkdown");
 
     // ── clampToggleFollowsOverflow ──────────────────────────────────────
+    // The clamp is core/clamped-markdown.js's now (the desk's description is
+    // its second user): instructions() hands back the section and its
+    // measure, and the toggle keeps its label and its behaviour exactly.
     const tall = SECTIONS.instructions(BLOCKED);
-    const tallBody = tall.querySelector(".task-detail-instructions");
-    const tallMore = tall.querySelector(".task-detail-more");
-    const hiddenBeforeMeasure = tallMore.hidden === true && tallBody.classList.contains("is-clamped");
+    const tallBody = tall.element.querySelector(".task-detail-instructions");
+    const tallMore = tall.element.querySelector(".clamped-more");
+    const hiddenBeforeMeasure = tallMore.hidden === true && tallBody.classList.contains("is-clamped")
+        && tallMore.textContent === "Show full instruction";
     tallBody.scrollHeight = 200;
     tallBody.clientHeight = 100;
-    SECTIONS.measureClamp(tall);
+    tall.measure();
     const revealed = tallMore.hidden === false && tallBody.classList.contains("is-clamped");
     await click(tallMore, "Show full instruction");
-    const expanded = !tallBody.classList.contains("is-clamped") && !tall.querySelector(".task-detail-more");
+    const expanded = !tallBody.classList.contains("is-clamped")
+        && !tall.element.querySelector(".clamped-more");
     const short = SECTIONS.instructions(BLOCKED);
-    const shortBody = short.querySelector(".task-detail-instructions");
+    const shortBody = short.element.querySelector(".task-detail-instructions");
     shortBody.scrollHeight = 100;
     shortBody.clientHeight = 100;
-    SECTIONS.measureClamp(short);
-    const fits = !short.querySelector(".task-detail-more") && !shortBody.classList.contains("is-clamped");
+    short.measure();
+    const fits = !short.element.querySelector(".clamped-more") && !shortBody.classList.contains("is-clamped");
     const clampToggleFollowsOverflow = hiddenBeforeMeasure && revealed && expanded && fits;
     if (!clampToggleFollowsOverflow) {
         fail(`clamp: hidden ${hiddenBeforeMeasure}, revealed ${revealed}, expanded ${expanded}, fits ${fits}`);

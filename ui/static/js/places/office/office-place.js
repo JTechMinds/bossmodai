@@ -4,8 +4,8 @@
  * The floor: a live map of who is where, an org chart of the same people, and
  * a ticker of what just happened. Clicking an agent — on the floor or in the
  * org chart — offers the doors into them (their chat, their desk) in a small
- * dialog; both are the roster's routes, so the Office hosts no conversation of
- * its own.
+ * dialog: the chat is the roster's route and the desk is ctx.openDesk, the
+ * same modal every door opens, so the Office hosts neither of its own.
  *
  * It registers itself, so shell/places.js is never edited to add a real place.
  */
@@ -92,7 +92,8 @@ const BossModOfficePlace = (() => {
         agentDialog = BossModOfficeAgentActions.open({
             agent,
             onOpenChat: () => BossModAgentRoutes.openConversation(routes, agent.id, 'agent'),
-            onViewDesk: () => BossModAgentRoutes.openDesk(routes, agent.id),
+            // The desk is a modal over the Office now, not a trip to Chat.
+            onViewDesk: () => ctxRef.openDesk(agent.id),
             onClose: () => { agentDialog = null; },
         });
     }

@@ -89,6 +89,9 @@
   /* A panel modal's reading column. The task detail and Archive centre their
    * content in it, so a wide window adds margin rather than line length. */
   --panel-column: 720px;
+  /* The desk modal's aside — who the agent is, beside the work. Wide enough
+   * for a two-fact list and an extension row with its buttons on one line. */
+  --desk-aside: 300px;
   /* The agent form's measure in the Agents dialog. The form filled an 80vw
    * panel before it moved into a 95vw takeover; this is that panel's width on
    * a 1400px window, so the form reads as it did rather than sprawling. */

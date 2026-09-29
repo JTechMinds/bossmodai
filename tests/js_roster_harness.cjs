@@ -218,6 +218,8 @@ function rowFor(el, name) {
     const busBaseline = bus.subscriberCount();
     const el = makeEl("aside");
     const navigated = [];
+    // The desk modal the shell injects; the rail only asks it to open.
+    const desksOpened = [];
     let hires = 0;
 
     const dispose = BossModRoster.mount(el, {
@@ -225,6 +227,7 @@ function rowFor(el, name) {
         bus,
         apiFetch,
         navigate: (id, params) => navigated.push({ id, params: params || null }),
+        openDesk: (agentId) => desksOpened.push(agentId),
         onHire: () => { hires += 1; },
     });
     if (typeof dispose !== "function") throw new Error("mount must return a disposer");
@@ -530,13 +533,12 @@ function rowFor(el, name) {
         throw new Error(`each person row owns one avatar button, got ${personAvatars.length}`);
     }
     click(personAvatars[0]);
-    const avatarDoesNotOpenDeskWhileSelecting = store.getState().contextMode === undefined
-        && store.getState().deskAgentId === undefined
+    const avatarDoesNotOpenDeskWhileSelecting = desksOpened.length === 0
         && jimBox.checked === false
         && jimRow.getAttribute("data-selected") === "false";
     if (!avatarDoesNotOpenDeskWhileSelecting) {
-        throw new Error(`the avatar must toggle rather than open the desk: mode `
-            + `${store.getState().contextMode} checked ${jimBox.checked}`);
+        throw new Error(`the avatar must toggle rather than open the desk: desks `
+            + `${JSON.stringify(desksOpened)} checked ${jimBox.checked}`);
     }
 
     // A nested interactive control is invalid HTML and unreachable by
@@ -791,7 +793,7 @@ function rowFor(el, name) {
     // shows roles on its first render — no click — with its switch agreeing.
     const freshEl = makeEl("aside");
     const disposeFresh = BossModRoster.mount(freshEl, {
-        store, bus, apiFetch, navigate: () => {}, onHire: () => {},
+        store, bus, apiFetch, navigate: () => {}, openDesk: () => {}, onHire: () => {},
     });
     await drain();
     const freshRole = find(rowFor(freshEl, "Jim") || freshEl, hasClass("roster-role"), [])[0];

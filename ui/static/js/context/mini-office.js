@@ -1,5 +1,5 @@
 /**
- * BossMod AI — the office summary in the context column.
+ * BossMod AI — the office summary: the whole of Chat's context column.
  *
  * A DOM room summary, not a second canvas renderer. It answers "who is around
  * and who needs me", and hands off to the Office place for the map.
@@ -77,14 +77,17 @@ const BossModMiniOffice = (() => {
      * @param {Function} deps.api  Authenticated fetch helper. Used once, for
      *   the floor plan; who is on it comes from the store.
      * @param {(placeId: string, params?: object) => void} deps.navigate
+     * @param {(agentId: string) => void} deps.openDesk  A seat opens that
+     *   agent's desk modal (context/desk-dialog.js).
      * @returns {{ element: HTMLElement, destroy: () => void }}
-     * @throws {Error} When store, api, or navigate is missing.
+     * @throws {Error} When store, api, navigate or openDesk is missing.
      */
     function createMiniOffice(deps) {
-        const { store, api, navigate } = deps || {};
+        const { store, api, navigate, openDesk } = deps || {};
         if (!store) throw new Error('[mini-office] deps.store is required');
         if (typeof api !== 'function') throw new Error('[mini-office] deps.api is required');
         if (typeof navigate !== 'function') throw new Error('[mini-office] deps.navigate is required');
+        if (typeof openDesk !== 'function') throw new Error('[mini-office] deps.openDesk is required');
 
         const disposers = [];
         let loaded = store.getState().roster.length > 0;
@@ -183,9 +186,7 @@ const BossModMiniOffice = (() => {
                 'data-agent-id': agent.id,
                 // The ping is decorative; the name states the fact instead.
                 'aria-label': wanted ? `${agent.name} — needs you` : String(agent.name),
-                onclick: () => {
-                    store.setState({ contextMode: 'desk', deskAgentId: agent.id });
-                },
+                onclick: () => openDesk(agent.id),
             },
                 // A chip, because a map of a floor is read as a shape rather
                 // than as a list of faces. The BUTTON keeps the 24px floor

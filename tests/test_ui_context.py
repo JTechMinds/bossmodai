@@ -1,4 +1,4 @@
-"""The context column: who the operator is talking to, and their desk."""
+"""The context column (the office summary) and the agent desk modal."""
 
 from __future__ import annotations
 
@@ -18,6 +18,8 @@ HARNESS = Path(__file__).resolve().parent / "js_context_harness.cjs"
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "markdown.js",
+    JS / "core" / "clamped-markdown.js",
+    JS / "core" / "fact-list.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
@@ -94,7 +96,9 @@ CONTEXT_MODULES = [
     CONTEXT / "agent-edit.js",
     CONTEXT / "agents-dialog.js",
     CONTEXT / "desk-panel.js",
-    CONTEXT / "context-column.js",
+    JS / "places" / "tasks" / "tasks-columns.js",
+    JS / "shell" / "agent-routes.js",
+    CONTEXT / "desk-dialog.js",
     JS / "extensions" / "extensions-api.js",
     JS / "extensions" / "browser-vision-status.js",
     JS / "extensions" / "extensions-live.js",
@@ -121,14 +125,23 @@ def test_context_column_is_torn_down_when_chat_unmounts() -> None:
     #app-context lives outside #app-place, so the shell hides it on navigation
     but never clears it. If Chat did not destroy the column, its subscriptions
     would survive every navigation away and accumulate one set per visit.
+
+    The column holds the office summary and nothing else: the desk that used
+    to be its second view is a modal, one at a time, which drains everything
+    it subscribed to when it closes.
     """
     payload = _harness()
     assert payload["drainsOnDestroy"] is True
-    assert payload["switchesModes"] is True
+    assert payload["columnHoldsOnlyTheOffice"] is True
+    assert payload["oneDeskAtATime"] is True
+    assert payload["deskDrainsOnClose"] is True
 
     place = _read(JS / "places" / "chat" / "chat-place.js")
-    assert "BossModContextColumn.createContextColumn(" in place
-    assert "contextColumn.destroy()" in place
+    assert "BossModMiniOffice.createMiniOffice(" in place
+    assert "miniOffice.destroy()" in place
+    # The view switcher is gone with the second view it switched to.
+    assert not (CONTEXT / "context-column.js").exists()
+    assert "BossModContextColumn" not in place
     # The shell hands the element down and knows nothing else about it.
     # Phase 4 resolved it into a local so the responsive layer can move the
     # same element into an overlay below 1200px; it is still resolved ONCE and
@@ -686,6 +699,8 @@ def test_the_desk_and_the_form_render_the_delete_warning() -> None:
     assert payload["removeWaitsForTheName"] is True
     assert payload["removeOpensOnceTheNameIsIn"] is True
     assert payload["deleteWarnsWhatIsDeleted"] is True
+    # ...and a Remove that lands closes the desk of the agent it deleted.
+    assert payload["removeClosesTheDesk"] is True
 
 
 def test_context_modules_stay_focused() -> None:
@@ -768,8 +783,13 @@ def test_desk_panel_keeps_role_contract_copy() -> None:
     assert "who.description" in panel, "the agent's about line must survive"
     assert "What done looks like for this agent:" in panel
 
-    assert "doneClaimGuidance" in tasks
-    assert "Blocked — checkable claim missing" in tasks
+    # The per-task done-claim guidance left the desk's rows on purpose: every
+    # open row repeated three lines of it. It is the task detail's contract
+    # section now, one click away from a desk row (task rows open the task).
+    detail_sections = _read(JS / "places" / "tasks" / "task-detail-sections.js")
+    assert "doneClaimGuidance" in detail_sections
+    assert "Blocked — checkable claim missing" in detail_sections
+    assert "onOpenTask(task.id)" in tasks
     assert "scope=self" in tasks and "scope=owned" in tasks
     assert "const load = BossModGates.createLoadGeneration()" in tasks
 
@@ -781,8 +801,14 @@ def test_desk_panel_keeps_role_contract_copy() -> None:
     for spec in ("REMOVE_TITLE", "RESET_TITLE"):
         assert f"title: {spec}," in footer, f"{spec} must gate its action"
     # The API is never reached from the click itself, only from the modal's
-    # confirm action.
-    assert "onclick: () => confirmThen({" in footer
+    # confirm action. The desk's `⋯` rows call the two confirm runners, and
+    # this module renders no button that could reach the API another way.
+    for runner in ("function confirmReset() {", "function confirmRemove() {"):
+        assert "confirmThen({" in footer.split(runner, 1)[1].split("\n        }\n", 1)[0], runner
+    assert "onclick" not in footer
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert "pick(() => actions.confirmReset()), true)" in panel
+    assert "pick(() => actions.confirmRemove()), true))" in panel
     assert "onclick: () => { void removeAgent(); }" not in footer
     assert "onclick: () => { void resetRuntime(); }" not in footer
     # Cancel is last, so it holds focus and Esc and Enter agree.
@@ -808,15 +834,23 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     assert "api, bus, store, presence, openDesk," in conversation
 
     place = _read(JS / "places" / "chat" / "chat-place.js")
-    assert "openDesk:" in place
-    column = _read(CONTEXT / "context-column.js")
-    assert "function openDeskFrom(store, target)" in column
-    assert "deskPath: typeof target === 'string' && target.startsWith('/')" in column
+    # The capability is the shell's one desk modal, handed down as ctx.openDesk
+    # and passed straight through — the conversation's lamp, a deliverable the
+    # desk opens on, a mention's View Desk and the summary's seats all open it.
+    assert "openDesk: ctx.openDesk," in place
+    assert "onViewDesk: (agent) => ctx.openDesk(agent.id)" in place
+    navigator = _read(JS / "shell" / "navigator.js")
+    assert "openDesk," in navigator.split("const ctx = {", 1)[1].split("};", 1)[0]
+    dialog = _read(CONTEXT / "desk-dialog.js")
+    assert "BossModOverlays.createModal({" in dialog
+    assert "size: 'panel'," in dialog
+    assert "initialPath: path || '/me'," in dialog
 
-    # Hiring selects the new agent and opens their desk. The create flow is
-    # the Agents dialog's Add agent pane now, and the Edit role dialog is
-    # edit-only, so the routing lives in the pane and the edit's save routes
-    # nowhere.
+    # Hiring selects the new agent's conversation — and deliberately NOT their
+    # desk, which as a modal would spring open over the chat the operator just
+    # landed in. The create flow is the Agents dialog's Add agent pane, and the
+    # Edit role dialog is edit-only, so the routing lives in the pane and the
+    # edit's save routes nowhere.
     edit = _read(CONTEXT / "agent-edit.js")
     # Phase 4 split agent-panel.js away; renderInline is this module's own now.
     assert "void renderInline({ container: formEl, agent, primary, onSave, onDelete })" in edit
@@ -828,14 +862,16 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     saved = pane.split("function onSave(savedAgent) {", 1)[1]
     assert "if (savedAgent) {" in saved
     assert "conversationKind: 'agent'" in saved
-    assert "deskAgentId: savedAgent.id" in saved
+    saved_body = saved.split("onDone();", 1)[0]
+    for desk_key in ("contextMode", "deskAgentId", "deskPath"):
+        assert desk_key not in saved_body, f"a create must not open the desk ({desk_key})"
+    assert _harness()["createOpensTheConversationOnly"] is True
 
-    # Round three made hire and edit one centred dialog, so the column's
-    # form-hosting mode and the navigation that reached it are gone rather than
-    # left reachable. The property these two lines guarded — hiring has exactly
-    # one entry point and it lands somewhere real — is asserted on the new one.
-    assert "if (mode === 'desk' && !agentId)" not in column
-    assert "AgentEdit" not in column, "the column hosts no form"
+    # Round three made hire and edit one centred dialog, and the column that
+    # hosted a form mode is gone altogether now. The property these lines
+    # guarded — hiring has exactly one entry point and it lands somewhere
+    # real — is asserted on the new one.
+    assert "AgentEdit" not in place, "the Chat place hosts no form"
     assert "placeParams.hire" not in place
     shell_source = _read(JS / "shell" / "shell.js")
     assert "onHire:" in shell_source
@@ -845,12 +881,18 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
     assert "BossModAgentsDialog.open({ store, tab: 'add' })" in _read(
         JS / "shell" / "add-agent-menu.js")
 
-    # deskPath is a real store key with a real consumer, not dead state.
+    # No desk state in the store or the session: a modal is transient UI, and
+    # where its file browser opens is an argument to the one door into it.
     shell = _read(JS / "shell" / "shell.js")
-    assert "deskPath: null," in shell
+    state = shell.split("const INITIAL_STATE = {", 1)[1].split("};", 1)[0]
+    for desk_key in ("contextMode", "deskAgentId", "deskPath"):
+        assert desk_key not in state, desk_key
+    session = _read(JS / "shell" / "session.js")
+    persisted = session.split("PERSISTED_KEYS = Object.freeze([", 1)[1].split("]);", 1)[0]
+    assert "contextMode" not in persisted
     panel = _read(CONTEXT / "desk-panel.js")
-    assert "store.subscribe((s) => s.deskPath" in panel
-    assert "files.open(store.getState().deskPath || '/me')" in panel
+    assert "s.deskPath" not in panel
+    assert "void files.open(initialPath);" in panel
 
 
 def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:

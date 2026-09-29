@@ -77,6 +77,10 @@ global.document = {
     get activeElement() { return activeElement; },
 };
 global.window = { document: global.document };
+// createModal paints its own head: the ‹ is the frame's shared back control,
+// a lucide chevron. Recorded, so the harness can show which head was painted.
+const { installIconsStub } = require("./js_icons_stub.cjs");
+const iconPaints = installIconsStub().calls;
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
@@ -449,6 +453,17 @@ const headIsFirstAndOrdered = classesOf(frameHead).includes("modal-head")
     && classesOf(headKids[4]).includes("modal-close")
     && classesOf(headKids[4]).includes("header-icon-btn");
 if (!headIsFirstAndOrdered) throw new Error("the head must be back, title, subtitle, tools, close");
+// The ‹ is the ONE back control every modal shares (backButton()): the
+// bordered `.btn.btn-sm.step-back` with a lucide chevron, not a typed glyph —
+// and the frame paints the head it built.
+const backGlyph = headKids[0].children.filter((c) => c.nodeType === 1)[0];
+const backIsTheSharedControl = ["btn", "btn-sm", "step-back", "modal-back"]
+        .every((name) => classesOf(headKids[0]).includes(name))
+    && headKids[0].tagName === "BUTTON"
+    && Boolean(backGlyph) && backGlyph.getAttribute("data-lucide") === "chevron-left"
+    && backGlyph.getAttribute("aria-hidden") === "true"
+    && iconPaints.some((call) => call.root === frameHead && call.context === "overlays");
+if (!backIsTheSharedControl) throw new Error("the layer ‹ must be the shared back control, painted");
 const panelSizeIsDeclared = framed.element.getAttribute("data-size") === "panel";
 const closeButtonTakesFocusWhenNothingElseCan = document.activeElement === headKids[4];
 const closeLabelNamesTheDialog =
@@ -575,8 +590,10 @@ const topLayer = BossModOverlays.createModal({
 const topBack = findIn(headOf(topLayer), "modal-back");
 const oneFrameOnScreen = baseLayer.element.hidden === true
     && !topLayer.element.hidden && scrims().length === 1;
+// The name and the tooltip are one string, and both follow the layer beneath.
 const backNamesTheLayerBeneath = Boolean(topBack) && topBack.hidden === false
     && topBack.getAttribute("aria-label") === "Back to Open A1 PR"
+    && topBack.getAttribute("data-tooltip") === "Back to Open A1 PR"
     && findIn(headOf(baseLayer), "modal-back").hidden === true;
 
 topBack.listeners.click[0]({ preventDefault() {} });
@@ -624,6 +641,7 @@ const layerB = BossModOverlays.createModal({ title: "B", body: "x", actions: [] 
 const layerC = BossModOverlays.createModal({ title: "C", body: "x", actions: [] });
 layerB.close();
 const middleCloseRelabels = findIn(headOf(layerC), "modal-back").getAttribute("aria-label") === "Back to A"
+    && findIn(headOf(layerC), "modal-back").getAttribute("data-tooltip") === "Back to A"
     && panels().length === 2 && !layerC.element.hidden && layerA.element.hidden === true;
 layerC.close();
 const lostOpenerFallsBackToClose = document.activeElement === findIn(headOf(layerA), "modal-close")
@@ -743,6 +761,7 @@ process.stdout.write(JSON.stringify({
     closeRemovesBackdrop,
     escStillCloses,
     headIsFirstAndOrdered,
+    backIsTheSharedControl,
     panelSizeIsDeclared,
     closeButtonTakesFocusWhenNothingElseCan,
     closeLabelNamesTheDialog,

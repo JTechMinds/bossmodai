@@ -422,10 +422,13 @@ def test_the_two_rails_share_one_right_hand_column() -> None:
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "markdown.js",
+    JS / "core" / "clamped-markdown.js",
+    JS / "core" / "fact-list.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "specialty.js",
@@ -435,28 +438,29 @@ CONTEXT_MODULES = [
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
-    CONVERSATION / "empty-state.js",
-    CONVERSATION / "transcript.js",
-    CONVERSATION / "transcript-cache.js",
-    CONVERSATION / "message.js",
-    CONVERSATION / "event-cards.js",
-    CONVERSATION / "title-rename.js",
-    CONVERSATION / "chrome-menu.js",
-    CONVERSATION / "chrome.js",
+    JS / "conversation" / "empty-state.js",
+    JS / "conversation" / "transcript.js",
+    JS / "conversation" / "transcript-cache.js",
+    JS / "conversation" / "message.js",
+    JS / "conversation" / "event-cards.js",
+    JS / "conversation" / "title-rename.js",
+    JS / "conversation" / "chrome-menu.js",
+    JS / "conversation" / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
-    CONVERSATION / "composer-attachments.js",
-    CONVERSATION / "composer.js",
-    CONVERSATION / "system-receipts.js",
+    JS / "conversation" / "composer-attachments.js",
+    JS / "conversation" / "composer.js",
+    JS / "conversation" / "system-receipts.js",
     JS / "needs" / "need-shape.js",
     JS / "needs" / "need-coalesce.js",
     JS / "needs" / "needs-store.js",
     JS / "needs" / "needs-bar.js",
-    CONVERSATION / "sources" / "thread-archive.js",
-    CONVERSATION / "sources" / "thread-seat.js",
-    CONVERSATION / "sources" / "thread-requests.js",
-    CONVERSATION / "sources" / "thread-source.js",
-    CONVERSATION / "sources" / "agent-source.js",
-    CONVERSATION / "conversation.js",
+    JS / "conversation" / "sources" / "thread-archive.js",
+    JS / "conversation" / "sources" / "thread-seat.js",
+    JS / "conversation" / "sources" / "thread-requests.js",
+    JS / "conversation" / "sources" / "thread-source.js",
+    JS / "conversation" / "sources" / "agent-source.js",
+    JS / "conversation" / "conversation-focus-invalidate.js",
+    JS / "conversation" / "conversation.js",
     JS / "shell" / "places.js",
     JS / "places" / "files" / "file-content.js",
     JS / "places" / "files" / "file-form.js",
@@ -494,7 +498,13 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-edit.js",
     JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
-    JS / "context" / "context-column.js",
+    JS / "places" / "tasks" / "tasks-columns.js",
+    JS / "shell" / "agent-routes.js",
+    JS / "context" / "desk-dialog.js",
+    JS / "extensions" / "extensions-api.js",
+    JS / "extensions" / "browser-vision-status.js",
+    JS / "extensions" / "extensions-live.js",
+    JS / "context" / "desk-extensions.js",
     JS / "places" / "chat" / "chat-place.js",
 ]
 
@@ -589,12 +599,12 @@ def test_both_agent_flows_open_the_centred_modal() -> None:
     assert "BossModOverlays.createModal(" in agents
     assert "size: 'takeover'" in agents
 
-    # The context column no longer hosts a form, and the state that reached it
-    # is gone rather than left reachable.
-    column = _read(JS / "context/context-column.js")
-    assert "AgentEdit" not in column, column
-    assert "if (mode === 'desk' && !agentId)" not in column
+    # The context column no longer hosts a form — nor a desk: the view
+    # switcher that once reached a form mode is gone altogether, and Chat
+    # mounts the office summary straight into the column.
+    assert not (JS / "context/context-column.js").exists()
     place = _read(JS / "places/chat/chat-place.js")
+    assert "AgentEdit" not in place
     assert "placeParams.hire" not in place
 
     payload = _context_payload()

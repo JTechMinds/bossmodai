@@ -26,8 +26,10 @@
  * in the browse view beside the URL row that raised it, the uninstall question
  * is asked here, and the bubble that says which family a pack belongs to leads
  * its card and its hero alike. One builder each, two call sites, and no import
- * cycle for index.html's load order to fail on. The takeover's one `✕` is not
- * built here: it is the modal frame's, in the head above whichever view is up.
+ * cycle for index.html's load order to fail on. Neither way out is built here:
+ * the takeover's one `✕` is the modal frame's, and the way back to the grid is
+ * the pane's `lead` (marketplace.js) — the frame's shared back chevron on the
+ * dialog's title row, shown while this view is up.
  */
 const BossModMarketplaceDetail = (() => {
     const { h } = BossModDom;
@@ -36,11 +38,6 @@ const BossModMarketplaceDetail = (() => {
     const READER = BossModMarketplaceSections;
 
     const COPY = Object.freeze({
-        // The back control is the chevron and nothing else, so this is its
-        // whole accessible name and it has to say where it goes. It returns to
-        // the CATALOG, which is mostly packs that are not installed templates,
-        // so it never names the library.
-        backLabel: 'Back to the marketplace',
         by: 'By',
         pinned: 'pinned',
         install: 'Install',
@@ -198,22 +195,6 @@ const BossModMarketplaceDetail = (() => {
         return parts.length ? h('p', { class: 'market-detail-by' }, parts) : null;
     }
 
-    // `‹` goes back to the grid this replaced. Dismissing the takeover is a
-    // different errand and not this bar's: that is the modal frame's `✕`, in
-    // the head above both views. The chevron is a glyph and nothing else — the
-    // word `Back` beside it said less than the announced name already does. The
-    // mark is aria-hidden, so the button announces as "Back to the marketplace"
-    // rather than as a punctuation mark — the glyph is the affordance and
-    // `aria-label` is the whole of the name.
-    function bar(handlers) {
-        return h('div', { class: 'market-detail-bar' },
-            h('button', {
-                class: 'market-detail-back', id: 'market-back', type: 'button',
-                'aria-label': COPY.backLabel, onclick: () => handlers.onBack(),
-            },
-            h('span', { class: 'market-detail-back-mark', 'aria-hidden': 'true' }, '‹')));
-    }
-
     /**
      * Build the detail view for the item the state has selected.
      *
@@ -225,7 +206,7 @@ const BossModMarketplaceDetail = (() => {
      *   to read, `busyId` gates install and uninstall, `sectionKey` is which of the
      *   pack's sections is open, and `error`, `notice` and `pendingUninstall`
      *   are the three things that can sit above the hero.
-     * @param {object} handlers  onBack, onInstall, onUseTemplate, onUninstall,
+     * @param {object} handlers  onInstall, onUseTemplate, onUninstall,
      *   onUninstallConfirm, onUninstallCancel, onSection.
      * @returns {HTMLElement} The whole view, ready to replace the browse one.
      * @throws {Error} When nothing is selected. Rendering an empty detail would
@@ -245,7 +226,6 @@ const BossModMarketplaceDetail = (() => {
             class: 'market-detail', id: 'market-detail', tabindex: '-1',
             'aria-label': COPY.detailLabel,
         },
-        bar(handlers),
         state.error ? h('p', { class: 'market-error', role: 'alert' }, state.error) : null,
         state.notice ? h('p', { class: 'market-notice', role: 'status' }, state.notice) : null,
         state.pendingUninstall ? confirmStrip({

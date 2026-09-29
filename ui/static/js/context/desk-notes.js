@@ -108,7 +108,7 @@ const BossModDeskNotes = (() => {
             listEl.append(
                 h('p', { class: 'context-error', role: 'alert' }, message || ERROR_COPY),
                 h('button', {
-                    class: 'desk-files-btn',
+                    class: 'btn btn-sm',
                     id: 'desk-notes-retry-btn',
                     type: 'button',
                     onclick: () => { void refresh(); },
@@ -135,10 +135,14 @@ const BossModDeskNotes = (() => {
                             .catch(() => renderError('That note could not be opened.'));
                     },
                 },
-                    h('span', { class: 'desk-note-title' }, noteTitle(entry)),
-                    h('span', { class: 'desk-note-meta' },
-                        BossModFormat.formatRelativeTime(entry.updated_at) || 'Not saved yet')));
+                    h('i', { 'data-lucide': 'notebook-pen', 'aria-hidden': 'true' }),
+                    h('span', { class: 'desk-note-text' },
+                        h('span', { class: 'desk-note-title' }, noteTitle(entry)),
+                        h('span', { class: 'desk-note-meta' },
+                            BossModFormat.formatRelativeTime(entry.updated_at) || 'Not saved yet'))));
             });
+            // Rebuilt per load, so this section paints its own glyphs.
+            BossModIcons.paint(listEl, 'desk-notes');
         }
 
         /**

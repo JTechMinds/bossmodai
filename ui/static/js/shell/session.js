@@ -9,9 +9,14 @@
 const BossModSession = (() => {
     const STORAGE_KEY = 'bossmod_ui';
 
-    /** The only keys that persist. Server collections never do. */
+    /**
+     * The only keys that persist. Server collections never do, and neither
+     * does transient UI: the desk is a modal (context/desk-dialog.js), and a
+     * reload that reopened one would be side-panel behaviour the modal
+     * standard retired. An old blob's `contextMode` is simply not read.
+     */
     const PERSISTED_KEYS = Object.freeze([
-        'place', 'conversationId', 'conversationKind', 'contextMode', 'railCollapsed',
+        'place', 'conversationId', 'conversationKind', 'railCollapsed',
         'currentFloorId',
     ]);
 
@@ -19,7 +24,6 @@ const BossModSession = (() => {
         place: 'chat',
         conversationId: null,
         conversationKind: null,
-        contextMode: 'office',
         railCollapsed: false,
         currentFloorId: 'lobby',
     });
@@ -96,9 +100,6 @@ const BossModSession = (() => {
             }
         }
 
-        if (result.contextMode !== 'office' && result.contextMode !== 'desk') {
-            result.contextMode = DEFAULTS.contextMode;
-        }
         result.railCollapsed = result.railCollapsed === true;
         if (typeof result.currentFloorId !== 'string' || !result.currentFloorId) {
             result.currentFloorId = DEFAULTS.currentFloorId;

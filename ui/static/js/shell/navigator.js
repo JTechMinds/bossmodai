@@ -22,9 +22,15 @@ const BossModNavigator = (() => {
      * @param {object} options.needs      From BossModNeeds.createNeedsStore.
      * @param {HTMLElement} options.contextEl  #app-context. The shell owns the
      *   element and toggles the column; it knows nothing about what fills it.
+     * @param {(agentId: string, path?: string) => void} options.openDesk  Opens
+     *   one agent's desk modal (context/desk-dialog.js). Handed to every place
+     *   as `ctx.openDesk`, so each door into a desk is the same one.
      * @returns {{ navigate: (id: string, params?: object) => void, getCtx: () => object }}
+     * @throws {Error} When openDesk is not a function: a place would otherwise
+     *   render a desk door that fails only when clicked.
      */
-    function createNavigator({ store, bus, container, api, needs, contextEl }) {
+    function createNavigator({ store, bus, container, api, needs, contextEl, openDesk }) {
+        if (typeof openDesk !== 'function') throw new Error('[navigator] openDesk is required');
         let current = null;
 
         const ctx = {
@@ -33,6 +39,7 @@ const BossModNavigator = (() => {
             api,
             needs,
             contextEl,
+            openDesk,
             navigate: (id, params) => navigate(id, params),
         };
 

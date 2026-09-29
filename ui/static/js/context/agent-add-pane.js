@@ -5,8 +5,8 @@
  * Marketplace became two tabs of ONE dialog (context/agents-dialog.js). This
  * is the create flow with no modal of its own: the template picker, the form
  * host, the Back chevron the form step puts on the title row, and the wiring a
- * create does once it lands — the new agent's conversation and desk open, and
- * the dialog closes. The dialog owns the frame, the tabs and which pane is up;
+ * create does once it lands — the new agent's conversation opens, and the
+ * dialog closes. The dialog owns the frame, the tabs and which pane is up;
  * building the form and saving through it is context/agent-form-save.js, which
  * this hosts and calls but does not re-export.
  *
@@ -60,8 +60,8 @@ const BossModAgentAddPane = (() => {
      *
      * @param {object} deps
      * @param {object} deps.store  Application store. A successful create
-     *   routes to the new agent — its conversation and its desk — so the
-     *   operator lands somewhere rather than back at a blank form.
+     *   routes to the new agent's conversation, so the operator lands
+     *   somewhere rather than back at a blank form.
      * @param {() => void} deps.onBrowse  The picker's empty-state door: the
      *   dialog switches to its Marketplace tab.
      * @param {() => void} deps.onDone  The create finished (or a recovery tool
@@ -128,12 +128,11 @@ const BossModAgentAddPane = (() => {
         // as a bordered square floating in the band between the title and the
         // first card, aligned to neither and filling nothing. The row is also
         // OUTSIDE the body, so a build that fails and empties the form host
-        // cannot take the way back with it.
-        const lead = h('button', {
-            class: 'btn btn-sm step-back', type: 'button', id: 'agent-add-back',
-            'aria-label': BACK_LABEL, 'data-tooltip': BACK_LABEL,
-            onclick: () => showStep('picker'),
-        }, h('i', { 'data-lucide': 'chevron-left', 'aria-hidden': 'true' }));
+        // cannot take the way back with it. The shape is the frame's one back
+        // control (core/overlays.js), the same as every layer's ‹.
+        const lead = BossModOverlays.backButton({
+            label: BACK_LABEL, onBack: () => showStep('picker'), id: 'agent-add-back',
+        });
         lead.hidden = true;
         const element = h('div', { class: 'agent-add-body' }, picker.element, formEl);
 
@@ -301,15 +300,14 @@ const BossModAgentAddPane = (() => {
         function onSave(savedAgent) {
             if (destroyed) return;
             if (savedAgent) {
-                // Preserves the dock-era behaviour: creating someone opens
-                // their conversation and their desk, so the operator lands
-                // somewhere rather than back at a blank form.
+                // Creating someone opens their conversation, so the operator
+                // lands somewhere rather than back at a blank form. NOT their
+                // desk: the desk is a modal now, and one springing open over
+                // the chat the operator just landed in would block it. It is
+                // one click away, on the conversation header's lamp.
                 store.setState({
                     conversationId: savedAgent.id,
                     conversationKind: 'agent',
-                    contextMode: 'desk',
-                    deskAgentId: savedAgent.id,
-                    deskPath: null,
                 });
             }
             onDone();

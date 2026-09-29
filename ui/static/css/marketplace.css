@@ -445,8 +445,10 @@
 
 /* ─── The detail view ─── */
 
-/* The whole surface, and its own scroller. Its bar sticks to the top of it at
-   `0` — exact for the same reason the rail's is.
+/* The whole surface, and its own scroller. No bar of its own at the top: the
+   way back to the grid is the frame's back chevron on the dialog's title row
+   (marketplace.js `lead`), so the read starts at the hero, under the same
+   .modal-body padding every other dialog's content starts under.
    A COLUMN, so the section reader at the bottom can be handed the height the
    description above it did not use; without that the panel has no height to
    scroll inside and the two-column read is as tall as whichever section happens
@@ -460,45 +462,6 @@
   flex-direction: column;
   padding-right: 4px;
 }
-
-.market-detail-bar {
-  position: sticky;
-  z-index: 1;
-  top: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding-bottom: 12px;
-  margin-bottom: 20px;
-  border-bottom: 1px solid var(--line);
-  background: var(--panel);
-}
-
-/* Icon-only now: the word `Back` is gone and `aria-label` carries the whole
-   name. A chevron is narrower than a word, so the target is squared up rather
-   than left at whatever the glyph happens to measure (SC 2.5.8). */
-.market-detail-back {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-width: 32px;
-  min-height: 24px;
-  padding: 4px 6px;
-  border: 1px solid transparent;
-  border-radius: var(--r);
-  background: transparent;
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--accent);
-}
-
-/* --accent measures 4.19:1 on --accent-bg and fails AA; --blue-ink is 6.86:1
-   there. The same correction .roster-hire and .menu-door carry. */
-.market-detail-back:hover { background: var(--accent-bg); color: var(--blue-ink); }
-
-.market-detail-back-mark { font-size: 18px; line-height: 1; }
 
 /* WHO on the left, WHAT IT COSTS on the right, on one line at the top of the
    read: the mark, the name and everything that identifies the pack, against the

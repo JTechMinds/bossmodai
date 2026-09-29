@@ -1,15 +1,20 @@
 /**
- * BossMod AI — the two ways into an agent, wherever the operator starts.
+ * BossMod AI — the way into an agent's conversation, wherever the operator
+ * starts.
  *
- * The roster's People rows and the Office floor both offer an agent's chat and
- * an agent's desk, and both must mean exactly what the roster always meant. So
- * the store writes live here once, and every door calls them with its own
- * store and navigate — injected, never read off a global.
+ * The roster's People rows, the Office floor, the Tasks place and the desk all
+ * offer an agent's chat, and all must mean exactly what the roster always
+ * meant. So the store write lives here once, and every door calls it with its
+ * own store and navigate — injected, never read off a global.
+ *
+ * ONE door now. The desk used to be the second: a store write that switched
+ * Chat's context column. It is a modal (context/desk-dialog.js) reached
+ * through the injected `ctx.openDesk`, and has nothing to write here.
  *
  * Navigation is only how the operator REACHES Chat; the store is what switches
- * the conversation or the context column. Navigating while already there
- * would remount the place and take the transcript cache, the composer draft,
- * and the caret with it on every click.
+ * the conversation. Navigating while already there would remount the place
+ * and take the transcript cache, the composer draft, and the caret with it on
+ * every click.
  */
 const BossModAgentRoutes = (() => {
     /**
@@ -44,20 +49,5 @@ const BossModAgentRoutes = (() => {
         if (store.getState().place !== 'chat') navigate('chat');
     }
 
-    /**
-     * Open one agent's desk in Chat's context column.
-     *
-     * @param {{store: object, navigate: (placeId: string) => void}} deps
-     * @param {string} agentId
-     * @returns {void}
-     * @throws {Error} On missing deps or an empty agent id.
-     */
-    function openDesk(deps, agentId) {
-        const { store, navigate } = requireDeps(deps);
-        if (!agentId) throw new Error('[agent-routes] a desk needs an agent id');
-        store.setState({ contextMode: 'desk', deskAgentId: agentId });
-        if (store.getState().place !== 'chat') navigate('chat');
-    }
-
-    return { openConversation, openDesk };
+    return { openConversation };
 })();

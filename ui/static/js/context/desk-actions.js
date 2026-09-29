@@ -1,18 +1,19 @@
 /**
- * BossMod AI — the desk footer: workspace, model, and what the operator can do
- * to an agent.
+ * BossMod AI — the desk's Details facts, and the two destructive actions on an
+ * agent.
  *
- * Split out of desk-panel.js, which composes read-only sections; everything
- * here mutates. Two of the four actions destroy work that cannot be recovered,
- * so both confirm through core/overlays.js before the API is touched. A bare
- * click-through on either would be the kind of accident this codebase's rules
- * exist to prevent.
+ * Split out of desk-panel.js, which composes read-only sections; the two
+ * runners here destroy work that cannot be recovered, so both confirm through
+ * core/overlays.js before the API is touched. A bare click-through on either
+ * would be the kind of accident this codebase's rules exist to prevent.
  *
- * It is the panel's foot: pinned to the bottom, quiet key/value facts, and
- * four text-link actions. Four equal bordered buttons under the content read
- * as the loudest thing on the desk, which is the opposite of what they are —
- * the two that matter are already behind a confirmation, and the ink on the
- * two destructive ones is what marks them, not a box.
+ * It renders NO BUTTONS. The desk used to end in four text links — Edit role,
+ * Diagnostics, Reset runtime, Remove — at the bottom of a long scroll, two of
+ * them red, in the reading flow. In every other modal those live in the head,
+ * and the destructive ones behind its `⋯` (places/tasks/task-detail.js): so
+ * the desk panel's head `⋯` calls `confirmReset()` and `confirmRemove()` here,
+ * and what this renders is the quiet facts — workspace and model — plus the
+ * error line either runner reports into.
  */
 const BossModDeskActions = (() => {
     const { h, clear } = BossModDom;
@@ -22,45 +23,35 @@ const BossModDeskActions = (() => {
     // the warning names whose files go, so there is no dialog without the name.
     const REMOVE_NOT_READY = 'This agent’s details haven’t loaded yet, so Remove '
         + 'can’t say whose files it deletes. Try again in a moment.';
-    /**
-     * One footer fact: a label and its value, on one row.
-     *
-     * @param {string} label
-     * @param {string} value
-     * @returns {HTMLElement}
-     */
-    function kv(label, value) {
-        return h('p', { class: 'desk-kv' },
-            h('span', {}, label),
-            h('b', { class: 'desk-kv-value' }, String(value)));
-    }
 
     const RESET_TITLE = 'Reset this agent’s runtime?';
     const RESET_BODY = 'This cancels active work, clears queued triggers, resets the agent to '
         + 'idle, and may block the active task. Completed work history is preserved.';
 
     /**
-     * Build the desk footer.
+     * Build the Details facts and the runners the desk's `⋯` calls.
      *
      * @param {object} deps
-     * @param {object}   deps.store
-     * @param {Function} deps.api
-     * @param {(placeId: string, params?: object) => void} deps.navigate
+     * @param {Function} deps.api  Authenticated fetch helper.
      * @param {string}   deps.agentId
-     * @param {() => void} deps.onEdit  Swaps the desk for the role form.
-     * @returns {{ element: HTMLElement, refresh: () => void, destroy: () => void }}
+     * @param {() => void} deps.onRemoved  Called once the DELETE has landed:
+     *   the desk that showed the agent cannot stay open, and closing it is the
+     *   desk dialog's job, not this module's.
+     * @returns {{ element: HTMLElement, refresh: () => Promise<void>,
+     *   confirmReset: () => void, confirmRemove: () => void,
+     *   destroy: () => void }} `element` is the facts and the error line.
+     *   `confirmReset`/`confirmRemove` open the confirmation layer; nothing
+     *   reaches the API until the operator confirms.
      * @throws {Error} When any dependency is missing.
      */
     function createDeskActions(deps) {
-        const { store, api, navigate, agentId, onEdit } = deps || {};
-        if (!store) throw new Error('[desk-actions] deps.store is required');
+        const { api, agentId, onRemoved } = deps || {};
         if (typeof api !== 'function') throw new Error('[desk-actions] deps.api is required');
-        if (typeof navigate !== 'function') throw new Error('[desk-actions] deps.navigate is required');
         if (!agentId) throw new Error('[desk-actions] deps.agentId is required');
-        if (typeof onEdit !== 'function') throw new Error('[desk-actions] deps.onEdit is required');
+        if (typeof onRemoved !== 'function') throw new Error('[desk-actions] deps.onRemoved is required');
 
         const detailLoad = BossModGates.createLoadGeneration();
-        const metaEl = h('div', { class: 'desk-meta-block' });
+        const metaEl = h('div', { class: 'desk-details' });
         const errorEl = h('p', { class: 'context-error', role: 'alert' });
         let destroyed = false;
         /** From GET /api/agents/{id}: name, storage key and model overrides. */
@@ -81,12 +72,12 @@ const BossModDeskActions = (() => {
             // A null model override means the company default, which is a real
             // configuration rather than a missing value.
             const model = detail.model_work || detail.model_reasoning || 'Company default';
-            // Key on the left, value on the right: two quiet facts about the
-            // desk rather than two more sentences competing with the sections
-            // above them.
-            metaEl.append(
-                kv('Workspace', detail.storage_key || 'unassigned'),
-                kv('Model', model));
+            // The shared fact list, the task detail's: two quiet facts about
+            // the desk rather than two more sentences.
+            metaEl.append(BossModFactList.create([
+                { label: 'Workspace', value: String(detail.storage_key || 'unassigned') },
+                { label: 'Model', value: String(model) },
+            ]));
         }
 
         /**
@@ -113,6 +104,9 @@ const BossModDeskActions = (() => {
 
         /**
          * Run a destructive action behind a confirmation.
+         *
+         * Opened over the desk, it is a layer in the same frame
+         * (core/overlays.js), so Cancel and Esc come back to the desk.
          *
          * @param {object} spec  `{title, body, confirm, run}`. Nothing is called
          *   until the operator confirms; Cancel is the focused default.
@@ -141,11 +135,25 @@ const BossModDeskActions = (() => {
         }
 
         /**
+         * Open Reset runtime's confirmation.
+         * @returns {void}
+         */
+        function confirmReset() {
+            confirmThen({
+                title: RESET_TITLE,
+                body: RESET_BODY,
+                confirm: 'Reset runtime',
+                run: resetRuntime,
+            });
+        }
+
+        /**
          * Open Remove's confirmation, which names the agent it deletes.
          *
          * The name is `detail.name`, so until the detail read lands there is
-         * no dialog: the footer's error line says why and the read is retried,
-         * which also covers a read that failed rather than one still in flight.
+         * no dialog: the Details section's error line says why and the read is
+         * retried, which also covers a read that failed rather than one still
+         * in flight.
          * @returns {void}
          */
         function confirmRemove() {
@@ -173,38 +181,13 @@ const BossModDeskActions = (() => {
                 return;
             }
             // The agent is gone; the desk that showed them cannot stay open.
-            store.setState({ contextMode: 'office', deskAgentId: null, deskPath: null });
+            // Unless it already closed while the DELETE was in flight: the
+            // desk open now may be someone else's.
+            if (destroyed) return;
+            onRemoved();
         }
 
-        const element = h('div', { class: 'desk-footer' },
-            metaEl,
-            errorEl,
-            h('div', { class: 'desk-actions' },
-                h('button', {
-                    class: 'btn-link desk-action',
-                    type: 'button',
-                    onclick: () => onEdit(),
-                }, 'Edit role'),
-                h('button', {
-                    class: 'btn-link desk-action',
-                    type: 'button',
-                    onclick: () => navigate('log', { agentId }),
-                }, 'Diagnostics'),
-                h('button', {
-                    class: 'btn-link desk-action danger',
-                    type: 'button',
-                    onclick: () => confirmThen({
-                        title: RESET_TITLE,
-                        body: RESET_BODY,
-                        confirm: 'Reset runtime',
-                        run: resetRuntime,
-                    }),
-                }, 'Reset runtime'),
-                h('button', {
-                    class: 'btn-link desk-action danger',
-                    type: 'button',
-                    onclick: () => confirmRemove(),
-                }, 'Remove')));
+        const element = h('div', { class: 'desk-details-block' }, metaEl, errorEl);
 
         renderMeta();
         void refresh();
@@ -212,6 +195,8 @@ const BossModDeskActions = (() => {
         return {
             element,
             refresh,
+            confirmReset,
+            confirmRemove,
 
             /**
              * Stop painting; an in-flight detail response is dropped.

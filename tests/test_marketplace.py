@@ -871,28 +871,45 @@ def test_the_back_control_is_a_glyph_that_still_says_where_it_goes() -> None:
     where it goes, and the glyph stays aria-hidden so it cannot be announced as
     a punctuation mark instead. Dropping the label is a visual change; dropping
     the name would be a keyboard dead end.
+
+    The bar is gone too. Its blue `‹` inside the scrolling detail was one of
+    THREE back controls the app's modals wore; the chevron is the frame's one
+    back control now (core/overlays.js `backButton()`), on the dialog's title
+    row as the pane's `lead` — shown only while this tab is up and a pack is
+    open.
     """
-    assert _harness()["backIsAGlyphThatStillSaysWhereItGoes"] is True
+    payload = _harness()
+    assert payload["backIsAGlyphThatStillSaysWhereItGoes"] is True
+    assert payload["backFollowsTheTab"] is True
+    assert payload["backHidesWithTheGrid"] is True
+    pane = _read(JS / "marketplace" / "marketplace.js")
+    lead = pane.split("const lead = BossModOverlays.backButton({", 1)[1].split("});", 1)[0]
+    assert "label: 'Back to the marketplace'," in lead
+    assert "onBack: () => handlers.onBack()," in lead
+    assert "id: 'market-back'" in lead
+    # The detail draws no way back of its own any more.
     detail = _read(JS / "marketplace" / "marketplace-detail.js")
-    assert "backLabel: 'Back to the marketplace'," in detail
-    assert "'aria-label': COPY.backLabel," in detail
-    # The glyph is the button's ONLY child, and it is hidden from the name. The
-    # button — and, since the frame's ✕ replaced the bar's own, the bar — closes
-    # straight after it.
-    assert (
-        "h('span', { class: 'market-detail-back-mark', 'aria-hidden': 'true' }, '‹')));"
-    ) in detail
+    assert "market-back" not in detail
+    assert "function bar(" not in detail
     # The retired copy is gone rather than merely unrendered — comments
-    # stripped, because the prose above quotes both of the words it replaced.
+    # stripped, because the prose above quotes the words it replaced.
     copy = _code(JS / "marketplace" / "marketplace-detail.js")
     copy = copy.split("const COPY = Object.freeze({", 1)[1].split("});", 1)[0]
     assert "back: " not in copy, "the visible label is gone, not just unused"
-    # A chevron is narrower than a word, so the target is squared up (SC 2.5.8).
-    css = _read(CSS)
-    back = css.split(".market-detail-back {", 1)[1].split("}", 1)[0]
-    assert "min-width: 32px;" in back
-    assert "justify-content: center;" in back
+    assert "backLabel" not in copy, "the label lives with the control, on the pane"
     assert "Templates" not in copy, "the control no longer names the library"
+    # The shape is the shared one: `.btn.btn-sm.step-back`, a square icon-only
+    # target from `.btn[data-tooltip]` (SC 2.5.8), one glyph size for every
+    # back chevron — and none of the bar's own rules survive.
+    overlays = _read(JS / "core" / "overlays.js")
+    shared = overlays.split("function backButton(", 1)[1].split("\n    }\n", 1)[0]
+    assert "class: 'btn btn-sm step-back'," in shared
+    assert "'data-lucide': 'chevron-left'" in shared
+    controls = _read(ROOT / "ui" / "static" / "css" / "controls.css")
+    assert ".step-back svg { width: 14px; height: 14px; }" in controls
+    css = _read(CSS)
+    for retired in (".market-detail-bar", ".market-detail-back"):
+        assert retired not in css, retired
 
 
 def test_the_takeover_carries_one_dismiss_control_and_no_footer() -> None:

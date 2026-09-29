@@ -210,7 +210,9 @@ function apiFetch(url) {
                 destroy: () => {},
             },
         }),
-        BossModRoster.mount(rosterEl, { store: s, bus: b, apiFetch, navigate: noop, onHire: noop }),
+        BossModRoster.mount(rosterEl, {
+            store: s, bus: b, apiFetch, navigate: noop, openDesk: noop, onHire: noop,
+        }),
         BossModFooter.mount(footerEl, { store: s, bus: b }),
     ];
     await drain();

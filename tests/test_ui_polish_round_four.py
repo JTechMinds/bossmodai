@@ -104,10 +104,13 @@ def test_the_scrim_reads_without_the_blur() -> None:
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "markdown.js",
+    JS / "core" / "clamped-markdown.js",
+    JS / "core" / "fact-list.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "specialty.js",
@@ -117,28 +120,29 @@ CONTEXT_MODULES = [
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
-    CONVERSATION / "empty-state.js",
-    CONVERSATION / "transcript.js",
-    CONVERSATION / "transcript-cache.js",
-    CONVERSATION / "message.js",
-    CONVERSATION / "event-cards.js",
-    CONVERSATION / "title-rename.js",
-    CONVERSATION / "chrome-menu.js",
-    CONVERSATION / "chrome.js",
+    JS / "conversation" / "empty-state.js",
+    JS / "conversation" / "transcript.js",
+    JS / "conversation" / "transcript-cache.js",
+    JS / "conversation" / "message.js",
+    JS / "conversation" / "event-cards.js",
+    JS / "conversation" / "title-rename.js",
+    JS / "conversation" / "chrome-menu.js",
+    JS / "conversation" / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
-    CONVERSATION / "composer-attachments.js",
-    CONVERSATION / "composer.js",
-    CONVERSATION / "system-receipts.js",
+    JS / "conversation" / "composer-attachments.js",
+    JS / "conversation" / "composer.js",
+    JS / "conversation" / "system-receipts.js",
     JS / "needs" / "need-shape.js",
     JS / "needs" / "need-coalesce.js",
     JS / "needs" / "needs-store.js",
     JS / "needs" / "needs-bar.js",
-    CONVERSATION / "sources" / "thread-archive.js",
-    CONVERSATION / "sources" / "thread-seat.js",
-    CONVERSATION / "sources" / "thread-requests.js",
-    CONVERSATION / "sources" / "thread-source.js",
-    CONVERSATION / "sources" / "agent-source.js",
-    CONVERSATION / "conversation.js",
+    JS / "conversation" / "sources" / "thread-archive.js",
+    JS / "conversation" / "sources" / "thread-seat.js",
+    JS / "conversation" / "sources" / "thread-requests.js",
+    JS / "conversation" / "sources" / "thread-source.js",
+    JS / "conversation" / "sources" / "agent-source.js",
+    JS / "conversation" / "conversation-focus-invalidate.js",
+    JS / "conversation" / "conversation.js",
     JS / "shell" / "places.js",
     JS / "places" / "files" / "file-content.js",
     JS / "places" / "files" / "file-form.js",
@@ -176,7 +180,13 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-edit.js",
     JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
-    JS / "context" / "context-column.js",
+    JS / "places" / "tasks" / "tasks-columns.js",
+    JS / "shell" / "agent-routes.js",
+    JS / "context" / "desk-dialog.js",
+    JS / "extensions" / "extensions-api.js",
+    JS / "extensions" / "browser-vision-status.js",
+    JS / "extensions" / "extensions-live.js",
+    JS / "context" / "desk-extensions.js",
     JS / "places" / "chat" / "chat-place.js",
 ]
 
@@ -201,10 +211,10 @@ def test_the_primary_action_is_pinned_beside_cancel() -> None:
     # frame's ✕ on every tab. The primary is pinned on the step that HAS a
     # form, which is this test's subject.
     #
-    # Step two no longer pins Back: it is the chevron on the title row, which
-    # is where .desk-back and the marketplace detail's `‹` already are. Its
-    # presence there is pinned in the harness and in
-    # tests/test_add_agent_modal.py.
+    # Step two no longer pins Back: it is the chevron on the title row — the
+    # frame's one back control (core/overlays.js backButton()), the same as
+    # every layer's ‹ and the Marketplace pane's. Its presence there is pinned
+    # in the harness and in tests/test_add_agent_modal.py.
     #
     # `Save as template` LEADS both form rows (spec 2026-09-22, recent agents
     # and local templates): it is about the form rather than about finishing

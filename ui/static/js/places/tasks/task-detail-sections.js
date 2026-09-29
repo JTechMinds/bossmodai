@@ -202,48 +202,26 @@ const BossModTaskDetailSections = (() => {
 
     /**
      * What the task asks for, rendered as markdown and clamped to six lines
-     * until measureClamp() has seen whether it actually overflows.
+     * until the returned `measure()` has seen whether it actually overflows.
+     * The clamp itself is core/clamped-markdown.js's, which the agent desk's
+     * description shares.
      *
      * @param {object} task
-     * @returns {HTMLElement|null} null without a description.
+     * @returns {{element: HTMLElement, measure: () => void}|null} null without
+     *   a description. `measure` must be called once `element` is on screen.
      */
     function instructions(task) {
         if (!task.description) return null;
-        const text = h('div', { class: 'task-detail-instructions md is-clamped' },
-            BossModMarkdown.render(task.description));
-        const more = h('button', {
-            class: 'btn-link task-detail-more', type: 'button',
-            onclick: () => {
-                text.classList.remove('is-clamped');
-                more.remove();
-            },
-        }, 'Show full instruction');
-        // Hidden until measured: a toggle for text that fits would promise
-        // more than there is.
-        more.hidden = true;
-        return h('section', { class: 'task-detail-section' },
-            h('p', { class: 'task-detail-heading' }, 'Task'), text, more);
-    }
-
-    /**
-     * Decide the clamp once the section is on screen and has a height.
-     *
-     * @param {HTMLElement} sectionEl  From instructions().
-     * @returns {void}
-     * @throws {Error} When the section is not one instructions() built.
-     */
-    function measureClamp(sectionEl) {
-        const text = sectionEl.querySelector('.task-detail-instructions');
-        const more = sectionEl.querySelector('.task-detail-more');
-        if (!text || !more) throw new Error('[task-detail] measureClamp needs an instructions section');
-        // One pixel of slack: line boxes round, and a text that fits exactly
-        // can report a scrollHeight a pixel over its box.
-        if (text.scrollHeight <= text.clientHeight + 1) {
-            text.classList.remove('is-clamped');
-            more.remove();
-            return;
-        }
-        more.hidden = false;
+        const clamped = BossModClampedMarkdown.create({
+            text: String(task.description),
+            className: 'task-detail-instructions',
+            moreLabel: 'Show full instruction',
+        });
+        return {
+            element: h('section', { class: 'task-detail-section' },
+                h('p', { class: 'task-detail-heading' }, 'Task'), clamped.element),
+            measure: clamped.measure,
+        };
     }
 
     /**
@@ -329,7 +307,7 @@ const BossModTaskDetailSections = (() => {
     }
 
     return {
-        statusLine, facts, callout, instructions, measureClamp,
+        statusLine, facts, callout, instructions,
         deliverables, subtasks, doneContract,
     };
 })();

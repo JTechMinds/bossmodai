@@ -149,7 +149,9 @@ def test_add_agent_and_the_marketplace_are_two_tabs_of_one_dialog() -> None:
     assert dialog.count("BossModOverlays.createModal({") == 1
     assert "size: 'takeover'," in dialog
     assert "tools: [tabs.element]," in dialog
-    assert "lead: addPane.lead," in dialog
+    # Both panes' back chevrons share the title row, in one wrapper the head
+    # lays out as if it were not there (overlays.css `.modal-lead`).
+    assert "lead: h('span', { class: 'modal-lead' }, addPane.lead, market.lead)," in dialog
     assert "actions: []," in dialog
     # The bridge switches tabs FIRST, so the pane is live before the pick
     # lands in it, and a library change refreshes the picker.

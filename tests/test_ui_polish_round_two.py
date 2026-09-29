@@ -56,10 +56,13 @@ def _run(harness: str, modules: list[Path]) -> dict:
 CONTEXT_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "markdown.js",
+    JS / "core" / "clamped-markdown.js",
+    JS / "core" / "fact-list.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "specialty.js",
@@ -69,28 +72,29 @@ CONTEXT_MODULES = [
     JS / "core" / "overlay-focus.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
-    CONVERSATION / "empty-state.js",
-    CONVERSATION / "transcript.js",
-    CONVERSATION / "transcript-cache.js",
-    CONVERSATION / "message.js",
-    CONVERSATION / "event-cards.js",
-    CONVERSATION / "title-rename.js",
-    CONVERSATION / "chrome-menu.js",
-    CONVERSATION / "chrome.js",
+    JS / "conversation" / "empty-state.js",
+    JS / "conversation" / "transcript.js",
+    JS / "conversation" / "transcript-cache.js",
+    JS / "conversation" / "message.js",
+    JS / "conversation" / "event-cards.js",
+    JS / "conversation" / "title-rename.js",
+    JS / "conversation" / "chrome-menu.js",
+    JS / "conversation" / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
-    CONVERSATION / "composer-attachments.js",
-    CONVERSATION / "composer.js",
-    CONVERSATION / "system-receipts.js",
+    JS / "conversation" / "composer-attachments.js",
+    JS / "conversation" / "composer.js",
+    JS / "conversation" / "system-receipts.js",
     JS / "needs" / "need-shape.js",
     JS / "needs" / "need-coalesce.js",
     JS / "needs" / "needs-store.js",
     JS / "needs" / "needs-bar.js",
-    CONVERSATION / "sources" / "thread-archive.js",
-    CONVERSATION / "sources" / "thread-seat.js",
-    CONVERSATION / "sources" / "thread-requests.js",
-    CONVERSATION / "sources" / "thread-source.js",
-    CONVERSATION / "sources" / "agent-source.js",
-    CONVERSATION / "conversation.js",
+    JS / "conversation" / "sources" / "thread-archive.js",
+    JS / "conversation" / "sources" / "thread-seat.js",
+    JS / "conversation" / "sources" / "thread-requests.js",
+    JS / "conversation" / "sources" / "thread-source.js",
+    JS / "conversation" / "sources" / "agent-source.js",
+    JS / "conversation" / "conversation-focus-invalidate.js",
+    JS / "conversation" / "conversation.js",
     JS / "shell" / "places.js",
     JS / "places" / "files" / "file-content.js",
     JS / "places" / "files" / "file-form.js",
@@ -128,7 +132,13 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-edit.js",
     JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
-    JS / "context" / "context-column.js",
+    JS / "places" / "tasks" / "tasks-columns.js",
+    JS / "shell" / "agent-routes.js",
+    JS / "context" / "desk-dialog.js",
+    JS / "extensions" / "extensions-api.js",
+    JS / "extensions" / "browser-vision-status.js",
+    JS / "extensions" / "extensions-live.js",
+    JS / "context" / "desk-extensions.js",
     JS / "places" / "chat" / "chat-place.js",
 ]
 
@@ -550,15 +560,25 @@ def test_the_overflow_menu_is_keyboard_operable() -> None:
 def test_the_desk_panel_has_one_identity_block_and_labelled_sections() -> None:
     """"Looks like it was slapped together" is a hierarchy problem.
 
-    Eight sections at one visual level with no grouping. The identity block is
-    closed by a rule, each section carries its own labelled header with its
-    action right-aligned on it, and the vocabulary is the panel's — the section
-    modules render content and stop authoring headers of their own.
+    Eight sections at one visual level with no grouping. Each section carries
+    its own labelled header with its action right-aligned on it, and the
+    vocabulary is the panel's — the section modules render content and stop
+    authoring headers of their own.
+
+    The identity block closed by a rule is gone with the column: the desk is a
+    modal, so WHO this is is the modal's own head — the agent's name as the
+    title and their face as its lead — and the body's aside answers the rest
+    (About, Details) beside the work rather than above it.
     """
     js = _read(JS / "context/desk-panel.js")
-    assert "desk-profile" in js
+    assert "desk-profile" not in js
+    assert "lead.append(BossModAvatar.create({ name: who.name, color: who.color, size: 'md' }));" in js
+    assert "h('aside', { class: 'desk-aside'" in js
+    dialog = _read(JS / "context/desk-dialog.js")
+    assert "title: who ? String(who.name) : LOADING_TITLE," in dialog
+    assert "lead: entry.panel.lead," in dialog
     css = _read(CSS / "context.css")
-    assert "border-bottom" in _rule(css, ".desk-profile")
+    assert ".desk-profile" not in css
 
     # Section actions belong to their section's header, not to the gap below it.
     assert "desk-section-action" in js
@@ -593,22 +613,33 @@ def test_the_folder_buttons_are_quiet_and_the_footer_is_pinned() -> None:
     """Three equal bordered buttons competed with the content they act on.
 
     They stay in the Files section, where their path scope lives, and stop
-    shouting. The footer's own four actions are quiet text links on a block
-    pinned to the bottom, which is the concept's `.desk-foot`.
+    shouting — as the head's icon buttons now, on the crumbs' own row, rather
+    than as the blue text links that took a line of their own. The root switch
+    keeps a word beside its glyph because it names WHERE it goes.
+
+    The footer that was pinned under them is gone: the desk is a modal, and
+    its actions on the agent are the head's (Chat, Edit role, and the rest
+    behind the `⋯`), so nothing in the body is an action link any more.
     """
     files = _read(JS / "context/desk-files.js")
-    controls = files.split("function controlsRow(", 1)[1].split("\n        function ", 1)[0]
+    controls = files.split("function controls(", 1)[1].split("\n        function ", 1)[0]
     assert "desk-files-btn" not in controls, controls
-    assert "btn-link desk-files-link" in controls
-    # The duplicate header is gone: the panel labels the section, the browser
-    # names the folder it is showing.
+    assert "btn-link" not in controls
+    for control in ("desk-open-parent-btn", "desk-open-folder-btn", "desk-refresh-btn"):
+        assert f"toolButton('{control}'" in controls, control
+    tool = files.split("function toolButton(", 1)[1].split("\n        }\n", 1)[0]
+    assert "class: 'header-icon-btn desk-files-tool'," in tool
+    assert "'aria-label': label," in tool and "'data-tooltip': label," in tool
+    assert "class: 'btn btn-sm',\n                id: 'desk-root-switch-btn'," in controls
+    # The duplicate header is gone: the panel labels the section and the
+    # crumbs say where the browser is, so the "Desk" caption went too.
     assert "desk-section-title" not in files
-    assert "desk-files-path" in files
+    assert "desk-files-path" not in files
 
     css = _read(CSS / "context.css")
-    assert "border" not in _rule(css, ".desk-files-link")
-    assert "btn-link desk-action" in _read(JS / "context/desk-actions.js")
-    assert "margin-top: auto" in _rule(css, ".desk-footer")
+    for retired in (".desk-files-link", ".desk-footer", ".desk-action"):
+        assert retired not in css, retired
+    assert "onclick" not in _read(JS / "context/desk-actions.js")
 
 
 def test_an_empty_section_still_reads_as_a_section() -> None:

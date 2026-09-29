@@ -340,16 +340,19 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "const TYPES = Object.freeze(['agent', 'task', 'error', 'system']);" in log_shape_js
     assert "type: TYPES.indexOf(category) === -1 ? 'system' : category," in log_shape_js
     assert classify_category("activity_log", "world_feedback") == "task"
-    # Phase 2B replaced agent-context.js with the context column. The desk
-    # panel carries the agent's own contract copy; the desk's task cards carry
-    # the per-task claim copy, which is where doneClaimGuidance takes a task.
+    # Phase 2B replaced agent-context.js with the context column, and the desk
+    # is a modal now. The desk panel carries the agent's own contract copy.
+    # The per-task claim copy left the desk's task rows — every open row
+    # repeated it — for the task detail's contract section, one click away
+    # from a row; that is where doneClaimGuidance takes a task now.
     panel_js = Path("ui/static/js/context/desk-panel.js").read_text(encoding="utf-8")
     assert "No specialty" in panel_js
     assert "who.description" in panel_js
     assert "done_fail_bar" in panel_js
-    desk_tasks_js = Path("ui/static/js/context/desk-tasks.js").read_text(encoding="utf-8")
-    assert "doneClaimGuidance" in desk_tasks_js
-    assert "Blocked — checkable claim missing" in desk_tasks_js
+    detail_sections_js = Path(
+        "ui/static/js/places/tasks/task-detail-sections.js").read_text(encoding="utf-8")
+    assert "doneClaimGuidance" in detail_sections_js
+    assert "Blocked — checkable claim missing" in detail_sections_js
     board = Path("core/tasking/board.py").read_text(encoding="utf-8")
     assert "done_claim_guidance" in board
     assert "operator_done_claim_guidance" in board

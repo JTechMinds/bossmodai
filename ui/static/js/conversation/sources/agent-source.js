@@ -20,6 +20,8 @@ const BossModAgentSource = (() => {
      * @param {object} ctx.bus  Topic bus.
      * @param {object} ctx.store  Read for the roster, which names the agent.
      * @param {object} ctx.presence  Shared presence controller.
+     * @param {(agentId: string, path?: string) => void} [ctx.openDesk]
+     *   Optional: the desk modal, which the header's lamp opens on this agent.
      * @param {object} [ctx.browserView]  Optional `{hasView, subscribe, open}`:
      *   the Browser Vision screen button, shown while this agent has a view.
      * @returns {object} ConversationSource (spec 4.1).
@@ -248,8 +250,8 @@ const BossModAgentSource = (() => {
         }
 
         /**
-         * Face, name, role, and — when the context column is there to receive
-         * it — the Desk toggle.
+         * Face, name, role, and — when the desk modal is injected — the Desk
+         * toggle.
          *
          * `avatar` and `icon` are DATA: a name, a colour, and a glyph name. The
          * adapter still builds nothing, which is what keeps the conversation

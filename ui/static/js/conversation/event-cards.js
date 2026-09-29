@@ -117,8 +117,10 @@ const BossModEventCards = (() => {
      * @param {object} ctx  Conversation capabilities.
      * @param {Function} ctx.api  Authenticated fetch helper; a consent card
      *   cannot resolve without it.
-     * @param {(path: string) => void} [ctx.openDesk]  Optional (spec 4.1). Desk
-     *   chrome fallback when the deliverable opener is not loaded.
+     * @param {(agentId: string, path?: string) => void} [ctx.openDesk]
+     *   Optional (spec 4.1). The desk modal, opened on the path, as the
+     *   fallback when the deliverable opener is not loaded — only for a note
+     *   with an author, because a desk needs an owner.
      * @param {(path: string, agentId?: string) => (void|Promise<void>)} [ctx.openDeliverable]
      *   Same file-open path the task deliverable cards use. The Done path link
      *   renders only when this or openDesk is injected — a control that
@@ -167,9 +169,12 @@ const BossModEventCards = (() => {
                 'data-task-id': taskId,
                 'data-tone': openableFile ? 'ok' : null,
             });
+            // The desk fallback opens the AUTHOR's desk, so a note with no
+            // author has no desk to open and the link does not render.
+            const noteAgentId = String(message.authorAgentId || ctx.agentId || '');
             const canOpenFile = openableFile && (
                 typeof ctx.openDeliverable === 'function'
-                || typeof ctx.openDesk === 'function'
+                || (typeof ctx.openDesk === 'function' && Boolean(noteAgentId))
             );
             const canOpenTask = Boolean(taskId) && typeof ctx.navigate === 'function';
             const openKind = canOpenTask ? 'task' : (canOpenFile ? 'file' : '');
@@ -182,13 +187,13 @@ const BossModEventCards = (() => {
                     })),
                 );
             } else if (openKind === 'file') {
-                const agentId = String(message.authorAgentId || ctx.agentId || '');
+                const agentId = noteAgentId;
                 const at = text.lastIndexOf(filePath);
                 const prefix = at >= 0 ? text.slice(0, at) : '';
                 const label = at >= 0 ? filePath : text;
                 const fileLink = originLink(label, async () => {
                     if (typeof ctx.openDeliverable !== 'function') {
-                        ctx.openDesk(filePath);
+                        ctx.openDesk(agentId, filePath);
                         return;
                     }
                     fileLink.classList.remove('is-failed');
