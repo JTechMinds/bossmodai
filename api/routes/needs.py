@@ -44,15 +44,17 @@ def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
         NEST_GIT_KIND,
     )
 
-    groups: dict[tuple[str, str, str], list[Any]] = {}
-    order: list[tuple[str, str, str]] = []
+    groups: dict[tuple[str, str, str, bool], list[Any]] = {}
+    order: list[tuple[str, str, str, bool]] = []
     for request in db.list_consent_requests(status="pending", limit=MAX_LIMIT):
         kind = (request.card_kind or "host_path").strip() or "host_path"
         conversation = request.channel_id or request.agent_id
+        # Detached and attached turns' asks are separate items: a decision on
+        # one resumes only its own turn.
         if kind == SHELL_EXECUTOR_KIND or kind == NEST_GIT_KIND:
-            key = (kind, conversation, "")
+            key = (kind, conversation, "", request.detached_origin)
         else:
-            key = (kind, conversation, request.grant_root or request.path)
+            key = (kind, conversation, request.grant_root or request.path, request.detached_origin)
         if key not in groups:
             groups[key] = []
             order.append(key)
@@ -155,10 +157,12 @@ def _nest_git_need_actions(request: Any) -> list[dict[str, Any]]:
 def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     from core.bm_cli.cli_always import offers_always_allow_cli
 
-    groups: dict[tuple[str, str, str], list[Any]] = {}
-    order: list[tuple[str, str, str]] = []
+    groups: dict[tuple[str, str, str, bool], list[Any]] = {}
+    order: list[tuple[str, str, str, bool]] = []
     for request in db.list_cli_approval_requests(status="pending", limit=MAX_LIMIT):
-        key = (request.agent_id, request.command, request.cwd or "")
+        # One decision resumes one origin (detached vs attached turn), so the
+        # two never share an item.
+        key = (request.agent_id, request.command, request.cwd or "", request.detached_origin)
         if key not in groups:
             groups[key] = []
             order.append(key)

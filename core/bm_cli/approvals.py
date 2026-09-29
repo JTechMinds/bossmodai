@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Sequence
 
 import db
+from core.agent_loop.work_binding import DETACHED_ORIGIN_KEY
 from core.bm_cli.host_path_consent import _clean_channel_id
 from core.models.cli_policy import CliApprovalRequest
 
@@ -136,6 +137,9 @@ async def resume_cli_approval(
     channel_id = _clean_channel_id(getattr(approval, "channel_id", None))
     if channel_id:
         payload["channel_id"] = channel_id
+    # Opened in a detached turn: the resume runs detached too (work_binding.is_detached).
+    if approval.detached_origin:
+        payload[DETACHED_ORIGIN_KEY] = True
 
     await services.enqueue_trigger(
         agent_id=approval.agent_id,
@@ -153,9 +157,11 @@ def _collapse_duplicate_pending(
     decision_by: str,
     note: str | None,
 ) -> None:
-    """Resolve leftover pending rows for the same agent, command, and cwd.
+    """Resolve leftover pending rows for the same agent, command, cwd and origin.
 
-    Does not enqueue extra wakes — one decision already resumed the agent.
+    Does not enqueue extra wakes — one decision already resumed the agent. A
+    row of the other origin (detached vs attached) belongs to another turn
+    that still needs its own resume, so it is left pending.
     """
     command = str(approval.command or "")
     cwd = str(approval.cwd or "")
@@ -165,6 +171,8 @@ def _collapse_duplicate_pending(
         if str(sibling.command or "") != command:
             continue
         if str(sibling.cwd or "") != cwd:
+            continue
+        if sibling.detached_origin != approval.detached_origin:
             continue
         if approved:
             db.approve_cli_approval_request(sibling.id, decision_by=decision_by)

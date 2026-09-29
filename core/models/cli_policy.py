@@ -68,6 +68,8 @@ class CliApprovalRequest(BaseModel):
     decided_at: datetime | None = None
     expires_at: datetime | None = None
     created_at: datetime
+    # Opened in a detached turn: the operator's resume runs detached too.
+    detached_origin: bool = False
 
     def as_card(self) -> dict[str, object]:
         """Operator-facing card payload for chat / channel / WebSocket."""

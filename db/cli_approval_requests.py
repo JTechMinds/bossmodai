@@ -14,7 +14,7 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
 _ALL_COLUMNS = (
     "id, agent_id, trigger_id, command, content, cwd, matched_rule_id, "
     "channel_id, status, decision_by, decision_note, review_note, "
-    "decided_at, expires_at, created_at"
+    "decided_at, expires_at, created_at, detached_origin"
 )
 
 
@@ -33,11 +33,19 @@ def create_approval_request(
     expires_at: datetime | None = None,
     channel_id: str | None = None,
     review_note: str | None = None,
+    detached_origin: bool = False,
 ) -> CliApprovalRequest:
-    """Insert a new approval request, or reuse a pending row for this command."""
+    """Insert a new approval request, or reuse a pending row for this command.
+
+    Args:
+        detached_origin: The request was opened in a detached turn
+            (``work_binding.current_turn_detached``). A pending row is reused
+            only when it has the same origin, so a detached and an attached
+            turn never share one: each resume must run in its own mode.
+    """
     origin = (channel_id or "").strip() or None
     note = (review_note or "").strip() or None
-    existing = get_pending_for_command(agent_id, command, cwd=cwd)
+    existing = get_pending_for_command(agent_id, command, cwd=cwd, detached_origin=detached_origin)
     if existing is not None:
         if note and not (existing.review_note or "").strip():
             updated = _set_review_note(existing.id, note)
@@ -48,12 +56,16 @@ def create_approval_request(
         f"""
         INSERT INTO cli_approval_requests (
             agent_id, command, content, cwd,
-            matched_rule_id, trigger_id, expires_at, channel_id, review_note
+            matched_rule_id, trigger_id, expires_at, channel_id, review_note,
+            detached_origin
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING {_ALL_COLUMNS}
         """,
-        [agent_id, command, content, cwd, matched_rule_id, trigger_id, expires_at, origin, note],
+        [
+            agent_id, command, content, cwd, matched_rule_id, trigger_id, expires_at, origin, note,
+            bool(detached_origin),
+        ],
         CliApprovalRequest,
     )
 
@@ -97,19 +109,21 @@ def get_pending_for_command(
     agent_id: str,
     command: str,
     cwd: str | None = None,
+    *,
+    detached_origin: bool = False,
 ) -> CliApprovalRequest | None:
-    """Return the newest pending approval for this agent, command, and cwd."""
+    """Return the newest pending approval for this agent, command, cwd and origin."""
     scope = (cwd or "").strip()
     return fetch_one(
         f"""
         SELECT {_ALL_COLUMNS}
         FROM cli_approval_requests
         WHERE agent_id = $1 AND command = $2 AND status = 'pending'
-          AND COALESCE(cwd, '') = $3
+          AND COALESCE(cwd, '') = $3 AND detached_origin = $4
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
-        [agent_id, command, scope],
+        [agent_id, command, scope, bool(detached_origin)],
         CliApprovalRequest,
     )
 

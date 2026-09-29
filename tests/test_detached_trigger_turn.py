@@ -666,3 +666,343 @@ async def test_r3_launching_a_detached_trigger_keeps_the_soft_block(monkeypatch:
     assert db.get_agent_trigger(row.id).status == "completed"
     assert _live_state(task.id, activity.id) == before
     assert db.get_task(task.id).status == "blocked"
+
+
+# ─── Revision 4: failure paths and resume provenance ───
+
+
+class _RecordingServices:
+    """Runtime services double: persists each resume the way the real enqueue does."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def enqueue_trigger(self, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
+        db.create_agent_trigger(
+            agent_id=kwargs["agent_id"],
+            trigger_type=kwargs["trigger_type"],
+            source_channel=kwargs["source_channel"],
+            payload=kwargs["payload"],
+            task_id=kwargs.get("task_id"),
+        )
+
+
+def _claimed_trigger(agent_id: str, trigger_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    """Queue and claim one trigger, shaped as the dispatcher hands it to a turn."""
+    row = db.create_agent_trigger(
+        agent_id=agent_id, trigger_type=trigger_type, source_channel="system", payload=payload,
+    )
+    claimed = db.claim_trigger(row.id)
+    assert claimed is not None
+    return {
+        **payload,
+        "type": claimed.trigger_type,
+        "trigger_id": claimed.id,
+        "task_id": claimed.task_id,
+        "source_channel": claimed.source_channel,
+        "claim_generation": claimed.claim_generation,
+    }
+
+
+def _no_retries() -> None:
+    db.set_setting("turn_failure_retry_limit", "0", "advanced")
+    config.reload()
+
+
+def _operator_dms(agent_id: str) -> list[str]:
+    return [item.content for item in db.get_human_chat_thread(agent_id) if item.from_agent == agent_id]
+
+
+@pytest.mark.asyncio
+async def test_r4_detached_retry_exhaustion_leaves_the_live_work_and_tells_the_operator() -> None:
+    agent, task, activity = _soft_blocked_worker()
+    before = _live_state(task.id, activity.id)
+    trigger = _claimed_trigger(agent.id, "extension_event", _EVENT_PAYLOAD)
+
+    await TurnDispatcher()._supervise_failed_turn(
+        agent=agent, trigger=trigger, failure_detail="Graph outage", retryable=False,
+    )
+
+    assert db.get_agent_trigger(trigger["trigger_id"]).status == "failed"
+    assert _live_state(task.id, activity.id) == before
+    assert db.get_task(task.id).status == "blocked"
+    assert db.get_activity(activity.id).status == "active"
+    assert _operator_dms(agent.id) == [
+        "I hit repeated runtime failures while handling an extension event and could not recover. "
+        "Last error: Graph outage"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_r4_attached_retry_exhaustion_still_stalls_the_live_task() -> None:
+    agent, task, activity = _working_agent_with_snapshot()
+    trigger = _claimed_trigger(agent.id, "activity_resumed", {})
+
+    await TurnDispatcher()._supervise_failed_turn(
+        agent=agent, trigger=trigger, failure_detail="model error", retryable=False,
+    )
+
+    assert db.get_task(task.id).status == "stalled"
+    assert db.get_activity(activity.id).status == "cancelled"
+    assert db.get_work_snapshot(activity.id) is None
+
+
+@pytest.mark.asyncio
+async def test_r4_a_detached_turn_raising_keeps_the_soft_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task, activity = _soft_blocked_worker()
+    before = _live_state(task.id, activity.id)
+    _no_retries()
+
+    async def _boom(*_args: Any, **_kwargs: Any):
+        raise RuntimeError("Graph outage")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _boom)
+    trigger = _claimed_trigger(agent.id, "extension_event", _EVENT_PAYLOAD)
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    assert db.get_agent_trigger(trigger["trigger_id"]).status == "failed"
+    assert _live_state(task.id, activity.id) == before
+    assert db.get_task(task.id).status == "blocked"
+
+
+@pytest.mark.asyncio
+async def test_r4_an_attached_turn_raising_still_clears_the_soft_block(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.llm.client import LLMTimeoutError
+
+    agent, task, _activity = _soft_blocked_worker()
+
+    async def _timeout(*_args: Any, **_kwargs: Any):
+        raise LLMTimeoutError(30.0)
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _timeout)
+    trigger = _claimed_trigger(agent.id, "human_chat", {"content": "status?"})
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    assert db.get_task(task.id).status == "active"
+
+
+def _enable_shell() -> None:
+    from core.bm_cli.policy_engine import policy_engine
+
+    db.set_setting("cli_shell_enabled", "true", "cli_policy")
+    config.reload()
+    policy_engine.reload()
+
+
+_ATTACHED_TRIGGER = {"type": "human_chat", "source_channel": "chat", "task_id": None}
+
+
+async def _open_approval(agent, trigger: dict[str, Any]):
+    from core.agent_loop.actions import execute_action
+
+    result = await execute_action(
+        {"action": "bm_cli", "command": "pip install pytest"}, agent, db.get_agent_state(agent.id), trigger,
+    )
+    assert result["event"] == "cli_approval_required", result
+    stored = db.get_cli_approval_request(result["approval_request_id"])
+    assert stored is not None
+    return stored
+
+
+@pytest.mark.asyncio
+async def test_r4_an_approval_opened_detached_resumes_detached(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.bm_cli.approvals import resume_cli_approval
+
+    _enable_shell()
+    agent, task, activity = _working_agent_with_snapshot()
+    before = _live_state(task.id, activity.id)
+
+    stored = await _open_approval(agent, _event_trigger())
+
+    assert stored.detached_origin is True
+    services = _RecordingServices()
+    await resume_cli_approval(stored.id, approved=False, note="Not needed for a reply.", services=services)
+    assert services.calls[0]["payload"]["detached_origin"] is True
+    queued = [row for row in db.list_agent_triggers(agent.id, status="queued")
+              if row.get("trigger_type") == "cli_approval_resolved"]
+    assert len(queued) == 1
+    claimed = db.claim_trigger(queued[0]["id"])
+    assert claimed is not None
+    prompts = _script(monkeypatch, [_IDLE_STEP])
+    dispatcher = TurnDispatcher()
+
+    assert await dispatcher._launch_claimed_trigger(claimed) is True
+    await dispatcher._active_turns[agent.id]
+
+    assert db.get_agent_trigger(claimed.id).status == "completed"
+    assert not any("board result" == item["content"] for item in prompts[0])
+    assert _live_state(task.id, activity.id) == before
+
+
+@pytest.mark.asyncio
+async def test_r4_an_approval_opened_attached_is_unchanged() -> None:
+    from core.bm_cli.approvals import resume_cli_approval
+
+    _enable_shell()
+    agent, _task_row, _activity = _working_agent_with_snapshot()
+
+    stored = await _open_approval(agent, dict(_ATTACHED_TRIGGER))
+
+    assert stored.detached_origin is False
+    services = _RecordingServices()
+    await resume_cli_approval(stored.id, approved=False, note="No.", services=services)
+    assert "detached_origin" not in services.calls[0]["payload"]
+
+
+@pytest.mark.asyncio
+async def test_r4_detached_and_attached_approvals_never_share_a_row() -> None:
+    from core.bm_cli.approvals import resume_cli_approval
+
+    _enable_shell()
+    agent, _task_row, _activity = _working_agent_with_snapshot()
+
+    attached = await _open_approval(agent, dict(_ATTACHED_TRIGGER))
+    detached = await _open_approval(agent, _event_trigger())
+    again = await _open_approval(agent, _event_trigger())
+
+    assert attached.id != detached.id and again.id == detached.id
+    assert (attached.command, attached.cwd) == (detached.command, detached.cwd)
+    # Each origin has its own card, and one decision resumes only its own turn.
+    assert db.has_approval_notification(attached.id) and db.has_approval_notification(detached.id)
+    services = _RecordingServices()
+    await resume_cli_approval(attached.id, approved=True, services=services)
+    assert db.get_cli_approval_request(detached.id).status == "pending"
+    assert len(services.calls) == 1
+
+
+async def _open_consent(agent, trigger: dict[str, Any], path: Path):
+    from core.agent_loop.actions import execute_action, parse_action
+
+    parsed = parse_action(
+        '{"act":"request_host_access","data":{"path":"%s","why":"Attach the report"},"th":"ask"}' % path
+    )
+    result = await execute_action(parsed, agent, db.get_agent_state(agent.id), trigger)
+    assert result["event"] == "host_path_consent_required", result
+    stored = db.get_consent_request(result["consent_request_id"])
+    assert stored is not None
+    return stored
+
+
+@pytest.mark.asyncio
+async def test_r4_host_path_consent_carries_its_origin_into_the_resume(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    from core.bm_cli.host_path_consent import resume_host_path_consent
+    from tests.test_consent_origin import _host_file
+
+    fixture = _host_file(tmp_path)
+    agent, task, activity = _working_agent_with_snapshot()
+    before = _live_state(task.id, activity.id)
+
+    attached = await _open_consent(agent, dict(_ATTACHED_TRIGGER), fixture)
+    detached = await _open_consent(agent, _event_trigger(), fixture)
+    again = await _open_consent(agent, _event_trigger(), fixture)
+
+    assert attached.detached_origin is False and detached.detached_origin is True
+    assert attached.id != detached.id and again.id == detached.id
+    services = _RecordingServices()
+    await resume_host_path_consent(detached.id, decision="deny", services=services, note="Not for email.")
+    # The deny also resolves the attached waiter in the same scope, each with its own origin.
+    by_id = {call["payload"]["consent_request_id"]: call["payload"] for call in services.calls}
+    assert by_id[detached.id]["detached_origin"] is True
+    assert "detached_origin" not in by_id[attached.id]
+    queued = [row for row in db.list_agent_triggers(agent.id, status="queued")
+              if row.get("trigger_type") == "host_path_consent_resolved"
+              and json.loads(row["payload"])["consent_request_id"] == detached.id]
+    assert len(queued) == 1
+    claimed = db.claim_trigger(queued[0]["id"])
+    assert claimed is not None
+    prompts = _script(monkeypatch, [_IDLE_STEP])
+    dispatcher = TurnDispatcher()
+
+    assert await dispatcher._launch_claimed_trigger(claimed) is True
+    await dispatcher._active_turns[agent.id]
+
+    assert db.get_agent_trigger(claimed.id).status == "completed"
+    assert not any("board result" == item["content"] for item in prompts[0])
+    assert _live_state(task.id, activity.id) == before
+
+
+def test_r4_the_migration_adds_detached_origin_to_existing_tables() -> None:
+    from db.connection import _apply_migrations, get_connection
+
+    agent = db.create_agent("Charles", role="Build Engineer")
+    approval = db.create_cli_approval_request(agent_id=agent.id, command="pip install pytest", cwd="/me")
+    consent = db.create_consent_request(agent_id=agent.id, path="/srv/a", grant_root="/srv", reason="why")
+    con = get_connection()
+    for table in ("cli_approval_requests", "host_path_consent_requests"):
+        con.execute(f"ALTER TABLE {table} DROP COLUMN detached_origin")
+
+    _apply_migrations(con)
+
+    for table in ("cli_approval_requests", "host_path_consent_requests"):
+        columns = {row[1] for row in con.execute(f"PRAGMA table_info({table})").fetchall()}
+        assert "detached_origin" in columns
+    # Rows from before the column read as attached, which is what they were.
+    assert db.get_cli_approval_request(approval.id).detached_origin is False
+    assert db.get_consent_request(consent.id).detached_origin is False
+
+
+@pytest.mark.parametrize("kind", ["shell_executor", "nest_git", "workspace_preference"])
+def test_r4_other_consent_cards_never_share_a_row_across_origins(kind: str, tmp_path: Path) -> None:
+    from core.agent_loop.work_binding import bind_turn
+    from core.bm_cli.nest_git_consent import request_nest_git_consent
+    from core.bm_cli.parser import parse_cli_command
+    from core.bm_cli.shell_executor_consent import request_shell_executor_consent
+    from core.bm_cli.workspace_preference import request_workspace_preference
+    from tests.test_consent_origin import _host_file
+
+    fixture = _host_file(tmp_path)
+    agent = db.create_agent("Charles", role="Build Engineer", model_work="test/mock")
+
+    def _open(trigger: dict[str, Any]):
+        with bind_turn(agent.id, trigger):
+            if kind == "workspace_preference":
+                result = request_workspace_preference(
+                    agent=agent, raw_path=str(fixture), command=f"write {fixture}", content="x\n",
+                    cwd="/me", task_id=None,
+                )
+            else:
+                opener = request_shell_executor_consent if kind == "shell_executor" else request_nest_git_consent
+                result = opener(
+                    agent=agent, parsed=parse_cli_command("git push"), content=None, cwd="/me",
+                    task_id=None, channel_id=None,
+                )
+        assert result.consent_request_id, result
+        stored = db.get_consent_request(result.consent_request_id)
+        assert stored is not None and stored.card_kind == kind
+        return stored
+
+    attached = _open(dict(_ATTACHED_TRIGGER))
+    detached = _open(_event_trigger())
+
+    assert attached.detached_origin is False and detached.detached_origin is True
+    assert attached.id != detached.id
+    assert _open(_event_trigger()).id == detached.id
+    assert _open(dict(_ATTACHED_TRIGGER)).id == attached.id
+    # Each origin has its own card to resolve.
+    assert db.has_consent_notification(attached.id) and db.has_consent_notification(detached.id)
+
+
+def test_r4_needs_lists_each_origin_as_its_own_item() -> None:
+    from api.routes.needs import _approval_needs, _consent_needs
+
+    agent = db.create_agent("Charles", role="Build Engineer")
+    rows = [
+        db.create_cli_approval_request(
+            agent_id=agent.id, command="pip install pytest", cwd="/me", detached_origin=detached,
+        )
+        for detached in (False, True)
+    ]
+    consents = [
+        db.create_consent_request(
+            agent_id=agent.id, path="/srv/a", grant_root="/srv", reason="why", detached_origin=detached,
+        )
+        for detached in (False, True)
+    ]
+
+    assert sorted(item["grouped_ids"] for item in _approval_needs({})) == sorted([row.id] for row in rows)
+    assert sorted(item["grouped_ids"] for item in _consent_needs({})) == sorted([row.id] for row in consents)

@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import db
+from core.agent_loop.work_binding import current_turn_detached
 from core.bm_cli.filesystem import agent_artifact_dir, slugify_name
 from core.bm_cli.host_roots import (
     denial_message,
@@ -94,12 +95,16 @@ def _pending_preference_for_write(
     agent_id: str,
     path: str,
     grant_root: str,
+    detached_origin: bool,
 ) -> HostPathConsentRequest | None:
-    exact = db.find_pending_workspace_preference(agent_id, path)
+    # A detached and an attached turn never share a pending row.
+    exact = db.find_pending_workspace_preference(agent_id, path, detached_origin=detached_origin)
     if exact is not None:
         return exact
     for row in db.list_consent_requests(agent_id=agent_id, status="pending", limit=80):
         if (row.card_kind or "") != WORKSPACE_PREFERENCE_KIND:
+            continue
+        if row.detached_origin != detached_origin:
             continue
         if workspace_preference_scopes_match(row, path=path, grant_root=grant_root):
             return row
@@ -263,10 +268,12 @@ def request_workspace_preference(
 
     from core.bm_cli.host_path_consent import require_consent_chrome
 
+    detached = current_turn_detached(agent.id)
     pending = _pending_preference_for_write(
         agent_id=agent.id,
         path=path,
         grant_root=str(grant_root),
+        detached_origin=detached,
     )
     if pending is not None:
         if origin_channel and not pending.channel_id:
@@ -302,6 +309,7 @@ def request_workspace_preference(
         channel_id=origin_channel,
         card_kind=WORKSPACE_PREFERENCE_KIND,
         is_git=is_git,
+        detached_origin=detached,
     )
     chrome_error = require_consent_chrome(
         agent,

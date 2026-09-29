@@ -329,6 +329,16 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "cli_approval_requests", "review_note", "TEXT",
     )
+    # After the consent-table rebuilds above, which copy named columns only.
+    # Existing rows read as attached (0), which is what they were.
+    _add_column_if_missing(
+        con, "cli_approval_requests", "detached_origin",
+        "BOOLEAN NOT NULL DEFAULT 0",
+    )
+    _add_column_if_missing(
+        con, "host_path_consent_requests", "detached_origin",
+        "BOOLEAN NOT NULL DEFAULT 0",
+    )
     _backfill_task_closed_at(con)
     _create_work_snapshots_table_if_missing(con)
     _ensure_attachment_context_columns(con)

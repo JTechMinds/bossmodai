@@ -105,6 +105,16 @@ def _unbound_for(agent_id: str) -> bool:
     return scope is not None and scope.detached and scope.agent_id == agent_id
 
 
+def current_turn_detached(agent_id: str) -> bool:
+    """Return whether a detached turn scope for ``agent_id`` is active.
+
+    Approval and consent creation sites persist this on the request row, so
+    the operator's later resume turn runs detached too (``detached_origin``).
+    Outside any turn scope, or in another agent's scope, it is ``False``.
+    """
+    return _unbound_for(agent_id)
+
+
 def bound_work(agent_id: str) -> WorkBinding:
     """Return the live work the current turn may act on for ``agent_id``.
 

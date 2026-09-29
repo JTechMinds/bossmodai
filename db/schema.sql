@@ -469,7 +469,8 @@ CREATE TABLE IF NOT EXISTS host_path_consent_requests (
     decision_note   TEXT,
     decided_at      TIMESTAMP,
     expires_at      TIMESTAMP,
-    created_at      TIMESTAMP DEFAULT current_timestamp
+    created_at      TIMESTAMP DEFAULT current_timestamp,
+    detached_origin BOOLEAN NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS host_path_once_grants (
@@ -497,7 +498,8 @@ CREATE TABLE IF NOT EXISTS cli_approval_requests (
     review_note     TEXT,
     decided_at      TIMESTAMP,
     expires_at      TIMESTAMP,
-    created_at      TIMESTAMP DEFAULT current_timestamp
+    created_at      TIMESTAMP DEFAULT current_timestamp,
+    detached_origin BOOLEAN NOT NULL DEFAULT 0
 );
 
 -- ───────────────────────────────────────────────────────────────────────────

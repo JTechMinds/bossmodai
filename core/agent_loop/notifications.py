@@ -958,7 +958,11 @@ def _approval_sibling_card_open(
     approval: CliApprovalRequest,
     channel_id: str | None,
 ) -> bool:
-    """Return True when a coalesced sibling already owns the live card."""
+    """Return True when a coalesced sibling already owns the live card.
+
+    A sibling of the other origin (detached vs attached turn) never owns
+    this card: its decision resumes only its own turn.
+    """
     command = str(approval.command or "")
     cwd = str(approval.cwd or "")
     origin = (channel_id or "").strip() or None
@@ -970,6 +974,8 @@ def _approval_sibling_card_open(
         if str(sibling.command or "") != command:
             continue
         if str(sibling.cwd or "") != cwd:
+            continue
+        if sibling.detached_origin != approval.detached_origin:
             continue
         if origin and sibling.channel_id and sibling.channel_id != origin:
             continue
@@ -1027,6 +1033,10 @@ def _workspace_preference_card_already_open(
             continue
         if (sibling.card_kind or "") != WORKSPACE_PREFERENCE_KIND:
             continue
+        # Resolving a preference resumes only its own row, so a row of the
+        # other origin (detached vs attached turn) needs its own card.
+        if current is not None and sibling.detached_origin != current.detached_origin:
+            continue
         if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
             continue
         if not workspace_preference_scopes_match(
@@ -1051,6 +1061,9 @@ def _shell_executor_card_already_open(
             continue
         if (sibling.card_kind or "") != SHELL_EXECUTOR_KIND:
             continue
+        # A row of the other origin (detached vs attached turn) is its own ask.
+        if current is not None and sibling.detached_origin != current.detached_origin:
+            continue
         if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
             continue
         if db.has_consent_notification(sibling.id):
@@ -1070,6 +1083,9 @@ def _nest_git_card_already_open(
         if sibling.id == consent_id:
             continue
         if (sibling.card_kind or "") != NEST_GIT_KIND:
+            continue
+        # A row of the other origin (detached vs attached turn) is its own ask.
+        if current is not None and sibling.detached_origin != current.detached_origin:
             continue
         if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
             continue

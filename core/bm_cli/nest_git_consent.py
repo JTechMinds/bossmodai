@@ -11,6 +11,7 @@ from typing import Any, Literal
 
 import db
 from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
+from core.agent_loop.work_binding import current_turn_detached
 from core.bm_cli.host_path_consent import _clean_channel_id, _enqueue_resume
 from core.bm_cli.nest_git import (
     GitAuthFailureKind,
@@ -156,7 +157,9 @@ def request_nest_git_consent(
 
         return error_result(parsed.raw, THREAD_ARCHIVED_CONSENT_DENY, cwd=cwd, executor="shell")
 
-    pending = _pending_for_agent(agent.id)
+    # A detached and an attached turn never share a pending row.
+    detached = current_turn_detached(agent.id)
+    pending = _pending_for_agent(agent.id, detached_origin=detached)
     if pending is not None:
         if origin_channel and not pending.channel_id:
             pending = db.bind_consent_channel(pending.id, origin_channel) or pending
@@ -191,6 +194,7 @@ def request_nest_git_consent(
         task_id=task_id,
         channel_id=origin_channel,
         card_kind=NEST_GIT_KIND,
+        detached_origin=detached,
     )
     chrome_error = require_consent_chrome(
         agent,
@@ -391,10 +395,18 @@ class NestGitProbeError(ValueError):
     """Host Enable probe failed; Settings On was not saved."""
 
 
-def _pending_for_agent(agent_id: str) -> HostPathConsentRequest | None:
+def _pending_for_agent(
+    agent_id: str,
+    *,
+    detached_origin: bool | None = None,
+) -> HostPathConsentRequest | None:
+    """Return the agent's pending card of this kind; ``detached_origin`` narrows it to one origin."""
     for row in db.list_consent_requests(agent_id=agent_id, status="pending", limit=80):
-        if (row.card_kind or "") == NEST_GIT_KIND:
-            return row
+        if (row.card_kind or "") != NEST_GIT_KIND:
+            continue
+        if detached_origin is not None and row.detached_origin != detached_origin:
+            continue
+        return row
     return None
 
 

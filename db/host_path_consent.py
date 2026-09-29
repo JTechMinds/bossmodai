@@ -10,7 +10,7 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query, quer
 _ALL_COLUMNS = (
     "id, agent_id, path, grant_root, reason, command, content, cwd, task_id, "
     "channel_id, card_kind, is_git, clone_dest, status, decision_by, "
-    "decision_note, decided_at, expires_at, created_at"
+    "decision_note, decided_at, expires_at, created_at, detached_origin"
 )
 _HOST_PATH_KIND = "host_path"
 _WORKSPACE_KIND = "workspace_preference"
@@ -31,16 +31,24 @@ def create_consent_request(
     card_kind: str = _HOST_PATH_KIND,
     is_git: bool = False,
     clone_dest: str | None = None,
+    detached_origin: bool = False,
 ) -> HostPathConsentRequest:
-    """Insert a pending host-path or workspace-preference consent request."""
+    """Insert a pending host-path or workspace-preference consent request.
+
+    Args:
+        detached_origin: The request was opened in a detached turn
+            (``work_binding.current_turn_detached``); its resume then runs
+            detached too.
+    """
     kind = (card_kind or _HOST_PATH_KIND).strip() or _HOST_PATH_KIND
     return insert_returning(
         f"""
         INSERT INTO host_path_consent_requests (
             agent_id, path, grant_root, reason, command, content, cwd,
-            task_id, channel_id, card_kind, is_git, clone_dest, expires_at
+            task_id, channel_id, card_kind, is_git, clone_dest, expires_at,
+            detached_origin
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         RETURNING {_ALL_COLUMNS}
         """,
         [
@@ -57,6 +65,7 @@ def create_consent_request(
             bool(is_git),
             clone_dest,
             expires_at,
+            bool(detached_origin),
         ],
         HostPathConsentRequest,
     )
@@ -208,18 +217,27 @@ def find_pending_for_grant_root_scope(
     return pending[0] if pending else None
 
 
-def find_pending_for_path(agent_id: str, path: str) -> HostPathConsentRequest | None:
-    """Return the pending request for this agent + canonical path, if any."""
+def find_pending_for_path(
+    agent_id: str,
+    path: str,
+    *,
+    detached_origin: bool = False,
+) -> HostPathConsentRequest | None:
+    """Return the pending request for this agent + canonical path + origin, if any.
+
+    A detached and an attached turn never share a pending row.
+    """
     return fetch_one(
         f"""
         SELECT {_ALL_COLUMNS}
         FROM host_path_consent_requests
         WHERE agent_id = $1 AND path = $2 AND status = 'pending'
           AND COALESCE(card_kind, 'host_path') = 'host_path'
+          AND detached_origin = $3
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        [agent_id, path],
+        [agent_id, path, bool(detached_origin)],
         HostPathConsentRequest,
     )
 
@@ -360,18 +378,24 @@ def clear_once_grants_for_task(task_id: str) -> int:
 def find_pending_workspace_preference(
     agent_id: str,
     path: str,
+    *,
+    detached_origin: bool = False,
 ) -> HostPathConsentRequest | None:
-    """Return the pending workspace-preference card for this agent + path."""
+    """Return the pending workspace-preference card for this agent + path + origin.
+
+    A detached and an attached turn never share a pending row.
+    """
     return fetch_one(
         f"""
         SELECT {_ALL_COLUMNS}
         FROM host_path_consent_requests
         WHERE agent_id = $1 AND path = $2 AND status = 'pending'
           AND card_kind = '{_WORKSPACE_KIND}'
+          AND detached_origin = $3
         ORDER BY created_at DESC
         LIMIT 1
         """,
-        [agent_id, path],
+        [agent_id, path, bool(detached_origin)],
         HostPathConsentRequest,
     )
 

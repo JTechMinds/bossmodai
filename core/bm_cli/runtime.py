@@ -1242,6 +1242,8 @@ def _maybe_thread_auto_approve(
         )
         return _ThreadAutoGate(result=result)
 
+    from core.agent_loop.work_binding import current_turn_detached
+
     timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
     try:
@@ -1253,6 +1255,7 @@ def _maybe_thread_auto_approve(
             matched_rule_id=getattr(policy, "matched_rule_id", None),
             expires_at=expires_at,
             channel_id=channel_id,
+            detached_origin=current_turn_detached(agent.id),
         )
     except Exception:
         logger.exception("CLI auto-approve create failed for %s", parsed.raw)
@@ -1336,6 +1339,8 @@ def _handle_approval_required(
     if auto.result is not None:
         return auto.result
 
+    from core.agent_loop.work_binding import current_turn_detached
+
     timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
 
@@ -1349,6 +1354,7 @@ def _handle_approval_required(
             expires_at=expires_at,
             channel_id=origin_channel,
             review_note=auto.card_why or None,
+            detached_origin=current_turn_detached(agent.id),
         )
     except Exception:
         logger.exception("CLI approval create failed for %s", parsed.raw)

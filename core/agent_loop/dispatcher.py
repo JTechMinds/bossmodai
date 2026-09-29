@@ -241,9 +241,14 @@ class TurnDispatcher:
         return trigger_status == "failed"
 
     def _resolve_stuck_task(self, agent_id: str, trigger: dict[str, Any]):
-        """Return the task that should be marked stalled after retry exhaustion, if any."""
+        """Return the task that should be marked stalled after retry exhaustion, if any.
+
+        The trigger's own ``task_id`` wins. Only an attached trigger falls
+        back to the agent's live task: a detached one (``work_binding``)
+        never relates to the live work, so its failure must not stall it.
+        """
         task_id = trigger.get("task_id")
-        if not isinstance(task_id, str) or not task_id.strip():
+        if (not isinstance(task_id, str) or not task_id.strip()) and not is_detached(trigger):
             task_id = activity_runtime.get_active_task_id(agent_id)
         if not isinstance(task_id, str) or not task_id.strip():
             return None
@@ -260,8 +265,17 @@ class TurnDispatcher:
         agent: Any,
         failure_detail: str,
         task: Any | None,
+        subject: str = "the request",
     ) -> None:
-        """Persist and broadcast a requester-visible stuck notice."""
+        """Persist and broadcast a requester-visible stuck notice.
+
+        Args:
+            agent: The agent whose trigger exhausted its retries.
+            failure_detail: The short last-error text.
+            task: The stalled task; ``None`` for a trigger with no task.
+            subject: What the agent was handling, named in the task-less
+                notice (a chat is "the request"; a detached trigger is not).
+        """
         if task is not None:
             content = format_origin_status_line(
                 kind="stalled",
@@ -271,7 +285,7 @@ class TurnDispatcher:
             )
         else:
             content = (
-                "I hit repeated runtime failures while handling the request and could not recover. "
+                f"I hit repeated runtime failures while handling {subject} and could not recover. "
                 f"Last error: {failure_detail}"
             )
         if origin_thread_target(task) == "channel":
@@ -365,12 +379,26 @@ class TurnDispatcher:
             )
             return
 
-        activity_runtime.reconcile_after_turn_failure(
-            agent.id,
-            detail=f"Turn failed while processing {trigger.get('type', 'trigger')}: {failure_detail}",
-        )
-        if trigger.get("type") == "human_chat":
-            await self._notify_human_of_stuck_turn(agent=agent, failure_detail=failure_detail, task=None)
+        if is_detached(trigger):
+            # The agent's current activity and the live task's Soft-block
+            # belong to its paused work, not this turn. A detached turn starts
+            # no transient activity (walk and meeting actions are refused), so
+            # there is nothing of its own to cancel.
+            activity_runtime.refresh_agent_status(agent.id, clear_soft_block=False)
+            # Nobody is waiting in chat, so an unhandled event must not fail silently.
+            await self._notify_human_of_stuck_turn(
+                agent=agent,
+                failure_detail=failure_detail,
+                task=None,
+                subject="an extension event",
+            )
+        else:
+            activity_runtime.reconcile_after_turn_failure(
+                agent.id,
+                detail=f"Turn failed while processing {trigger.get('type', 'trigger')}: {failure_detail}",
+            )
+            if trigger.get("type") == "human_chat":
+                await self._notify_human_of_stuck_turn(agent=agent, failure_detail=failure_detail, task=None)
         await manager.broadcast_activity(
             event="agent_error",
             detail=f"{agent.name} failed while processing a trigger",

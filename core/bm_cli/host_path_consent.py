@@ -9,6 +9,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import db
+from core.agent_loop.work_binding import DETACHED_ORIGIN_KEY, current_turn_detached
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_roots import (
     SETTING_CATEGORY,
@@ -318,7 +319,9 @@ def request_host_path_access(
 
         return error_result(label, THREAD_ARCHIVED_CONSENT_DENY, cwd=cwd, executor="virtual")
 
-    pending = db.find_pending_for_path(agent.id, path)
+    # A detached and an attached turn never share a pending row.
+    detached = current_turn_detached(agent.id)
+    pending = db.find_pending_for_path(agent.id, path, detached_origin=detached)
     if pending is not None:
         if origin_channel and not pending.channel_id:
             pending = db.bind_consent_channel(pending.id, origin_channel) or pending
@@ -341,7 +344,7 @@ def request_host_path_access(
         )
 
     scoped = db.find_pending_for_grant_root_scope(str(grant_root), origin_channel)
-    if scoped is not None and scoped.agent_id == agent.id:
+    if scoped is not None and scoped.agent_id == agent.id and scoped.detached_origin == detached:
         if origin_channel and not scoped.channel_id:
             scoped = db.bind_consent_channel(scoped.id, origin_channel) or scoped
         chrome_error = require_consent_chrome(
@@ -373,6 +376,7 @@ def request_host_path_access(
         cwd=cwd,
         task_id=task_id,
         channel_id=origin_channel,
+        detached_origin=detached,
     )
     chrome_error = require_consent_chrome(
         agent,
@@ -384,7 +388,9 @@ def request_host_path_access(
     )
     if chrome_error is not None:
         return chrome_error
-    attached = scoped is not None
+    # Waiting on another agent's card in this scope (this agent's own card of
+    # the other origin is a separate ask, not a shared one).
+    attached = scoped is not None and scoped.agent_id != agent.id
     return consent_required_result(
         label,
         _consent_message(request),
@@ -637,6 +643,9 @@ async def _enqueue_resume(
     if status != "denied":
         payload["content"] = request.content
         payload["cwd"] = request.cwd
+    # Opened in a detached turn: the resume runs detached too (work_binding.is_detached).
+    if request.detached_origin:
+        payload[DETACHED_ORIGIN_KEY] = True
     await services.enqueue_trigger(
         agent_id=request.agent_id,
         trigger_type="host_path_consent_resolved",
