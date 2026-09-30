@@ -1552,6 +1552,31 @@ async function main() {
         for (const fn of [...(control.listeners.change || [])]) await fn({ target: control });
     };
 
+    // The done bar lives in Advanced, and was auto-grown while Advanced was
+    // hidden and measured 0. Opening the panel must size it again, or a long
+    // done bar opens clipped with no scrollbar. The fake has no layout, so the
+    // measurement is stubbed: content taller than the CSS ceiling allows.
+    // stubControls keeps ids and names only, so the two markup facts this
+    // rests on are read from the real markup and copied onto the fake nodes.
+    const doneBar = quickForm.querySelector('textarea[name="done_fail_bar"]');
+    if (!doneBar
+        || !/<div id="advanced-content" class="hidden\b/.test(formMarkup)
+        || !/<textarea name="done_fail_bar"[^>]*\bdata-autogrow\b/.test(formMarkup)) {
+        throw new Error("the done bar must start inside the closed Advanced panel");
+    }
+    advanced.classList.add("hidden");
+    doneBar.setAttribute("data-autogrow", "");
+    doneBar.scrollHeight = 480;
+    doneBar.clientHeight = 300;
+    await toggle();
+    const openingAdvancedSizesTheDoneBar = !advanced.classList.contains("hidden")
+        && doneBar.style.height === "480px"
+        && doneBar.style.overflowY === "auto";
+    await toggle();
+    if (!openingAdvancedSizesTheDoneBar || !advanced.classList.contains("hidden")) {
+        throw new Error("opening Advanced must re-measure the done bar it hid");
+    }
+
     const theTemplateFormAsksForAConnection = templateSetAll.hasAttribute("required")
         && Boolean(quickDialog.querySelector(".template-chip-text"))
         && quickForm.querySelector('input[name="role"]').value === "Reviews claims";
@@ -1925,7 +1950,8 @@ async function main() {
         'name="name"', 'value="Ada"',
         'value="Code Auditor"',
         "Reads a diff and reports what is not true.",
-        'value="A checkable allow/deny exists."',
+        // The done bar is a textarea now, so its value is the element body.
+        '>A checkable allow/deny exists.</textarea>',
         'value="#1d4ed8"',
     ].every((fragment) => formMarkup.includes(fragment));
     const recreateFillsTheFormFromTheSnapshot = filled

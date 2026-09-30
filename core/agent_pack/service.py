@@ -360,10 +360,16 @@ def export_pack(
     company_name: str | None = None,
     company_url: str | None = None,
 ) -> AgentPack:
-    """Export an agent's specialty / description / done bar as a pack."""
+    """Export an agent's specialty / description / done bar as a pack.
+
+    Optional metadata (company author, personality hint) that is over its cap
+    or invalid is left out, and the returned pack's ``ignored_keys`` names it.
+    """
     hint = _personality_hint(agent, personalities)
-    author = pack_author_from_company(company_name, company_url)
-    return export_agent_pack(agent, personality_hint=hint, pack_author=author)
+    author, dropped = pack_author_from_company(company_name, company_url)
+    return export_agent_pack(
+        agent, personality_hint=hint, pack_author=author, dropped=dropped,
+    )
 
 
 def pack_content_hash(pack: AgentPack) -> str:

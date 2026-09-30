@@ -112,7 +112,7 @@ const BossModAgentFormBindings = (() => {
     function bindFinishLineSuggestion(container, values) {
         const specialtyInput = container.querySelector('input[name="role"]');
         const descriptionInput = container.querySelector('textarea[name="description"]');
-        const finishLineInput = container.querySelector('input[name="done_fail_bar"]');
+        const finishLineInput = container.querySelector('textarea[name="done_fail_bar"]');
         const suggestBtn = container.querySelector('#btn-suggest-finish-line');
         if (!specialtyInput || !descriptionInput || !finishLineInput) return;
 
@@ -132,6 +132,8 @@ const BossModAgentFormBindings = (() => {
                 || current === lastSuggested;
             if (canReplace) {
                 finishLineInput.value = suggested;
+                // A scripted value fires no `input`, so the box is resized here.
+                growHireText(container);
             }
             lastSuggested = suggested;
         }
@@ -287,13 +289,9 @@ const BossModAgentFormBindings = (() => {
         refresh();
     }
 
-    /** How tall the description may grow before it scrolls instead. Past
-     *  roughly ten lines the field would push the matrix beside it off the
-     *  panel, and a document that long is being read rather than written. */
-    const DESCRIPTION_MAX_PX = 240;
-
     /**
-     * Size the description box to what is actually in it.
+     * Size every auto-growing hire textarea (description, done bar) to what is
+     * actually in it.
      *
      * A pack's description is a STRUCTURED DOCUMENT — mission, both scopes,
      * handoff — and it is saved verbatim because
@@ -303,39 +301,46 @@ const BossModAgentFormBindings = (() => {
      * scrollbar overlapping the hint underneath, which read as a broken control
      * rather than as a long value.
      *
+     * The ceiling is CSS (`--field-grow-max` on `.field-textarea[data-autogrow]`),
+     * so past it the box scrolls instead of pushing the panel away.
+     *
      * @param {HTMLElement} container
-     * @returns {void} Does nothing where the node cannot be measured — the
-     *   suite's fake DOM has no layout, and a binding that threw there would
-     *   take the whole form down with it.
+     * @returns {void} Skips a node that cannot be measured — the suite's fake
+     *   DOM has no layout, and a binding that threw there would take the whole
+     *   form down with it.
      */
-    function growDescription(container) {
-        const field = container.querySelector('textarea[name="description"]');
-        if (!field || !field.style || typeof field.scrollHeight !== 'number') return;
-        // Reset first: scrollHeight reports the CONTENT height only while the
-        // box is not already tall enough to hold it, so a field that has been
-        // grown once would otherwise never shrink back.
-        field.style.height = 'auto';
-        field.style.height = `${Math.min(field.scrollHeight, DESCRIPTION_MAX_PX)}px`;
-        field.style.overflowY = field.scrollHeight > DESCRIPTION_MAX_PX ? 'auto' : 'hidden';
+    function growHireText(container) {
+        container.querySelectorAll('textarea[data-autogrow]').forEach((field) => {
+            if (!field.style || typeof field.scrollHeight !== 'number') return;
+            // Reset first: scrollHeight reports the CONTENT height only while the
+            // box is not already tall enough to hold it, so a field that has been
+            // grown once would otherwise never shrink back.
+            field.style.height = 'auto';
+            field.style.height = `${field.scrollHeight}px`;
+            // After the CSS max-height clamps it, the box is shorter than its
+            // content exactly when the scrollbar is needed.
+            field.style.overflowY = field.scrollHeight > field.clientHeight ? 'auto' : 'hidden';
+        });
     }
 
     /**
-     * Keep the description box sized to its content as the operator types.
+     * Keep the auto-growing hire textareas sized to their content as the
+     * operator types.
      *
      * @param {HTMLElement} container
      * @returns {void}
      */
-    function bindDescriptionAutoGrow(container) {
-        const field = container.querySelector('textarea[name="description"]');
-        if (!field) return;
-        field.addEventListener('input', () => growDescription(container));
-        growDescription(container);
+    function bindHireTextAutoGrow(container) {
+        container.querySelectorAll('textarea[data-autogrow]').forEach((field) => {
+            field.addEventListener('input', () => growHireText(container));
+        });
+        growHireText(container);
     }
 
     return {
         bindColorSwatchInitial,
-        bindDescriptionAutoGrow,
-        growDescription,
+        bindHireTextAutoGrow,
+        growHireText,
         bindDuplicateNameWarning,
         bindRuntimeCorePreview,
         bindFinishLineSuggestion,

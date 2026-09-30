@@ -209,7 +209,7 @@ function buildForm() {
 
     const connections = buildConnections();
 
-    const done = h("input", { name: "done_fail_bar" });
+    const done = h("textarea", { name: "done_fail_bar" });
     const personality = h("select", { name: "personality_id" });
     personality.append(h("option", { value: "" }, "No personality"),
         h("option", { value: "p1" }, "Software Engineer"));
@@ -778,8 +778,11 @@ async function main() {
     verdict.hydrated = field('input[name="role"]').value === "Reviews claims"
         && field('textarea[name="description"]').value
             === "Reads a diff and reports what is not true. Cites files."
-        && field('input[name="done_fail_bar"]').value === "A checkable allow/deny exists."
+        && field('textarea[name="done_fail_bar"]').value === "A checkable allow/deny exists."
         && field('select[name="personality_id"]').value === "p1";
+    // Both hire textareas are the agent's prompt: no length cap in markup.
+    verdict.promptFieldsUncapped = !field('textarea[name="description"]').hasAttribute("maxlength")
+        && !field('textarea[name="done_fail_bar"]').hasAttribute("maxlength");
     // The three the operator owns. A template that could write these would
     // overwrite a draft, and a name it filled would be accepted by accident.
     verdict.operatorFieldsUntouched = field('input[name="name"]').value === ""
@@ -866,7 +869,7 @@ async function main() {
     const after = find("#agent-form");
     verdict.chipClearsTemplateOnly = after.querySelector('input[name="role"]').value === ""
         && after.querySelector('textarea[name="description"]').value === ""
-        && after.querySelector('input[name="done_fail_bar"]').value === ""
+        && after.querySelector('textarea[name="done_fail_bar"]').value === ""
         && after.querySelector('input[name="name"]').value === "Mine"
         && after.querySelector('input[name="name"]').getAttribute("placeholder") === "e.g. PM Agent"
         && after.querySelector(".template-chip") === null

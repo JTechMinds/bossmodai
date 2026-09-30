@@ -105,6 +105,10 @@
   /* An ancestor crumb in a modal's trail: capped, so an ancestor never pushes
    * ✕ or the tools off the head. */
   --crumb-max: 180px;
+  /* How tall an auto-growing hire textarea (description, done bar) may get
+   * before it scrolls. Window-relative, like the modals it sits in: those
+   * fields are the agent's prompt, so a long one gets most of the dialog. */
+  --field-grow-max: 60vh;
 
   /* The two horizontal rules that cross the whole window.
    *

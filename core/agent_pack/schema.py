@@ -1,12 +1,15 @@
 """Data-only agent pack schema ``bossmod.agent_pack/v1``.
 
 YAML is parsed with SafeLoader and treated as a mapping of hire-contract
-fields. Unknown keys are recorded and ignored. Dangerous keys (shell,
+fields. Unknown keys are recorded and ignored, and so is optional metadata
+(personality hint, pack author) that is over its cap or invalid: it is left
+out and listed in ``ignored_keys``, never cut short. Dangerous keys (shell,
 credentials, code execution) are rejected. Nothing in a pack is executed.
 """
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
@@ -27,10 +30,9 @@ from core.agent_pack.sections import (
     extract_labeled_sections,
 )
 from core.models.agent import (
-    HIRE_DESCRIPTION_MAX_LEN,
-    HIRE_DONE_FAIL_BAR_MAX_LEN,
     HIRE_ROLE_MAX_LEN,
     Agent,
+    check_hire_label,
     normalize_hire_text,
 )
 
@@ -245,20 +247,51 @@ def export_agent_pack(
     *,
     personality_hint: str | None = None,
     pack_author: PackAuthor | None = None,
+    dropped: Sequence[str] = (),
 ) -> AgentPack:
-    """Build a pack from an existing agent's hire-contract profile fields."""
-    specialty = normalize_hire_text(agent.role, max_len=HIRE_ROLE_MAX_LEN)
-    description = normalize_hire_text(agent.description, max_len=HIRE_DESCRIPTION_MAX_LEN)
+    """Build a pack from an existing agent's hire-contract profile fields.
+
+    Description and done bar are exported whole. A specialty over the label
+    cap is refused rather than shortened, so a round trip never loses text.
+    A personality hint over its cap is left out and reported instead.
+
+    Args:
+        agent: The agent whose profile is exported.
+        personality_hint: Optional personality name to carry as a hint.
+        pack_author: Optional authorship, already built by the caller.
+        dropped: Metadata keys the caller already left out (e.g. from
+            ``pack_author_from_company``); carried into ``ignored_keys``.
+
+    Returns:
+        The pack, with every left-out metadata key in ``ignored_keys``.
+
+    Raises:
+        AgentPackError: ``export_incomplete`` (409) when specialty or
+            description is missing or the specialty is over the label cap.
+    """
+    try:
+        specialty = check_hire_label(
+            agent.role, max_len=HIRE_ROLE_MAX_LEN, field_name="specialty",
+        )
+    except ValueError as exc:
+        raise AgentPackError(str(exc), code="export_incomplete", status=409) from exc
+    description = normalize_hire_text(agent.description)
     if not specialty or not description:
         raise AgentPackError(
             "Pack export needs specialty and description on the agent profile.",
             code="export_incomplete",
             status=409,
         )
-    done = normalize_hire_text(agent.done_fail_bar, max_len=HIRE_DONE_FAIL_BAR_MAX_LEN)
+    done = normalize_hire_text(agent.done_fail_bar)
     if not done:
-        done = suggest_finish_line(specialty, description)[:HIRE_DONE_FAIL_BAR_MAX_LEN]
-    hint = normalize_hire_text(personality_hint, max_len=PERSONALITY_HINT_MAX_LEN)
+        done = suggest_finish_line(specialty, description)
+    hint_dropped: list[str] = []
+    hint = _optional_metadata(
+        personality_hint,
+        max_len=PERSONALITY_HINT_MAX_LEN,
+        field_name="personality_hint",
+        dropped=hint_dropped,
+    )
     return AgentPack(
         schema=SCHEMA_ID,
         kind=PACK_KIND_AGENT,
@@ -268,24 +301,43 @@ def export_agent_pack(
         personality_hint=hint,
         communication=communication_from_agent(agent),
         pack_author=pack_author,
+        ignored_keys=tuple(dropped) + tuple(hint_dropped),
     )
 
 
 def pack_author_from_company(
     name: str | None,
     url: str | None = None,
-) -> PackAuthor | None:
-    """Build pack_author from company settings, or None if the name is unknown."""
-    cleaned_name = normalize_hire_text(name, max_len=PACK_AUTHOR_NAME_MAX_LEN)
+) -> tuple[PackAuthor | None, list[str]]:
+    """Build pack_author from company settings, reporting what was left out.
+
+    Args:
+        name: Company name setting, or None when unset.
+        url: Company URL setting, or None when unset.
+
+    Returns:
+        ``(author, dropped)``. ``author`` is None when the name is unset
+        (nothing dropped) or over its cap / not text (``pack_author.name``
+        dropped). A URL that fails validation leaves an author without a
+        URL and reports ``pack_author.url``. Never raises, never cuts.
+    """
+    dropped: list[str] = []
+    cleaned_name = _optional_metadata(
+        name,
+        max_len=PACK_AUTHOR_NAME_MAX_LEN,
+        field_name="pack_author.name",
+        dropped=dropped,
+    )
     if not cleaned_name:
-        return None
+        return None, dropped
     cleaned_url: str | None = None
     if url and str(url).strip():
         try:
             cleaned_url = _parse_author_url(url)
         except AgentPackError:
-            cleaned_url = None
-    return PackAuthor(name=cleaned_name, url=cleaned_url)
+            # Reported, not silent: the export's ignored_keys names it.
+            dropped.append("pack_author.url")
+    return PackAuthor(name=cleaned_name, url=cleaned_url), dropped
 
 
 def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
@@ -320,12 +372,14 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
         )
 
     specialty = _required_text(normalized, "specialty", HIRE_ROLE_MAX_LEN)
-    description = _required_text(normalized, "description", HIRE_DESCRIPTION_MAX_LEN)
-    done = _required_text(normalized, "what_done_looks_like", HIRE_DONE_FAIL_BAR_MAX_LEN)
-    personality_hint = _optional_text(
+    # Prompt prose: unbounded here; MAX_PACK_BYTES is the only size guard.
+    description = _required_text(normalized, "description", None)
+    done = _required_text(normalized, "what_done_looks_like", None)
+    personality_hint = _optional_metadata(
         normalized.get("personality_hint"),
         max_len=PERSONALITY_HINT_MAX_LEN,
         field_name="personality_hint",
+        dropped=ignored,
     )
     tools_hint = _optional_tools_hint(normalized.get("tools_hint"))
     communication = _optional_communication(
@@ -337,7 +391,7 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
     additive = {
         key: _optional_text(
             normalized.get(key),
-            max_len=HIRE_DESCRIPTION_MAX_LEN,
+            max_len=None,
             field_name=key,
         )
         for key in _STRUCTURED_FIELDS
@@ -387,7 +441,7 @@ def _canonical_key(raw_key: str) -> str | None:
     return None
 
 
-def _required_text(mapping: dict[str, Any], field_name: str, max_len: int) -> str:
+def _required_text(mapping: dict[str, Any], field_name: str, max_len: int | None) -> str:
     text = _optional_text(mapping.get(field_name), max_len=max_len, field_name=field_name)
     if not text:
         raise AgentPackError(
@@ -397,7 +451,11 @@ def _required_text(mapping: dict[str, Any], field_name: str, max_len: int) -> st
     return text
 
 
-def _optional_text(value: Any, *, max_len: int, field_name: str) -> str | None:
+def _optional_text(value: Any, *, max_len: int | None, field_name: str) -> str | None:
+    """Strip a pack string field; ``max_len`` None means unbounded prose.
+
+    A label over ``max_len`` is rejected (``invalid_schema``), never cut.
+    """
     if value is None:
         return None
     if not isinstance(value, str):
@@ -405,33 +463,74 @@ def _optional_text(value: Any, *, max_len: int, field_name: str) -> str | None:
             f"Pack field {field_name!r} must be a string.",
             code="invalid_schema",
         )
-    return normalize_hire_text(value, max_len=max_len)
+    text = normalize_hire_text(value)
+    if max_len is not None and text is not None and len(text) > max_len:
+        raise AgentPackError(
+            f"Pack field {field_name!r} must be {max_len} characters or fewer.",
+            code="invalid_schema",
+        )
+    return text
+
+
+def _optional_metadata(
+    value: Any,
+    *,
+    max_len: int,
+    field_name: str,
+    dropped: list[str],
+) -> str | None:
+    """Read optional pack metadata; omit and report it rather than fail.
+
+    Metadata (personality hint, author name) never decides whether a pack is
+    valid, so an unusable value is left out, never cut short and never fatal.
+
+    Args:
+        value: Raw value from the pack or settings.
+        max_len: Longest allowed length after stripping.
+        field_name: Key recorded when the value is left out.
+        dropped: Receives ``field_name`` when the value is not text or is
+            over ``max_len``.
+
+    Returns:
+        The stripped text, or None when empty or left out.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        dropped.append(field_name)
+        return None
+    text = normalize_hire_text(value)
+    if text is not None and len(text) > max_len:
+        dropped.append(field_name)
+        return None
+    return text
 
 
 def _optional_pack_author(value: Any) -> tuple[PackAuthor | None, list[str]]:
+    """Read the optional author block; an unusable one is left out and reported.
+
+    A non-mapping block, or one whose name is missing, not text or over its
+    cap, becomes ``(None, [..., "pack_author"])``: an author without a name
+    means nothing. An invalid ``url`` still raises ``invalid_schema``.
+    """
     if value is None:
         return None, []
     if not isinstance(value, dict):
-        raise AgentPackError(
-            "Pack field 'pack_author' must be a mapping with name "
-            "(and optional url).",
-            code="invalid_schema",
-        )
+        return None, ["pack_author"]
     ignored = [
         f"pack_author.{raw_key}"
         for raw_key in value
         if isinstance(raw_key, str) and raw_key not in {"name", "url"}
     ]
-    name = _optional_text(
+    # The whole block is reported below, so the name's own key is not.
+    name = _optional_metadata(
         value.get("name"),
         max_len=PACK_AUTHOR_NAME_MAX_LEN,
         field_name="pack_author.name",
+        dropped=[],
     )
     if not name:
-        raise AgentPackError(
-            "Pack field 'pack_author.name' is required when pack_author is set.",
-            code="invalid_schema",
-        )
+        return None, ignored + ["pack_author"]
     raw_url = value.get("url")
     url: str | None = None
     if raw_url is not None and not (isinstance(raw_url, str) and not raw_url.strip()):
@@ -487,24 +586,12 @@ def _fold_structured_sections(
         done_sections["fail_examples"] = fail
 
     if any(desc_sections.get(key) for key in DESCRIPTION_SECTION_KEYS):
-        composed = compose_labeled_description(desc_preamble, desc_sections)
-        if len(composed) > HIRE_DESCRIPTION_MAX_LEN:
-            raise AgentPackError(
-                "Pack description with structured sections exceeds the hire-field length cap.",
-                code="invalid_schema",
-            )
-        description = composed
+        description = compose_labeled_description(desc_preamble, desc_sections)
 
     fail_body = (done_sections.get("fail_examples") or "").strip()
     if fail_body:
         success = (done_preamble or done_sections.get("done") or "").strip()
-        composed_done = compose_labeled_done(success, fail_body)
-        if len(composed_done) > HIRE_DONE_FAIL_BAR_MAX_LEN:
-            raise AgentPackError(
-                "Pack what_done_looks_like with fail examples exceeds the hire-field length cap.",
-                code="invalid_schema",
-            )
-        done = composed_done
+        done = compose_labeled_done(success, fail_body)
     return description, done
 
 

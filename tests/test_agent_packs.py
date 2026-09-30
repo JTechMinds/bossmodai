@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
+import yaml
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -364,6 +365,27 @@ what_done_looks_like: A named draft exists. Empty done does not count.
         "pack_author: 3",
         "pack_author:\n  url: https://northwind.example",
         "pack_author:\n  name: ''",
+        "pack_author:\n  name: 12",
+        "pack_author:\n  name: " + "n" * 81,
+    ],
+)
+def test_schema_omits_and_reports_unusable_pack_author(author_yaml: str) -> None:
+    """Author metadata never blocks an import: it is left out and reported."""
+    pack = parse_pack_yaml(f"""
+schema: bossmod.agent_pack/v1
+{author_yaml}
+specialty: Writer
+description: Writes first drafts.
+what_done_looks_like: A named draft exists. Empty done does not count.
+""")
+    assert pack.pack_author is None
+    assert "pack_author" in pack.ignored_keys
+    assert "pack_author" not in pack.as_dict()
+
+
+@pytest.mark.parametrize(
+    "author_yaml",
+    [
         "pack_author:\n  name: Northwind\n  url: not-a-url",
         "pack_author:\n  name: Northwind\n  url: javascript:alert(1)",
         "pack_author:\n  name: Northwind\n  url: 12",
@@ -1056,6 +1078,65 @@ def test_export_fills_done_bar_from_specialty_when_blank() -> None:
     assert pack.what_done_looks_like == suggest_finish_line(agent.role, agent.description)
 
 
+def test_long_structured_pack_parses_and_export_round_trips_unchanged() -> None:
+    """Prompt prose is unbounded: only MAX_PACK_BYTES limits a pack's size."""
+    long_description = "Extra office context. " + "x" * 4978
+    assert len(long_description) == 5000
+    pack = parse_pack_yaml(yaml.safe_dump({
+        "schema": SCHEMA_ID,
+        "specialty": "Writer",
+        "description": long_description,
+        "mission": "Writes first drafts a reviewer can open as a named file. " + "m" * 900,
+        "in_scope": "Named drafts, outlines, and edit passes.",
+        "out_of_scope": "Publishing and sending mail on behalf of the operator.",
+        "handoff": "A reviewer receives the named draft and the finish line.",
+        "what_done_looks_like": "A named draft exists and can be opened. " + "w" * 900,
+        "fail_examples": '"Looks good" with no file. ' + "f" * 900,
+    }))
+    hire = pack.hire_fields()
+    assert long_description in hire["description"]
+    assert "Mission:" in hire["description"]
+    assert "Fail examples:" in hire["done_fail_bar"]
+
+    agent = db.create_agent(
+        "Long Writer",
+        role=hire["role"],
+        description=hire["description"],
+        done_fail_bar=hire["done_fail_bar"],
+    )
+    exported = export_pack(agent)
+    assert exported.description == hire["description"]
+    assert exported.what_done_looks_like == hire["done_fail_bar"]
+    reparsed = parse_pack_yaml(exported.to_yaml())
+    assert reparsed.description == hire["description"]
+    assert reparsed.what_done_looks_like == hire["done_fail_bar"]
+
+
+def test_over_length_pack_personality_hint_is_omitted_and_reported() -> None:
+    pack = parse_pack_yaml(yaml.safe_dump({
+        "schema": SCHEMA_ID,
+        "specialty": "Writer",
+        "description": "Writes first drafts.",
+        "what_done_looks_like": "A named draft exists.",
+        "personality_hint": "p" * 121,
+    }))
+    assert pack.personality_hint is None
+    assert "personality_hint" in pack.ignored_keys
+    assert "personality_hint" not in pack.as_dict()
+
+
+def test_over_length_pack_specialty_is_rejected_not_truncated() -> None:
+    with pytest.raises(AgentPackError) as exc:
+        parse_pack_yaml(yaml.safe_dump({
+            "schema": SCHEMA_ID,
+            "specialty": "s" * 121,
+            "description": "Implements features.",
+            "what_done_looks_like": "Tests pass.",
+        }))
+    assert exc.value.code == "invalid_schema"
+    assert "120 characters or fewer" in str(exc.value)
+
+
 def test_api_import_hydrates_then_operator_still_names_hire(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1123,6 +1204,65 @@ def test_api_export_fills_pack_author_from_company_settings(
     parsed = parse_pack_yaml(exported.json()["yaml"])
     assert parsed.pack_author is not None
     assert parsed.pack_author.name == "Northwind"
+
+
+def _export_with_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    company_name: str,
+    company_url: str,
+    prompt_template: str | None = None,
+) -> dict:
+    client = _client(monkeypatch, _catalog_source())
+    agent = db.create_agent(
+        "Desk Neighbor",
+        role="Code Auditor",
+        description="Reviews claims.",
+        done_fail_bar="A checkable allow/deny exists.",
+        prompt_template=prompt_template,
+    )
+    db.set_setting("company_name", company_name, "general")
+    db.set_setting("company_url", company_url, "general")
+    config.reload()
+    exported = client.get(f"/api/agents/{agent.id}/pack", headers=_headers())
+    assert exported.status_code == 200, exported.text
+    return exported.json()
+
+
+def test_api_export_omits_and_reports_over_length_company_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = _export_with_settings(
+        monkeypatch, company_name="N" * 81, company_url="https://northwind.example",
+    )
+    assert "pack_author" not in body["pack"]
+    assert "pack_author.name" in body["ignored_keys"]
+
+
+def test_api_export_keeps_author_name_and_reports_invalid_company_url(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    body = _export_with_settings(
+        monkeypatch, company_name="Northwind", company_url="javascript:alert(1)",
+    )
+    assert body["pack"]["pack_author"] == {"name": "Northwind"}
+    assert "pack_author.url" in body["ignored_keys"]
+
+
+def test_api_export_omits_and_reports_over_length_personality_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    template = "You are a meticulous reviewer of claims."
+    db.create_personality("P" * 121, template)
+    body = _export_with_settings(
+        monkeypatch,
+        company_name="Northwind",
+        company_url="https://northwind.example",
+        prompt_template=template,
+    )
+    assert "personality_hint" not in body["pack"]
+    assert "personality_hint" in body["ignored_keys"]
+    assert body["pack"]["pack_author"]["name"] == "Northwind"
 
 
 def test_api_trust_gate_and_live_hire_overwrite(

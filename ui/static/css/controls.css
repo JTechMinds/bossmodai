@@ -354,6 +354,11 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   resize: vertical;
 }
 
+/* The hire form's prompt fields size to their content (agent-form-bindings.js)
+   up to this ceiling, then scroll. The cap lives here, not in script, so the
+   binding reads it back from clientHeight instead of repeating a number. */
+.field-textarea[data-autogrow] { max-height: var(--field-grow-max); }
+
 /* Connection and personality labels are arbitrary operator input and the
    columns they sit in are narrow, so the visible text can clip. Truncation is
    acceptable only because it stays RECOVERABLE: the option carries the full

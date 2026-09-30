@@ -18,9 +18,8 @@ from core.models.agent import (
     AgentCreate,
     AgentState,
     AgentUpdate,
-    HIRE_DESCRIPTION_MAX_LEN,
-    HIRE_DONE_FAIL_BAR_MAX_LEN,
     HIRE_ROLE_MAX_LEN,
+    check_hire_label,
     normalize_hire_text,
 )
 from core.models.agent_snapshot import AgentSnapshot
@@ -74,9 +73,8 @@ __all__ = [
     "AgentSnapshot",
     "AgentState",
     "AgentUpdate",
-    "HIRE_DESCRIPTION_MAX_LEN",
-    "HIRE_DONE_FAIL_BAR_MAX_LEN",
     "HIRE_ROLE_MAX_LEN",
+    "check_hire_label",
     "normalize_hire_text",
     "AgentCliState",
     "CliApprovalRequest",

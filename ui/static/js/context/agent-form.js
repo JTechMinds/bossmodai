@@ -337,7 +337,11 @@ const BossModAgentForm = (() => {
             if (advancedChevron) {
                 advancedToggle.addEventListener('click', () => {
                     advancedContent.classList.toggle('hidden');
-                    advancedChevron.style.transform = advancedContent.classList.contains('hidden') ? '' : 'rotate(90deg)';
+                    const open = !advancedContent.classList.contains('hidden');
+                    advancedChevron.style.transform = open ? 'rotate(90deg)' : '';
+                    // The done bar was sized while this panel was hidden, when
+                    // it measured 0; it can only be measured now it has layout.
+                    if (open) BossModAgentFormBindings.growHireText(form);
                 });
             }
         }
@@ -350,7 +354,7 @@ const BossModAgentForm = (() => {
         BINDINGS.bindRuntimeCorePreview(form, values);
         BINDINGS.bindDuplicateNameWarning(form, roster, agent);
         BINDINGS.bindColorSwatchInitial(form);
-        BINDINGS.bindDescriptionAutoGrow(form);
+        BINDINGS.bindHireTextAutoGrow(form);
         // LAST, and after the "Set All" fan-out above it — the ordering is
         // load-bearing. The fan-out writes the five per-type selects FROM
         // SCRIPT, and a value assigned that way fires no change event of its

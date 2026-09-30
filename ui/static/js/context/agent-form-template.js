@@ -164,7 +164,7 @@ const BossModAgentFormTemplate = (() => {
         // for a sentence. Values assigned from script fire no `input`, so the
         // binding that sizes it has to be told — and told again when the chip's
         // dismissal empties the field.
-        BossModAgentFormBindings.growDescription(formRoot);
+        BossModAgentFormBindings.growHireText(formRoot);
 
         const tools = toolsLine(template);
         const chip = provenanceChip(template, () => {
@@ -174,7 +174,7 @@ const BossModAgentFormTemplate = (() => {
             // else was done — the form the operator is looking at is already
             // the blank one's layout.
             HYDRATE.applyHireFields(formRoot, clearedFields());
-            BossModAgentFormBindings.growDescription(formRoot);
+            BossModAgentFormBindings.growHireText(formRoot);
             chip.remove();
             if (tools) tools.remove();
             if (nameInput && wasPlaceholder !== null) {

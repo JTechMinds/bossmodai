@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 from fastapi import FastAPI
+from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
 import db
@@ -32,6 +33,7 @@ from core.agent_loop.runtime_core import AUDIENCE_SOFT_JUDGMENT, CHAT_FORMATTING
 from core.llm import context_preview
 from db.unified_feed import classify_category
 from core.bm_cli.virtual_fs import resolve_cli_path
+from core.models import AgentCreate, AgentUpdate
 from core.models.message import HUMAN_SENDER_ID
 from core.models.work_contract import DeliverableSpec, WorkContract
 from core.runtime import runtime_services
@@ -198,6 +200,40 @@ def test_create_agent_api_allows_blank_done_fail_bar(
     persisted = db.get_agent(body["id"])
     assert persisted is not None
     assert persisted.done_fail_bar is None
+
+
+def test_hire_prompt_prose_is_kept_whole_on_create_and_update() -> None:
+    """Description and done bar are the agent's prompt: no cap, no truncation."""
+    description = "Mission: " + "d" * 4991
+    done = "Good: " + "g" * 1994
+    assert len(description) == 5000 and len(done) == 2000
+    created = AgentCreate(name="Long Prompt", description=description, done_fail_bar=done)
+    assert created.description == description
+    assert created.done_fail_bar == done
+    updated = AgentUpdate(description=description, done_fail_bar=done)
+    assert updated.description == description
+    assert updated.done_fail_bar == done
+
+
+def test_over_length_role_is_rejected_not_truncated(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Specialty keeps its label cap, and going over it fails loudly (422)."""
+    role = "r" * 121
+    with pytest.raises(ValidationError, match="role must be 120 characters or fewer"):
+        AgentCreate(name="Long Role", role=role)
+    with pytest.raises(ValidationError, match="role must be 120 characters or fewer"):
+        AgentUpdate(role=role)
+    assert AgentCreate(name="Edge Role", role="r" * 120).role == "r" * 120
+
+    client = _api_client(monkeypatch)
+    refused = client.post(
+        "/api/agents",
+        headers=_headers(),
+        json={"name": "Long Role", "role": role, "description": "Writes notes."},
+    )
+    assert refused.status_code == 422
+    assert "role must be 120 characters or fewer" in refused.text
 
 
 # The agent form is composed from field-group modules (Phase 4 split

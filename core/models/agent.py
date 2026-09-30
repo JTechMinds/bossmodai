@@ -16,11 +16,10 @@ from core.agent_loop.communication_contract import (
     load_communication_value,
 )
 
-# Hire-contract field lengths. Agent packs use the same caps so import
-# hydrates Advanced hire fields without a second set of limits.
+# Hire-contract LABEL cap. Specialty renders in rosters, chips and menus, so
+# it stays short; agent packs share it. Description and done bar are the
+# agent's own prompt and are unbounded. Over a cap is rejected, never cut.
 HIRE_ROLE_MAX_LEN = 120
-HIRE_DESCRIPTION_MAX_LEN = 1000
-HIRE_DONE_FAIL_BAR_MAX_LEN = 500
 
 
 # ---------------------------------------------------------------------------
@@ -104,14 +103,39 @@ class AgentState(BaseModel):
 # API input models
 # ---------------------------------------------------------------------------
 
-def normalize_hire_text(value: str | None, *, max_len: int) -> str | None:
-    """Strip optional hire-contract text and drop empty strings."""
+def normalize_hire_text(value: str | None) -> str | None:
+    """Strip optional hire-contract text and drop empty strings.
+
+    Never shortens the text: prose fields are the agent's prompt and are kept
+    whole. Labels that carry a cap go through ``check_hire_label``.
+    """
     if value is None:
         return None
     text = value.strip()
     if not text:
         return None
-    return text[:max_len]
+    return text
+
+
+def check_hire_label(value: str | None, *, max_len: int, field_name: str) -> str | None:
+    """Normalize a short hire-contract label and reject it when too long.
+
+    Args:
+        value: Raw label text, or None.
+        max_len: Longest allowed length after stripping.
+        field_name: Name used in the error message.
+
+    Returns:
+        The stripped label, or None when empty.
+
+    Raises:
+        ValueError: The stripped label exceeds ``max_len``. Pydantic reports
+            this as a 422 instead of saving a silently shortened label.
+    """
+    text = normalize_hire_text(value)
+    if text is not None and len(text) > max_len:
+        raise ValueError(f"{field_name} must be {max_len} characters or fewer")
+    return text
 
 
 def _coerce_communication(value: Any) -> dict[str, str] | None:
@@ -152,17 +176,17 @@ class AgentCreate(BaseModel):
     @field_validator("role")
     @classmethod
     def _normalize_role(cls, value: str | None) -> str | None:
-        return normalize_hire_text(value, max_len=HIRE_ROLE_MAX_LEN)
+        return check_hire_label(value, max_len=HIRE_ROLE_MAX_LEN, field_name="role")
 
     @field_validator("description")
     @classmethod
     def _normalize_description(cls, value: str | None) -> str | None:
-        return normalize_hire_text(value, max_len=HIRE_DESCRIPTION_MAX_LEN)
+        return normalize_hire_text(value)
 
     @field_validator("done_fail_bar")
     @classmethod
     def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
-        return normalize_hire_text(value, max_len=HIRE_DONE_FAIL_BAR_MAX_LEN)
+        return normalize_hire_text(value)
 
     @field_validator("communication", mode="before")
     @classmethod
@@ -206,17 +230,17 @@ class AgentUpdate(BaseModel):
     @field_validator("role")
     @classmethod
     def _normalize_role(cls, value: str | None) -> str | None:
-        return normalize_hire_text(value, max_len=HIRE_ROLE_MAX_LEN)
+        return check_hire_label(value, max_len=HIRE_ROLE_MAX_LEN, field_name="role")
 
     @field_validator("description")
     @classmethod
     def _normalize_description(cls, value: str | None) -> str | None:
-        return normalize_hire_text(value, max_len=HIRE_DESCRIPTION_MAX_LEN)
+        return normalize_hire_text(value)
 
     @field_validator("done_fail_bar")
     @classmethod
     def _normalize_done_fail_bar(cls, value: str | None) -> str | None:
-        return normalize_hire_text(value, max_len=HIRE_DONE_FAIL_BAR_MAX_LEN)
+        return normalize_hire_text(value)
 
     @field_validator("communication", mode="before")
     @classmethod
