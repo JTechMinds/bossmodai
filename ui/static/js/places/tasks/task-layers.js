@@ -26,9 +26,9 @@ const BossModTaskLayers = (() => {
      *   the latest load rather than the one this was built with.
      * @param {(agentId: string) => (string|undefined)} deps.colorOf  Roster
      *   colours for the detail's avatars.
-     * @param {{cancelOne: Function, completeOne: Function, edit: Function}} deps.actions
-     *   The caller's BossModTaskActions: it owns cancelling, completing and
-     *   editing; a detail only asks.
+     * @param {{cancel: Function, complete: Function, resume: Function,
+     *   update: Function, roster: Function}} deps.actions  The caller's BossModTaskActions: it
+     *   owns cancelling, completing, resuming and updating; a detail only asks.
      * @param {(task: object) => void} deps.onOpenChat  Leaves for the task's
      *   conversation. Closing these layers on the way out is the caller's.
      * @returns {{ open: (taskId: string) => void, push: (taskId: string) => void,
@@ -47,8 +47,9 @@ const BossModTaskLayers = (() => {
         if (typeof api !== 'function') throw new Error('[task-layers] deps.api is required');
         if (typeof getTasks !== 'function') throw new Error('[task-layers] deps.getTasks is required');
         if (typeof colorOf !== 'function') throw new Error('[task-layers] deps.colorOf is required');
-        if (!actions || typeof actions.cancelOne !== 'function' || typeof actions.completeOne !== 'function'
-            || typeof actions.edit !== 'function') {
+        if (!actions || typeof actions.cancel !== 'function' || typeof actions.complete !== 'function'
+            || typeof actions.resume !== 'function' || typeof actions.update !== 'function'
+            || typeof actions.roster !== 'function') {
             throw new Error('[task-layers] deps.actions must be a BossModTaskActions');
         }
         if (typeof onOpenChat !== 'function') throw new Error('[task-layers] deps.onOpenChat is required');

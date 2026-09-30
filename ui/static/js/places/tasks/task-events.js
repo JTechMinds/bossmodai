@@ -59,7 +59,9 @@ const BossModTaskEvents = (() => {
      * @param {string} deps.taskId
      * @param {(agentId: string) => (string|undefined)} deps.colorOf  An
      *   author's roster colour, for the avatar beside each sentence.
-     * @returns {{element: HTMLElement, destroy: () => void}}
+     * @returns {{element: HTMLElement, refresh: () => Promise<void>, destroy: () => void}}
+     *   `refresh` re-reads the thread, so an event the operator's own
+     *   change wrote appears at once.
      * @throws {Error} When api, taskId or colorOf is missing.
      */
     function createTaskEvents(deps) {
@@ -141,6 +143,7 @@ const BossModTaskEvents = (() => {
 
         return {
             element,
+            refresh,
 
             /**
              * Abandon any in-flight load; a late response is dropped, not painted.

@@ -26,7 +26,7 @@ installIconsStub();
 const NAMES = [
     "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModAvatar", "BossModSearchField",
     "BossModInlineRename",
-    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModAgentApi",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModAgentApi",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
     "BossModFloorSettings", "BossModFloorSwitcher",

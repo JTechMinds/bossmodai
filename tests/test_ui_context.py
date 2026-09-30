@@ -33,8 +33,13 @@ CONTEXT_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    # A desk task's Edit mode picks its assignee from a dropdown.
+    JS / "core" / "menu-select.js",
+    # The desk Files section and the task file picker share its crumbs and rows.
+    JS / "core" / "file-listing.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",
@@ -109,8 +114,10 @@ CONTEXT_MODULES = [
     JS / "places" / "tasks" / "tasks-cancel.js",
     JS / "places" / "tasks" / "assign-outcomes.js",
     JS / "places" / "tasks" / "assign-form.js",
+    JS / "places" / "tasks" / "task-file-picker.js",
+    JS / "places" / "tasks" / "task-edit-files.js",
+    JS / "places" / "tasks" / "task-edit-mode.js",
     JS / "places" / "tasks" / "tasks-complete.js",
-    JS / "places" / "tasks" / "task-edit-form.js",
     JS / "places" / "tasks" / "task-actions.js",
     JS / "places" / "tasks" / "task-layers.js",
     CONTEXT / "desk-task-opener.js",
@@ -801,8 +808,13 @@ def test_desk_files_guard_stale_loads() -> None:
     for control in ("desk-root-switch-btn", "desk-open-parent-btn",
                     "desk-open-folder-btn", "desk-refresh-btn"):
         assert control in source, f"the desk browser lost {control}"
+    # The rows and crumbs are drawn by the shared core/file-listing.js (the
+    # task file picker is its second user); the desk still owns the copy.
+    assert "LISTING.breadcrumbs(payload.breadcrumbs" in source
+    assert "LISTING.entries(payload.entries" in source
+    listing = _read(JS / "core" / "file-listing.js")
     for name in ("desk-entry", "desk-crumb"):
-        assert f"class: '{name}'" in source
+        assert f"class: '{name}'" in listing
     assert "This folder is empty." in source
     # A live write repaints the folder on screen — the auto-refresh that used
     # to hang off the desk cache in agent-context.js.

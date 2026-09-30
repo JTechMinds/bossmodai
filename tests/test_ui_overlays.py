@@ -80,6 +80,7 @@ def test_modal_accessibility_contract() -> None:
     result = subprocess.run(
         ["node", str(HARNESS), str(JS / "core" / "dom.js"), str(JS / "core" / "overlay-focus.js"),
          str(JS / "core" / "modal-trail.js"),
+         str(JS / "core" / "overlay-actions.js"),
          str(JS / "core" / "overlays.js"), str(JS / "core" / "menu.js")],
         check=False, capture_output=True, text=True,
     )
@@ -206,9 +207,29 @@ def test_modal_accessibility_contract() -> None:
         "focusBackLandsOnTheBack": True,
         "setTitleRerendersUpperCrumbs": True,
         "setStepsRejectsMalformedSteps": True,
+        # The task detail's Edit mode mounts its title input in the head;
+        # every trail re-render would wipe a caller-mounted node, so the frame
+        # owns "this title is being edited" (setTitleEditor), and null puts
+        # the text back.
+        "setTitleEditorSurvivesRerenders": True,
         # The frame's ‹ is the only back control: nothing outside builds one.
         "backButtonIsNotExported": True,
     }
+
+
+def test_overlays_stays_under_its_line_cap() -> None:
+    """The frame's module stays below 400 lines; the action row moved out.
+
+    core/overlays.js was 396 lines when the task detail's title editor
+    (setTitleEditor) needed a place to land, so the action row moved to
+    core/overlay-actions.js — the same seam overlay-focus.js and menu.js were
+    cut along — and createModal calls it.
+    """
+    source = (JS / "core" / "overlays.js").read_text(encoding="utf-8")
+    assert len(source.splitlines()) < 400
+    assert "function renderActions(" not in source
+    assert "ACTIONS.render(actionRow, nextActions, close)" in source
+    assert "function render(actionRow, actions, close) {" in _overlay_modules()["overlay-actions.js"]
 
 
 def test_modal_does_not_use_window_confirm() -> None:

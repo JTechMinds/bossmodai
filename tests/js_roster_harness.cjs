@@ -116,6 +116,9 @@ eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModOverlayFocus =
 // core/modal-trail.js (a modal head's trail and ‹, split from overlays.js)
 // is the overlays slot's SIBLING, for the five-lists reason given below.
 eval(`${fs.readFileSync(path.join(path.dirname(process.argv[10]), "modal-trail.js"), "utf8")}\n;global.BossModModalTrail = BossModModalTrail;\n`);
+// core/overlay-actions.js (a modal's action row, split from overlays.js) is
+// a sibling too, for the same reason.
+eval(`${fs.readFileSync(path.join(path.dirname(process.argv[10]), "overlay-actions.js"), "utf8")}\n;global.BossModOverlayActions = BossModOverlayActions;\n`);
 eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
 // Both section headers' `⋯` (shell/roster-header-menu.js) and the People
 // half's "Show roles" switch behind its own. Loaded as SIBLINGS of the

@@ -23,13 +23,15 @@ const NAMES = [
     "BossModDom", "BossModFactList", "BossModAvatar", "BossModSwitch",
     "BossModSearchField", "BossModStore",
     "BossModBus", "BossModFormat", "BossModSpecialty", "BossModGates",
-    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModMenuSelect", "BossModPlaces", "BossModAgentRoutes",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
+    "BossModFileListing", "BossModPlaces", "BossModAgentRoutes",
     "BossModFloorScope",
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetailSections",
     "BossModTaskDetail",
-    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksCancel", "BossModTasksComplete",
-    "BossModTaskEditForm", "BossModTaskActions", "BossModTaskLayers",
+    "BossModAssignOutcomes", "BossModAssignForm",
+    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksCancel", "BossModTasksComplete",
+    "BossModTaskActions", "BossModTaskLayers",
     "BossModTasksMenu", "BossModTasksArchive", "BossModTasksToolbar", "BossModTasksPlace",
 ];
 if (paths.length !== NAMES.length) {

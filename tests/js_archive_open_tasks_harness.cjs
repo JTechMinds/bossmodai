@@ -18,7 +18,7 @@ installIconsStub();
 
 const [
     agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, gatesPath, consentPath,
-    overlayFocusPath, modalTrailPath, overlaysPath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath, threadRequestsPath,
+    overlayFocusPath, modalTrailPath, overlayActionsPath, overlaysPath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath, threadRequestsPath,
     threadSourcePath,
     rosterHeaderMenuPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
     rosterThreadsPath, agentRoutesPath, rosterPath,
@@ -36,6 +36,7 @@ load(gatesPath, "BossModGates");
 load(consentPath, "BossModConsentCard");
 load(overlayFocusPath, "BossModOverlayFocus");
 load(modalTrailPath, "BossModModalTrail");
+load(overlayActionsPath, "BossModOverlayActions");
 load(overlaysPath, "BossModOverlays");
 load(menuPath, "BossModMenu");
 // Both rails render their last-activity column through these two.

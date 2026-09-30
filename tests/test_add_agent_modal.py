@@ -31,6 +31,7 @@ HARNESS_MODULES = [
     JS / "core" / "agent-status.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
@@ -1040,5 +1041,6 @@ def test_save_as_template_writes_the_form_into_the_library() -> None:
     assert "BossModMenuSelect.create({" in module
     assert "<select" not in module
     assert "class: 'field-input'" in module
-    # Overlays carries the flag the action leans on.
-    assert "if (!action.keepOpen) close();" in _read(ROOT / "ui" / "static" / "js" / "core" / "overlays.js")
+    # The modal's action row carries the flag the action leans on (moved out
+    # of core/overlays.js into core/overlay-actions.js).
+    assert "if (!action.keepOpen) close();" in _read(ROOT / "ui" / "static" / "js" / "core" / "overlay-actions.js")

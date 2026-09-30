@@ -18,7 +18,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu",
+    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu",
     "BossModSearchField", "BossModMenuSelect",
 ];
 if (paths.length !== NAMES.length) {
@@ -186,6 +186,76 @@ async function main() {
         && threw(() => global.BossModMenuSelect.create({ options: [{ value: "", label: "All" }], onChange() {} }))
         && threw(() => global.BossModMenuSelect.create({ label: "x", options: [{ value: "", label: "All" }] }));
 
+    // ── Menu select: the two trigger looks ─────────────────────────────
+    // The default is the toolbar's button with the full label and no chip,
+    // exactly as every existing caller builds it.
+    const classes = (el) => String(el.getAttribute("class")).split(" ").filter(Boolean).sort().join(" ");
+    const defaultTrigger = global.BossModMenuSelect.create({
+        label: "Filter by assignee",
+        options: [{ value: "a1", label: "Jim — Engineer", short: "Jim", avatar: { name: "Jim" } }],
+        onChange() {},
+    });
+    const buttonTrigger = defaultTrigger.element.querySelector(".menu-select-trigger");
+    const defaultVariantIsTheButton = classes(buttonTrigger) === "btn btn-sm menu-select-trigger"
+        && defaultTrigger.element.getAttribute("class") === "menu-select"
+        && buttonTrigger.textContent.includes("Jim — Engineer")
+        && !buttonTrigger.querySelector(".avatar");
+    if (!defaultVariantIsTheButton) fail(`the default trigger changed: "${buttonTrigger.getAttribute("class")}"`);
+
+    // 'field' reads as an edit field: no .btn, the short name beside the
+    // chosen person's chip, and the full label still in the accessible name.
+    const fieldSelect = global.BossModMenuSelect.create({
+        label: "Assignee",
+        variant: "field",
+        options: [
+            { value: "", label: "Unassigned backlog", short: "Unassigned" },
+            { value: "a1", label: "Charles — Build Engineer (matches)", short: "Charles",
+                avatar: { name: "Charles", color: "#d97706" } },
+        ],
+        value: "a1",
+        onChange() {},
+    });
+    const fieldTrigger = fieldSelect.element.querySelector(".menu-select-trigger");
+    const fieldValue = fieldTrigger.querySelector(".menu-select-value");
+    const chipBeforeText = fieldTrigger.children.indexOf(fieldTrigger.querySelector(".avatar"))
+        < fieldTrigger.children.indexOf(fieldValue);
+    const fieldShownAtFirst = classes(fieldTrigger) === "menu-select-field menu-select-trigger"
+        && fieldSelect.element.getAttribute("class") === "menu-select menu-select--field"
+        && fieldValue.textContent === "Charles"
+        && fieldTrigger.querySelectorAll(".avatar").length === 1 && chipBeforeText
+        && fieldTrigger.getAttribute("aria-label") === "Assignee: Charles — Build Engineer (matches)";
+    // The trigger follows the choice: no chip for an option without one, and
+    // one chip — never two — when a person is chosen again.
+    fieldSelect.setOptions([
+        { value: "", label: "Unassigned backlog", short: "Unassigned" },
+        { value: "a1", label: "Charles — Build Engineer (matches)", short: "Charles", avatar: { name: "Charles" } },
+    ], "");
+    const fieldFollowsTheChoice = fieldValue.textContent === "Unassigned"
+        && !fieldTrigger.querySelector(".avatar")
+        && fieldTrigger.getAttribute("aria-label") === "Assignee: Unassigned backlog";
+    await fieldTrigger.dispatchClick();
+    const fieldRows = fieldSelect.element.querySelector(".menu").querySelectorAll(".menu-select-label")
+        .map((node) => node.textContent);
+    await fieldSelect.element.querySelector(".menu").querySelectorAll(".menu-select-option")[1].dispatchClick();
+    const fieldVariantReadsAsAField = fieldShownAtFirst && fieldFollowsTheChoice
+        && fieldRows.join("|") === "Unassigned backlog|Charles — Build Engineer (matches)"
+        && fieldValue.textContent === "Charles" && fieldTrigger.querySelectorAll(".avatar").length === 1;
+    if (!fieldVariantReadsAsAField) {
+        fail(`the field trigger: first ${fieldShownAtFirst}, follows ${fieldFollowsTheChoice}, rows [${fieldRows}]`);
+    }
+
+    const badVariantAndShortThrow =
+        threw(() => global.BossModMenuSelect.create({
+            label: "x", variant: "pill", options: [{ value: "", label: "All" }], onChange() {},
+        }))
+        && threw(() => global.BossModMenuSelect.create({
+            label: "x", options: [{ value: "", label: "All", short: "" }], onChange() {},
+        }))
+        && threw(() => global.BossModMenuSelect.create({
+            label: "x", options: [{ value: "", label: "All", short: 3 }], onChange() {},
+        }));
+    if (!badVariantAndShortThrow) fail("an unknown variant or a bad short label was accepted");
+
     process.stdout.write(JSON.stringify({
         ok: true,
         searchIsOneBox,
@@ -203,6 +273,9 @@ async function main() {
         setOptionsMovesTheChoice,
         unknownChoiceIsRefused,
         badOptionsThrow,
+        defaultVariantIsTheButton,
+        fieldVariantReadsAsAField,
+        badVariantAndShortThrow,
     }));
 }
 

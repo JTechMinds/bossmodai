@@ -13,7 +13,7 @@ const documentStub = installDom();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu",
+    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu",
     "BossModMentions", "BossModMentionPills", "BossModMentionDraft",
     "BossModMentionPicker",
 ];

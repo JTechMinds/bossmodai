@@ -1,7 +1,7 @@
-"""BossMod AI — Operator task actions: edit, reassign, requirements and mark complete.
+"""BossMod AI — Operator task actions: edit, reassign, requirements, resume and mark complete.
 
 The operator is the final judge of a task. These are the domain-layer verbs
-behind the Tasks place's ``⋯`` menu (routes stay thin). Every status change
+behind the task detail's Edit mode (routes stay thin). Every status change
 goes through ``transition_task``; nothing here widens the state machine.
 
 Re-present: reassigning a task, or changing what it asks for, means the
@@ -35,6 +35,10 @@ from core.tasking.transitions import (
 )
 
 OPERATOR_NAME = "Human Operator"
+
+# The statuses the "Needs you" queue treats as blocked (api/routes/needs.py
+# BLOCKED_STATUSES): the only ones the operator hands back with Resume.
+OPERATOR_RESUMABLE_STATUSES = frozenset({"blocked", "stalled"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -213,6 +217,55 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
         if posted:
             posted_lines.append(posted)
     return OperatorTaskResult(task=updated, trigger_requests=trigger_requests, posted_lines=posted_lines)
+
+
+def resume_task_as_operator(task_id: str) -> OperatorTaskResult:
+    """Hand a blocked or stalled task back to its assignee, with nothing edited.
+
+    This is the re-present step a reassign or a requirements change takes
+    (see module docstring), without the change: live work stops, queued
+    wakes are dropped, the task moves to ``pending`` and a fresh
+    ``task_assigned`` wake is returned for the caller to enqueue. Nothing is
+    destroyed, so it needs no confirmation.
+
+    Args:
+        task_id: The task to resume.
+
+    Returns:
+        The stored task (now ``pending``) and the assignee's wake to enqueue.
+        No origin lines are posted.
+
+    Raises:
+        ValueError: No such task, or the task is not ``blocked``/``stalled``
+            with an assignee.
+        IllegalTaskTransition: The task is closed.
+    """
+    task = db.get_task(task_id)
+    if task is None:
+        raise ValueError("Task not found")
+    if is_terminal_task_status(task.status):
+        raise IllegalTaskTransition(task.status, "pending")
+    if not task.assigned_to or task.status not in OPERATOR_RESUMABLE_STATUSES:
+        raise ValueError("Only a blocked or stalled task with an assignee can be resumed")
+
+    _re_present(task, reason="Resumed by the operator")
+    append_task_event(
+        task_id=task.id,
+        author_type="human",
+        author_name=OPERATOR_NAME,
+        event_type="system",
+        content="Operator resumed the task.",
+    )
+    stored = db.get_task(task.id)
+    if stored is None:
+        raise RuntimeError(f"Failed to reload task {task.id} after operator resume")
+    trigger_requests: list[dict[str, Any]] = []
+    wake = assignment_wake_trigger(stored)
+    # None only when the assignee has left the task's floor; the task still
+    # waits in pending, exactly as an operator edit leaves it.
+    if wake is not None:
+        trigger_requests.append(wake)
+    return OperatorTaskResult(task=stored, trigger_requests=trigger_requests)
 
 
 def complete_task_as_operator(task_id: str, *, summary: str) -> OperatorTaskResult:

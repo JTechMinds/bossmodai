@@ -1579,7 +1579,8 @@ FACT_LIST_CALLERS = (
     "places/tasks/task-detail-sections.js",
 )
 EMPTY_SLOT_CALLERS = (
-    "context/desk-files.js",
+    # The desk's Files section draws its folders through the shared listing.
+    "core/file-listing.js",
     "context/desk-notes.js",
     "context/desk-tasks.js",
     "places/tasks/tasks-grid.js",

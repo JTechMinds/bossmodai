@@ -36,10 +36,12 @@ from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
 from core.tasking import build_task_board, create_or_bind_task, serialize_task_board
 from core.tasking.operator_actions import (
+    OPERATOR_RESUMABLE_STATUSES,
     OpenChildTasks,
     OperatorTaskResult,
     SpecialtyMismatch,
     complete_task_as_operator,
+    resume_task_as_operator,
     update_task_as_operator,
 )
 from core.tasking.service import cancel_task_as_operator, cancel_tasks_as_operator
@@ -118,6 +120,7 @@ def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None)
         "operator_can_complete": (
             is_allowed_task_transition(task.status, "complete") and not is_terminal_task_status(task.status)
         ),
+        "operator_can_resume": bool(task.assigned_to) and task.status in OPERATOR_RESUMABLE_STATUSES,
         "latest_event": latest.model_dump(mode="json") if latest is not None else None,
         "done_claim": done_claim,
         "done_claim_guidance": operator_done_claim_guidance(
@@ -357,7 +360,10 @@ async def cancel_tasks(body: TaskCancelRequest):
 
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(task_id: str):
-    """Cancel one task from the operator board."""
+    """Cancel one task from its detail; returns the row as ``GET /tasks`` lists it.
+
+    The detail repaints in place from the returned row, flags included.
+    """
     try:
         task, posted = cancel_task_as_operator(task_id, reason=OPERATOR_CANCEL_REASON)
     except IllegalTaskTransition as exc:
@@ -370,7 +376,7 @@ async def cancel_task(task_id: str):
             raise HTTPException(404, "Task not found") from exc
         raise
     await _broadcast_operator_cancels([task], [posted] if posted else [])
-    return _serialize_cancelled_task(task)
+    return _serialize_task_row(task)
 
 
 @router.patch("/tasks/{task_id}")
@@ -442,6 +448,29 @@ async def complete_task(task_id: str, body: TaskCompleteRequest):
     await _deliver_operator_result(
         result, event="task_completed", detail=f'Task "{result.task.title}" marked complete'
     )
+    return _serialize_task_row(result.task)
+
+
+@router.post("/tasks/{task_id}/resume")
+async def resume_task(task_id: str):
+    """Hand a blocked or stalled task back to its assignee, with nothing edited.
+
+    Returns:
+        The serialized task row (as ``GET /tasks`` lists it), now ``pending``.
+
+    Raises:
+        HTTPException: 404 unknown task, 400 when the task is not blocked or
+            stalled with an assignee, 409 closed task.
+    """
+    try:
+        result = resume_task_as_operator(task_id)
+    except IllegalTaskTransition as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400, str(exc)) from exc
+    await _deliver_operator_result(result, event="task_resumed", detail=f'Task "{result.task.title}" resumed')
     return _serialize_task_row(result.task)
 
 

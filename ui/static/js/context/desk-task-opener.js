@@ -10,8 +10,8 @@
  * otherwise pass the line cap. The panel decides THAT a row opens a layer;
  * this is the wiring that makes one: the task list read at the click, the
  * actions a detail asks for, and the chat a detail leaves for. No endpoint of
- * its own — the list is BossModTasksData.loadTasks, the edit, complete and
- * cancel are BossModTaskActions, exactly the Tasks place's.
+ * its own — the list is BossModTasksData.loadTasks, the edit, resume,
+ * complete and cancel are BossModTaskActions, exactly the Tasks place's.
  */
 const BossModDeskTaskOpener = (() => {
     /**
@@ -19,11 +19,12 @@ const BossModDeskTaskOpener = (() => {
      *
      * @param {object} deps
      * @param {object} deps.store  Application store; the roster colours the
-     *   detail's avatars and is who the edit form can assign.
+     *   detail's avatars and is who a detail's Edit mode can assign.
      * @param {Function} deps.api  Authenticated fetch helper.
      * @param {{refresh: () => Promise<void>, showError: (message: string) => void}} deps.tasks
      *   The desk's Tasks section (context/desk-tasks.js): a failure here is
-     *   said above its rows, and a cancel, completion or edit re-reads them.
+     *   said above its rows, and a cancel, completion, resume or edit
+     *   re-reads them.
      * @param {(id: string, kind: string) => void} deps.openConversation
      *   Leaves for a task's conversation. The desk dialog's closes the desk
      *   and everything over it first.
@@ -57,11 +58,11 @@ const BossModDeskTaskOpener = (() => {
         const actions = BossModTaskActions.create({
             api,
             store,
-            // The changed task's layer is stale, and so is its row.
-            onChanged: () => {
-                taskLayers.closeAll();
-                void tasks.refresh();
-            },
+            // A cancel, completion or resume repaints its detail in place, as
+            // an update does: the operator is still looking at the task, so
+            // only the desk's rows are re-read.
+            onChanged: () => { void tasks.refresh(); },
+            onUpdated: () => { void tasks.refresh(); },
             onError: (message) => tasks.showError(message),
         });
         const taskLayers = BossModTaskLayers.create({

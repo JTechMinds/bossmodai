@@ -87,8 +87,11 @@ eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModOverlayFocus =
 // A modal head's trail and its ‹ (core/modal-trail.js), which overlays.js
 // reads at load time.
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModModalTrail = BossModModalTrail;\n`);
-eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
+// A modal's action row (core/overlay-actions.js), which overlays.js reads
+// at load time too.
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlayActions = BossModOverlayActions;\n`);
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
 
 // A trigger button has focus before the modal opens.
 const trigger = makeEl("button");
@@ -812,6 +815,28 @@ const setStepsRejectsMalformedSteps = rejects("Code Auditor")
     && trailOf(trailA) === "Brian Ops";
 const backButtonIsNotExported = typeof BossModOverlays.backButton === "undefined"
     && Object.keys(BossModOverlays).join(",") === "createModal";
+
+// A title edited in place (the task detail's Edit mode): the frame keeps the
+// caller's control mounted in the title across every trail re-render, the
+// dialog is still named for the title, and null puts the text back.
+const titleNodeOf = (handle) => {
+    const items = trailItemsOf(handle);
+    return findIn(items[items.length - 1], "modal-title");
+};
+const editor = makeEl("input");
+trailA.setTitleEditor(editor);
+const titleA = titleNodeOf(trailA);
+const editorMounted = titleA.children.length === 1 && titleA.children[0] === editor
+    && trailA.element.getAttribute("aria-label") === "Brian Ops";
+const trailF = BossModOverlays.createModal({ title: "Edit role", body: "x", actions: [] });
+const survivesPush = titleA.children[0] === editor && titleNodeOf(trailA) === titleA
+    && trailOf(trailF) === "Brian Ops › Edit role";
+trailF.close();
+const survivesPop = titleA.children.length === 1 && titleA.children[0] === editor
+    && trailA.element.hidden === false;
+trailA.setTitleEditor(null);
+const restoresText = titleA.textContent === "Brian Ops" && trailOf(trailA) === "Brian Ops";
+const setTitleEditorSurvivesRerenders = editorMounted && survivesPush && survivesPop && restoresText;
 trailA.close();
 if (panels().length !== 0 || scrims().length !== 0) throw new Error("trail block must leave nothing open");
 
@@ -950,6 +975,7 @@ process.stdout.write(JSON.stringify({
     focusBackLandsOnTheBack,
     setTitleRerendersUpperCrumbs,
     setStepsRejectsMalformedSteps,
+    setTitleEditorSurvivesRerenders,
     backButtonIsNotExported,
     slideOverIsGone: typeof BossModOverlays.slideOver === "undefined",
     menuFocusesFirstOption,

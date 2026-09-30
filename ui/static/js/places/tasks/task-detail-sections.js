@@ -70,9 +70,13 @@ const BossModTaskDetailSections = (() => {
      * last activity, else creation.
      *
      * @param {object} task
+     * @param {object} [deps]
+     * @param {HTMLElement|null} [deps.actions]  Appended at the row's end,
+     *   right-aligned: the detail's status actions, in Edit mode only.
      * @returns {HTMLElement} `div.task-detail-status`.
      */
-    function statusLine(task) {
+    function statusLine(task, deps) {
+        const { actions } = deps || {};
         let since;
         if (task.status === 'complete') {
             since = task.closed_at ? `Finished ${FORMAT.formatDateTime(task.closed_at)}` : '';
@@ -90,7 +94,8 @@ const BossModTaskDetailSections = (() => {
         return h('div', { class: 'task-detail-status' },
             h('span', { class: 'status-pill', 'data-status': task.status },
                 COLUMNS.STATUS_LABELS[task.status] || task.status),
-            since ? h('span', { class: 'task-detail-since' }, since) : null);
+            since ? h('span', { class: 'task-detail-since' }, since) : null,
+            actions || null);
     }
 
     /**
@@ -101,13 +106,16 @@ const BossModTaskDetailSections = (() => {
      * @param {object[]} deps.tasks  The page's list, to resolve the parent.
      * @param {(agentId: string) => (string|undefined)} deps.colorOf
      * @param {(taskId: string) => void} deps.onNavigate  Opens the parent.
+     * @param {HTMLElement} [deps.assigneeValue]  Shown as the Assignee value
+     *   instead of the assignee's name: the detail's Edit mode puts its
+     *   assignee dropdown in the same cell.
      * @returns {HTMLElement} `dl.fact-list[data-pairs="2"]`.
      * @throws {Error} When the list, colorOf or onNavigate is missing — a
      *   parent that could not be looked up would read "Not in the current
      *   list", which is a different fact.
      */
     function facts(task, deps) {
-        const { tasks, colorOf, onNavigate } = deps || {};
+        const { tasks, colorOf, onNavigate, assigneeValue } = deps || {};
         if (!Array.isArray(tasks)) throw new Error('[task-detail] facts needs the task list');
         if (typeof colorOf !== 'function') throw new Error('[task-detail] facts needs colorOf');
         if (typeof onNavigate !== 'function') throw new Error('[task-detail] facts needs onNavigate');
@@ -121,8 +129,8 @@ const BossModTaskDetailSections = (() => {
         const list = [
             {
                 label: 'Assignee',
-                value: task.assigned_to
-                    ? person(task.assigned_to, task.assigned_to_name || 'Unknown') : 'Unassigned',
+                value: assigneeValue || (task.assigned_to
+                    ? person(task.assigned_to, task.assigned_to_name || 'Unknown') : 'Unassigned'),
             },
             { label: 'Requester', value: requester },
             { label: 'Created', value: FORMAT.formatDateTime(task.created_at) },
@@ -225,6 +233,29 @@ const BossModTaskDetailSections = (() => {
     }
 
     /**
+     * Each child's deliverables under its own subheading, read-only: the
+     * tail of the Deliverables section, in view and in Edit mode alike.
+     *
+     * @param {object[]} children
+     * @param {Function} api  Passed to each row, which opens its file.
+     * @returns {{nodes: HTMLElement[], count: number}} The subheadings and
+     *   rows in order, and how many rows; children without deliverables
+     *   add nothing.
+     */
+    function childDeliverableGroups(children, api) {
+        const nodes = [];
+        let count = 0;
+        children.forEach((child) => {
+            const rows = (child.work_contract && child.work_contract.deliverables) || [];
+            if (rows.length === 0) return;
+            nodes.push(h('p', { class: 'task-detail-meta' }, child.title || 'Subtask'));
+            rows.forEach((item) => nodes.push(DELIVERABLES.renderDeliverable(item, child, api)));
+            count += rows.length;
+        });
+        return { nodes, count };
+    }
+
+    /**
      * This task's deliverables, then each child's, under its own subheading.
      *
      * @param {object} task
@@ -234,18 +265,12 @@ const BossModTaskDetailSections = (() => {
      */
     function deliverables(task, children, api) {
         const own = (task.work_contract && task.work_contract.deliverables) || [];
-        const childRows = children
-            .map((child) => ({ child, rows: (child.work_contract && child.work_contract.deliverables) || [] }))
-            .filter((entry) => entry.rows.length > 0);
-        const total = own.length + childRows.reduce((sum, entry) => sum + entry.rows.length, 0);
+        const groups = childDeliverableGroups(children, api);
+        const total = own.length + groups.count;
         if (total === 0) return null;
         const node = headed('Deliverables', String(total));
         own.forEach((item) => node.append(DELIVERABLES.renderDeliverable(item, task, api)));
-        childRows.forEach((entry) => {
-            node.append(h('p', { class: 'task-detail-meta' }, entry.child.title || 'Subtask'));
-            entry.rows.forEach((item) =>
-                node.append(DELIVERABLES.renderDeliverable(item, entry.child, api)));
-        });
+        node.append(...groups.nodes);
         return node;
     }
 
@@ -308,6 +333,6 @@ const BossModTaskDetailSections = (() => {
 
     return {
         statusLine, facts, callout, instructions,
-        deliverables, subtasks, doneContract,
+        deliverables, childDeliverableGroups, subtasks, doneContract,
     };
 })();

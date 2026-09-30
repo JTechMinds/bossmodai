@@ -20,7 +20,7 @@ HARNESS = Path(__file__).resolve().parent / "js_toolbar_controls_harness.cjs"
 
 MODULES = [
     JS / "core" / "dom.js", JS / "core" / "avatar.js",
-    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "search-field.js", JS / "core" / "menu-select.js",
 ]
 
@@ -57,6 +57,9 @@ def test_toolbar_controls_harness() -> None:
         "setOptionsMovesTheChoice": True,
         "unknownChoiceIsRefused": True,
         "badOptionsThrow": True,
+        "defaultVariantIsTheButton": True,
+        "fieldVariantReadsAsAField": True,
+        "badVariantAndShortThrow": True,
     }
 
 

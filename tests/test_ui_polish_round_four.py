@@ -55,7 +55,7 @@ def _run(harness: str, modules: list[Path]) -> dict:
 
 def _overlays_payload() -> dict:
     return _run("js_overlays_harness.cjs",
-                [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/modal-trail.js", JS / "core/overlays.js",
+                [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/modal-trail.js", JS / "core/overlay-actions.js", JS / "core/overlays.js",
                  JS / "core/menu.js"])
 
 
@@ -119,8 +119,12 @@ CONTEXT_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-select.js",
+    # The desk Files section and the task file picker share its crumbs and rows.
+    JS / "core" / "file-listing.js",
     JS / "conversation" / "empty-state.js",
     JS / "conversation" / "transcript.js",
     JS / "conversation" / "transcript-cache.js",
@@ -193,8 +197,10 @@ CONTEXT_MODULES = [
     JS / "places" / "tasks" / "tasks-cancel.js",
     JS / "places" / "tasks" / "assign-outcomes.js",
     JS / "places" / "tasks" / "assign-form.js",
+    JS / "places" / "tasks" / "task-file-picker.js",
+    JS / "places" / "tasks" / "task-edit-files.js",
+    JS / "places" / "tasks" / "task-edit-mode.js",
     JS / "places" / "tasks" / "tasks-complete.js",
-    JS / "places" / "tasks" / "task-edit-form.js",
     JS / "places" / "tasks" / "task-actions.js",
     JS / "places" / "tasks" / "task-layers.js",
     JS / "context" / "desk-task-opener.js",
@@ -278,6 +284,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",

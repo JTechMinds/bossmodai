@@ -218,6 +218,7 @@ const BossModNeedShape = (() => {
         'task_cancelled',
         'task_updated',
         'task_completed',
+        'task_resumed',
         'task_clarify',
     ]);
 

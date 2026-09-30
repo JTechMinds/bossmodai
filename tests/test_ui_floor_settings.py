@@ -19,6 +19,7 @@ MODULES = [
     JS / "core" / "inline-rename.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "context" / "agent-api.js",

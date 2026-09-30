@@ -286,6 +286,7 @@ const BossModTasksPlace = (() => {
                     ids.forEach((id) => selected.delete(id));
                     void refresh(true);
                 },
+                onUpdated: () => { void refresh(true); },
                 onError: paintError,
             });
             layers = BossModTaskLayers.create({

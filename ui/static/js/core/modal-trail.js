@@ -150,7 +150,9 @@ const BossModModalTrail = (() => {
      * showing a pack is named for the pack.
      *
      * @param {{element: HTMLElement, trailNode: HTMLElement,
-     *   titleNode: HTMLElement, back: HTMLElement}} layer  The layer's nodes.
+     *   titleNode: HTMLElement, back: HTMLElement,
+     *   titleEditor: (HTMLElement|null)}} layer  The layer's nodes; a
+     *   `titleEditor` is mounted inside the title in place of its text.
      * @param {Array<{title: string, layer: object, depth: number}>} crumbs
      *   From crumbsOf(); never empty — a layer is always its own crumb.
      * @param {(layer: object, depth: number) => void} onCrumb  What a click
@@ -163,7 +165,14 @@ const BossModModalTrail = (() => {
         if (!crumbs.length) throw new Error('[modal-trail] a trail needs at least its own crumb');
         const current = crumbs[crumbs.length - 1];
         const earlier = crumbs.slice(0, -1);
-        layer.titleNode.textContent = current.title;
+        // A title being edited is the caller's control, re-mounted on every
+        // render; the dialog is still named for the title it holds.
+        if (layer.titleEditor) {
+            clear(layer.titleNode);
+            layer.titleNode.append(layer.titleEditor);
+        } else {
+            layer.titleNode.textContent = current.title;
+        }
         layer.element.setAttribute('aria-label', current.title);
         const shown = earlier.length > MAX_ANCESTORS
             ? [earlier[0], GAP, ...earlier.slice(-2)]

@@ -172,8 +172,10 @@ def test_cancel_task_button_and_confirm_copy() -> None:
     closed-without-completing are three counts, and `cancelled` is terminal.
     """
     detail = (TASKS / "task-detail.js").read_text(encoding="utf-8")
-    assert "option('ct-cancel-task-btn', 'Cancel task', actions.cancelOne)" in detail
-    assert "/api/tasks/cancel" not in detail, (
+    # Cancel is a status action on Edit mode's status row now, beside Resume
+    # and Mark complete; the detail still only asks.
+    assert "button('ct-cancel-task-btn', 'Cancel task…', actions.cancel, true)" in detail
+    assert "/api/tasks" not in detail, (
         "the detail asks for a cancel; the Tasks place performs it"
     )
 

@@ -4,7 +4,8 @@
  * The operator is the final judge of whether work is done: an agent can be
  * stuck behind a done check the operator can see is met. This is the one
  * place in Tasks that completes a task, mirroring tasks-cancel.js — a detail
- * asks, this confirms and posts. The confirmation needs a summary, because
+ * asks, this confirms and posts, and the detail repaints in place from the
+ * row the promise resolves with. The confirmation needs a summary, because
  * the server records it as the completion summary and tells the origin thread
  * and a delegated parent why the work closed.
  *
@@ -48,35 +49,93 @@ const BossModTasksComplete = (() => {
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper.
      * @param {(ids: string[]) => void} deps.onCompleted  The server accepted.
-     * @param {(message: string) => void} deps.onError  Surfaced, never swallowed.
-     * @returns {{completeOne: (task: object) => void}}
+     * @returns {{completeOne: (task: object) => Promise<object|null>}}
      * @throws {Error} When a dependency is missing.
      */
     function createCompleter(deps) {
-        const { api, onCompleted, onError } = deps || {};
+        const { api, onCompleted } = deps || {};
         if (typeof api !== 'function') throw new Error('[tasks-complete] deps.api is required');
         if (typeof onCompleted !== 'function') throw new Error('[tasks-complete] deps.onCompleted is required');
-        if (typeof onError !== 'function') throw new Error('[tasks-complete] deps.onError is required');
 
         /**
          * POST the completion.
          * @param {string} taskId
          * @param {string} summary
-         * @returns {Promise<void>} Never rejects; a failure reaches onError.
+         * @returns {Promise<object>} The stored row, as GET /api/tasks lists it.
+         * @throws {Error} (rejects) SUBTASKS_COPY for open subtasks, else the
+         *   server's `detail`.
          */
         async function post(taskId, summary) {
+            let res;
             try {
-                const res = await api(`/api/tasks/${encodeURIComponent(taskId)}/complete`, {
+                res = await api(`/api/tasks/${encodeURIComponent(taskId)}/complete`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ summary }),
                 });
-                if (!res.ok) throw new Error(await failureMessage(res));
-                onCompleted([taskId]);
             } catch (err) {
-                console.error('[tasks-complete] complete failed', err);
-                onError(`Could not mark complete: ${(err && err.message) || 'the request failed'}`);
+                console.error('[tasks-complete] the completion request failed', err);
+                throw new Error(`Could not mark complete: ${(err && err.message) || 'the request failed'}`);
             }
+            if (!res.ok) throw new Error(`Could not mark complete: ${await failureMessage(res)}`);
+            let row;
+            try {
+                row = await res.json();
+            } catch (err) {
+                console.error('[tasks-complete] the completion response had no JSON body', err);
+                throw new Error(`Could not mark complete: HTTP ${res.status}`);
+            }
+            onCompleted([taskId]);
+            return row;
+        }
+
+        /**
+         * The summary dialog; its outcome settles the caller's promise.
+         * @param {object} task
+         * @param {(row: object|null) => void} resolve
+         * @param {(err: Error) => void} reject
+         * @returns {void}
+         */
+        function ask(task, resolve, reject) {
+            let submitted = false;
+            const summary = h('textarea', {
+                class: 'assign-textarea', id: 'ct-complete-summary', rows: '3', maxlength: '2000',
+                'aria-required': 'true', placeholder: 'What was delivered, or why it counts as done',
+            });
+            const note = h('div', { class: 'assign-result', role: 'alert' });
+            let modal = null;
+            const form = h('form', {
+                class: 'assign-form',
+                id: FORM_ID,
+                onsubmit: (event) => {
+                    event.preventDefault();
+                    const text = summary.value.trim();
+                    clear(note);
+                    if (!text) {
+                        note.append(h('div', { class: 'callout', 'data-tone': 'alert' },
+                            h('p', { class: 'callout-title' }, 'A summary is required')));
+                        summary.focus();
+                        return;
+                    }
+                    submitted = true;
+                    modal.close();
+                    post(task.id, text).then(resolve, reject);
+                },
+            },
+                h('p', { class: 'assign-hint' }, BODY_COPY),
+                h('label', { class: 'assign-field' },
+                    h('span', { class: 'assign-field-label' }, SUMMARY_LABEL), summary),
+                note);
+            modal = BossModOverlays.createModal({
+                title: TITLE_COPY,
+                body: form,
+                actions: [
+                    { label: 'Mark complete', tone: 'primary', id: 'ct-complete-submit', form: FORM_ID },
+                    { label: 'Keep open', tone: 'quiet' },
+                ],
+                // However it closed without a summary sent: kept open.
+                onClose: () => { if (!submitted) resolve(null); },
+            });
         }
 
         return {
@@ -86,45 +145,15 @@ const BossModTasksComplete = (() => {
              *
              * @param {object} task  Only a task the server flagged
              *   `operator_can_complete` opens anything.
-             * @returns {void}
+             * @returns {Promise<object|null>} The stored row once the server
+             *   completed it (after `onCompleted`); null when the operator
+             *   kept it open, or the task cannot be completed.
+             * @throws {Error} (rejects) The server refused: SUBTASKS_COPY for
+             *   open subtasks, else its `detail`.
              */
             completeOne(task) {
-                if (!task || !task.id || !task.operator_can_complete) return;
-                const summary = h('textarea', {
-                    class: 'assign-textarea', id: 'ct-complete-summary', rows: '3', maxlength: '2000',
-                    'aria-required': 'true', placeholder: 'What was delivered, or why it counts as done',
-                });
-                const note = h('div', { class: 'assign-result', role: 'alert' });
-                let modal = null;
-                const form = h('form', {
-                    class: 'assign-form',
-                    id: FORM_ID,
-                    onsubmit: (event) => {
-                        event.preventDefault();
-                        const text = summary.value.trim();
-                        clear(note);
-                        if (!text) {
-                            note.append(h('div', { class: 'callout', 'data-tone': 'alert' },
-                                h('p', { class: 'callout-title' }, 'A summary is required')));
-                            summary.focus();
-                            return;
-                        }
-                        modal.close();
-                        void post(task.id, text);
-                    },
-                },
-                    h('p', { class: 'assign-hint' }, BODY_COPY),
-                    h('label', { class: 'assign-field' },
-                        h('span', { class: 'assign-field-label' }, SUMMARY_LABEL), summary),
-                    note);
-                modal = BossModOverlays.createModal({
-                    title: TITLE_COPY,
-                    body: form,
-                    actions: [
-                        { label: 'Mark complete', tone: 'primary', id: 'ct-complete-submit', form: FORM_ID },
-                        { label: 'Keep open', tone: 'quiet' },
-                    ],
-                });
+                if (!task || !task.id || !task.operator_can_complete) return Promise.resolve(null);
+                return new Promise((resolve, reject) => ask(task, resolve, reject));
             },
         };
     }

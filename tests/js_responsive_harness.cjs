@@ -15,7 +15,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const paths = process.argv.slice(2);
-const NAMES = ["BossModDom", "BossModStore", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu",
+const NAMES = ["BossModDom", "BossModStore", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu",
     "BossModPlaces", "BossModResponsive"];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);

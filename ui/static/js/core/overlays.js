@@ -33,12 +33,14 @@
  * loads ahead of it).
  */
 const BossModOverlays = (() => {
-    const { h, clear } = BossModDom;
+    const { h } = BossModDom;
     // The trap and the tab-order selector are core/overlay-focus.js's: one
     // rule, two overlays, and no room left in this file to keep it here.
     const { FOCUSABLE, trapKeydown } = BossModOverlayFocus;
     // The trail, the ‹ and the walk back; the stack they walk is this file's.
     const TRAIL = BossModModalTrail;
+    // The footer's buttons (core/overlay-actions.js); the row is this file's.
+    const ACTIONS = BossModOverlayActions;
 
     /** The sizes the stylesheet knows. Anything else renders as 'default'. */
     const SIZES = ['panel', 'takeover'];
@@ -72,42 +74,6 @@ const BossModOverlays = (() => {
      *  form anywhere beneath must not lose its typing to a stray click. */
     function onScrimClick() {
         if (layers.every((layer) => layer.allowsBackdrop())) closeAll();
-    }
-
-    /**
-     * Fill an action row with buttons, replacing whatever it held: one
-     * implementation for construction and for setActions(), so the `form`,
-     * `keepOpen` and close semantics documented on createModal's `actions`
-     * cannot drift.
-     * @returns {HTMLElement[]} The buttons, in render order.
-     */
-    function renderActions(actionRow, actions, close) {
-        const buttons = [];
-        clear(actionRow);
-        (actions || []).forEach((action) => {
-            // A `form` makes this that form's submit button from outside it,
-            // and it must NOT close: a refused save keeps the draft on screen.
-            const btn = h('button', {
-                class: `modal-action ${action.tone || 'default'}`,
-                type: action.form ? 'submit' : 'button',
-                form: action.form || null,
-                onclick: action.form ? null : () => {
-                    // Runs BEFORE close (options.onClose); finally unwedges it.
-                    // `keepOpen` skips the close: the action opened a layer.
-                    try {
-                        if (action.onSelect) action.onSelect();
-                    } finally {
-                        if (!action.keepOpen) close();
-                    }
-                },
-            }, action.label);
-            // Test surface: a fake DOM can name a button without textContent.
-            btn.textLabel = action.label;
-            if (action.id) btn.id = action.id;
-            buttons.push(btn);
-            actionRow.append(btn);
-        });
-        return buttons;
     }
 
     /**
@@ -168,7 +134,8 @@ const BossModOverlays = (() => {
      *   element: HTMLElement, focusBack: () => void,
      *   setActions: (actions: Array<object>) => void,
      *   setSteps: (steps: Array<{title: string, onBack: () => void}>) => void,
-     *   setTitle: (title: string) => void }} `close` removes exactly
+     *   setTitle: (title: string) => void,
+     *   setTitleEditor: (node: HTMLElement|null) => void }} `close` removes exactly
      *   this layer, wherever it sits: layers above it stay. `closeFrom`
      *   closes the layers above, top first, then this one — for leaving the
      *   modal world from here, so nothing stacked on it is orphaned. `setActions` rebuilds
@@ -187,6 +154,11 @@ const BossModOverlays = (() => {
      *   dialog's own state — idempotent, so the two cannot drift. It throws on
      *   malformed steps (core/modal-trail.js `copySteps`). `focusBack` puts
      *   the keyboard on this layer's ‹, and throws while it is hidden.
+     *   `setTitleEditor` mounts a caller's control (the task detail's title
+     *   input) in place of this layer's title text, and keeps it there across
+     *   every trail re-render — a caller-mounted node would otherwise be
+     *   wiped by the next layer change. The accessible name stays the title,
+     *   crumbs above still read it, and null restores the text.
      *
      *   Focus on open: the first control in the BODY that actually takes focus
      *   (a hidden one does not) unless `focusBody` is false; else the last
@@ -211,7 +183,7 @@ const BossModOverlays = (() => {
         // function closes over `buttons`, and a fresh array would strand it.
         function setActions(nextActions) {
             buttons.length = 0;
-            buttons.push(...renderActions(actionRow, nextActions, close));
+            buttons.push(...ACTIONS.render(actionRow, nextActions, close));
         }
         setActions(actions);
 
@@ -271,6 +243,8 @@ const BossModOverlays = (() => {
             trailNode,
             /** Where the dialog is inside this layer; see setSteps. */
             steps: [],
+            /** A caller's control shown in place of the title; see setTitleEditor. */
+            titleEditor: null,
             /** Back one: this layer's last step, else this layer. */
             backOne() {
                 if (!layer.steps.length) {
@@ -369,6 +343,12 @@ const BossModOverlays = (() => {
             renderTrails();
         }
 
+        /** Edit this layer's title in place, or stop; see @returns. */
+        function setTitleEditor(node) {
+            layer.titleEditor = node;
+            renderTrails();
+        }
+
         /** Report where the dialog is inside this layer; see @returns. */
         function setSteps(steps) {
             layer.steps = TRAIL.copySteps(steps);
@@ -389,7 +369,7 @@ const BossModOverlays = (() => {
             close();
         }
 
-        return { close, closeFrom, element, focusBack, setActions, setSteps, setTitle };
+        return { close, closeFrom, element, focusBack, setActions, setSteps, setTitle, setTitleEditor };
     }
 
     return { createModal };

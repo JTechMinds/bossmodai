@@ -116,7 +116,8 @@ documentStub.createElement = (tag) => {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
-    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
+    "BossModFileListing",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeedCoalesce", "BossModNeeds", "BossModNeedsBar",
@@ -148,7 +149,8 @@ const NAMES = [
     // conversation route. All are read at call time.
     "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables", "BossModTaskEvents",
     "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel",
-    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksComplete", "BossModTaskEditForm",
+    "BossModAssignOutcomes", "BossModAssignForm",
+    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksComplete",
     "BossModTaskActions", "BossModTaskLayers",
     "BossModDeskTaskOpener", "BossModAgentRoutes", "BossModDeskDialog",
     // The chat place hands agent conversations the Browser Vision screen.
@@ -326,7 +328,7 @@ const updates = [];
 const JIM_TASK = { id: "t1", title: "Write TDD specs", status: "complete" };
 // What GET /api/tasks answers: the whole list a task layer resolves its
 // parent and subtasks from. Jim's task, and an open subtask of it — open, so
-// its `⋯` offers Cancel.
+// its Edit mode offers Cancel.
 const TASK_LIST = [
     { ...JIM_TASK, assigned_to: "a1" },
     { id: "t2", title: "Draft M5.3 list", status: "in_progress", parent_task_id: "t1", assigned_to: "a1" },
@@ -335,7 +337,7 @@ const TASK_LIST = [
 let taskListFails = false;
 // How many board reads the desk's Tasks section has made: a cancel re-reads.
 let boardReads = 0;
-// Every POST /api/tasks/cancel body, in order.
+// Every POST /api/tasks/{id}/cancel URL, in order.
 const cancels = [];
 // What GET /api/agents/{id} answers, shaped as the server's `Agent`: the desk
 // footer reads the workspace and model off it, and Remove reads the NAME its
@@ -409,9 +411,12 @@ function api(url, init) {
         if (taskListFails) return jsonResponse({ detail: "boom" }, 500);
         return jsonResponse(TASK_LIST);
     }
-    if (String(url) === "/api/tasks/cancel" && init && init.method === "POST") {
-        cancels.push(JSON.parse(init.body));
-        return jsonResponse({ cancelled: JSON.parse(init.body).task_ids });
+    const cancelOne = String(url).match(/^\/api\/tasks\/([^/]+)\/cancel$/);
+    if (cancelOne && init && init.method === "POST") {
+        cancels.push(String(url));
+        // The single cancel answers the list-row shape, so the detail repaints.
+        const listed = TASK_LIST.find((item) => item.id === cancelOne[1]);
+        return jsonResponse({ ...listed, status: "cancelled" });
     }
     if (String(url).startsWith("/api/tasks/board")) {
         boardReads += 1;
@@ -791,22 +796,30 @@ async function main() {
         && trailOf(topTaskLayer()) === "Jim › Write TDD specs › Draft M5.3 list"
         && topTaskLayer().querySelector(".modal-back").getAttribute("aria-label")
             === "Back to Write TDD specs";
-    // Cancel from the open subtask: asked, posted, and the desk's rows re-read
-    // with the stale task layers gone.
+    // Cancel from the open subtask's Edit mode: asked, posted, the layer
+    // repainted in place as cancelled, and the desk's rows re-read. ‹ twice
+    // then walks back through both task layers to the desk.
     const boardReadsBeforeCancel = boardReads;
-    await topTaskLayer().querySelector("#task-options").dispatchClick();
+    const cancelLayer = topTaskLayer();
+    await cancelLayer.querySelector("#ct-edit-mode-btn").dispatchClick();
     await drain();
-    await topTaskLayer().querySelector("#ct-cancel-task-btn").dispatchClick();
+    await cancelLayer.querySelector("#ct-cancel-task-btn").dispatchClick();
     await drain();
     const cancelConfirm = modals().find((panel) => panel.textContent.includes("Cancel this task?"));
     await cancelConfirm.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
-        .find((btn) => btn.textContent === "Cancel tasks").dispatchClick();
+        .find((btn) => btn.textContent === "Cancel task").dispatchClick();
     await drain();
-    const aCancelRefreshesTheDeskRows = cancels.length === 1
-        && JSON.stringify(cancels[0]) === JSON.stringify({ task_ids: ["t2"] })
+    const repaintedInPlace = cancels.length === 1 && cancels[0] === "/api/tasks/t2/cancel"
+        && taskLayers().length === 2 && topTaskLayer() === cancelLayer
+        && cancelLayer.querySelector(".status-pill").getAttribute("data-status") === "cancelled"
+        && boardReads > boardReadsBeforeCancel;
+    await topTaskLayer().querySelector(".modal-back").dispatchClick();
+    await drain();
+    await topTaskLayer().querySelector(".modal-back").dispatchClick();
+    await drain();
+    const aCancelRefreshesTheDeskRows = repaintedInPlace
         && taskLayers().length === 0 && modals().length === 1
         && deskModal().hidden === false
-        && boardReads > boardReadsBeforeCancel
         && Boolean(inDesk(".desk-task"));
     // ‹ from a task opened over the desk comes back to the desk.
     await inDesk(".desk-task").dispatchClick();

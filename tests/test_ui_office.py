@@ -117,7 +117,7 @@ def test_agent_click_offers_chat_and_desk_through_the_shared_routes() -> None:
 def test_agent_actions_harness() -> None:
     harness = Path(__file__).resolve().parent / "js_office_agent_actions_harness.cjs"
     modules = [
-        JS / "core" / "dom.js", JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlays.js",
+        JS / "core" / "dom.js", JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js",
         JS / "core" / "menu.js", JS / "core" / "avatar.js", JS / "core" / "agent-status.js", JS / "core" / "store.js",
         JS / "shell" / "agent-routes.js", OFFICE / "agent-actions.js",
     ]

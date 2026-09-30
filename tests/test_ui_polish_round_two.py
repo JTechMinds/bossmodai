@@ -71,8 +71,12 @@ CONTEXT_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-select.js",
+    # The desk Files section and the task file picker share its crumbs and rows.
+    JS / "core" / "file-listing.js",
     JS / "conversation" / "empty-state.js",
     JS / "conversation" / "transcript.js",
     JS / "conversation" / "transcript-cache.js",
@@ -145,8 +149,10 @@ CONTEXT_MODULES = [
     JS / "places" / "tasks" / "tasks-cancel.js",
     JS / "places" / "tasks" / "assign-outcomes.js",
     JS / "places" / "tasks" / "assign-form.js",
+    JS / "places" / "tasks" / "task-file-picker.js",
+    JS / "places" / "tasks" / "task-edit-files.js",
+    JS / "places" / "tasks" / "task-edit-mode.js",
     JS / "places" / "tasks" / "tasks-complete.js",
-    JS / "places" / "tasks" / "task-edit-form.js",
     JS / "places" / "tasks" / "task-actions.js",
     JS / "places" / "tasks" / "task-layers.js",
     JS / "context" / "desk-task-opener.js",
@@ -205,6 +211,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
@@ -561,6 +568,7 @@ def test_the_overflow_menu_is_keyboard_operable() -> None:
     harness = HERE / "js_overlays_harness.cjs"
     args = ["node", str(harness), str(JS / "core/dom.js"), str(JS / "core/overlay-focus.js"),
             str(JS / "core/modal-trail.js"),
+            str(JS / "core/overlay-actions.js"),
             str(JS / "core/overlays.js"), str(JS / "core/menu.js")]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr or result.stdout
@@ -671,7 +679,9 @@ def test_an_empty_section_still_reads_as_a_section() -> None:
     the two cannot drift apart.
     """
     assert "dashed" in _rule(_read(CSS / "controls.css"), ".empty-slot")
-    for owner in ("context/desk-files.js", "context/desk-notes.js", "context/desk-tasks.js"):
+    # The desk's Files rows are drawn by core/file-listing.js since the task
+    # file picker became its second user.
+    for owner in ("core/file-listing.js", "context/desk-notes.js", "context/desk-tasks.js"):
         assert "empty-slot" in _read(JS / owner), owner
     assert ".desk-empty" not in _read(CSS / "context.css")
 

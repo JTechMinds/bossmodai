@@ -500,6 +500,37 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 .menu-select-trigger { min-height: 28px; gap: 6px; }
 .menu-select-trigger svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
 
+/* The 'field' look (menu-select.js `variant: 'field'`): the task detail's
+   Edit mode puts it in a fact cell among .task-detail-edit-field inputs, so it
+   reads as one of them — no box and no fill, the fact's own type, the edit
+   hairline under it turning --accent on focus or while open. One line: the
+   chip, the short name, the chevron; a long name ellipsizes, never wraps. No
+   .btn, so no button hover or active fill reaches it. The host class lets it
+   shrink inside its cell (the codebase does not use :has()). */
+.menu-select--field { max-width: 100%; min-width: 0; }
+.menu-select-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+  /* The toolbar trigger's 28px is a toolbar row's height; a fact cell keeps
+     base.css's 24px target floor instead. */
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line-control);
+  border-radius: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.menu-select-field .menu-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-select-field:focus-visible,
+.menu-select-field[aria-expanded="true"] { outline: none; border-bottom-color: var(--accent); }
+
 /* ─── Fact list ───
  *
  * Label/value pairs as a <dl> (core/fact-list.js). Promoted from the Log's

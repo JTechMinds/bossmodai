@@ -25,8 +25,10 @@ HARNESS_MODULES = [
     JS / "core" / "store.js", JS / "core" / "bus.js",
     JS / "core" / "format.js", JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
-    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
+    # The Edit mode file picker draws the desk's crumbs and rows.
+    JS / "core" / "file-listing.js",
     JS / "shell" / "places.js", JS / "shell" / "agent-routes.js",
     # tasks-place.js scopes the board to the operator's floor through it.
     JS / "shell" / "floor-scope.js",
@@ -34,7 +36,8 @@ HARNESS_MODULES = [
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
     TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
-    TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js", TASKS / "task-edit-form.js",
+    TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
+    TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js",
     TASKS / "task-actions.js", TASKS / "task-layers.js", TASKS / "tasks-menu.js",
     TASKS / "tasks-archive.js", TASKS / "tasks-toolbar.js", TASKS / "tasks-place.js",
 ]
@@ -46,15 +49,32 @@ DETAIL_HARNESS = Path(__file__).resolve().parent / "js_task_detail_harness.cjs"
 DETAIL_MODULES = [
     JS / "core" / "dom.js", JS / "core" / "avatar.js", JS / "core" / "format.js",
     JS / "core" / "specialty.js", JS / "core" / "gates.js",
-    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
+    # The Edit mode file picker draws the desk's crumbs and rows.
+    JS / "core" / "file-listing.js",
     JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-deliverables.js",
-    TASKS / "task-events.js", TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
-    # The operator's actions the detail's `⋯` asks for, built for real so the
-    # harness drives the edit form and the completer too.
-    TASKS / "assign-outcomes.js", TASKS / "assign-form.js", TASKS / "tasks-cancel.js",
-    TASKS / "tasks-complete.js", TASKS / "task-edit-form.js", TASKS / "task-actions.js",
+    TASKS / "task-events.js", TASKS / "task-detail-sections.js",
+    # Edit mode ranks assignees as the assign dialog does, so it loads after
+    # assign-form.js; the detail builds it when Edit mode is picked.
+    TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
+    TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
+    TASKS / "task-detail.js",
+    # The operator's actions the detail's Edit mode asks for, built for real
+    # so the harness drives its saves, status actions and the completer too.
+    TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js", TASKS / "task-actions.js",
+]
+
+PICKER_HARNESS = Path(__file__).resolve().parent / "js_task_file_picker_harness.cjs"
+
+# The file picker's own chain, in load order: the modal it opens as a layer,
+# the shared folder listing it draws, and the picker.
+PICKER_MODULES = [
+    JS / "core" / "dom.js", JS / "core" / "format.js", JS / "core" / "gates.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js",
+    JS / "core" / "overlays.js",
+    JS / "core" / "file-listing.js", TASKS / "task-file-picker.js",
 ]
 
 # Column ids, which are not statuses. Anything else the place names must be a
@@ -267,7 +287,7 @@ def test_selection_and_bulk_cancel_are_keyboard_reachable_and_confirmed() -> Non
     assert "BossModOverlays.createModal(" not in place, (
         "the Tasks place has one destructive path, and tasks-cancel.js owns it"
     )
-    confirm = cancel.split("function confirmCancel(title, ids) {", 1)[1].split("\n        }", 1)[0]
+    confirm = cancel.split("function confirmCancel(title, ids, choices) {", 1)[1].split("\n        }", 1)[0]
     assert "BossModOverlays.createModal({" in confirm
     assert "if (ids.length === 0) return;" in confirm, (
         "an empty selection must not open a dialog that would cancel nothing"
@@ -395,7 +415,8 @@ def test_tasks_modules_stay_focused() -> None:
 def test_task_detail_and_assign_are_modals() -> None:
     """Task detail reads in a panel modal; Assign is a form modal.
 
-    The detail has nothing to type into, so an outside click closes it.
+    At rest the detail has nothing to type into, so an outside click closes
+    it; in Edit mode it holds a draft, so the click is refused.
     Assign holds a half-written task, so it does not — and its primary is
     pinned in the footer band through createModal's `form:` action, which
     submits without closing so an outcome (a mismatch, an ambiguous match) is
@@ -405,13 +426,44 @@ def test_task_detail_and_assign_are_modals() -> None:
     assign = (TASKS / "assign-form.js").read_text(encoding="utf-8")
     assert "BossModOverlays.createModal({" in detail
     assert "size: 'panel'" in detail
-    assert "closeOnBackdrop: true" in detail
+    assert "closeOnBackdrop: () => !(editMode && editMode.isEditing())," in detail
     assert "BossModOverlays.createModal({" in assign
     assert "form: 'ct-assign-form'" in assign
     assert "id: 'ct-assign-submit'" in assign
     assert "closeOnBackdrop" not in assign
     for source in (detail, assign):
         assert "slideOver" not in source
+
+
+def test_task_file_picker_harness() -> None:
+    """Required files are picked from the assignee's folders, never pasted.
+
+    The picker is a panel layer listing one agent's desk view: it opens on the
+    folder it is given, a folder row walks in, a file row selects and fills the
+    "File name" field, and a typed name that is not there names a new output.
+    "Use this file" hands back `<folder>/<name>` and closes; it stays disabled
+    for a name with a `/` (or `.`/`..`), a blank name, and the `/` mount list.
+    A late listing for a folder already left is dropped, a failed one shows
+    the server's message with Retry and "Go to /", and Cancel picks nothing.
+    """
+    args = ["node", str(PICKER_HARNESS)] + [str(path) for path in PICKER_MODULES]
+    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "opensAsALayer": True,
+        "listsTheStartFolder": True,
+        "fileSelectsAndFillsTheName": True,
+        "folderNavigates": True,
+        "refusesBadNames": True,
+        "typedNameSelects": True,
+        "pickHandsBackTheJoinedPath": True,
+        "staleListingIsDropped": True,
+        "rootIsRefused": True,
+        "errorOffersRetry": True,
+        "cancelPicksNothing": True,
+    }
 
 
 def test_task_detail_harness() -> None:
@@ -422,11 +474,30 @@ def test_task_detail_harness() -> None:
     human requester named "You", each kind of state gets its callout (and a
     blocked one offers the chat), the instructions go through the markdown
     renderer and clamp only when they overflow, the subtask checklist counts
-    what is done, Edit and Cancel live behind the `⋯` of an unfinished task
-    only (Mark complete too, where the server flags `operator_can_complete`),
-    the edit form sends only what changed and confirms a refused reassign on
-    retry, the completer needs a summary, the
-    role contract folds away, and the activity reads as sentences.
+    what is done, the head of an unfinished task holds only the pencil (a
+    finished one holds nothing), the completer needs a summary and Keep open
+    resolves nothing, the role contract folds away, and the activity reads
+    as sentences.
+
+    Edit mode edits the same panel in place: the pencil shows ✓/✕ in its
+    place and mounts the title editor in the head; one Deliverables section
+    holds the task's own editable rows and its subtasks' read-only ones,
+    counted together; ✕ restores the task; ✓ sends only what changed
+    (nothing changed sends nothing; clearing every file sends
+    `work_contract: null`) and re-reads Activity; a specialty mismatch offers
+    "Reassign anyway", which resends with the confirmation; a failed save
+    keeps the draft; a save repaints the same layer; and neither an outside
+    click nor Esc loses a draft by closing the panel. The assignee reads as a
+    field (short name and chip, full label in its accessible name). A file row
+    appears only once its path is picked from the draft assignee's folders,
+    its path button re-picks, and an unassigned draft refuses to browse and
+    says why.
+
+    The status row gains Resume, Mark complete… and Cancel task… in Edit mode
+    only, as the server's flags allow, disabled with a hint while the draft
+    differs. Each repaints the same layer from the stored row (a finished
+    task with no tools, focus on the frame's ✕), re-reads Activity, and a
+    refusal stays in Edit mode with the error shown; Keep it stays editing.
     """
     args = ["node", str(DETAIL_HARNESS)] + [str(path) for path in DETAIL_MODULES]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
@@ -443,10 +514,27 @@ def test_task_detail_harness() -> None:
         "instructionsUseMarkdown": True,
         "clampToggleFollowsOverflow": True,
         "subtasksCountDone": True,
-        "optionsHoldCancel": True,
-        "optionsOfferEditAndComplete": True,
-        "editSendsOnlyChanges": True,
-        "mismatchRetryConfirms": True,
+        "pencilIsTheHeadsOnlyTool": True,
+        "editModeEntersInPlace": True,
+        "assigneeReadsAsAField": True,
+        "oneDeliverablesSection": True,
+        "statusActionsWaitForTheDraft": True,
+        "saveRefreshesActivity": True,
+        "discardRestores": True,
+        "unchangedSaveSendsNothing": True,
+        "saveRepaintsInPlace": True,
+        "mismatchOffersOverride": True,
+        "failedSaveKeepsDraft": True,
+        "fileEditsSendTheList": True,
+        "filesArePicked": True,
+        "browsingFollowsTheAssignee": True,
+        "backdropRefusedWhileEditing": True,
+        "escDiscardsWhileEditing": True,
+        "statusActionsFollowTheFlags": True,
+        "resumeRepaintsInPlace": True,
+        "rejectedActionKeepsEditMode": True,
+        "cancelConfirmsThenRepaints": True,
+        "completeRepaintsFinished": True,
         "completeNeedsSummary": True,
         "contractIsCollapsible": True,
         "activityReadsAsSentences": True,

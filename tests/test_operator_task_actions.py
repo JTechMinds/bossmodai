@@ -1,7 +1,8 @@
-"""Operator task actions: edit, reassign, change requirements, mark complete.
+"""Operator task actions: edit, reassign, change requirements, resume, mark complete.
 
-Drives PATCH /api/tasks/{id} and POST /api/tasks/{id}/complete through the
-real router against the isolated test database (conftest.py). No LLM.
+Drives PATCH /api/tasks/{id}, POST /api/tasks/{id}/resume, /complete and
+/cancel through the real router against the isolated test database
+(conftest.py). No LLM.
 """
 
 from __future__ import annotations
@@ -311,3 +312,69 @@ def test_operator_complete_of_a_child_tells_the_parent_assignee(monkeypatch: pyt
     payload = _payload(updates[0])
     assert payload["attention_kind"] == "completion_report"
     assert payload["content"] == 'Child task "Write the launch note" marked complete by the operator: Note is in the doc.'
+
+
+def test_resume_hands_a_stalled_task_back_to_its_assignee(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    writer = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    task = _create(client, title="Write the note", assigned_to=writer.id)
+    _move(task["id"], "accepted", "active")
+    activity = activate_work_activity(writer.id, db.get_task(task["id"]))
+    _move(task["id"], "stalled")
+    listed = next(row for row in client.get("/api/tasks", headers=_headers()).json() if row["id"] == task["id"])
+    assert listed["operator_can_resume"] is True
+
+    response = client.post(f"/api/tasks/{task['id']}/resume", headers=_headers())
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["status"] == "pending"
+    assert body["operator_can_resume"] is False
+    assert body["assigned_to_name"] == "Cap Writer"
+    assert db.get_task(task["id"]).status == "pending"
+    assert db.get_activity(activity.id).status == "cancelled"
+    assert len(_queued(writer.id, trigger_type="task_assigned", task_id=task["id"])) == 1
+    events = db.list_task_events(task["id"], limit=50)
+    assert any(item.content == "Operator resumed the task." for item in events)
+
+
+def test_resume_refuses_an_active_a_closed_or_an_unassigned_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    writer = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    active = _create(client, title="Write the note", assigned_to=writer.id)
+    _move(active["id"], "accepted", "active")
+    closed = _create(client, title="Write the launch note", assigned_to=writer.id)
+    assert client.post(f"/api/tasks/{closed['id']}/cancel", headers=_headers()).status_code == 200
+    unassigned = _create(client, title="Write the recap")
+    _move(unassigned["id"], "stalled")
+
+    busy = client.post(f"/api/tasks/{active['id']}/resume", headers=_headers())
+    over = client.post(f"/api/tasks/{closed['id']}/resume", headers=_headers())
+    nobody = client.post(f"/api/tasks/{unassigned['id']}/resume", headers=_headers())
+    missing = client.post("/api/tasks/no-such-task/resume", headers=_headers())
+
+    assert busy.status_code == 400
+    assert busy.json()["detail"] == "Only a blocked or stalled task with an assignee can be resumed"
+    assert db.get_task(active["id"]).status == "active"
+    assert over.status_code == 409
+    assert db.get_task(closed["id"]).status == "cancelled"
+    assert nobody.status_code == 400
+    assert db.get_task(unassigned["id"]).status == "stalled"
+    assert missing.status_code == 404
+
+
+def test_single_cancel_returns_the_listed_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    writer = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    task = _create(client, title="Write the note", assigned_to=writer.id)
+    listed = next(row for row in client.get("/api/tasks", headers=_headers()).json() if row["id"] == task["id"])
+
+    response = client.post(f"/api/tasks/{task['id']}/cancel", headers=_headers())
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == set(listed)
+    assert body["status"] == "cancelled"
+    assert body["assigned_to_name"] == "Cap Writer"
+    assert body["operator_can_complete"] is False
+    assert body["operator_can_resume"] is False

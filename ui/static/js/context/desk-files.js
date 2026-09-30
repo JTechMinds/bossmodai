@@ -13,6 +13,9 @@
  */
 const BossModDeskFiles = (() => {
     const { h, clear } = BossModDom;
+    // The crumbs and the entry rows are core/file-listing.js's, shared with
+    // the task detail's file picker; this module owns the fetching around them.
+    const LISTING = BossModFileListing;
 
     const ROOT_PATH = '/me';
     const EMPTY_COPY = 'This folder is empty.';
@@ -162,83 +165,17 @@ const BossModDeskFiles = (() => {
             return row;
         }
 
-        /**
-         * The folder path as crumbs. The root crumb is a house rather than the
-         * API's `/` label, and the separators are chevrons — `/ / me` was the
-         * root's slash and a typed separator in a row.
-         *
-         * @param {Array<{label: string, path: string}>} crumbs
-         * @returns {HTMLElement}
-         */
-        function breadcrumbs(crumbs) {
-            const list = Array.isArray(crumbs) ? crumbs : [];
-            const row = h('nav', { class: 'desk-crumbs', 'aria-label': 'Folder path' });
-            list.forEach((crumb, index) => {
-                if (index > 0) {
-                    row.append(h('i', {
-                        class: 'desk-crumb-sep', 'data-lucide': 'chevron-right', 'aria-hidden': 'true',
-                    }));
-                }
-                const isRoot = crumb.path === '/';
-                const isLast = index === list.length - 1;
-                row.append(h('button', {
-                    class: 'desk-crumb',
-                    type: 'button',
-                    'data-path': crumb.path,
-                    'aria-label': isRoot ? 'Workspace root' : null,
-                    'aria-current': isLast ? 'page' : null,
-                    onclick: () => { void open(crumb.path); },
-                }, isRoot
-                    ? h('i', { 'data-lucide': 'house', 'aria-hidden': 'true' })
-                    : String(crumb.label)));
-            });
-            return row;
-        }
-
-        /** A row's glyph: a folder, a text document, or any other file. */
-        function entryIcon(entry) {
-            if (entry.is_dir === true) return 'folder';
-            return /\.(md|txt)$/i.test(String(entry.name || '')) ? 'file-text' : 'file';
-        }
-
-        function entryList(entries) {
-            if (!Array.isArray(entries) || entries.length === 0) {
-                // Dashed, so an empty folder reads as an empty folder rather
-                // than as a section that failed to render.
-                return h('p', { class: 'context-empty empty-slot' }, EMPTY_COPY);
-            }
-            const list = h('div', { class: 'desk-entries' });
-            entries.forEach((entry) => {
-                const isDir = entry.is_dir === true;
-                const name = String(entry.name);
-                // One line: the glyph, the name, then the size and the time.
-                // The full path is the crumbs' job; repeating it under every
-                // name is what wrapped a narrow row into "outpu / t".
-                list.append(h('button', {
-                    class: 'desk-entry',
-                    type: 'button',
-                    'data-path': entry.path,
-                    'data-is-dir': isDir ? '1' : '0',
-                    onclick: () => { void open(entry.path); },
-                },
-                    h('i', { 'data-lucide': entryIcon(entry), 'aria-hidden': 'true' }),
-                    h('span', { class: 'desk-entry-name', title: name }, name),
-                    h('span', { class: 'desk-entry-meta' },
-                        isDir ? '' : BossModFormat.formatFileSize(entry.size_bytes)),
-                    h('span', { class: 'desk-entry-meta' },
-                        BossModFormat.formatRelativeTime(entry.updated_at))));
-            });
-            return list;
-        }
-
         function renderDirectory(payload) {
             const path = String(payload.path || ROOT_PATH);
             clear(element);
             element.append(
                 h('div', { class: 'desk-files-bar' },
-                    breadcrumbs(payload.breadcrumbs),
+                    LISTING.breadcrumbs(payload.breadcrumbs, { onCrumb: (crumbPath) => { void open(crumbPath); } }),
                     controls(path)),
-                entryList(payload.entries));
+                LISTING.entries(payload.entries, {
+                    onEntry: (entry) => { void open(entry.path); },
+                    emptyCopy: EMPTY_COPY,
+                }));
             // Rebuilt per folder, so the glyphs are painted per folder. Scoped
             // to this browser, and the painter is idempotent.
             BossModIcons.paint(element, 'desk-files');
