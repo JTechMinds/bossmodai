@@ -76,11 +76,7 @@ async def _handle_work(
         )
         task = db.get_task(task.id)
 
-    pending_deliverables = missing_deliverables(
-        agent_id=agent.id,
-        agent_storage_key=agent.storage_key,
-        task=task,
-    )
+    pending_deliverables = missing_deliverables(agent_storage_key=agent.storage_key, task=task)
     file_deliverables = [item for item in pending_deliverables if item.type == "file" and item.path]
     if file_deliverables and len(output) > _MAX_INLINE_FILE_DELIVERABLE_WORK_CHARS:
         if len(file_deliverables) == 1:

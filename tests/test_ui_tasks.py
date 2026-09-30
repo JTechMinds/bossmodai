@@ -34,7 +34,8 @@ HARNESS_MODULES = [
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
     TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
-    TASKS / "tasks-cancel.js", TASKS / "task-layers.js", TASKS / "tasks-menu.js",
+    TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js", TASKS / "task-edit-form.js",
+    TASKS / "task-actions.js", TASKS / "task-layers.js", TASKS / "tasks-menu.js",
     TASKS / "tasks-archive.js", TASKS / "tasks-toolbar.js", TASKS / "tasks-place.js",
 ]
 
@@ -46,9 +47,14 @@ DETAIL_MODULES = [
     JS / "core" / "dom.js", JS / "core" / "avatar.js", JS / "core" / "format.js",
     JS / "core" / "specialty.js", JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "menu-select.js",
     JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-deliverables.js",
     TASKS / "task-events.js", TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
+    # The operator's actions the detail's `⋯` asks for, built for real so the
+    # harness drives the edit form and the completer too.
+    TASKS / "assign-outcomes.js", TASKS / "assign-form.js", TASKS / "tasks-cancel.js",
+    TASKS / "tasks-complete.js", TASKS / "task-edit-form.js", TASKS / "task-actions.js",
 ]
 
 # Column ids, which are not statuses. Anything else the place names must be a
@@ -416,7 +422,10 @@ def test_task_detail_harness() -> None:
     human requester named "You", each kind of state gets its callout (and a
     blocked one offers the chat), the instructions go through the markdown
     renderer and clamp only when they overflow, the subtask checklist counts
-    what is done, Cancel lives behind the `⋯` of an unfinished task only, the
+    what is done, Edit and Cancel live behind the `⋯` of an unfinished task
+    only (Mark complete too, where the server flags `operator_can_complete`),
+    the edit form sends only what changed and confirms a refused reassign on
+    retry, the completer needs a summary, the
     role contract folds away, and the activity reads as sentences.
     """
     args = ["node", str(DETAIL_HARNESS)] + [str(path) for path in DETAIL_MODULES]
@@ -435,6 +444,10 @@ def test_task_detail_harness() -> None:
         "clampToggleFollowsOverflow": True,
         "subtasksCountDone": True,
         "optionsHoldCancel": True,
+        "optionsOfferEditAndComplete": True,
+        "editSendsOnlyChanges": True,
+        "mismatchRetryConfirms": True,
+        "completeNeedsSummary": True,
         "contractIsCollapsible": True,
         "activityReadsAsSentences": True,
         "deliverablesCounted": True,

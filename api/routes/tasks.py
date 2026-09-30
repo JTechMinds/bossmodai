@@ -1,8 +1,9 @@
-"""Task list, create/bind, board, and events."""
+"""Task list, create/bind, board, events, and operator cancel/edit/complete."""
 
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Response
+from fastapi.responses import JSONResponse
 
 from api.websocket import manager
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
@@ -20,12 +21,29 @@ from core.agent_loop.role_contracts import (
 from core.agent_loop.task_origin_mirrors import OPERATOR_CANCEL_REASON
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.host_roots import PathOutsideRootsError
-from core.models import AssigneeSuggestion, Task, TaskCandidateSummary, TaskCancelRequest, TaskCreate, TaskCreateResponse
+from core.floors import FloorDenied
+from core.models import (
+    AssigneeSuggestion,
+    Task,
+    TaskCandidateSummary,
+    TaskCancelRequest,
+    TaskCompleteRequest,
+    TaskCreate,
+    TaskCreateResponse,
+    TaskUpdateRequest,
+)
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime import runtime_services
 from core.tasking import build_task_board, create_or_bind_task, serialize_task_board
+from core.tasking.operator_actions import (
+    OpenChildTasks,
+    OperatorTaskResult,
+    SpecialtyMismatch,
+    complete_task_as_operator,
+    update_task_as_operator,
+)
 from core.tasking.service import cancel_task_as_operator, cancel_tasks_as_operator
-from core.tasking.transitions import IllegalTaskTransition
+from core.tasking.transitions import IllegalTaskTransition, is_allowed_task_transition, is_terminal_task_status
 import db
 
 router = APIRouter()
@@ -96,6 +114,10 @@ def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None)
             else None
         ),
         "floor_id": _listed_task_floor(task, agents_by_id),
+        # The server owns the state machine; the UI only reads this flag.
+        "operator_can_complete": (
+            is_allowed_task_transition(task.status, "complete") and not is_terminal_task_status(task.status)
+        ),
         "latest_event": latest.model_dump(mode="json") if latest is not None else None,
         "done_claim": done_claim,
         "done_claim_guidance": operator_done_claim_guidance(
@@ -247,8 +269,6 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
         parent_task=parent_task,
     )
 
-    from core.floors import FloorDenied
-
     try:
         creation = create_or_bind_task(
             title=body.title,
@@ -353,6 +373,78 @@ async def cancel_task(task_id: str):
     return _serialize_cancelled_task(task)
 
 
+@router.patch("/tasks/{task_id}")
+async def update_task(task_id: str, body: TaskUpdateRequest):
+    """Edit an open task on the operator's behalf: title, description, assignee, requirements.
+
+    A reassign or a requirements change re-presents the task to its assignee.
+
+    Returns:
+        The serialized task row (as ``GET /tasks`` lists it), or a 409
+        ``{"outcome": "specialty_mismatch", "reason", "suggested_assignees"}``
+        body when the new assignee's specialty does not fit and the body did
+        not set ``confirm_specialty_mismatch``.
+
+    Raises:
+        HTTPException: 404 unknown task, 400 invalid edit or deliverable path,
+            403 cross-floor reassign, 409 closed task.
+    """
+    try:
+        result = update_task_as_operator(task_id, body)
+    except SpecialtyMismatch as exc:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "outcome": "specialty_mismatch",
+                "reason": exc.warning,
+                "suggested_assignees": [item.model_dump(mode="json") for item in suggested_assignees(exc.suggested)],
+            },
+        )
+    except IllegalTaskTransition as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except FloorDenied as exc:
+        raise HTTPException(403, str(exc)) from exc
+    except PathOutsideRootsError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400, str(exc)) from exc
+    await _deliver_operator_result(result, event="task_updated", detail=f'Task "{result.task.title}" updated')
+    return _serialize_task_row(result.task)
+
+
+@router.post("/tasks/{task_id}/complete")
+async def complete_task(task_id: str, body: TaskCompleteRequest):
+    """Mark a task complete on the operator's behalf; the summary says why it is done.
+
+    Returns:
+        The serialized task row, or a 409 ``{"reason", "task_ids"}`` body
+        when the task still has open subtasks.
+
+    Raises:
+        HTTPException: 404 unknown task, 400 blank summary, 409 when the
+            status cannot move to complete (closed, or ``pending``).
+    """
+    try:
+        result = complete_task_as_operator(task_id, summary=body.summary)
+    except OpenChildTasks as exc:
+        return JSONResponse(
+            status_code=409,
+            content={"reason": str(exc), "task_ids": [child.id for child in exc.children]},
+        )
+    except IllegalTaskTransition as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400, str(exc)) from exc
+    await _deliver_operator_result(
+        result, event="task_completed", detail=f'Task "{result.task.title}" marked complete'
+    )
+    return _serialize_task_row(result.task)
+
+
 @router.get("/tasks/{task_id}/events")
 async def get_task_events(task_id: str, limit: int = 100):
     task = db.get_task(task_id)
@@ -386,6 +478,32 @@ async def _broadcast_operator_cancels(tasks: list[Task], posted_lines: list[dict
         detail = "Cancelled tasks"
     await manager.broadcast_activity(event="task_cancelled", detail=detail)
     await manager.broadcast_world_state()
+    await _broadcast_posted_lines(posted_lines)
+
+
+def _serialize_task_row(task: Task) -> dict:
+    """Serialize one task the way ``GET /tasks`` lists it, so the UI can swap it in."""
+    ids = {item for item in (task.assigned_to, task.requester_id, task.owner_id) if item}
+    agents_by_id: dict[str, object] = {}
+    for agent_id in ids:
+        agent = db.get_agent(agent_id)
+        if agent:
+            agents_by_id[agent_id] = agent
+    recent = db.list_recent_task_events([task.id], limit_per_task=1)
+    return _serialize_listed_task(task, agents_by_id, recent.get(task.id))
+
+
+async def _deliver_operator_result(result: OperatorTaskResult, *, event: str, detail: str) -> None:
+    """Enqueue an operator action's wakes, then tell the UI and origin threads."""
+    for spec in result.trigger_requests:
+        await runtime_services.enqueue_trigger(**spec)
+    await manager.broadcast_activity(event=event, detail=detail)
+    await manager.broadcast_world_state()
+    await _broadcast_posted_lines(result.posted_lines)
+
+
+async def _broadcast_posted_lines(posted_lines: list[dict]) -> None:
+    """Broadcast origin-thread lines an operator action persisted."""
     for posted in posted_lines:
         extra = posted.get("channel_message") if isinstance(posted, dict) else None
         if extra:

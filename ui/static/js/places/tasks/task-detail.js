@@ -8,9 +8,10 @@
  * task-detail-sections.js; this file composes them, owns the modal, and owns
  * the head's `⋯`.
  *
- * It never ends a task itself. Cancel lives behind the `⋯` and only asks: the
- * detail is handed `onCancel` at construction and never calls the cancel
- * route, so there is exactly one place in Tasks that can end a task.
+ * It never changes a task itself. Edit, Mark complete and Cancel live behind
+ * the `⋯` and only ask: the detail is handed `actions` (BossModTaskActions)
+ * at construction and never calls a task route, so each change a task can
+ * take has exactly one place in Tasks that performs it.
  */
 const BossModTaskDetail = (() => {
     const { h } = BossModDom;
@@ -32,9 +33,9 @@ const BossModTaskDetail = (() => {
      *   colours for the avatars in the facts and the activity.
      * @param {(taskId: string) => void} deps.onNavigate  Opens a related task
      *   as a layer over this one.
-     * @param {(task: object) => void} deps.onCancel  The caller owns
-     *   cancelling (the Tasks place, or the desk that opened this over
-     *   itself); this panel only asks for it.
+     * @param {{cancelOne: Function, completeOne: Function, edit: Function}} deps.actions
+     *   The caller owns editing, completing and cancelling (the Tasks place,
+     *   or the desk that opened this over itself); this panel only asks.
      * @param {(task: object) => void} deps.onOpenChat  Leaves for the task's
      *   conversation.
      * @param {() => void} [deps.onClose]
@@ -45,12 +46,15 @@ const BossModTaskDetail = (() => {
      */
     function openTaskDetail(deps) {
         const {
-            api, taskId, tasks, colorOf, onNavigate, onCancel, onOpenChat, onClose,
+            api, taskId, tasks, colorOf, onNavigate, actions, onOpenChat, onClose,
         } = deps || {};
         if (typeof api !== 'function') throw new Error('[task-detail] deps.api is required');
         if (typeof colorOf !== 'function') throw new Error('[task-detail] deps.colorOf is required');
         if (typeof onNavigate !== 'function') throw new Error('[task-detail] deps.onNavigate is required');
-        if (typeof onCancel !== 'function') throw new Error('[task-detail] deps.onCancel is required');
+        if (!actions || typeof actions.cancelOne !== 'function' || typeof actions.completeOne !== 'function'
+            || typeof actions.edit !== 'function') {
+            throw new Error('[task-detail] deps.actions must be a BossModTaskActions');
+        }
         if (typeof onOpenChat !== 'function') throw new Error('[task-detail] deps.onOpenChat is required');
         const task = (tasks || []).find((item) => item.id === taskId);
         if (!task) throw new Error(`[task-detail] no task "${taskId}" in the current list`);
@@ -70,8 +74,8 @@ const BossModTaskDetail = (() => {
                 SECTIONS.doneContract(task),
                 events.element));
 
-        // A finished task can no longer be cancelled, and Cancel is all the
-        // `⋯` holds — so a finished task has no `⋯` rather than an empty one.
+        // A finished task can no longer be edited, completed or cancelled,
+        // which is all the `⋯` holds — so it has no `⋯` rather than an empty one.
         const optionsButton = COLUMNS.isTerminal(task.status) ? null : h('button', {
             class: 'header-icon-btn',
             id: 'task-options',
@@ -91,8 +95,8 @@ const BossModTaskDetail = (() => {
             body,
             size: 'panel',
             tools: optionsButton ? [optionsButton] : [],
-            // Read-only apart from Cancel task, which asks its own question:
-            // nothing here can be lost to an outside click.
+            // Read-only: Edit, Mark complete and Cancel each open their own
+            // layer, so nothing here can be lost to an outside click.
             actions: [],
             closeOnBackdrop: true,
             onClose: () => {
@@ -105,8 +109,25 @@ const BossModTaskDetail = (() => {
         });
 
         /**
-         * Show Cancel, or put it away. Picking it closes the panel first, so
-         * focus is back on the `⋯` and the confirmation layer returns there.
+         * One `⋯` item. Picking it closes the panel first, so focus is back on
+         * the `⋯` and the layer it opens returns there.
+         * @param {string} id
+         * @param {string} label
+         * @param {(task: object) => void} run
+         * @returns {HTMLElement}
+         */
+        function option(id, label, run) {
+            return h('button', {
+                class: 'menu-action',
+                id,
+                type: 'button',
+                onclick: () => { menu.close(); run(task); },
+            }, label);
+        }
+
+        /**
+         * Show the task's options, or put them away. Mark complete is offered
+         * only where the server says the status can move to complete.
          * @returns {void}
          */
         function toggleOptions() {
@@ -118,12 +139,11 @@ const BossModTaskDetail = (() => {
                 anchor: optionsButton,
                 label: OPTIONS_LABEL,
                 items: [h('div', { class: 'menu-actions' },
-                    h('button', {
-                        class: 'menu-action',
-                        id: 'ct-cancel-task-btn',
-                        type: 'button',
-                        onclick: () => { menu.close(); onCancel(task); },
-                    }, 'Cancel task'))],
+                    option('ct-edit-task-btn', 'Edit task…', actions.edit),
+                    task.operator_can_complete
+                        ? option('ct-complete-task-btn', 'Mark complete…', actions.completeOne)
+                        : null,
+                    option('ct-cancel-task-btn', 'Cancel task', actions.cancelOne))],
                 container: panel.element.querySelector('.modal-head'),
                 onClose: () => {
                     menu = null;

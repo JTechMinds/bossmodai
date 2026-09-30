@@ -16,7 +16,7 @@ from db.task_work_contracts import delete_task_work_contract, set_task_work_cont
 
 _TASK_COLUMNS = (
     "t.id, t.title, t.description, t.project, t.assigned_to, t.requester_id, t.owner_id, t.created_by, "
-    "t.status, twc.work_contract, twc.updated_at AS work_contract_updated_at, "
+    "t.status, twc.work_contract, "
     "tnp.source_channel, tnp.policy AS notification_policy, tnp.updated_at AS notification_policy_updated_at, "
     "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.cost_ceiling, t.completion_summary, "

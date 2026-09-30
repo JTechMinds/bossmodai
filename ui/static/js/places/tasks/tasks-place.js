@@ -18,7 +18,7 @@ const BossModTasksPlace = (() => {
     let ctxRef = null;
     let toolbar = null;
     let menu = null;
-    let canceller = null;
+    let actions = null;
     let tasks = [];
     let progress = new Map();
     let selected = new Set();
@@ -32,7 +32,7 @@ const BossModTasksPlace = (() => {
     let headerEl = null;
     let bodyEl = null;
     /** The task layers this page opens (places/tasks/task-layers.js). Built
-     *  in mount(), once the canceller it cancels through exists. */
+     *  in mount(), once the actions (places/tasks/task-actions.js) exist. */
     let layers = null;
     /** The open Archive, or null. */
     let archive = null;
@@ -275,13 +275,14 @@ const BossModTasksPlace = (() => {
                 rosterAgent,
                 onChange: paint,
                 onNewTask: openAssign,
-                onCancelSelected: () => canceller.cancelMany(
+                onCancelSelected: () => actions.cancelMany(
                     [...selected].map((id) => tasks.find((task) => task.id === id))),
             });
 
-            canceller = BossModTasksCancel.createCanceller({
+            actions = BossModTaskActions.create({
                 api: ctx.api,
-                onCancelled: (ids) => {
+                store: ctx.store,
+                onChanged: (ids) => {
                     ids.forEach((id) => selected.delete(id));
                     void refresh(true);
                 },
@@ -291,7 +292,7 @@ const BossModTasksPlace = (() => {
                 api: ctx.api,
                 getTasks: () => tasks,
                 colorOf,
-                onCancel: (task) => canceller.cancelOne(task),
+                actions,
                 onOpenChat: openChat,
             });
 
@@ -355,7 +356,7 @@ const BossModTasksPlace = (() => {
             layers = null;
             toolbar = null;
             menu = null;
-            canceller = null;
+            actions = null;
             tasks = [];
             selected = new Set();
             progress = new Map();

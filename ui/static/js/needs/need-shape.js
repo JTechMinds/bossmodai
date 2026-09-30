@@ -216,6 +216,8 @@ const BossModNeedShape = (() => {
         'task_created',
         'task_reused',
         'task_cancelled',
+        'task_updated',
+        'task_completed',
         'task_clarify',
     ]);
 

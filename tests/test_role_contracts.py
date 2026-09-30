@@ -17,6 +17,7 @@ from api.routes import router
 from core import config
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.activity_runtime import activate_work_activity
+from core.agent_loop.deliverables import missing_deliverables
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.role_contracts import (
     format_role_contract_block,
@@ -32,6 +33,7 @@ from core.llm import context_preview
 from db.unified_feed import classify_category
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models.message import HUMAN_SENDER_ID
+from core.models.work_contract import DeliverableSpec, WorkContract
 from core.runtime import runtime_services
 from core.tasking import create_or_bind_task
 
@@ -850,6 +852,105 @@ async def test_complete_with_existing_artifact_claim_succeeds() -> None:
     assert result["event"] == "status_changed"
     assert result["done_claim"]["type"] == "artifact"
     refreshed = db.get_task(creation.task.id)
+    assert refreshed is not None
+    assert refreshed.status == "complete"
+
+
+# ---------------------------------------------------------------------------
+# File deliverables: the file exists and was modified since the task began
+# ---------------------------------------------------------------------------
+
+
+def _bind_contract_task(agent, path: str):
+    """An operator task for ``agent`` that must produce ``path``."""
+    creation = create_or_bind_task(
+        title="Write the report",
+        description=None,
+        project=None,
+        assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=WorkContract(deliverables=[DeliverableSpec(type="file", path=path)]),
+        source_channel=None,
+        notification_policy=None,
+        notification_channel_id=None,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    )
+    assert creation.task is not None
+    return creation.task
+
+
+def test_a_shell_produced_file_satisfies_its_deliverable() -> None:
+    """No BossMod CLI write event is needed: a file a shell command made counts."""
+    agent = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    task = _bind_contract_task(agent, "/me/out/report.md")
+    assert [item.path for item in missing_deliverables(agent_storage_key=agent.storage_key, task=task)] == [
+        "/me/out/report.md"
+    ]
+    _write_me_file(agent.storage_key, "/me/out/report.md", "written by cp")
+    assert db.list_bm_cli_events(agent.id) == []
+    assert missing_deliverables(agent_storage_key=agent.storage_key, task=task) == []
+
+
+def test_a_teammate_written_file_satisfies_the_assignees_deliverable() -> None:
+    """Who wrote the shared file does not matter, only that it exists for this task."""
+    owner = db.create_agent("Cap Owner", role="Writer", desk_x=1, desk_y=1)
+    teammate = db.create_agent("Cap Mate", role="Writer", desk_x=2, desk_y=1)
+    task = _bind_contract_task(owner, "/projects/shared/brief.md")
+    resolved = resolve_cli_path(teammate.storage_key, "/", "/projects/shared/brief.md")
+    assert resolved.real_path is not None
+    resolved.real_path.parent.mkdir(parents=True, exist_ok=True)
+    resolved.real_path.write_text("teammate draft", encoding="utf-8")
+    assert missing_deliverables(agent_storage_key=owner.storage_key, task=task) == []
+
+
+def test_a_file_older_than_the_task_does_not_satisfy() -> None:
+    """A stale file left from earlier work is not this task's output."""
+    agent = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    task = _bind_contract_task(agent, "/me/out/report.md")
+    _write_me_file(agent.storage_key, "/me/out/report.md", "last month's report")
+    real = resolve_cli_path(agent.storage_key, "/", "/me/out/report.md").real_path
+    assert real is not None
+    stale = task.created_at.timestamp() - 3600
+    os.utime(real, (stale, stale))
+    assert [item.path for item in missing_deliverables(agent_storage_key=agent.storage_key, task=task)] == [
+        "/me/out/report.md"
+    ]
+
+
+def test_a_contract_edit_after_the_write_still_satisfies() -> None:
+    """Editing the requirements never invalidates work already done for the task."""
+    agent = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    task = _bind_contract_task(agent, "/me/out/report.md")
+    _write_me_file(agent.storage_key, "/me/out/report.md", "done")
+    edited = db.update_task(
+        task.id,
+        work_contract=WorkContract(
+            deliverables=[DeliverableSpec(type="file", path="/me/out/report.md", description="The final report")]
+        ),
+    )
+    assert edited is not None
+    assert missing_deliverables(agent_storage_key=agent.storage_key, task=edited) == []
+
+
+@pytest.mark.asyncio
+async def test_done_with_a_shell_produced_deliverable_completes() -> None:
+    """The agent that was stuck behind the CLI-write rule can now close its task."""
+    agent = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    task = _bind_contract_task(agent, "/me/out/report.md")
+    activate_work_activity(agent.id, task)
+    _write_me_file(agent.storage_key, "/me/out/report.md", "written by a script")
+
+    result = await execute_action({"action": "complete", "summary": "Report written."}, agent, state)
+
+    assert result["event"] == "status_changed"
+    assert result["done_claim"] == {"type": "artifact", "path": "/me/out/report.md"}
+    refreshed = db.get_task(task.id)
     assert refreshed is not None
     assert refreshed.status == "complete"
 

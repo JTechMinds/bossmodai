@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -94,34 +93,3 @@ def list_bm_cli_events(agent_id: str | None = None, limit: int = 100) -> list[di
         [limit],
     )
 
-
-def has_bm_cli_write_for_path(
-    agent_id: str,
-    path: str,
-    *,
-    since: datetime,
-) -> bool:
-    """Return whether the agent wrote/appended the exact path after the given time."""
-    rows = query(
-        """
-        SELECT changed_paths
-        FROM bm_cli_events
-        WHERE agent_id = $1
-          AND result_kind IN ('write', 'append', 'batch-write', 'replace-section', 'rewrite-section')
-          AND created_at >= $2
-        ORDER BY created_at DESC, id DESC
-        LIMIT 200
-        """,
-        [agent_id, since],
-    )
-    for row in rows:
-        changed_paths = row.get("changed_paths")
-        if not changed_paths:
-            continue
-        try:
-            values = json.loads(changed_paths)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(values, list) and path in values:
-            return True
-    return False

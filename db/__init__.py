@@ -64,7 +64,7 @@ from db.artifacts import (
     rewrite_artifact_path_prefix,
     upsert_artifact,
 )
-from db.bm_cli_events import create_bm_cli_event, has_bm_cli_write_for_path, list_bm_cli_events
+from db.bm_cli_events import create_bm_cli_event, list_bm_cli_events
 from db.cli_policy_rules import (
     create_rule as create_cli_policy_rule,
     delete_rule as delete_cli_policy_rule,
@@ -438,7 +438,6 @@ __all__ = [
     "update_agent_cli_state",
     "update_agent_prompt_history_policy",
     "create_bm_cli_event",
-    "has_bm_cli_write_for_path",
     "list_bm_cli_events",
     "create_notification",
     "create_notification_link",

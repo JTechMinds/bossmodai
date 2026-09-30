@@ -326,11 +326,7 @@ def resolve_done_claim(
     specialties use the same complete path; v1 CLEAR is this check, not a
     separate protocol.
     """
-    pending = missing_deliverables(
-        agent_id=agent.id,
-        agent_storage_key=agent.storage_key,
-        task=task,
-    )
+    pending = missing_deliverables(agent_storage_key=agent.storage_key, task=task)
     if pending:
         first = summarize_deliverable(pending[0])
         return None, {

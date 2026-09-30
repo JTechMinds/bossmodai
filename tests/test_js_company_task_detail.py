@@ -159,9 +159,10 @@ def test_cancel_task_button_and_confirm_copy() -> None:
     """The cancel button, its confirm copy, and the open/finished distinction.
 
     The detail half keeps the button, its label, and its id. `setCancelCallback`
-    is gone and the assertion is stronger for it: the panel is handed `onCancel`
-    at construction and is asserted never to name the cancel route itself, so
-    there is exactly one place in Tasks that can end a task.
+    is gone and the assertion is stronger for it: the panel is handed `actions`
+    (BossModTaskActions) at construction and is asserted never to name the
+    cancel route itself, so there is exactly one place in Tasks that can end a
+    task.
 
     The table half moved to the Tasks place's modules. `statusFilter`, its three
     chips, and `matchesBoardFilter` were the mechanism by which the old table
@@ -171,9 +172,7 @@ def test_cancel_task_button_and_confirm_copy() -> None:
     closed-without-completing are three counts, and `cancelled` is terminal.
     """
     detail = (TASKS / "task-detail.js").read_text(encoding="utf-8")
-    assert "id: 'ct-cancel-task-btn'" in detail
-    assert "'Cancel task'" in detail
-    assert "onCancel(task)" in detail
+    assert "option('ct-cancel-task-btn', 'Cancel task', actions.cancelOne)" in detail
     assert "/api/tasks/cancel" not in detail, (
         "the detail asks for a cancel; the Tasks place performs it"
     )

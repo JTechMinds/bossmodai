@@ -1,11 +1,17 @@
-"""BossMod AI — Structured deliverable helpers for work activities."""
+"""BossMod AI — Structured deliverable helpers for work activities.
+
+A file deliverable is satisfied when the file exists and was modified at or
+after the task was created. Who wrote it, and with which tool (a CLI write, a
+shell command, a teammate's write), does not matter: the invariant is that the
+file exists and was produced for this task. Editing the contract never
+invalidates work already done for the task.
+"""
 
 from __future__ import annotations
 
 from datetime import datetime, timezone
 from typing import Any
 
-import db
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models.task import Task
 from core.models.work_contract import DeliverableSpec, WorkContract
@@ -50,20 +56,28 @@ def get_work_contract(task: Task | dict[str, Any] | None) -> WorkContract:
 
 def missing_deliverables(
     *,
-    agent_id: str,
     agent_storage_key: str,
     task: Task | None,
 ) -> list[DeliverableSpec]:
-    """Return the structured deliverables that are still unsatisfied."""
+    """Return the structured deliverables that are still unsatisfied.
+
+    Args:
+        agent_storage_key: Storage key of the agent whose ``/me`` resolves
+            relative deliverable paths.
+        task: The durable task carrying the work contract, or ``None``.
+
+    Returns:
+        The deliverables that do not yet exist as a file modified at or after
+        ``task.created_at``. Empty when the task has no deliverables.
+    """
     contract = get_work_contract(task)
-    if not contract.deliverables:
+    if not contract.deliverables or task is None:
         return []
-    threshold = _contract_threshold(task)
+    threshold = _normalize_threshold(task.created_at)
     return [
         item
         for item in contract.deliverables
         if not _deliverable_is_satisfied(
-            agent_id=agent_id,
             agent_storage_key=agent_storage_key,
             deliverable=item,
             not_before=threshold,
@@ -86,20 +100,18 @@ def format_deliverables_for_context(task: Task | dict[str, Any] | None) -> list[
 
 def _deliverable_is_satisfied(
     *,
-    agent_id: str,
     agent_storage_key: str,
     deliverable: DeliverableSpec,
-    not_before: datetime | None,
+    not_before: datetime,
 ) -> bool:
-    """Return whether one deliverable has been satisfied through allowed tools."""
+    """Return whether one deliverable exists as a file modified at or after ``not_before``."""
     if deliverable.type != "file":
         return False
     resolved = resolve_cli_path(agent_storage_key, "/", deliverable.path)
     if not _path_is_file(resolved.real_path, resolved.exists):
         return False
-    if not_before is None:
-        return True
-    return db.has_bm_cli_write_for_path(agent_id, resolved.virtual_path, since=not_before)
+    modified_at = datetime.fromtimestamp(resolved.real_path.stat().st_mtime, tz=timezone.utc)
+    return modified_at >= not_before
 
 
 def _path_is_file(path: object, exists: bool) -> bool:
@@ -111,11 +123,3 @@ def _normalize_threshold(value: datetime) -> datetime:
     """Normalize a threshold datetime to timezone-aware UTC."""
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
 
-
-def _contract_threshold(task: Task | None) -> datetime | None:
-    """Return the durable threshold for contract-bound deliverable validation."""
-    if task is None:
-        return None
-    if task.work_contract_updated_at is not None:
-        return _normalize_threshold(task.work_contract_updated_at)
-    return _normalize_threshold(task.created_at)

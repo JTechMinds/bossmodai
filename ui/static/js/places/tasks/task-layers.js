@@ -4,10 +4,11 @@
  * Extracted from places/tasks/tasks-place.js when the desk's task rows stopped
  * switching to the Tasks place and began opening the task over the desk. The
  * page held the only code that could open a task as a layer — with the push
- * into a parent or subtask, cancelling and chat — and it read the page's own
- * list and canceller, so nothing else could. The second caller is the reason
+ * into a parent or subtask, the task actions and chat — and it read the page's
+ * own list and actions, so nothing else could. The second caller is the reason
  * this is a module: the page and the desk both hand it their list and their
- * canceller, and the stack of open task layers is kept here, once.
+ * actions (places/tasks/task-actions.js), and the stack of open task layers is
+ * kept here, once.
  *
  * It owns only WHICH task layers are open. The detail itself is
  * places/tasks/task-detail.js; the frame, the trail and ‹ are
@@ -25,8 +26,9 @@ const BossModTaskLayers = (() => {
      *   the latest load rather than the one this was built with.
      * @param {(agentId: string) => (string|undefined)} deps.colorOf  Roster
      *   colours for the detail's avatars.
-     * @param {(task: object) => void} deps.onCancel  The caller owns
-     *   cancelling (places/tasks/tasks-cancel.js); a detail only asks.
+     * @param {{cancelOne: Function, completeOne: Function, edit: Function}} deps.actions
+     *   The caller's BossModTaskActions: it owns cancelling, completing and
+     *   editing; a detail only asks.
      * @param {(task: object) => void} deps.onOpenChat  Leaves for the task's
      *   conversation. Closing these layers on the way out is the caller's.
      * @returns {{ open: (taskId: string) => void, push: (taskId: string) => void,
@@ -41,11 +43,14 @@ const BossModTaskLayers = (() => {
      *   at the click is worse than one that fails where it is built.
      */
     function create(deps) {
-        const { api, getTasks, colorOf, onCancel, onOpenChat } = deps || {};
+        const { api, getTasks, colorOf, actions, onOpenChat } = deps || {};
         if (typeof api !== 'function') throw new Error('[task-layers] deps.api is required');
         if (typeof getTasks !== 'function') throw new Error('[task-layers] deps.getTasks is required');
         if (typeof colorOf !== 'function') throw new Error('[task-layers] deps.colorOf is required');
-        if (typeof onCancel !== 'function') throw new Error('[task-layers] deps.onCancel is required');
+        if (!actions || typeof actions.cancelOne !== 'function' || typeof actions.completeOne !== 'function'
+            || typeof actions.edit !== 'function') {
+            throw new Error('[task-layers] deps.actions must be a BossModTaskActions');
+        }
         if (typeof onOpenChat !== 'function') throw new Error('[task-layers] deps.onOpenChat is required');
 
         /** The open task layers, base first. */
@@ -65,7 +70,7 @@ const BossModTaskLayers = (() => {
                 tasks: getTasks(),
                 colorOf,
                 onNavigate: push,
-                onCancel,
+                actions,
                 onOpenChat,
                 onClose: () => { details = details.filter((item) => item !== handle); },
             });

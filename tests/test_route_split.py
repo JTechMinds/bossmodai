@@ -75,6 +75,8 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/tasks/board", "get_task_board"),
     (("POST",), "/api/tasks/cancel", "cancel_tasks"),
     (("POST",), "/api/tasks/{task_id}/cancel", "cancel_task"),
+    (("PATCH",), "/api/tasks/{task_id}", "update_task"),
+    (("POST",), "/api/tasks/{task_id}/complete", "complete_task"),
     (("GET",), "/api/tasks/{task_id}/events", "get_task_events"),
     (("GET",), "/api/tasks/{task_id}", "get_task"),
     (("GET",), "/api/needs", "list_needs"),
@@ -170,7 +172,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 146
+    assert len(got) == 148
 
 
 def test_from_api_routes_import_router_still_works() -> None:

@@ -415,3 +415,27 @@ def mirror_task_cancelled_by_operator(task: Any, *, reason: str) -> dict[str, An
         kind="cancelled",
         reason=reason,
     )
+
+
+def mirror_task_completed_by_operator(task: Any, summary: str) -> dict[str, Any]:
+    """Post ``Done — Marked done by the operator: <summary>`` on the origin thread.
+
+    Args:
+        task: The task the operator just marked complete.
+        summary: The operator's reason it is done.
+
+    Returns:
+        The posted line, or ``{}`` when the task has no origin thread or no
+        live agent to author the line.
+    """
+    if task is None or origin_thread_target(task) is None:
+        return {}
+    agent = _origin_author_agent(task)
+    if agent is None:
+        return {}
+    return mirror_origin_status(
+        task=task,
+        agent=agent,
+        kind="completion",
+        reason=f"Marked done by the operator: {summary}",
+    )

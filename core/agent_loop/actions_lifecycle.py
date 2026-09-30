@@ -556,6 +556,11 @@ async def _handle_delegated(
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=(trigger or {}).get("trigger_id"),
         ).task
+        # The child's /me deliverables were rewritten to a shared /projects path;
+        # the parent must point at that same file, or its own done check would
+        # resolve /me on the parent assignee's desk and never be satisfied.
+        if child is not None and child.work_contract != original_task.work_contract:
+            db.update_task(original_task.id, work_contract=child.work_contract)
     else:
         child = None
 

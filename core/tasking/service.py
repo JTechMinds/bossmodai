@@ -161,7 +161,7 @@ def create_or_bind_task(
         notification_channel_id=notification_channel_id,
     )
 
-    rewritten_contract = _rewrite_shared_work_contract(
+    rewritten_contract = rewrite_shared_work_contract(
         task=task,
         work_contract=work_contract,
         assigned_to=assigned_to,
@@ -380,7 +380,7 @@ def _agent_id_for_author(created_by: str | None, author_type: str) -> str | None
     return created_by
 
 
-def _rewrite_shared_work_contract(
+def rewrite_shared_work_contract(
     *,
     task: Task,
     work_contract: Any | None,
@@ -394,6 +394,23 @@ def _rewrite_shared_work_contract(
     - /me is private scratch per-agent.
     - If another agent (requester/owner) must review the output, file deliverables must
       live under /projects/<project-or-shared>/<task-id>/... so they are shareable.
+
+    Used by task creation and by the operator's reassign/requirements edit, so
+    both apply one sharing policy.
+
+    Args:
+        task: The persisted task; its id and project name the shared folder.
+        work_contract: The contract to rewrite (a ``WorkContract`` or its dict form).
+        assigned_to: The task's assignee.
+        requester_id: Who asked for the work.
+        owner_id: Who is accountable for the task.
+
+    Returns:
+        The rewritten contract, or ``None`` when nothing needs to change (no
+        contract, no assignee, outputs stay private, or no ``/me`` file paths).
+
+    Raises:
+        pydantic.ValidationError: ``work_contract`` is not a valid contract shape.
     """
     if work_contract is None:
         return None

@@ -56,9 +56,11 @@ from core.models.task import (
     Task,
     TaskCandidateSummary,
     TaskCancelRequest,
+    TaskCompleteRequest,
     TaskCreate,
     TaskCreateOutcome,
     TaskCreateResponse,
+    TaskUpdateRequest,
 )
 from core.models.task_event import TaskEvent
 from core.models.trigger import AgentTrigger
@@ -103,6 +105,8 @@ __all__ = [
     "Task",
     "TaskCandidateSummary",
     "TaskCancelRequest",
+    "TaskCompleteRequest",
+    "TaskUpdateRequest",
     "TaskCreate",
     "TaskCreateOutcome",
     "TaskCreateResponse",

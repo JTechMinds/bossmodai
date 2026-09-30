@@ -6,7 +6,11 @@
  * Opens real tasks in the real modal and reads what it shows: a status line
  * measured the way the watchdog measures, the facts as pairs, the callout for
  * each kind of state, the instruction clamp, the subtask checklist, the `⋯`
- * that holds Cancel, the role contract, and the activity as sentences.
+ * that holds Edit, Mark complete (only where the server allows it) and
+ * Cancel, the role contract, and the activity as sentences. Then it drives the
+ * real operator actions behind that `⋯`: the edit form sends only what
+ * changed and resends a refused reassign with the confirmation, and the
+ * completer will not post without a summary.
  *
  * BossModMarkdown is stubbed to hand the source back as one text node and to
  * record what it was asked to render. The real renderer is covered by its own
@@ -32,12 +36,15 @@ global.BossModMarkdown = {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates",
-    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModFactList",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
+    "BossModFactList",
     // The instructions' clamp is the shared component the desk's description
     // uses too; it renders through the stubbed BossModMarkdown above.
     "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskDetailSections", "BossModTaskDetail",
+    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksCancel",
+    "BossModTasksComplete", "BossModTaskEditForm", "BossModTaskActions",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -69,6 +76,7 @@ const BLOCKED = {
     created_at: ago(24 * HOUR),
     closed_at: null,
     work_contract: { deliverables: [{ type: "file", path: "/me/out/report.md", description: "The report" }] },
+    operator_can_complete: true,
 };
 const CHILD_DONE = {
     id: "c-done", title: "Write the regression test", status: "complete",
@@ -88,7 +96,15 @@ const DONE = {
     parent_task_id: null,
     last_activity: ago(3 * HOUR), created_at: ago(48 * HOUR), closed_at: ago(3 * HOUR),
 };
-const TASKS = [BLOCKED, CHILD_DONE, CHILD_OPEN, DONE];
+// Not yet accepted: the state machine has no pending → complete, so the
+// server says it cannot be marked complete.
+const PENDING = {
+    id: "t-pending", title: "Draft the rollout note", status: "pending",
+    assigned_to: "a2", assigned_to_name: "Debra", requester_id: "__human__", parent_task_id: null,
+    last_activity: ago(HOUR), created_at: ago(HOUR), closed_at: null,
+    operator_can_complete: false,
+};
+const TASKS = [BLOCKED, CHILD_DONE, CHILD_OPEN, DONE, PENDING];
 
 const EVENTS = [
     { id: "e1", event_type: "status_update", author_name: "Jim", author_agent_id: "a1",
@@ -141,14 +157,18 @@ function open(task, calls) {
         tasks: TASKS,
         colorOf: (agentId) => (agentId === "a1" ? "#3b82f6" : undefined),
         onNavigate: (id) => calls.navigated.push(id),
-        onCancel: (t) => calls.cancelled.push(t),
+        actions: {
+            edit: (t) => calls.edited.push(t),
+            completeOne: (t) => calls.completed.push(t),
+            cancelOne: (t) => calls.cancelled.push(t),
+        },
         onOpenChat: (t) => calls.chats.push(t),
     });
 }
 
 async function main() {
     const SECTIONS = global.BossModTaskDetailSections;
-    const calls = { navigated: [], cancelled: [], chats: [] };
+    const calls = { navigated: [], cancelled: [], completed: [], edited: [], chats: [] };
     const blocked = open(BLOCKED, calls);
     await drain();
     const panel = document.body.querySelector(".modal-panel");
@@ -262,7 +282,13 @@ async function main() {
             === JSON.stringify({ actor: "Jim", verb: "marked it blocked", detail: "no progress, @Debra" });
     if (!activityReadsAsSentences) fail(`activity read ${JSON.stringify(texts)} at ${JSON.stringify(times)}`);
 
-    // ── optionsHoldCancel ───────────────────────────────────────────────
+    // ── optionsHoldCancel, optionsOfferEditAndComplete ──────────────────
+    await click(panel.querySelector("#task-options"), "#task-options");
+    const itemIds = panel.querySelectorAll(".menu-action").map((item) => item.getAttribute("id"));
+    const offersAll = itemIds.join(",") === "ct-edit-task-btn,ct-complete-task-btn,ct-cancel-task-btn";
+    await click(panel.querySelector("#ct-edit-task-btn"), "#ct-edit-task-btn");
+    await click(panel.querySelector("#task-options"), "#task-options");
+    await click(panel.querySelector("#ct-complete-task-btn"), "#ct-complete-task-btn");
     await click(panel.querySelector("#task-options"), "#task-options");
     const cancelItem = panel.querySelector("#ct-cancel-task-btn");
     await click(cancelItem, "#ct-cancel-task-btn");
@@ -284,7 +310,24 @@ async function main() {
     if (!optionsHoldCancel) fail("the ⋯ did not hold Cancel, or a finished task still has one");
     done.close();
     await drain();
+
+    const pending = open(PENDING, calls);
+    await drain();
+    const pendingPanel = document.body.querySelectorAll(".modal-panel").pop();
+    await click(pendingPanel.querySelector("#task-options"), "the pending task's ⋯");
+    const pendingIds = pendingPanel.querySelectorAll(".menu-action").map((item) => item.getAttribute("id"));
+    const optionsOfferEditAndComplete = offersAll
+        && calls.edited.length === 1 && calls.edited[0] === BLOCKED
+        && calls.completed.length === 1 && calls.completed[0] === BLOCKED
+        && pendingIds.join(",") === "ct-edit-task-btn,ct-cancel-task-btn";
+    if (!optionsOfferEditAndComplete) {
+        fail(`the ⋯ offered [${itemIds}] and, for a pending task, [${pendingIds}]`);
+    }
+    pending.close();
+    await drain();
     if (document.body.querySelectorAll(".modal-panel").length !== 0) fail("a detail outlived its close");
+
+    const { editSendsOnlyChanges, mismatchRetryConfirms, completeNeedsSummary } = await operatorActions();
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -298,10 +341,115 @@ async function main() {
         clampToggleFollowsOverflow,
         subtasksCountDone,
         optionsHoldCancel,
+        optionsOfferEditAndComplete,
+        editSendsOnlyChanges,
+        mismatchRetryConfirms,
+        completeNeedsSummary,
         contractIsCollapsible,
         activityReadsAsSentences,
         deliverablesCounted,
     }));
+}
+
+/**
+ * Drive the real BossModTaskActions against a recording api: the edit form
+ * and the completer, as the `⋯` opens them.
+ */
+async function operatorActions() {
+    const requests = [];
+    const replies = [];
+    const actionApi = (url, opts) => {
+        const init = opts || {};
+        requests.push({ url: String(url), method: init.method, body: init.body ? JSON.parse(init.body) : null });
+        const reply = replies.shift();
+        if (!reply) throw new Error(`[task-detail-harness] no reply queued for ${url}`);
+        return Promise.resolve({
+            ok: reply.status < 400, status: reply.status, json: () => Promise.resolve(reply.body),
+        });
+    };
+    const store = {
+        getState: () => ({
+            roster: [
+                { id: "a1", name: "Jim", role: "Implementation engineer", color: "#3b82f6", floorId: "f1" },
+                { id: "a2", name: "Debra", role: "Designer", color: "#10b981", floorId: "f1" },
+            ],
+        }),
+    };
+    const changed = [];
+    const errors = [];
+    const actions = global.BossModTaskActions.create({
+        api: actionApi, store, onChanged: (ids) => changed.push(...ids), onError: (m) => errors.push(m),
+    });
+    const top = () => document.body.querySelectorAll(".modal-panel").pop() || null;
+
+    // ── editSendsOnlyChanges ────────────────────────────────────────────
+    actions.edit(BLOCKED);
+    await drain();
+    const editPanel = top();
+    editPanel.querySelector("#ct-edit-title").value = "Fix the login bug today";
+    replies.push({ status: 200, body: { ...BLOCKED, title: "Fix the login bug today" } });
+    await click(editPanel.querySelector("#ct-edit-submit"), "#ct-edit-submit");
+    const first = requests[0];
+    const editSendsOnlyChanges = Boolean(first) && first.method === "PATCH"
+        && first.url === "/api/tasks/t-blocked"
+        && JSON.stringify(first.body) === JSON.stringify({ title: "Fix the login bug today" })
+        && changed.join(",") === "t-blocked" && top() === null;
+    if (!editSendsOnlyChanges) fail(`the edit sent ${JSON.stringify(first)}; changed [${changed}]`);
+
+    // ── mismatchRetryConfirms ───────────────────────────────────────────
+    actions.edit(BLOCKED);
+    await drain();
+    const retryPanel = top();
+    await click(retryPanel.querySelector(".menu-select-trigger"), "the assignee trigger");
+    const debra = retryPanel.querySelectorAll(".menu-select-option")
+        .find((row) => row.textContent.includes("Debra"));
+    await click(debra, "Debra in the assignee menu");
+    replies.push({
+        status: 409,
+        body: { outcome: "specialty_mismatch", reason: 'Debra is "Designer".', suggested_assignees: [] },
+    });
+    await click(retryPanel.querySelector("#ct-edit-submit"), "#ct-edit-submit");
+    const warned = Boolean(retryPanel.querySelector(".callout"))
+        && retryPanel.querySelector(".callout").getAttribute("data-tone") === "warn" && top() === retryPanel;
+    replies.push({ status: 200, body: { ...BLOCKED, assigned_to: "a2" } });
+    await click(retryPanel.querySelector("#ct-edit-reassign-anyway"), "Reassign anyway");
+    const mismatchRetryConfirms = warned
+        && JSON.stringify(requests[1].body) === JSON.stringify({ assigned_to: "a2" })
+        && JSON.stringify(requests[2].body)
+            === JSON.stringify({ assigned_to: "a2", confirm_specialty_mismatch: true })
+        && top() === null;
+    if (!mismatchRetryConfirms) fail(`the reassign sent ${JSON.stringify(requests.slice(1))}`);
+
+    // ── completeNeedsSummary ────────────────────────────────────────────
+    actions.completeOne(PENDING);
+    await drain();
+    const pendingOpenedNothing = top() === null;
+    actions.completeOne(BLOCKED);
+    await drain();
+    const completePanel = top();
+    await click(completePanel.querySelector("#ct-complete-submit"), "#ct-complete-submit");
+    const refusedBlank = requests.length === 3
+        && completePanel.querySelector(".callout").textContent.includes("A summary is required");
+    completePanel.querySelector("#ct-complete-summary").value = "Shipped behind the flag.";
+    replies.push({ status: 200, body: { ...BLOCKED, status: "complete" } });
+    await click(completePanel.querySelector("#ct-complete-submit"), "#ct-complete-submit");
+    const posted = requests[3];
+    const completeNeedsSummary = pendingOpenedNothing && refusedBlank
+        && posted.method === "POST" && posted.url === "/api/tasks/t-blocked/complete"
+        && JSON.stringify(posted.body) === JSON.stringify({ summary: "Shipped behind the flag." })
+        && changed.length === 3 && errors.length === 0 && top() === null;
+    if (!completeNeedsSummary) fail(`the completion sent ${JSON.stringify(posted)}; errors [${errors}]`);
+
+    // Open subtasks refuse a completion; the reason reaches onError.
+    actions.completeOne(BLOCKED);
+    await drain();
+    top().querySelector("#ct-complete-summary").value = "Done enough.";
+    replies.push({ status: 409, body: { reason: "Resolve first", task_ids: ["c-open"] } });
+    await click(top().querySelector("#ct-complete-submit"), "#ct-complete-submit");
+    if (!errors.length || !errors[0].includes(global.BossModTasksComplete.SUBTASKS_COPY)) {
+        fail(`an open-subtask refusal said [${errors}]`);
+    }
+    return { editSendsOnlyChanges, mismatchRetryConfirms, completeNeedsSummary };
 }
 
 main().catch((err) => {

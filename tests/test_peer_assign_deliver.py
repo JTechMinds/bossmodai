@@ -21,11 +21,16 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from core.agent_loop.actions import execute_action
+from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import persist_result_triggers
 from core.agent_loop.decision_runtime import apply_decision
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND
+from core.models.message import HUMAN_SENDER_ID
+from core.models.work_contract import DeliverableSpec, WorkContract
 from core.runtime import runtime_services
+from core.tasking import create_or_bind_task
+from core.tasking.transitions import transition_task
 from tests.test_workspace_preference import choose_edit_host
 
 
@@ -355,6 +360,84 @@ async def test_peer_assignee_decline_wakes_assigner_and_stays_declined() -> None
     assert "cannot take this assignment" in _payload(follow_ups[0]).get("content", "").lower()
     resolved = resolve_cli_path(worker.storage_key, "/me", deliverable_path)
     assert not resolved.exists
+
+
+@pytest.mark.asyncio
+async def test_delegated_parent_points_at_the_childs_shared_file_and_can_complete() -> None:
+    """A delegated parent's deliverable follows the child's /projects rewrite.
+
+    Without that, the parent kept its /me path, resolved it on its own
+    assignee's desk, and could never be completed after the child delivered.
+    """
+    lead = db.create_agent("Cap Lead", role="Writer", desk_x=1, desk_y=1)
+    worker = db.create_agent("Cap Worker", role="Writer", desk_x=2, desk_y=1)
+    lead_state = db.get_agent_state(lead.id)
+    worker_state = db.get_agent_state(worker.id)
+    assert lead_state is not None
+    assert worker_state is not None
+    parent = create_or_bind_task(
+        title="Write the launch note",
+        description=None,
+        project=None,
+        assigned_to=lead.id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=WorkContract(deliverables=[DeliverableSpec(type="file", path="/me/launch.md")]),
+        source_channel=None,
+        notification_policy=None,
+        notification_channel_id=None,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    ).task
+    assert parent is not None
+    activate_work_activity(lead.id, parent)
+
+    delegated = await execute_action(
+        {
+            "action": "delegated",
+            "agentId": worker.id,
+            "followUpMessage": "Handing this to Worker.",
+            "confirmSpecialtyMismatch": True,
+        },
+        lead,
+        lead_state,
+    )
+    assert delegated["event"] == "status_changed"
+    children = db.list_tasks(parent_task_id=parent.id)
+    assert len(children) == 1
+    child = children[0]
+    assert child.work_contract is not None
+    shared_path = child.work_contract.deliverables[0].path
+    assert shared_path.startswith("/projects/")
+    refreshed_parent = db.get_task(parent.id)
+    assert refreshed_parent is not None
+    assert refreshed_parent.work_contract == child.work_contract
+
+    transition_task(child.id, "accepted", reason="Accepted.", actor=worker.name, actor_type="agent")
+    activate_work_activity(worker.id, db.get_task(child.id))
+    written = resolve_cli_path(worker.storage_key, "/", shared_path)
+    assert written.real_path is not None
+    written.real_path.parent.mkdir(parents=True, exist_ok=True)
+    written.real_path.write_text("launch note", encoding="utf-8")
+    child_done = await execute_action(
+        {"action": "complete", "summary": "Launch note written.", "followUpMessage": "Done."},
+        worker,
+        worker_state,
+    )
+    assert child_done["event"] == "status_changed", child_done.get("detail")
+
+    activate_work_activity(lead.id, db.get_task(parent.id))
+    parent_done = await execute_action(
+        {"action": "complete", "summary": "Worker delivered the note.", "followUpMessage": "Done."},
+        lead,
+        lead_state,
+    )
+    assert parent_done["event"] == "status_changed", parent_done.get("detail")
+    final = db.get_task(parent.id)
+    assert final is not None
+    assert final.status == "complete"
 
 
 def test_work_plan_ambiguous_assignee_name_does_not_create_child() -> None:

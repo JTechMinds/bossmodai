@@ -28,7 +28,8 @@ const NAMES = [
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetailSections",
     "BossModTaskDetail",
-    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksCancel", "BossModTaskLayers",
+    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksCancel", "BossModTasksComplete",
+    "BossModTaskEditForm", "BossModTaskActions", "BossModTaskLayers",
     "BossModTasksMenu", "BossModTasksArchive", "BossModTasksToolbar", "BossModTasksPlace",
 ];
 if (paths.length !== NAMES.length) {

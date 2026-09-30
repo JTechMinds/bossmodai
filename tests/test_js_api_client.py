@@ -108,6 +108,8 @@ API_BY_INJECTION = {
     "places/tasks/task-events.js",
     "places/tasks/assign-form.js",
     "places/tasks/tasks-cancel.js",
+    "places/tasks/tasks-complete.js",
+    "places/tasks/task-edit-form.js",
     # The Files place and its dialogs take `api` from the shell's ctx and hand
     # it down; none of them names the global.
     "places/files/file-viewer.js",
@@ -211,7 +213,9 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "places/tasks/task-deliverables.js",
                  "places/tasks/task-events.js",
                  "places/tasks/assign-form.js",
-                 "places/tasks/tasks-cancel.js"):
+                 "places/tasks/tasks-cancel.js",
+                 "places/tasks/tasks-complete.js",
+                 "places/tasks/task-edit-form.js"):
         source = _read(name)
         assert "apiFetch" not in source, f"{name} must take api from ctx"
 

@@ -144,10 +144,12 @@ const NAMES = [
     "BossModAgentEdit", "BossModAgentsDialog", "BossModDeskPanel",
     // The desk's task rows wear the Tasks place's status labels and open the
     // task as a layer over the desk through the Tasks place's own loader,
-    // detail, canceller and layer controller; its Chat tool is the one
+    // detail, task actions and layer controller; its Chat tool is the one
     // conversation route. All are read at call time.
     "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables", "BossModTaskEvents",
-    "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel", "BossModTaskLayers",
+    "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel",
+    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksComplete", "BossModTaskEditForm",
+    "BossModTaskActions", "BossModTaskLayers",
     "BossModDeskTaskOpener", "BossModAgentRoutes", "BossModDeskDialog",
     // The chat place hands agent conversations the Browser Vision screen.
     "BossModExtensionsApi", "BossModBrowserVisionStatus", "BossModExtensionsLive",
