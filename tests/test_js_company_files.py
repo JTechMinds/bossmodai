@@ -24,6 +24,7 @@ FILES_MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "shell" / "places.js",
@@ -187,3 +188,17 @@ def test_company_files_named_path_harness() -> None:
     assert payload["floorSwitchFollows"] is True
     # Away and back before the first read settles: that read does not paint.
     assert payload["staleLoadDropped"] is True
+    # The viewer's folder line names folders, not the file (the title does),
+    # with a house root and chevrons rather than a typed "/ / me / …" path.
+    desk_line = payload["viewerDeskLine"]
+    assert desk_line["rows"] == 1
+    assert desk_line["tokens"] == [
+        "icon:house", "hidden:/", "icon:chevron-right", "crumb:me", "icon:chevron-right", "crumb:reports",
+    ]
+    assert desk_line["painted"] is True
+    # The root's accessible name is whatever the server calls it.
+    company_line = payload["viewerCompanyLine"]
+    assert company_line["tokens"] == ["icon:house", "hidden:Company", "icon:chevron-right", "crumb:Finance"]
+    assert company_line["painted"] is True
+    # A file directly under the root: a lone house would say nothing.
+    assert payload["viewerRootFileLine"]["rows"] == 0

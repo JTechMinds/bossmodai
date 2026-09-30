@@ -32,8 +32,9 @@ const BossModTaskDetail = (() => {
      *   colours for the avatars in the facts and the activity.
      * @param {(taskId: string) => void} deps.onNavigate  Opens a related task
      *   as a layer over this one.
-     * @param {(task: object) => void} deps.onCancel  The Tasks place owns
-     *   cancelling; this panel only asks for it.
+     * @param {(task: object) => void} deps.onCancel  The caller owns
+     *   cancelling (the Tasks place, or the desk that opened this over
+     *   itself); this panel only asks for it.
      * @param {(task: object) => void} deps.onOpenChat  Leaves for the task's
      *   conversation.
      * @param {() => void} [deps.onClose]

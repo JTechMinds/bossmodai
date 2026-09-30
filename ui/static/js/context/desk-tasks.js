@@ -27,9 +27,15 @@ const BossModDeskTasks = (() => {
      * @param {Function} deps.api      Authenticated fetch helper.
      * @param {string}   deps.agentId
      * @param {(taskId: string) => void} deps.onOpenTask  A row was clicked.
-     *   Where a task opens is the panel's decision (the Tasks place, the same
-     *   route an event card takes), not the list's.
-     * @returns {{ element: HTMLElement, destroy: () => void }}
+     *   Where a task opens is the panel's decision (a layer over the desk),
+     *   not the list's.
+     * @returns {{ element: HTMLElement, refresh: () => Promise<void>,
+     *   showError: (message: string) => void, destroy: () => void }}
+     *   `refresh` re-reads both boards — after a cancel, say — and clears any
+     *   error `showError` put up. `showError` is for a failure that happened
+     *   AROUND the list rather than in its own read (a task that could not be
+     *   opened, a cancel refused): the message goes above the rows as an
+     *   alert, and the rows stay, because they are still true.
      * @throws {Error} When api, agentId or onOpenTask is missing.
      */
     function createDeskTasks(deps) {
@@ -40,6 +46,9 @@ const BossModDeskTasks = (() => {
 
         const load = BossModGates.createLoadGeneration();
         const listEl = h('div', { class: 'desk-tasks' });
+        /** The alert showError() put above the rows, or null. Kept by name so
+         *  a second error replaces it and refresh() clears it. */
+        let errorEl = null;
         let destroyed = false;
 
         const element = listEl;
@@ -96,6 +105,7 @@ const BossModDeskTasks = (() => {
         async function refresh() {
             const loadId = load.next();
             clear(listEl);
+            errorEl = null;
             listEl.append(h('p', { class: 'context-skeleton' }, 'Loading tasks…'));
 
             let boards;
@@ -145,8 +155,29 @@ const BossModDeskTasks = (() => {
 
         void refresh();
 
+        /**
+         * Say something went wrong around the list, above its rows.
+         *
+         * @param {string} message
+         * @returns {void}
+         * @throws {Error} On an empty message: an alert that says nothing is
+         *   a failure nobody can act on.
+         */
+        function showError(message) {
+            if (typeof message !== 'string' || !message.trim()) {
+                throw new Error('[desk-tasks] showError needs a message');
+            }
+            if (errorEl) errorEl.remove();
+            errorEl = h('p', { class: 'context-error', role: 'alert' }, message);
+            // First in the list's own column, so its gap spaces the alert
+            // from the rows it sits above.
+            listEl.prepend(errorEl);
+        }
+
         return {
             element,
+            refresh,
+            showError,
 
             /**
              * Stop painting; an in-flight board response is dropped.

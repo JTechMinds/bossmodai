@@ -29,6 +29,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "consent-card.js",
     # The chrome's overflow menu is an overlays.js panel, not a second popover.
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
@@ -188,6 +189,7 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
             str(JS / "core" / "gates.js"),
             str(JS / "core" / "consent-card.js"),
             str(JS / "core" / "overlay-focus.js"),
+            str(JS / "core" / "modal-trail.js"),
             str(JS / "core" / "overlays.js"),
             str(JS / "core" / "menu.js"),
             str(SOURCES / "thread-archive.js"),

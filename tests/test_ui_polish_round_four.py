@@ -55,7 +55,7 @@ def _run(harness: str, modules: list[Path]) -> dict:
 
 def _overlays_payload() -> dict:
     return _run("js_overlays_harness.cjs",
-                [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js",
+                [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/modal-trail.js", JS / "core/overlays.js",
                  JS / "core/menu.js"])
 
 
@@ -118,6 +118,7 @@ CONTEXT_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "conversation" / "empty-state.js",
@@ -181,6 +182,17 @@ CONTEXT_MODULES = [
     JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
+    # A desk task row opens the task as a layer over the desk: the Tasks
+    # place's loader, detail, canceller and layer controller, and the desk's
+    # opener over them (index.html loads the desk after all of these).
+    JS / "places" / "tasks" / "tasks-data.js",
+    JS / "places" / "tasks" / "task-deliverables.js",
+    JS / "places" / "tasks" / "task-events.js",
+    JS / "places" / "tasks" / "task-detail-sections.js",
+    JS / "places" / "tasks" / "task-detail.js",
+    JS / "places" / "tasks" / "tasks-cancel.js",
+    JS / "places" / "tasks" / "task-layers.js",
+    JS / "context" / "desk-task-opener.js",
     JS / "shell" / "agent-routes.js",
     JS / "context" / "desk-dialog.js",
     JS / "extensions" / "extensions-api.js",
@@ -212,7 +224,7 @@ def test_the_primary_action_is_pinned_beside_cancel() -> None:
     # form, which is this test's subject.
     #
     # Step two no longer pins Back: it is the chevron on the title row — the
-    # frame's one back control (core/overlays.js backButton()), the same as
+    # frame's one back control (core/modal-trail.js backButton()), the same as
     # every layer's ‹ and the Marketplace pane's. Its presence there is pinned
     # in the harness and in tests/test_add_agent_modal.py.
     #
@@ -260,6 +272,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",

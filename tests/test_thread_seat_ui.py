@@ -17,6 +17,7 @@ SEAT_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "conversation" / "sources" / "thread-archive.js",

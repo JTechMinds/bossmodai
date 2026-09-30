@@ -31,7 +31,7 @@ FakeEl.prototype.setSelectionRange = function setSelectionRange(start, end) {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
+    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu",
     // The browse head's filter is the app's toolbar search.
     "BossModSearchField",
     "BossModAgentApi", "BossModAgentTemplatesApi",
@@ -536,22 +536,33 @@ async function click(el) {
  * @returns {{close: () => void, pane: object}}
  */
 function mountMarket() {
+    // The pane reports its step while it is built, before there is a frame —
+    // the Agents dialog's order, and its no-op until the frame exists.
+    let modal = null;
     const pane = global.BossModMarketplace.createPane({
         onUseTemplate: (template) => { used.push(template); },
         onLibraryChanged: () => { libraryChanges += 1; },
+        onStepsChange: () => { if (modal) modal.setSteps(pane.steps()); },
     });
-    // The pane's back chevron goes where the Agents dialog puts it: on the
-    // frame's title row, as the lead.
-    const modal = global.BossModOverlays.createModal({
-        title: "Agents", body: pane.element, size: "takeover", actions: [], lead: pane.lead,
+    // The open pack is a step on the frame's trail, as the Agents dialog puts
+    // it there: the frame's ‹ is the way back to the grid.
+    modal = global.BossModOverlays.createModal({
+        title: "Agents", body: pane.element, size: "takeover", actions: [],
     });
     return { close: modal.close, pane };
 }
 
-/** The way back from a pack to the grid: the pane's lead, on the title row. */
+/** The way back from a pack to the grid: the frame's ‹, on the title row. */
 function backControl() {
     const panel = global.document.body.querySelector(".modal-panel");
-    return panel ? panel.querySelector(".modal-head").querySelector("#market-back") : null;
+    return panel ? panel.querySelector(".modal-head").querySelector(".modal-back") : null;
+}
+
+/** The frame's breadcrumb trail, as the words it shows. */
+function trailText() {
+    const panel = global.document.body.querySelector(".modal-panel");
+    return panel.querySelector(".modal-trail").querySelectorAll("li")
+        .map((item) => item.textContent).join(" › ");
 }
 
 /** Mounted and activated: the Marketplace tab, up. Nothing awaited. */
@@ -919,27 +930,30 @@ async function main() {
     // has to prove it starts at the top of its OWN contract.
     await click(sectionTabs()[2]);
     // The visible word is gone and the announced name is not. The control is
-    // the frame's ONE back control on the title row now — the bordered
+    // the frame's ONE back control on the title row — the bordered
     // `.btn.btn-sm.step-back` with a lucide chevron, the same as Add agent's
-    // and every layer's — not a blue `‹` inside the scrolling detail. Still a
-    // real button, still named, and the mark is aria-hidden so it cannot be
-    // announced as punctuation.
+    // and every layer's — not a blue `‹` inside the scrolling detail, and the
+    // pack is the trail's current crumb after `Agents`. Still a real button,
+    // named for the crumb it goes back to, and the mark is aria-hidden so it
+    // cannot be announced as punctuation.
     const back = backControl();
     const backMark = back && back.querySelector('[data-lucide="chevron-left"]');
     verdict.backIsAGlyphThatStillSaysWhereItGoes = Boolean(back) && back.tagName === "BUTTON"
         && back.hidden === false
         && ["btn", "btn-sm", "step-back"].every((name) => back.classList.contains(name))
         && back.textContent === ""
-        && back.getAttribute("aria-label") === "Back to the marketplace"
-        && back.getAttribute("data-tooltip") === "Back to the marketplace"
+        && back.getAttribute("aria-label") === "Back to Agents"
+        && back.getAttribute("data-tooltip") === "Back to Agents"
+        && trailText() === "Agents › Code Auditor"
         && Boolean(backMark) && backMark.getAttribute("aria-hidden") === "true"
-        && host().querySelector("#market-back") === null;
-    // It belongs to the pane that is up: another tab taking the head puts it
-    // away, and coming back to the open pack brings it back.
+        && host().querySelector(".modal-back") === null;
+    // It belongs to the pane that is up: another tab taking the head clears
+    // the step, and coming back to the open pack restores it.
     handle.pane.deactivate();
-    const hiddenWhileAway = back.hidden === true;
+    const hiddenWhileAway = back.hidden === true && trailText() === "Agents";
     handle.pane.activate();
-    verdict.backFollowsTheTab = hiddenWhileAway && back.hidden === false;
+    verdict.backFollowsTheTab = hiddenWhileAway && back.hidden === false
+        && trailText() === "Agents › Code Auditor";
     // A stale install: `Update` is the actionable thing, so it keeps the slot.
     const lead = host().querySelector("#market-install");
     verdict.updateKeepsThePrimary = lead.textContent === "Update"
@@ -965,7 +979,7 @@ async function main() {
     })();
     await click(backControl());
     // The grid has nowhere to go back to, so the chevron is put away with it.
-    verdict.backHidesWithTheGrid = backControl().hidden === true;
+    verdict.backHidesWithTheGrid = backControl().hidden === true && trailText() === "Agents";
     verdict.backRestoresTheBrowseView = count(".market-card") === 3
         && host().querySelector(".market-body").scrollTop === 120
         && railRow("All").getAttribute("aria-current") === "true";

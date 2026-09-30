@@ -940,7 +940,7 @@ def test_the_way_out_of_a_desk_is_a_control_not_a_banner() -> None:
     spanned all 280px and read as a banner across the top of the panel. It
     became an icon-only button in the body, and now it is not in the body at
     all: the desk is a modal, and the way out of a modal is the frame's own —
-    its ✕, and the shared ‹ (core/overlays.js `backButton()`) when the desk is
+    its ✕, and the shared ‹ (core/modal-trail.js `backButton()`) when the desk is
     a layer over something else. No banner, and no desk-private way back.
     """
     js = _read(JS / "context/desk-panel.js")

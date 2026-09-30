@@ -23,12 +23,12 @@ const NAMES = [
     "BossModDom", "BossModFactList", "BossModAvatar", "BossModSwitch",
     "BossModSearchField", "BossModStore",
     "BossModBus", "BossModFormat", "BossModSpecialty", "BossModGates",
-    "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModMenuSelect", "BossModPlaces", "BossModAgentRoutes",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModMenuSelect", "BossModPlaces", "BossModAgentRoutes",
     "BossModFloorScope",
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetailSections",
     "BossModTaskDetail",
-    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksCancel",
+    "BossModAssignOutcomes", "BossModAssignForm", "BossModTasksCancel", "BossModTaskLayers",
     "BossModTasksMenu", "BossModTasksArchive", "BossModTasksToolbar", "BossModTasksPlace",
 ];
 if (paths.length !== NAMES.length) {

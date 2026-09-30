@@ -4,9 +4,9 @@
  * Extracted from context/agent-edit.js when Add agent and the Agent
  * Marketplace became two tabs of ONE dialog (context/agents-dialog.js). This
  * is the create flow with no modal of its own: the template picker, the form
- * host, the Back chevron the form step puts on the title row, and the wiring a
- * create does once it lands — the new agent's conversation opens, and the
- * dialog closes. The dialog owns the frame, the tabs and which pane is up;
+ * host, the step the form puts on the frame's trail (`Agents › Code Auditor`),
+ * and the wiring a create does once it lands — the new agent's conversation
+ * opens, and the dialog closes. The dialog owns the frame, the tabs and which pane is up;
  * building the form and saving through it is context/agent-form-save.js, which
  * this hosts and calls but does not re-export.
  *
@@ -42,8 +42,8 @@ const BossModAgentAddPane = (() => {
     // context/agent-form-save.js. Named here because this module hosts it.
     const { renderInline } = BossModAgentFormSave;
 
-    /** The back chevron's accessible name, and its tooltip. */
-    const BACK_LABEL = 'Back to the template picker';
+    /** The form step's crumb for a Blank pick, which has no name of its own. */
+    const BLANK_TITLE = 'New agent';
     // A failed render is recoverable here: step one is still mounted with its
     // list. That is not "refresh the page", which is what this said before
     // step two existed.
@@ -69,33 +69,42 @@ const BossModAgentAddPane = (() => {
      * @param {(template: object) => void} deps.onTemplateSaved  The form's
      *   role contract was saved as a local template; every library view the
      *   dialog holds has to re-read.
-     * @returns {{element: HTMLElement, lead: HTMLElement,
+     * @param {() => void} deps.onStepsChange  The step changed; the dialog
+     *   re-reads `steps()` into the frame's trail.
+     * @returns {{element: HTMLElement, steps: () => Array<{title: string,
+     *   onBack: () => void}>,
      *   attach: (modal: object) => void, activate: () => void,
      *   deactivate: () => void, refresh: () => Promise<void>,
      *   pick: (choice: object) => Promise<void>,
      *   holdsDraft: () => boolean, dispose: () => void}}
-     *   `element` is the body (`.agent-add-body`: picker and form host);
-     *   `lead` is the `#agent-add-back` chevron for the dialog's title row,
-     *   hidden until the form step is up. `attach` builds the footer on the
-     *   dialog, once. `activate`/`deactivate` say whether this pane is the
+     *   `element` is the body (`.agent-add-body`: picker and form host).
+     *   `steps` is where the pane is, for the frame's trail: none on the
+     *   picker; on the form, one crumb named for the pick — the template's
+     *   title, the snapshot's name, or `New agent` for Blank — whose way back
+     *   is the picker. `attach` builds the footer on the dialog, once. `activate`/`deactivate` say whether this pane is the
      *   visible tab. `refresh` re-reads the picker's two lists. `pick` is a
      *   cell click by another name — the Marketplace's "Add agent from this"
      *   — and never rejects: a failed build becomes the in-pane recovery
      *   state. `holdsDraft` answers whether a form build has landed (a draft
      *   exists to lose). `dispose` is the dialog closing: a save or a failure
      *   that settles afterwards routes nowhere and repairs nothing.
-     * @throws {Error} When store, onBrowse, onDone or onTemplateSaved is
-     *   missing. `attach` throws when called twice; `pick`, `activate` and
+     * @throws {Error} When store, onBrowse, onDone, onTemplateSaved or
+     *   onStepsChange is missing. `attach` throws when called twice; `pick`, `activate` and
      *   `deactivate` throw before `attach` — each needs the footer that only
      *   it can build — and `pick` throws on a choice that is none of the three.
      */
     function create(deps) {
-        const { store, onBrowse, onDone, onTemplateSaved } = deps || {};
+        const {
+            store, onBrowse, onDone, onTemplateSaved, onStepsChange,
+        } = deps || {};
         if (!store) throw new Error('[agent-add-pane] deps.store is required');
         if (typeof onBrowse !== 'function') throw new Error('[agent-add-pane] deps.onBrowse is required');
         if (typeof onDone !== 'function') throw new Error('[agent-add-pane] deps.onDone is required');
         if (typeof onTemplateSaved !== 'function') {
             throw new Error('[agent-add-pane] deps.onTemplateSaved is required');
+        }
+        if (typeof onStepsChange !== 'function') {
+            throw new Error('[agent-add-pane] deps.onStepsChange is required');
         }
 
         let destroyed = false;
@@ -107,12 +116,15 @@ const BossModAgentAddPane = (() => {
         let builtFrom = null;
         /** Step one is on screen from the start; the form host is hidden. */
         let step = 'picker';
+        /** The form step's crumb, named at the PICK: the step is up from then. */
+        let formTitle = BLANK_TITLE;
         /** Whether this pane is the visible tab. The dialog's first showTab
          *  sets it, whichever tab that is. */
         let active = false;
         /** Built by attach(), on the dialog the row belongs to. */
         let footer = null;
         let primary = null;
+        let modal = null; // attach()'s frame: a failed build focuses its ‹
 
         const formEl = h('div', { class: 'agent-form-host' });
         formEl.hidden = true;
@@ -124,16 +136,6 @@ const BossModAgentAddPane = (() => {
             // dialog and reopen it behind the marketplace.
             onBrowse: () => onBrowse(),
         });
-        // ON THE TITLE ROW — `‹ Agents` reads as one heading. It spent a round
-        // as a bordered square floating in the band between the title and the
-        // first card, aligned to neither and filling nothing. The row is also
-        // OUTSIDE the body, so a build that fails and empties the form host
-        // cannot take the way back with it. The shape is the frame's one back
-        // control (core/overlays.js), the same as every layer's ‹.
-        const lead = BossModOverlays.backButton({
-            label: BACK_LABEL, onBack: () => showStep('picker'), id: 'agent-add-back',
-        });
-        lead.hidden = true;
         const element = h('div', { class: 'agent-add-body' }, picker.element, formEl);
 
         /** The footer, or a named error for a call that came before it. */
@@ -159,10 +161,7 @@ const BossModAgentAddPane = (() => {
             step = next;
             picker.element.hidden = next === 'form';
             formEl.hidden = next !== 'form';
-            // Step one has nowhere to go back TO, so the chevron is not drawn
-            // there — a live control that does nothing is worse than no
-            // control. Nor while another tab owns the head.
-            lead.hidden = !active || next !== 'form';
+            onStepsChange(); // the frame's ‹ and trail: outside what a failure empties
             footer.show(next);
             if (next !== 'form' && active) picker.focus();
         }
@@ -186,6 +185,13 @@ const BossModAgentAddPane = (() => {
             throw new Error(`[agent-add-pane] no form for a "${kind}" pick`);
         }
 
+        /** The form step's crumb: what the picked card is called. A row
+         *  with no name reaches setSteps as-is, which throws on it. */
+        function titleOf(choice) {
+            if (choice.kind === 'template') return choice.row.title;
+            return choice.kind === 'snapshot' ? choice.row.name : BLANK_TITLE;
+        }
+
         /**
          * A cell was picked. The form is rebuilt only for a DIFFERENT pick, so
          * Back and re-picking the same cell keep the draft; picking another
@@ -202,6 +208,7 @@ const BossModAgentAddPane = (() => {
          */
         async function pickChoice(choice) {
             const key = keyOf(choice);
+            formTitle = titleOf(choice); // before the swap reports its crumb
             // The pane swaps FIRST, so the pick is acknowledged while the form
             // loads rather than after it. The primary that swap pins is
             // withheld by renderInline until the form it submits is on screen.
@@ -346,20 +353,23 @@ const BossModAgentAddPane = (() => {
             formEl.append(h('p', { class: 'context-error', role: 'alert' },
                 `${FAILED_COPY} ${FAILED_BACK}`));
             footer.recovery();
-            // The row's rebuild took the keyboard; the way out is the title
-            // row's chevron, which the failure did not touch, so it takes focus
-            // back from the dismissal footer.recovery() lit. Not while the pane
-            // is away: that row was only recorded, and the keyboard is the
-            // other tab's.
-            if (active) lead.focus();
+            // The row's rebuild took the keyboard; the way out is the frame's
+            // ‹, which the failure did not touch, so it takes focus back from
+            // the dismissal footer.recovery() lit. Not while the pane is away:
+            // that row was only recorded, and the keyboard is the other tab's.
+            if (active) modal.focusBack();
         }
 
         return {
             element,
-            lead,
-            attach(modal) {
+            steps() {
+                if (step !== 'form') return [];
+                return [{ title: formTitle, onBack: () => showStep('picker') }];
+            },
+            attach(frame) {
                 if (footer) throw new Error('[agent-add-pane] attach() was called twice');
-                footer = FOOTER.createFooter(modal, {
+                modal = frame;
+                footer = FOOTER.createFooter(frame, {
                     creating: true, onSaveTemplate: saveTemplate,
                 });
                 primary = footer.primary;
@@ -371,13 +381,11 @@ const BossModAgentAddPane = (() => {
             activate() {
                 requireFooter('activate()');
                 active = true;
-                lead.hidden = step !== 'form';
                 footer.resume();
             },
             deactivate() {
                 requireFooter('deactivate()');
                 active = false;
-                lead.hidden = true;
                 footer.suspend();
             },
             refresh: () => picker.refresh(),

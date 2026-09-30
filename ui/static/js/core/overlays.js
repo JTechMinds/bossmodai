@@ -24,59 +24,24 @@
  * dialog on top, and the scrim leaves with the last layer: a scrim outliving
  * its last layer bricks the app.
  *
- * It also owns the ONE BACK CONTROL (backButton()). A layer's ‹, the Add
- * agent form's chevron and the marketplace detail's way back used to be three
- * looks built in three places; the frame builds the shape now, and a surface
- * only says when it has somewhere to go back to. That is why this module
- * paints its own head (core/icons.js loads ahead of it).
+ * It also owns NAVIGATION between those layers: each is its title plus the
+ * STEPS its dialog reports (setSteps), the head shows them all as one trail,
+ * and ‹, Esc and a crumb walk back through it. A dialog never builds a back
+ * control of its own — the Add agent form's and the marketplace detail's were
+ * two more. How the trail looks and walks is core/modal-trail.js's; which
+ * layers it walks is this module's. It paints its own head (core/icons.js
+ * loads ahead of it).
  */
 const BossModOverlays = (() => {
     const { h, clear } = BossModDom;
     // The trap and the tab-order selector are core/overlay-focus.js's: one
     // rule, two overlays, and no room left in this file to keep it here.
     const { FOCUSABLE, trapKeydown } = BossModOverlayFocus;
+    // The trail, the ‹ and the walk back; the stack they walk is this file's.
+    const TRAIL = BossModModalTrail;
 
     /** The sizes the stylesheet knows. Anything else renders as 'default'. */
     const SIZES = ['panel', 'takeover'];
-
-    /**
-     * The ONE way back, wherever a modal offers one.
-     *
-     * A layer's ‹, the Add agent form's chevron and the marketplace detail's
-     * way back to its grid were three controls with three looks — a typed
-     * glyph, a bordered chevron and an accent-blue character in the body. The
-     * frame owns the shape now and every surface asks for it here; a surface
-     * only decides WHEN it has somewhere to go back to.
-     *
-     * `.btn.btn-sm.step-back` with a lucide `chevron-left`: the bordered,
-     * icon-only control controls.css squares off through `.btn[data-tooltip]`.
-     * The glyph is a placeholder until someone paints the head it sits in —
-     * createModal paints its own head, and a caller that builds a lead paints
-     * its dialog the way it already does.
-     *
-     * @param {object} options
-     * @param {string} options.label  The accessible name AND the tooltip — one
-     *   string, never two — and it has to say where the control goes.
-     * @param {() => void} options.onBack  What going back means here.
-     * @param {string} [options.id]  A stable id for tests and focus hand-back.
-     * @returns {HTMLButtonElement} The button; the caller places and hides it.
-     * @throws {Error} When `label` is empty or `onBack` is not a function: a
-     *   nameless control or a back that goes nowhere is worse than none.
-     */
-    function backButton({ label, onBack, id } = {}) {
-        if (typeof label !== 'string' || !label.trim()) {
-            throw new Error('[overlays] backButton needs a label');
-        }
-        if (typeof onBack !== 'function') throw new Error('[overlays] backButton needs onBack');
-        return h('button', {
-            class: 'btn btn-sm step-back',
-            type: 'button',
-            id: id || null,
-            'aria-label': label,
-            'data-tooltip': label,
-            onclick: onBack,
-        }, h('i', { 'data-lucide': 'chevron-left', 'aria-hidden': 'true' }));
-    }
 
     /**
      * The open modal LAYERS, base first. One frame is on screen at a time: a
@@ -88,18 +53,14 @@ const BossModOverlays = (() => {
     /** The one scrim every layer shares; null while no modal is open. */
     let scrim = null;
 
-    /** Point each layer's ‹ at the layer beneath it now; the base has none. */
-    function relabel() {
-        layers.forEach((layer, index) => {
-            layer.back.hidden = index === 0;
-            if (index > 0) {
-                // The name and the tooltip are one string (backButton()), so
-                // both follow the layer beneath.
-                const label = `Back to ${layers[index - 1].title}`;
-                layer.back.setAttribute('aria-label', label);
-                layer.back.setAttribute('data-tooltip', label);
-            }
-        });
+    /**
+     * Rebuild every layer's trail (core/modal-trail.js): a layer's crumbs
+     * include every layer beneath it, so a change to one changes all above
+     * it. A crumb click walks back until that crumb is the current one.
+     */
+    function renderTrails() {
+        const goTo = (target, depth) => TRAIL.walkTo(layers, target, depth);
+        layers.forEach((layer, index) => TRAIL.render(layer, TRAIL.crumbsOf(layers, index), goTo));
     }
 
     /** ✕: every layer, top first, so each caller's onClose still runs. */
@@ -153,10 +114,11 @@ const BossModOverlays = (() => {
      * Open a modal dialog.
      *
      * Opened while another modal is up, it becomes a LAYER in the same frame:
-     * the one beneath is hidden, not destroyed, and the head gains a ‹ named
-     * for it. ‹ and Esc go back one layer; ✕ closes every layer, top first,
-     * each onClose firing; an outside click closes them all only when every
-     * layer opted in to closeOnBackdrop.
+     * the one beneath is hidden, not destroyed, and the title ends a trail of
+     * every layer and step beneath it. ‹ and Esc go back one — this layer's
+     * last step (`setSteps`), else this layer; a crumb goes back to itself; ✕
+     * closes every layer, top first, each onClose firing; an outside click
+     * closes them all only when every layer opted in to closeOnBackdrop.
      *
      * @param {object} options
      * @param {string} options.title
@@ -178,10 +140,10 @@ const BossModOverlays = (() => {
      * @param {() => void} [options.onClose] Called after close, however it
      *   closed — and after the chosen action's onSelect, so a caller can treat
      *   it as "dismissed" when no choice was recorded.
-     * @param {HTMLElement} [options.lead] A node to sit on the TITLE ROW,
-     *   before the heading: a step dialog's Back, or an identity mark such as
-     *   an avatar. It belongs to the caller, which keeps it and may hide it per
-     *   step; this only decides where it renders.
+     * @param {HTMLElement} [options.lead] An identity mark for the TITLE ROW,
+     *   before the trail — the desk's avatar. It belongs to the caller; this
+     *   only decides where it renders. Never a back control: going back is
+     *   the frame's (see `setSteps`).
      * @param {string} [options.subtitle] A short fact after the title — an
      *   agent's status. Text only; it is read as part of the head row.
      * @param {HTMLElement[]} [options.tools] Controls at the right end of the
@@ -202,11 +164,14 @@ const BossModOverlays = (() => {
      *   'takeover' is 95% for a browse-and-read surface. All pin the head and
      *   actions outside the body, and none touches the trap, Esc or focus
      *   restoration. Anything else is default.
-     * @returns {{ close: () => void, element: HTMLElement,
+     * @returns {{ close: () => void, closeFrom: () => void,
+     *   element: HTMLElement, focusBack: () => void,
      *   setActions: (actions: Array<object>) => void,
+     *   setSteps: (steps: Array<{title: string, onBack: () => void}>) => void,
      *   setTitle: (title: string) => void }} `close` removes exactly
-     *   this layer, wherever it sits: layers above it stay, and each ‹ is
-     *   relabelled to whatever is now beneath it. `setActions` rebuilds
+     *   this layer, wherever it sits: layers above it stay. `closeFrom`
+     *   closes the layers above, top first, then this one — for leaving the
+     *   modal world from here, so nothing stacked on it is orphaned. `setActions` rebuilds
      *   the action row IN PLACE — same node, same panel, same trap — because a
      *   two-step dialog needs a footer per step, step one has no form for a
      *   `form:` primary to submit, and a second stacked dialog would be a
@@ -214,8 +179,14 @@ const BossModOverlays = (() => {
      *   Tab so it finds the new buttons; the button that held focus may be one
      *   just removed, so placing focus after a swap is the caller's.
      *   `setTitle` renames THIS layer in place (a rename saved in the dialog):
-     *   the head's title, the dialog's accessible name, its ✕ ("Close …"),
-     *   and the ‹ of the layer above it ("Back to …"), which reads the title.
+     *   its base crumb, the dialog's accessible name while it has no steps,
+     *   its ✕ ("Close …"), and every crumb and ‹ above it that reads the title.
+     *   `setSteps` says where the dialog is INSIDE this layer (the Agents
+     *   dialog's pack detail) as crumbs after the title. Back one pops the last
+     *   step FIRST, then calls its `onBack`, which re-sends setSteps from the
+     *   dialog's own state — idempotent, so the two cannot drift. It throws on
+     *   malformed steps (core/modal-trail.js `copySteps`). `focusBack` puts
+     *   the keyboard on this layer's ‹, and throws while it is hidden.
      *
      *   Focus on open: the first control in the BODY that actually takes focus
      *   (a hidden one does not) unless `focusBody` is false; else the last
@@ -248,8 +219,8 @@ const BossModOverlays = (() => {
         // the base screen. `.header-icon-btn` is the app's one icon button
         // (shell.css) — the bell's and the gear's shape, not a fifth geometry.
         // The ✕ stays a typed glyph; the ‹ below is a lucide chevron because
-        // it is the ONE back control every dialog shares (backButton()), and
-        // this module paints the head it builds once the panel is mounted.
+        // it is the frame's one back control (core/modal-trail.js), and this
+        // module paints the head it builds once the panel is mounted.
         const closeButton = h('button', {
             class: 'header-icon-btn modal-close',
             type: 'button',
@@ -257,25 +228,24 @@ const BossModOverlays = (() => {
             onclick: () => closeAll(),
         }, '\u2715');
 
-        // ‹ — back one layer, which is what Esc does too. Built on every panel
-        // and hidden on the base, so the head row never changes shape. The
-        // shared back control, marked `modal-back` so the frame's own ‹ can be
-        // told from a caller's lead (the `.modal-head [hidden]` guard covers
-        // both). setAttribute, not classList: a harness fake need not carry
-        // a classList for a string the markup already holds.
-        const back = backButton({ label: 'Back', onBack: () => close() });
-        back.setAttribute('class', `${back.getAttribute('class')} modal-back`);
+        // ‹ — back one, which is what Esc does too. Built on every panel and
+        // hidden while the trail is a single crumb, so the head row never
+        // changes shape. `layer` is declared below; the click comes later.
+        const back = TRAIL.backButton(() => layer.backOne());
 
-        // Kept by name: setTitle renames it in place.
+        // Kept by name and never recreated: each trail render moves it into the
+        // rebuilt trail as the current crumb, so setTitle works in place.
         const titleNode = h('h2', { class: 'modal-title' }, title);
+        const trailNode = h('nav', { class: 'modal-trail', 'aria-label': 'Breadcrumb' });
 
         // One row, the conversation header's: the way back, whatever leads,
-        // the name, a fact about it, the caller's tools, and the exit. Empty
-        // slots render nothing, so a confirm's head is its title and its ✕.
+        // the trail ending in the name, a fact about it, the caller's tools,
+        // and the exit. Empty slots render nothing, so a confirm's head is its
+        // title and its ✕.
         const head = h('div', { class: 'modal-head' },
             back,
             lead || null,
-            titleNode,
+            trailNode,
             subtitle ? h('span', { class: 'modal-subtitle' }, subtitle) : null,
             tools && tools.length ? h('div', { class: 'modal-tools' }, tools) : null,
             closeButton);
@@ -297,6 +267,20 @@ const BossModOverlays = (() => {
             element,
             title,
             back,
+            titleNode,
+            trailNode,
+            /** Where the dialog is inside this layer; see setSteps. */
+            steps: [],
+            /** Back one: this layer's last step, else this layer. */
+            backOne() {
+                if (!layer.steps.length) {
+                    close();
+                    return;
+                }
+                const step = layer.steps.pop();
+                renderTrails();
+                step.onBack();
+            },
             allowsBackdrop: () => (typeof closeOnBackdrop === 'function'
                 ? closeOnBackdrop() === true
                 : closeOnBackdrop === true),
@@ -305,8 +289,8 @@ const BossModOverlays = (() => {
             adoptOpener: (node) => { previouslyFocused = node; },
         };
 
-        // Esc runs THIS layer's close: back one, and at the base, closed.
-        const onKeydown = (event) => trapKeydown(event, element, close);
+        // Esc is ‹: back one step, else this layer, and at the base, closed.
+        const onKeydown = (event) => trapKeydown(event, element, () => layer.backOne());
 
         let closed = false;
         /** Remove exactly THIS layer, wherever it sits in the stack. */
@@ -329,7 +313,7 @@ const BossModOverlays = (() => {
             } else if (wasTop) {
                 top.element.hidden = false;
             }
-            relabel();
+            renderTrails();
             if (wasTop) {
                 // Back to what opened this layer — unless that lived in a layer
                 // closed meanwhile, in which case the new top's ✕ takes it
@@ -349,7 +333,7 @@ const BossModOverlays = (() => {
             layers[layers.length - 1].element.hidden = true;
         }
         layers.push(layer);
-        relabel();
+        renderTrails();
         BossModOverlayFocus.mountOverlay(element, onKeydown);
         document.body.append(element);
         // The ‹ chevron is a placeholder until painted. Scoped to the head this
@@ -381,14 +365,32 @@ const BossModOverlays = (() => {
         /** Rename this layer; see @returns. */
         function setTitle(next) {
             layer.title = next;
-            titleNode.textContent = next;
-            element.setAttribute('aria-label', next);
             closeButton.setAttribute('aria-label', `Close ${next}`);
-            relabel();
+            renderTrails();
         }
 
-        return { close, element, setActions, setTitle };
+        /** Report where the dialog is inside this layer; see @returns. */
+        function setSteps(steps) {
+            layer.steps = TRAIL.copySteps(steps);
+            renderTrails();
+        }
+
+        /** Put the keyboard on this layer's ‹; see @returns. */
+        function focusBack() {
+            if (back.hidden) throw new Error('[overlays] focusBack with nowhere to go back to');
+            back.focus();
+        }
+
+        /** This layer and everything stacked on it, top first; see @returns. */
+        function closeFrom() {
+            // Already closed: nothing above it is its to close.
+            if (!layers.includes(layer)) return;
+            layers.slice(layers.indexOf(layer) + 1).reverse().forEach((above) => above.close());
+            close();
+        }
+
+        return { close, closeFrom, element, focusBack, setActions, setSteps, setTitle };
     }
 
-    return { backButton, createModal };
+    return { createModal };
 })();

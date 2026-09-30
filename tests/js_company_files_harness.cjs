@@ -6,6 +6,9 @@
  * The place opens on the active floor's folder, follows a floor switch, and
  * comes back to the folder (and scroll) it left; a deep link wins over both.
  * A read still in flight when the place is left never paints the next mount.
+ * The real file viewer's folder line lists folders only (house root, chevron
+ * separators, the server's root label kept as a visually-hidden name) and is
+ * absent for a file directly under the root.
  *
  * Re-pointed in Phase 3B from company-files.js to places/files/. The payload
  * keys are byte-identical to the dock-era harness: the properties are the same,
@@ -34,7 +37,7 @@ global.window.BossModApi = {
 
 const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
-    "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModPlaces",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModPlaces",
     "BossModFloorScope", "BossModFileContent", "BossModFileForm",
     "BossModFileOps", "BossModFileViewer", "BossModFilesData", "BossModHostRoots",
     "BossModDeskOpener", "BossModFolderOpener", "BossModFileGrid",
@@ -49,6 +52,10 @@ NAMES.forEach((name, index) => {
 });
 
 const { BossModStore, BossModBus, BossModFilesPlace } = global;
+
+// Kept before the spy replaces it: the folder-line cases below open the real
+// viewer with a payload.
+const RealFileViewer = global.BossModFileViewer;
 
 // The place opens the shared viewer by name at call time, so a spy here
 // records exactly what the real one would have been asked to open.
@@ -118,7 +125,58 @@ function newToggle(root) {
     return root.querySelectorAll(".file-toolbar-btn").find((button) => button.textContent === "New");
 }
 
+/**
+ * Open the REAL viewer on a file payload and read back its folder line.
+ *
+ * Each child of `.file-view-crumbs` becomes one token, so the assertion
+ * sees order, glyphs and separators at once: `icon:<lucide name>`,
+ * `hidden:<text>` for the root's visually-hidden label, `crumb:<text>`, and
+ * `text:<text>` for any bare text node (a typed separator would show here).
+ *
+ * @param {object[]} crumbs  The payload's breadcrumbs, root first, file last.
+ * @returns {Promise<{rows: number, tokens: string[], painted: boolean}>}
+ */
+async function viewerFolderLine(crumbs) {
+    const paintsBefore = iconsStub.calls.length;
+    await RealFileViewer.open("/ignored", {
+        api: () => Promise.resolve(ok({
+            name: "a.md", path: "/me/reports/a.md", content: "hello", size_bytes: 5,
+            breadcrumbs: crumbs,
+        })),
+    });
+    const rows = documentStub.body.querySelectorAll(".file-view-crumbs");
+    const tokens = rows.length ? rows[0].childNodes.map((node) => {
+        if (node.nodeType !== 1) return `text:${node.textContent}`;
+        const icon = node.getAttribute("data-lucide");
+        if (icon) return `icon:${icon}`;
+        if (node.classList.contains("visually-hidden")) return `hidden:${node.textContent}`;
+        return `crumb:${node.textContent}`;
+    }) : [];
+    // The body itself is what gets painted: createModal paints only its head.
+    const painted = iconsStub.calls.slice(paintsBefore)
+        .some((call) => call.context === "file-viewer" && call.root.classList.contains("file-view"));
+    RealFileViewer.close();
+    return { rows: rows.length, tokens, painted };
+}
+
 async function main() {
+    // ─── The viewer's folder line: folders only, house root, chevrons ───
+    const deskLine = await viewerFolderLine([
+        { path: "/", label: "/" },
+        { path: "/me", label: "me" },
+        { path: "/me/reports", label: "reports" },
+        { path: "/me/reports/a.md", label: "a.md" },
+    ]);
+    const companyLine = await viewerFolderLine([
+        { path: "/", label: "Company" },
+        { path: "/f1", label: "Finance" },
+        { path: "/f1/a.md", label: "a.md" },
+    ]);
+    const rootFileLine = await viewerFolderLine([
+        { path: "/", label: "/" },
+        { path: "/a.md", label: "a.md" },
+    ]);
+
     // A deep link to the company top level: the floors themselves.
     const store = BossModStore.createStore({ placeParams: { path: "/" } });
     const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
@@ -314,6 +372,9 @@ async function main() {
 
     process.stdout.write(JSON.stringify({
         ok: true,
+        viewerDeskLine: deskLine,
+        viewerCompanyLine: companyLine,
+        viewerRootFileLine: rootFileLine,
         floorRowsShowNames,
         floorGlyphs,
         gridPainted,

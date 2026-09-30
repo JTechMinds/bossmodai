@@ -19,6 +19,12 @@
  * starts the form from that template, and a library write on either side — an
  * install, an uninstall, or a form saved as a template — re-reads the other.
  *
+ * WHERE THE OPERATOR IS, the dialog does not draw: each pane reports its step
+ * — the pack being read, the form being filled — and this hands the visible
+ * pane's to the frame (`setSteps`), whose trail and ‹ read `Agents › Code
+ * Auditor`. The panes' own title-row chevrons are gone; ‹, Esc and the
+ * `Agents` crumb go back to the grid or the picker.
+ *
  * A pane that is away is HIDDEN, never destroyed: the picker's filter, the
  * marketplace's scroll and open pack, and a half-typed form all survive a tab
  * switch. The Add agent pane can finish work while it is away — a build, a
@@ -98,8 +104,20 @@ const BossModAgentsDialog = (() => {
             return held;
         }
 
+        /** The frame, once createModal has built it. Declared first: both panes
+         *  report steps while they are built, before there is a frame. */
+        let modal = null;
+        /** Which pane is up; its steps are the ones the trail shows. */
+        let currentTab = tab;
+        /** Hand the visible pane's step to the frame. A no-op until it exists. */
+        function syncSteps() {
+            if (!modal) return;
+            modal.setSteps(currentTab === 'add' ? addPane.steps() : market.steps());
+        }
+
         const addPane = BossModAgentAddPane.create({
             store,
+            onStepsChange: syncSteps,
             onBrowse: () => selectTab('marketplace'),
             onDone: () => modal.close(),
             // A form saved as a template is a row BOTH panes list: the picker
@@ -120,6 +138,7 @@ const BossModAgentsDialog = (() => {
                 void addPane.pick({ kind: 'template', row: template });
             },
             onLibraryChanged: () => { void addPane.refresh(); },
+            onStepsChange: syncSteps,
         });
 
         /**
@@ -148,19 +167,21 @@ const BossModAgentsDialog = (() => {
          * @returns {void}
          */
         function showTab(id) {
+            currentTab = id;
             panels.add.hidden = id !== 'add';
             panels.marketplace.hidden = id !== 'marketplace';
             if (id === 'add') {
-                // The marketplace's back chevron shares the title row; it is
-                // put away before the Add agent pane may show its own.
                 market.deactivate();
                 addPane.activate();
-                return;
+            } else {
+                addPane.deactivate();
+                // Lazy: the catalog is a remote read, made the first time this
+                // tab is actually looked at and never again after.
+                market.activate();
             }
-            addPane.deactivate();
-            // Lazy: the catalog is a remote read, made the first time this
-            // tab is actually looked at and never again after.
-            market.activate();
+            // The trail follows the tab: the form's step comes back with it,
+            // and the open pack's goes while the picker is up.
+            syncSteps();
         }
 
         const tabs = BossModTabs.create({
@@ -190,16 +211,9 @@ const BossModAgentsDialog = (() => {
         const handle = { close: () => modal.close(), select: selectTab };
         OWN.add(handle);
 
-        const modal = BossModOverlays.createModal({
+        modal = BossModOverlays.createModal({
             title: TITLE,
             body: h('div', { class: 'agents-body' }, panels.add, panels.marketplace),
-            // Each pane's `‹`, on the title row: Add agent's back to its
-            // picker, the Marketplace's back from a pack to its grid. Both are
-            // the frame's one back control, each hidden unless its pane is up
-            // and has somewhere to go back to, so at most one ever shows. The
-            // wrapper is `display: contents` (overlays.css), so the head's
-            // spacing is the same as for a single lead.
-            lead: h('span', { class: 'modal-lead' }, addPane.lead, market.lead),
             // Where the Office keeps Map | Org: the right end of the head.
             tools: [tabs.element],
             // One size for both tabs, so a tab switch never resizes the box
@@ -226,9 +240,9 @@ const BossModAgentsDialog = (() => {
         // measure are this dialog's, not every takeover's.
         modal.element.setAttribute('data-dialog', 'agents');
         addPane.attach(modal);
-        // Both chevrons, the two tabs' marks and both panes' magnifiers are
-        // lucide placeholders until the panel is mounted, and createModal has
-        // just mounted it. Scoped to this panel, never the document.
+        // The two tabs' marks and both panes' magnifiers are lucide
+        // placeholders until the panel is mounted, and createModal has just
+        // mounted it. Scoped to this panel, never the document.
         BossModIcons.paint(modal.element, 'agents-dialog');
         showTab(tab);
         // The picker owns its own loading, empty, failed and ready states, so

@@ -26,6 +26,11 @@
  * reference material read once, not a standing alert. Editing the role opens
  * a layer over the desk (context/agent-edit.js), so the operator comes back to
  * the desk they opened.
+ *
+ * A TASK ROW opens the task as a layer over the desk too
+ * (context/desk-task-opener.js), so ‹ comes back here; it used to switch to
+ * the Tasks place, closing the desk with no way back. See all, Diagnostics
+ * and Chat still leave: they are places, not details.
  */
 const BossModDeskPanel = (() => {
     const { h, clear } = BossModDom;
@@ -82,22 +87,27 @@ const BossModDeskPanel = (() => {
      *   and the agent's lane presence.
      * @param {Function} deps.api    Authenticated fetch helper.
      * @param {(placeId: string, params?: object) => void} deps.navigate  Leaves
-     *   for another place. The dialog hands in one that closes the desk first.
+     *   for another place. The dialog hands in one that closes the desk — and
+     *   everything stacked on it — first.
      * @param {string}   deps.agentId
      * @param {string}   deps.initialPath  Where the file browser opens.
      * @param {() => void} deps.onRemoved  The agent was deleted — from Remove,
      *   from the role form's Delete, or elsewhere while this was open.
      * @param {(name: string) => void} deps.setTitle  The agent was renamed.
-     * @param {() => void} deps.onOpenChat  The head's Chat tool.
+     * @param {(id: string, kind: string) => void} deps.openConversation
+     *   Leaves for a conversation: the head's Chat tool (this agent's, kind
+     *   `agent`) and a task layer's chat (the task's own target). The dialog
+     *   hands in one that closes the desk and its layers first.
      * @returns {{ element: HTMLElement, lead: HTMLElement, tools: HTMLElement[],
      *   measure: () => void, destroy: () => void }} `lead` is the avatar for
      *   the title row (decorative: the name is the title). `measure` decides
      *   the description's clamp and must be called once the body is mounted.
+     *   `destroy` also closes any task layer the desk opened.
      * @throws {Error} When any dependency is missing.
      */
     function createDeskPanel(deps) {
         const {
-            store, bus, api, navigate, agentId, initialPath, onRemoved, setTitle, onOpenChat,
+            store, bus, api, navigate, agentId, initialPath, onRemoved, setTitle, openConversation,
         } = deps || {};
         if (!store) throw new Error('[desk-panel] deps.store is required');
         if (!bus) throw new Error('[desk-panel] deps.bus is required');
@@ -107,7 +117,9 @@ const BossModDeskPanel = (() => {
         if (!initialPath) throw new Error('[desk-panel] deps.initialPath is required');
         if (typeof onRemoved !== 'function') throw new Error('[desk-panel] deps.onRemoved is required');
         if (typeof setTitle !== 'function') throw new Error('[desk-panel] deps.setTitle is required');
-        if (typeof onOpenChat !== 'function') throw new Error('[desk-panel] deps.onOpenChat is required');
+        if (typeof openConversation !== 'function') {
+            throw new Error('[desk-panel] deps.openConversation is required');
+        }
 
         const disposers = [];
         /** The roster row for this agent, or null while the roster is loading. */
@@ -123,8 +135,10 @@ const BossModDeskPanel = (() => {
         const contractEl = h('div', { class: 'callout-body desk-bar' });
 
         const tasks = BossModDeskTasks.createDeskTasks({
-            api, agentId, onOpenTask: (taskId) => navigate('tasks', { taskId }),
+            api, agentId, onOpenTask: (taskId) => { void taskOpener.open(taskId); },
         });
+        // A row opens its task as a layer over this desk (context/desk-task-opener.js).
+        const taskOpener = BossModDeskTaskOpener.create({ store, api, tasks, openConversation });
         const actions = BossModDeskActions.createDeskActions({ api, agentId, onRemoved });
         const files = BossModDeskFiles.createDeskFiles({ api, bus, agentId });
         // A folder inside /me/notes is the browser's job, not a second one.
@@ -157,7 +171,7 @@ const BossModDeskPanel = (() => {
             { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' });
         const editBtn = tool('desk-edit', 'pencil', LABELS.edit, () => openEdit());
         const tools = [
-            tool('desk-chat', 'message-circle', LABELS.chat, () => onOpenChat()),
+            tool('desk-chat', 'message-circle', LABELS.chat, () => openConversation(agentId, 'agent')),
             editBtn,
             optionsBtn,
         ];
@@ -330,6 +344,8 @@ const BossModDeskPanel = (() => {
                 // agent nobody is looking at any more.
                 if (edit) edit.close();
                 edit = null;
+                // Nor may a task layer outlive the desk it was opened over.
+                taskOpener.destroy();
                 tasks.destroy();
                 files.destroy();
                 notes.destroy();

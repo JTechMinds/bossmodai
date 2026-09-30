@@ -18,7 +18,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
+    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu",
     "BossModSearchField", "BossModMenuSelect",
 ];
 if (paths.length !== NAMES.length) {

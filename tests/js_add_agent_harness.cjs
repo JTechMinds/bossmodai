@@ -39,7 +39,7 @@ installIconsStub();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus",
-    "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModMenuSelect", "BossModGates",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModMenuSelect", "BossModGates",
     "BossModAgentApi", "BossModAgentTemplatesApi", "BossModAgentFields",
     "BossModCommunication",
     // The two the fake form leans on rather than reimplementing: the shape
@@ -423,13 +423,11 @@ global.BossModMarketplace = {
         // can tell which pane holds the keyboard.
         const element = h("div", { class: "market-host" },
             h("input", { id: "market-find", type: "search" }));
-        // The pane's title-row chevron: hidden, as the real one is while no
-        // pack is open, so it never competes with Add agent's own.
-        const lead = h("span", { class: "market-lead-stub" });
-        lead.hidden = true;
+        // No pack is ever open in the stub, so it reports no trail step and
+        // the frame's trail is Add agent's alone.
         return {
             element,
-            lead,
+            steps: () => [],
             activate() { marketActivations += 1; },
             deactivate() {},
             refreshLibrary() { marketRefreshes += 1; return Promise.resolve(); },
@@ -447,6 +445,10 @@ const dialog = () => dialogs()[0] || null;
 const footer = () => dialog().querySelectorAll(".modal-actions")[0];
 const footerNames = () => footer().querySelectorAll("button").map((b) => b.textContent);
 const find = (selector) => dialog().querySelector(selector);
+// The frame's one ‹, in the dialog's head, and its breadcrumb trail as text.
+const back = () => dialog().querySelector(".modal-head").querySelector(".modal-back");
+const trail = () => dialog().querySelector(".modal-trail").querySelectorAll("li")
+    .map((item) => item.textContent).join(" › ");
 const cards = () => dialog().querySelectorAll(".picker-card");
 // The Agents dialog's two tabs, and the panel each one controls.
 const tabOf = (id) => find(`#agents-tab-${id}`);
@@ -581,24 +583,24 @@ async function main() {
     verdict.emptyState = dialog().textContent.includes("No templates installed yet.")
         && Boolean(find("#agent-pick-blank"))
         && Boolean(find("#agent-template-browse"));
-    // BACK IS ON THE TITLE ROW — the dialog's `lead` — and it is not drawn on
-    // step one, which has nowhere to go back to. It spent a round as a
-    // bordered square floating in the band under the title, aligned to
-    // nothing, and a round before that as a footer action beside Cancel.
+    // BACK IS THE FRAME'S ‹, on the title row, and it is not drawn on step
+    // one, which has nowhere to go back to: the trail is the title alone. It
+    // spent a round as the pane's own chevron, a round before that as a
+    // bordered square in the band under the title, and one as a footer action.
     verdict.backLeadsTheTitleRowAndNotStepOne =
         Boolean(dialog().querySelector(".modal-head"))
-        && Boolean(find("#agent-add-back"))
-        && find("#agent-add-back").hidden === true
+        && Boolean(back())
+        && back().hidden === true
+        && trail() === "Agents"
         // In the head, never in the body or the row: the body is emptied by a
         // failed build and the row is rebuilt on every step swap.
-        && Boolean(dialog().querySelector(".modal-head").querySelector("#agent-add-back"))
-        && footer().querySelector("#agent-add-back") === null
+        && footer().querySelector(".modal-back") === null
+        && dialog().querySelectorAll(".modal-back").length === 1
         // The frame's one back control, the same shape as every layer's ‹:
         // bordered, icon-only, named twice by one string.
-        && ["btn", "btn-sm", "step-back"].every((name) => find("#agent-add-back").classList.contains(name))
-        && find("#agent-add-back").getAttribute("data-tooltip")
-            === find("#agent-add-back").getAttribute("aria-label")
-        && Boolean(find("#agent-add-back").querySelector('[data-lucide="chevron-left"]'));
+        && ["btn", "btn-sm", "step-back"].every((name) => back().classList.contains(name))
+        && back().getAttribute("data-tooltip") === back().getAttribute("aria-label")
+        && Boolean(back().querySelector('[data-lucide="chevron-left"]'));
     // Step one's row is EMPTY now: no primary (there is no form for it to
     // submit), no `Browse marketplace` (the Marketplace is the tab beside this
     // one), and no Cancel (the frame's ✕ is the exit on every tab).
@@ -759,12 +761,15 @@ async function main() {
     // ─── 5. Picking a template: the SAME form, prefilled and marked ───
     await cards()[0].dispatchClick();
     await drain();
-    verdict.backShowsOnStepTwo = find("#agent-add-back").hidden === false;
+    // The form step is a crumb named for the pick, and ‹ goes back to Agents.
+    verdict.backShowsOnStepTwo = back().hidden === false
+        && trail() === "Agents › Code Auditor"
+        && back().getAttribute("aria-label") === "Back to Agents";
     verdict.stepTwoFooter = footerNames().join("|")
         === "Save as template|Cancel|Create Agent"
-        // Back left the row for the top-left of the step body, which is
-        // where every other back control in this app lives.
-        && Boolean(find("#agent-add-back"));
+        // Back is the frame's ‹ on the title row, where every other back
+        // control in this app lives.
+        && Boolean(back()) && back().hidden === false;
     verdict.provenanceChip = find(".template-chip-text").textContent
         === "Code Auditor · JTech Minds · pinned aa11bb2";
 
@@ -844,7 +849,7 @@ async function main() {
 
     // ─── 7. Back keeps the draft, and returns focus to the Find box ───
     await type(field('input[name="name"]'), "Mine");
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     const backedOut = dialogs().length === 1
         && footerNames().join("|") === ""
@@ -885,7 +890,7 @@ async function main() {
     // else. It used to be the opposite — Blank got the plain form, a template
     // got a rearranged one — so the operator met two different dialogs
     // depending on which cell they clicked.
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     await find("#agent-pick-blank").dispatchClick();
     await drain();
@@ -896,7 +901,9 @@ async function main() {
         && blank.querySelector(".template-tools") === null
         && blank.querySelector("#role-contract-card") !== null
         && footerNames().join("|") === "Save as template|Cancel|Create Agent"
-        && Boolean(find("#agent-add-back"));
+        && Boolean(back()) && back().hidden === false
+        // Blank has no card title: its crumb says what the form makes.
+        && trail() === "Agents › New agent";
     // Same sections, same order, whichever cell was picked — and the guard is
     // armed on BOTH, because an agent with no connection fails on its first
     // turn however it was created. Blank used to carry no guard at all.
@@ -954,15 +961,15 @@ async function main() {
         // The primary submits #agent-form by id, and there is no longer one.
         && documentStub.querySelector("#agent-form-submit") === null
         && find("#agent-form") === null
-        && documentStub.activeElement === find("#agent-add-back");
+        && documentStub.activeElement === back();
     formMode = "ready";
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     await cards()[0].dispatchClick();
     await drain();
     verdict.pickingAgainAfterAFailedRenderRetries = Boolean(find("#agent-form"))
         && footerNames().join("|") === "Save as template|Cancel|Create Agent"
-        && Boolean(find("#agent-add-back"));
+        && Boolean(back()) && back().hidden === false;
     await close();
 
     // ─── 12. The primary is disabled for as long as the save is running ───
@@ -1005,7 +1012,7 @@ async function main() {
     // section exists to test — and a `building()` that stopped disabling
     // would then still read as passing.
     await answerAi();
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     let releaseBuild;
     nextBuildHold = new Promise((resolve) => { releaseBuild = resolve; });
@@ -1041,7 +1048,7 @@ async function main() {
     nextBuildHold = new Promise((resolve) => { releaseFirst = resolve; });
     await cards()[0].dispatchClick();
     await drain();
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     await cards()[1].dispatchClick();
     await drain();
@@ -1054,14 +1061,14 @@ async function main() {
         && find('input[name="role"]').value === "Plans features";
     // What is recorded as built is what is on screen, so re-picking that cell
     // is the no-op it claims to be...
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     await cards()[1].dispatchClick();
     await drain();
     verdict.theRecordedBuildIsTheOneOnScreen = chipText().startsWith("Feature Planner")
         && find('input[name="role"]').value === "Plans features";
     // ...and the pick whose build lost rebuilds rather than reading as built.
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     await cards()[0].dispatchClick();
     await drain();
@@ -1096,7 +1103,7 @@ async function main() {
     holdCreate = new Promise((resolve) => { releaseRefusal = resolve; });
     const refusedSave = documentStub.querySelector("#agent-form-submit").dispatchClick();
     await drain();
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     let releaseSecond;
     nextBuildHold = new Promise((resolve) => { releaseSecond = resolve; });
@@ -1160,7 +1167,7 @@ async function main() {
     nextBuildHold = new Promise((resolve) => { releaseDoomed = resolve; });
     await cards()[0].dispatchClick();
     await drain();
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     formMode = "fail";
     releaseDoomed();
@@ -1181,7 +1188,7 @@ async function main() {
     await drain();
     verdict.pickingAgainAfterABuriedFailureRetries = Boolean(find("#agent-form"))
         && footerNames().join("|") === "Save as template|Cancel|Create Agent"
-        && Boolean(find("#agent-add-back"));
+        && Boolean(back()) && back().hidden === false;
     await close();
 
     // ─── 19. The keyboard, while the primary is taken away and given back ───
@@ -1232,7 +1239,7 @@ async function main() {
     await open();
     await cards()[0].dispatchClick();
     await drain();
-    await find("#agent-add-back").dispatchClick();
+    await back().dispatchClick();
     await drain();
     await cards()[0].dispatchClick();
     await drain();
@@ -1353,7 +1360,8 @@ async function main() {
         && Boolean(find("#agent-form"))
         && chipText() === "Code Auditor · JTech Minds · pinned aa11bb2"
         && footerNames().join("|") === "Save as template|Cancel|Create Agent"
-        && find("#agent-add-back").hidden === false
+        && back().hidden === false
+        && trail() === "Agents › Code Auditor"
         && documentStub.activeElement === find('input[name="name"]');
     // A form has landed, so there is a draft an outside click could lose.
     await documentStub.body.querySelector(".modal-backdrop").dispatchClick();
@@ -1380,8 +1388,10 @@ async function main() {
     const buildingBeforeLeaving = documentStub.querySelector("#agent-form-submit").textContent
         === "Loading…";
     await clickTab("marketplace");
+    // The trail follows the tab: the form's step leaves with it...
     const emptiedWhileAway = footerNames().join("|") === ""
-        && find("#agent-add-back").hidden === true;
+        && back().hidden === true
+        && trail() === "Agents";
     tabOf("marketplace").focus();
     releaseAway();
     await drain();
@@ -1396,7 +1406,9 @@ async function main() {
         && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && live.disabled === false
         && live.textContent === "Create Agent"
-        && find("#agent-add-back").hidden === false
+        // ...and comes back with it.
+        && back().hidden === false
+        && trail() === "Agents › Code Auditor"
         && chipText().startsWith("Code Auditor");
     await close();
 
@@ -1498,7 +1510,8 @@ async function main() {
         && dialog().getAttribute("aria-label") === "Edit role"
         && footerNames().join("|") === "Save as template|Cancel|Save Changes"
         && find("#agent-pick-blank") === null
-        && find("#agent-add-back") === null
+        && back().hidden === true
+        && trail() === "Edit role"
         && Boolean(find("#agent-form"));
     await close();
 

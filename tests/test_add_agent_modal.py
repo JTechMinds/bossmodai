@@ -30,6 +30,7 @@ HARNESS_MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
@@ -149,9 +150,11 @@ def test_add_agent_and_the_marketplace_are_two_tabs_of_one_dialog() -> None:
     assert dialog.count("BossModOverlays.createModal({") == 1
     assert "size: 'takeover'," in dialog
     assert "tools: [tabs.element]," in dialog
-    # Both panes' back chevrons share the title row, in one wrapper the head
-    # lays out as if it were not there (overlays.css `.modal-lead`).
-    assert "lead: h('span', { class: 'modal-lead' }, addPane.lead, market.lead)," in dialog
+    # No pane builds a back control: each reports its step and the dialog
+    # hands the visible pane's to the frame, whose trail and ‹ go back.
+    assert "lead:" not in dialog and "modal-lead" not in dialog
+    assert "modal.setSteps(currentTab === 'add' ? addPane.steps() : market.steps());" in dialog
+    assert dialog.count("onStepsChange: syncSteps,") == 2
     assert "actions: []," in dialog
     # The bridge switches tabs FIRST, so the pane is live before the pick
     # lands in it, and a library change refreshes the picker.
@@ -209,7 +212,7 @@ def test_a_hidden_pane_s_async_work_lands_where_it_belongs() -> None:
     picked = pane.split("async function pickChoice(choice) {", 1)[1]
     assert picked.index("footer.show('form');") < picked.index("renderInline(")
     assert picked.index("if (!active) return;") < picked.index("name.focus()")
-    assert "if (active) lead.focus();" in pane
+    assert "if (active) modal.focusBack();" in pane
 
 
 def test_a_landed_draft_refuses_an_outside_click() -> None:

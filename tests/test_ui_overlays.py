@@ -59,9 +59,14 @@ def test_both_overlays_share_one_focus_trap() -> None:
     # every secondary screen moved into the modal. The count is exact on
     # purpose: a third overlay that quietly skipped the trap would pass.
     assert sum(
-        text.count("const onKeydown = (event) => trapKeydown(event, element, close);")
+        text.count("const onKeydown = (event) => trapKeydown(event, element, ")
         for text in sources
     ) == 2
+    # What each hands the trap as its dismissal: the menu closes; the modal
+    # goes back ONE — its last trail step, else the layer — because Esc is ‹.
+    assert ("const onKeydown = (event) => trapKeydown(event, element, () => layer.backOne());"
+            in modules["overlays.js"])
+    assert "const onKeydown = (event) => trapKeydown(event, element, close);" in modules["menu.js"]
     assert "function slideOver(" not in joined
     # The trap must consider everything focusable in the overlay, not one row.
     assert "element.querySelectorAll(FOCUSABLE)" in joined
@@ -74,6 +79,7 @@ def test_both_overlays_share_one_focus_trap() -> None:
 def test_modal_accessibility_contract() -> None:
     result = subprocess.run(
         ["node", str(HARNESS), str(JS / "core" / "dom.js"), str(JS / "core" / "overlay-focus.js"),
+         str(JS / "core" / "modal-trail.js"),
          str(JS / "core" / "overlays.js"), str(JS / "core" / "menu.js")],
         check=False, capture_output=True, text=True,
     )
@@ -183,6 +189,25 @@ def test_modal_accessibility_contract() -> None:
         "menuEscCloses": True,
         "menuRestoresFocusToTheAnchor": True,
         "menuNeedsAnAnchor": True,
+        # 2026-09-29: the TRAIL. A layer's head shows every layer beneath it
+        # and every step its dialog reported, base first, as a breadcrumb; ‹,
+        # Esc and a crumb all walk back through that one list.
+        "singleLayerHasOneCrumbAndNoBack": True,
+        "twoLayersReadAsATrail": True,
+        "crumbClosesTheLayerAboveAndRestoresFocus": True,
+        "stepsExtendTheTrail": True,
+        "backPopsTheStepOnce": True,
+        "escPopsTheStepOnce": True,
+        "escOnASteplessLayerClosesIt": True,
+        "crumbJumpsAcrossLayersAndSteps": True,
+        "longTrailCollapses": True,
+        "closeFromClosesTheLayersAbove": True,
+        "focusBackThrowsWithNoStep": True,
+        "focusBackLandsOnTheBack": True,
+        "setTitleRerendersUpperCrumbs": True,
+        "setStepsRejectsMalformedSteps": True,
+        # The frame's ‹ is the only back control: nothing outside builds one.
+        "backButtonIsNotExported": True,
     }
 
 

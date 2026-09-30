@@ -32,7 +32,7 @@ global.BossModMarkdown = {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates",
-    "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModFactList",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModFactList",
     // The instructions' clamp is the shared component the desk's description
     // uses too; it renders through the stubbed BossModMarkdown above.
     "BossModClampedMarkdown",

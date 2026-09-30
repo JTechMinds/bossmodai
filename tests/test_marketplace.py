@@ -32,6 +32,7 @@ HARNESS_MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "avatar.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "core" / "search-field.js",
@@ -874,19 +875,20 @@ def test_the_back_control_is_a_glyph_that_still_says_where_it_goes() -> None:
 
     The bar is gone too. Its blue `‹` inside the scrolling detail was one of
     THREE back controls the app's modals wore; the chevron is the frame's one
-    back control now (core/overlays.js `backButton()`), on the dialog's title
-    row as the pane's `lead` — shown only while this tab is up and a pack is
-    open.
+    back control now (core/modal-trail.js `backButton()`), on the dialog's
+    title row. The pane builds no control at all: it reports the open pack as
+    a step on the frame's trail (`Agents › Code Auditor`) — only while this tab
+    is up and a pack is open — and the ‹ is named for the crumb it returns to.
     """
     payload = _harness()
     assert payload["backIsAGlyphThatStillSaysWhereItGoes"] is True
     assert payload["backFollowsTheTab"] is True
     assert payload["backHidesWithTheGrid"] is True
     pane = _read(JS / "marketplace" / "marketplace.js")
-    lead = pane.split("const lead = BossModOverlays.backButton({", 1)[1].split("});", 1)[0]
-    assert "label: 'Back to the marketplace'," in lead
-    assert "onBack: () => handlers.onBack()," in lead
-    assert "id: 'market-back'" in lead
+    steps = pane.split("const steps = () => (", 1)[1].split(";", 1)[0]
+    assert "active && state.detailOpen && state.selected && state.status !== 'failed'" in steps
+    assert "title: state.selected.title, onBack: () => handlers.onBack()" in steps
+    assert "backButton" not in pane and "market-back" not in pane
     # The detail draws no way back of its own any more.
     detail = _read(JS / "marketplace" / "marketplace-detail.js")
     assert "market-back" not in detail
@@ -901,9 +903,9 @@ def test_the_back_control_is_a_glyph_that_still_says_where_it_goes() -> None:
     # The shape is the shared one: `.btn.btn-sm.step-back`, a square icon-only
     # target from `.btn[data-tooltip]` (SC 2.5.8), one glyph size for every
     # back chevron — and none of the bar's own rules survive.
-    overlays = _read(JS / "core" / "overlays.js")
-    shared = overlays.split("function backButton(", 1)[1].split("\n    }\n", 1)[0]
-    assert "class: 'btn btn-sm step-back'," in shared
+    trail = _read(JS / "core" / "modal-trail.js")
+    shared = trail.split("function backButton(", 1)[1].split("\n    }\n", 1)[0]
+    assert "class: 'btn btn-sm step-back modal-back'," in shared
     assert "'data-lucide': 'chevron-left'" in shared
     controls = _read(ROOT / "ui" / "static" / "css" / "controls.css")
     assert ".step-back svg { width: 14px; height: 14px; }" in controls

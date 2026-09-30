@@ -15,7 +15,7 @@ const documentStub = installDom();
 const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
-const NAMES = ["BossModDom", "BossModOverlayFocus", "BossModOverlays", "BossModMenu", "BossModAvatar",
+const NAMES = ["BossModDom", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu", "BossModAvatar",
     "BossModAgentStatus", "BossModStore", "BossModAgentRoutes", "BossModOfficeAgentActions"];
 const paths = process.argv.slice(2);
 if (paths.length !== NAMES.length) {

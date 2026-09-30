@@ -172,6 +172,9 @@
     <!-- The one focus trap the overlays share, before the files that build
          them: overlays.js and menu.js read it at load time, not on first open. -->
     <script src="{{ static_url('js/core/overlay-focus.js') }}"></script>
+    <!-- A modal head's breadcrumb trail and its ‹, which overlays.js reads at
+         load time like the trap above. -->
+    <script src="{{ static_url('js/core/modal-trail.js') }}"></script>
     <script src="{{ static_url('js/core/overlays.js') }}"></script>
     <script src="{{ static_url('js/core/menu.js') }}"></script>
     <!-- A dropdown is the shared menu panel, so it loads after menu.js. -->
@@ -396,16 +399,6 @@
     <script src="{{ static_url('js/context/mini-office.js') }}"></script>
     <script src="{{ static_url('js/context/agent-edit.js') }}"></script>
     <script src="{{ static_url('js/context/agents-dialog.js') }}"></script>
-    <!-- The Tasks place's column map and status labels: pure data, loaded
-         ahead of the desk, whose task rows wear the same status pill. -->
-    <script src="{{ static_url('js/places/tasks/tasks-columns.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-files.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-notes.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-tasks.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-actions.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-extensions.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-panel.js') }}"></script>
-    <script src="{{ static_url('js/context/desk-dialog.js') }}"></script>
 
     <script src="{{ static_url('js/places/chat/chat-place.js') }}"></script>
 
@@ -419,8 +412,9 @@
     <script src="{{ static_url('js/places/office/agent-actions.js') }}"></script>
     <script src="{{ static_url('js/places/office/office-place.js') }}"></script>
 
-    <!-- Tasks: the data layer over the column map (which loads with the desk,
-         above), then the views, then the place that wires them together. -->
+    <!-- Tasks: the column map, the data layer over it, then the views, then
+         the place that wires them together. -->
+    <script src="{{ static_url('js/places/tasks/tasks-columns.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-data.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-grid.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/task-card.js') }}"></script>
@@ -429,10 +423,24 @@
     <script src="{{ static_url('js/places/tasks/task-detail-sections.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/task-detail.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-cancel.js') }}"></script>
+    <script src="{{ static_url('js/places/tasks/task-layers.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-menu.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-archive.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-toolbar.js') }}"></script>
     <script src="{{ static_url('js/places/tasks/tasks-place.js') }}"></script>
+
+    <!-- An agent's desk. After the Tasks place's modules: its task rows open
+         the task as a layer over the desk (task-layers.js, the detail, the
+         loader and the canceller), and their status pills are the column
+         map's. -->
+    <script src="{{ static_url('js/context/desk-files.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-notes.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-tasks.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-task-opener.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-actions.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-extensions.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-panel.js') }}"></script>
+    <script src="{{ static_url('js/context/desk-dialog.js') }}"></script>
 
     <!-- Metrics: the two renderers, then the place that fetches for them. -->
     <script src="{{ static_url('js/places/metrics/metric-cards.js') }}"></script>

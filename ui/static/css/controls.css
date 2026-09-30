@@ -216,9 +216,9 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
    shaped like a text one with the word missing. */
 .btn[data-tooltip] { padding-inline: 6px; }
 
-/* THE way back (core/overlays.js backButton()): a layer's ‹, the Add agent
-   form's and the marketplace detail's. One glyph size for all of them, so the
-   three can never drift back into three looks. */
+/* THE way back (core/modal-trail.js backButton()): the frame's ‹, the one back
+   control every modal shares — a layer's, the Add agent form's and the
+   marketplace detail's are all it now, walking the head's trail. */
 .step-back svg { width: 14px; height: 14px; }
 
 /* --panel measures 4.83:1 on --accent and 6.36:1 on --accent-deep, so the

@@ -84,8 +84,11 @@ const iconPaints = installIconsStub().calls;
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
-eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
-eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
+// A modal head's trail and its ‹ (core/modal-trail.js), which overlays.js
+// reads at load time.
+eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModModalTrail = BossModModalTrail;\n`);
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
 
 // A trigger button has focus before the modal opens.
 const trigger = makeEl("button");
@@ -424,9 +427,11 @@ if ((document.listeners.keydown || []).length !== 0) {
 
 // ── The frame: a chat-chrome head on every dialog ──
 //
-// The ‹ (hidden on a base layer), the title, an optional subtitle and tools,
-// and the frame's own ✕, in that order on one row ABOVE the body. The ✕ closes exactly as Esc does, and it is where
-// the keyboard lands when neither the body nor the action row has a stop.
+// The ‹ (hidden on a base layer), the trail ending in the title, an optional
+// subtitle and tools, and the frame's own ✕, in that order on one row ABOVE
+// the body. The ✕ closes exactly as Esc does, and it is where the keyboard
+// lands when neither the body nor the action row has a stop. A base layer's
+// trail is ONE crumb, and it is the title: nav > ol > li[aria-current] > h2.
 const trigger6 = makeEl("button");
 body.append(trigger6);
 trigger6.focus();
@@ -443,17 +448,23 @@ const framed = BossModOverlays.createModal({
 });
 const frameHead = framed.element.children[0];
 const headKids = frameHead.children.filter((c) => c.nodeType === 1);
+const baseTrailItems = headKids[1] && headKids[1].children[0] ? headKids[1].children[0].children : [];
 const headIsFirstAndOrdered = classesOf(frameHead).includes("modal-head")
     && headKids.length === 5
     && classesOf(headKids[0]).includes("modal-back") && headKids[0].hidden === true
-    && classesOf(headKids[1]).includes("modal-title")
-    && headKids[1].children[0].textContent === "a1-audit-ruling.md"
+    && classesOf(headKids[1]).includes("modal-trail") && headKids[1].tagName === "NAV"
+    && headKids[1].getAttribute("aria-label") === "Breadcrumb"
+    && headKids[1].children[0].tagName === "OL"
+    && baseTrailItems.length === 1
+    && baseTrailItems[0].getAttribute("aria-current") === "page"
+    && classesOf(baseTrailItems[0].children[0]).includes("modal-title")
+    && baseTrailItems[0].children[0].textContent === "a1-audit-ruling.md"
     && classesOf(headKids[2]).includes("modal-subtitle")
     && classesOf(headKids[3]).includes("modal-tools") && headKids[3].contains(tool)
     && classesOf(headKids[4]).includes("modal-close")
     && classesOf(headKids[4]).includes("header-icon-btn");
-if (!headIsFirstAndOrdered) throw new Error("the head must be back, title, subtitle, tools, close");
-// The ‹ is the ONE back control every modal shares (backButton()): the
+if (!headIsFirstAndOrdered) throw new Error("the head must be back, trail (ending in the title), subtitle, tools, close");
+// The ‹ is the ONE back control every modal shares (modal-trail.js): the
 // bordered `.btn.btn-sm.step-back` with a lucide chevron, not a typed glyph —
 // and the frame paints the head it built.
 const backGlyph = headKids[0].children.filter((c) => c.nodeType === 1)[0];
@@ -664,6 +675,146 @@ survivor.close();
 const baseCloseHandsItsOpenerUp = document.activeElement === trigger12
     && panels().length === 0 && scrims().length === 0;
 
+// ── The trail: every layer and step, as one breadcrumb ──
+//
+// A layer's head shows the title of every layer beneath it and every step its
+// dialog reported (setSteps), base first; the last crumb is the title, the
+// earlier ones are buttons. ‹, Esc and a crumb walk back through that list.
+const textOf = (node) => {
+    if (node.nodeType === 3) return node.textContent;
+    if (typeof node.textContent === "string") return node.textContent;
+    return node.children.map(textOf).join("");
+};
+const trailItemsOf = (handle) => findIn(headOf(handle), "modal-trail").children[0].children;
+const trailOf = (handle) => trailItemsOf(handle).map(textOf).join(" › ");
+const crumbButton = (handle, index) => findIn(trailItemsOf(handle)[index], "modal-crumb");
+const backOf = (handle) => findIn(headOf(handle), "modal-back");
+const trigger13 = makeEl("button");
+body.append(trigger13);
+trigger13.focus();
+
+const aBody = makeEl("div");
+const aOpener = makeEl("button");
+aBody.append(aOpener);
+const trailA = BossModOverlays.createModal({ title: "Brian", body: aBody, actions: [] });
+const singleLayerHasOneCrumbAndNoBack = trailOf(trailA) === "Brian"
+    && trailItemsOf(trailA)[0].getAttribute("aria-current") === "page"
+    && backOf(trailA).hidden === true;
+aOpener.focus();
+const trailB = BossModOverlays.createModal({ title: "Edit role", body: "x", actions: [] });
+const bItems = trailItemsOf(trailB);
+const bSeparator = bItems[1].children.filter((c) => c.nodeType === 1)[0];
+const twoLayersReadAsATrail = trailOf(trailB) === "Brian › Edit role"
+    && Boolean(crumbButton(trailB, 0)) && crumbButton(trailB, 0).tagName === "BUTTON"
+    && bItems[1].getAttribute("aria-current") === "page"
+    && bItems[0].getAttribute("aria-current") === null
+    && classesOf(bSeparator).includes("modal-crumb-sep")
+    && bSeparator.getAttribute("data-lucide") === "chevron-right"
+    && bSeparator.getAttribute("aria-hidden") === "true"
+    && iconPaints.some((call) => call.root === findIn(headOf(trailB), "modal-trail"));
+crumbButton(trailB, 0).listeners.click[0]({ preventDefault() {} });
+const crumbClosesTheLayerAboveAndRestoresFocus = body.children.indexOf(trailB.element) === -1
+    && trailA.element.hidden === false
+    && document.activeElement === aOpener
+    && trailOf(trailA) === "Brian";
+
+// A step the owner re-reports from its own state, as the Agents dialog does.
+const stepBacks = [];
+const s1 = { title: "Code Auditor", onBack: () => { stepBacks.push("S1"); trailA.setSteps([]); } };
+trailA.setSteps([s1]);
+const stepsExtendTheTrail = trailOf(trailA) === "Brian › Code Auditor"
+    && backOf(trailA).hidden === false
+    && backOf(trailA).getAttribute("aria-label") === "Back to Brian"
+    && backOf(trailA).getAttribute("data-tooltip") === "Back to Brian"
+    && trailA.element.getAttribute("aria-label") === "Code Auditor";
+backOf(trailA).listeners.click[0]({ preventDefault() {} });
+const backPopsTheStepOnce = stepBacks.join(",") === "S1"
+    && trailOf(trailA) === "Brian"
+    && body.children.indexOf(trailA.element) !== -1
+    && backOf(trailA).hidden === true;
+trailA.setSteps([s1]);
+pressEscape();
+const escPopsTheStepOnce = stepBacks.join(",") === "S1,S1"
+    && trailOf(trailA) === "Brian"
+    && body.children.indexOf(trailA.element) !== -1;
+const stepless = BossModOverlays.createModal({ title: "Viewer", body: "x", actions: [] });
+pressEscape();
+const escOnASteplessLayerClosesIt = body.children.indexOf(stepless.element) === -1
+    && trailA.element.hidden === false && stepBacks.join(",") === "S1,S1";
+
+// A crumb two layers down: the layers above close (their steps are not
+// walked), then the target's own steps pop.
+trailA.setSteps([s1]);
+const cBacks = [];
+const trailC = BossModOverlays.createModal({ title: "Write TDD specs", body: "x", actions: [] });
+trailC.setSteps([{ title: "Draft", onBack: () => cBacks.push("C1") }]);
+const crossTrail = trailOf(trailC) === "Brian › Code Auditor › Write TDD specs › Draft";
+crumbButton(trailC, 0).listeners.click[0]({ preventDefault() {} });
+const crumbJumpsAcrossLayersAndSteps = crossTrail
+    && body.children.indexOf(trailC.element) === -1
+    && cBacks.length === 0
+    && stepBacks.join(",") === "S1,S1,S1"
+    && trailOf(trailA) === "Brian";
+
+// Five crumbs: the first, a gap, and the last two ancestors, then the title.
+trailA.setSteps([s1]);
+const d1 = BossModOverlays.createModal({ title: "Write TDD specs", body: "x", actions: [] });
+const d2 = BossModOverlays.createModal({ title: "Subtask", body: "x", actions: [] });
+const d3 = BossModOverlays.createModal({ title: "report.md", body: "x", actions: [] });
+const gapItem = trailItemsOf(d3)[1];
+const longTrailCollapses = trailOf(d3) === "Brian › … › Write TDD specs › Subtask › report.md"
+    && gapItem.getAttribute("aria-hidden") === "true"
+    && Boolean(findIn(gapItem, "modal-crumb-gap"))
+    && backOf(d3).getAttribute("aria-label") === "Back to Subtask";
+
+const closedAbove = [];
+const d4 = BossModOverlays.createModal({
+    title: "Confirm", body: "x", actions: [], onClose: () => closedAbove.push("d4"),
+});
+d3.close();
+d2.closeFrom();
+const closeFromClosesTheLayersAbove = closedAbove.join(",") === "d4"
+    && [d2, d3, d4].every((handle) => body.children.indexOf(handle.element) === -1)
+    && body.children.indexOf(d1.element) !== -1 && d1.element.hidden === false;
+d1.close();
+
+trailA.setSteps([]);
+let focusBackThrowsWithNoStep = false;
+try {
+    trailA.focusBack();
+} catch (err) {
+    focusBackThrowsWithNoStep = /focusBack with nowhere to go back to/.test(err.message);
+}
+trailA.setSteps([s1]);
+trailA.focusBack();
+const focusBackLandsOnTheBack = document.activeElement === backOf(trailA);
+trailA.setSteps([]);
+
+const trailE = BossModOverlays.createModal({ title: "Edit role", body: "x", actions: [] });
+trailA.setTitle("Brian Ops");
+const setTitleRerendersUpperCrumbs = trailOf(trailE) === "Brian Ops › Edit role"
+    && backOf(trailE).getAttribute("aria-label") === "Back to Brian Ops"
+    && trailOf(trailA) === "Brian Ops";
+trailE.close();
+
+const rejects = (steps) => {
+    try {
+        trailA.setSteps(steps);
+    } catch (err) {
+        return /setSteps needs an array/.test(err.message);
+    }
+    return false;
+};
+const setStepsRejectsMalformedSteps = rejects("Code Auditor")
+    && rejects([{ title: "", onBack() {} }])
+    && rejects([{ title: "Code Auditor" }])
+    && rejects([null])
+    && trailOf(trailA) === "Brian Ops";
+const backButtonIsNotExported = typeof BossModOverlays.backButton === "undefined"
+    && Object.keys(BossModOverlays).join(",") === "createModal";
+trailA.close();
+if (panels().length !== 0 || scrims().length !== 0) throw new Error("trail block must leave nothing open");
+
 // ── The anchored menu: same contract, third shape ──
 //
 // It is the chat header's `⋯`. Non-modal, but it owes the same three things
@@ -785,6 +936,21 @@ process.stdout.write(JSON.stringify({
     lostOpenerFallsBackToClose,
     survivorBecomesTheBase,
     baseCloseHandsItsOpenerUp,
+    singleLayerHasOneCrumbAndNoBack,
+    twoLayersReadAsATrail,
+    crumbClosesTheLayerAboveAndRestoresFocus,
+    stepsExtendTheTrail,
+    backPopsTheStepOnce,
+    escPopsTheStepOnce,
+    escOnASteplessLayerClosesIt,
+    crumbJumpsAcrossLayersAndSteps,
+    longTrailCollapses,
+    closeFromClosesTheLayersAbove,
+    focusBackThrowsWithNoStep,
+    focusBackLandsOnTheBack,
+    setTitleRerendersUpperCrumbs,
+    setStepsRejectsMalformedSteps,
+    backButtonIsNotExported,
     slideOverIsGone: typeof BossModOverlays.slideOver === "undefined",
     menuFocusesFirstOption,
     menuTrapsTab,

@@ -9,13 +9,15 @@
  * whatever place the operator is in, and nothing about it lives in the store.
  *
  * ONE MODULE OWNS THE LIFECYCLE. context/desk-panel.js composes the body, the
- * avatar lead and the head tools and never touches overlays; this opens the
- * modal around them, closes it, and hands the panel the three ways it can end:
- * a navigation (`leave`), a removal, and Chat.
+ * avatar lead and the head tools and never opens the desk's own modal; this
+ * opens the modal around them, closes it, and hands the panel the three ways
+ * it can end: a navigation (`leave`), a removal, and a conversation.
  *
- * Every navigation the desk triggers closes it FIRST. The navigator would
- * otherwise mount a place under a live modal whose panel still holds
- * subscriptions — and the operator asked to go somewhere else.
+ * Every navigation the desk triggers closes it, and everything stacked over
+ * it — a role form, a task, a file — FIRST (the modal's `closeFrom`). The
+ * navigator would otherwise mount a place under a live modal whose panel
+ * still holds subscriptions, and a layer left over the desk would be an
+ * orphan with nothing beneath it — and the operator asked to go elsewhere.
  */
 const BossModDeskDialog = (() => {
     /** The title while the roster has not named the agent yet. */
@@ -33,8 +35,9 @@ const BossModDeskDialog = (() => {
      *   navigator is built after this.
      * @returns {{ open: (agentId: string, path?: string) => void,
      *   close: () => void }} `open` shows one agent's desk — closing any desk
-     *   already open, since only one exists at a time — with the file browser
-     *   at `path` (default `/me`). `close` closes the open desk, if any.
+     *   already open, and whatever was stacked on it, since only one exists at
+     *   a time — with the file browser at `path` (default `/me`). `close`
+     *   closes the open desk and every layer over it, if one is open.
      * @throws {Error} When any dependency is missing: a desk door that fails at
      *   the click is worse than a boot that fails at once.
      */
@@ -48,9 +51,10 @@ const BossModDeskDialog = (() => {
         /** The open desk as `{ modal, panel }`, or null. */
         let current = null;
 
-        /** Close the open desk, if any. The modal's onClose tears the panel down. */
+        /** Close the open desk and everything over it, if any. The modal's
+         *  onClose tears the panel down. */
         function close() {
-            if (current) current.modal.close();
+            if (current) current.modal.closeFrom();
         }
 
         /**
@@ -86,9 +90,10 @@ const BossModDeskDialog = (() => {
                 setTitle: (name) => { if (entry.modal) entry.modal.setTitle(name); },
                 // Closed explicitly: openConversation skips navigating when
                 // Chat is already the place, and the desk would stay up over it.
-                onOpenChat: () => {
+                // The head's Chat is this agent's; a task layer's is the task's.
+                openConversation: (id, kind) => {
                     closeThis();
-                    BossModAgentRoutes.openConversation({ store, navigate }, agentId, 'agent');
+                    BossModAgentRoutes.openConversation({ store, navigate }, id, kind);
                 },
             });
             entry.modal = BossModOverlays.createModal({

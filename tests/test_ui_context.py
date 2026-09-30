@@ -32,6 +32,7 @@ CONTEXT_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
@@ -97,6 +98,17 @@ CONTEXT_MODULES = [
     CONTEXT / "agents-dialog.js",
     CONTEXT / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
+    # A desk task row opens the task as a layer over the desk: the Tasks
+    # place's loader, detail, canceller and layer controller, and the desk's
+    # opener over them (index.html loads the desk after all of these).
+    JS / "places" / "tasks" / "tasks-data.js",
+    JS / "places" / "tasks" / "task-deliverables.js",
+    JS / "places" / "tasks" / "task-events.js",
+    JS / "places" / "tasks" / "task-detail-sections.js",
+    JS / "places" / "tasks" / "task-detail.js",
+    JS / "places" / "tasks" / "tasks-cancel.js",
+    JS / "places" / "tasks" / "task-layers.js",
+    CONTEXT / "desk-task-opener.js",
     JS / "shell" / "agent-routes.js",
     CONTEXT / "desk-dialog.js",
     JS / "extensions" / "extensions-api.js",
@@ -701,6 +713,39 @@ def test_the_desk_and_the_form_render_the_delete_warning() -> None:
     assert payload["deleteWarnsWhatIsDeleted"] is True
     # ...and a Remove that lands closes the desk of the agent it deleted.
     assert payload["removeClosesTheDesk"] is True
+
+
+def test_a_desk_task_opens_as_a_layer_over_the_desk() -> None:
+    """A task row opens the task OVER the desk, and ‹ comes back to it.
+
+    It used to navigate to the Tasks place, which closed the desk with no way
+    back. The row now opens the Tasks place's own detail as a layer, through
+    places/tasks/task-layers.js: the head's trail reads `Jim › Write TDD
+    specs`, a subtask link is a third crumb, a cancel re-reads the desk's rows,
+    and a list that cannot be read is said on the desk. Leaving — another
+    desk, a removal, a close — takes everything stacked on the desk with it.
+    """
+    payload = _harness()
+    for key in (
+        "taskRowOpensTheTask", "aSubtaskPushesAThirdCrumb", "aCancelRefreshesTheDeskRows",
+        "taskBackReturnsToTheDesk", "aFailedTaskListIsSaidOnTheDesk",
+        "anotherDeskClosesTheWholeStack", "aRemovalClosesTheWholeStack",
+        "closingTheDeskClosesTheViewerOverIt", "seeAllOpensTheAgentsTasks",
+        "chatToolOpensTheConversation",
+    ):
+        assert payload[key] is True, key
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert "navigate('tasks', { taskId })" not in panel
+    assert "onOpenChat" not in panel
+    assert "() => openConversation(agentId, 'agent')" in panel
+    assert "onOpenTask: (taskId) => { void taskOpener.open(taskId); }," in panel
+    opener = _read(CONTEXT / "desk-task-opener.js")
+    assert "BossModTaskLayers.create({" in opener
+    assert "loadedTasks = await BossModTasksData.loadTasks(api);" in opener
+    assert "tasks.showError('Could not open that task.');" in opener
+    dialog = _read(CONTEXT / "desk-dialog.js")
+    assert "if (current) current.modal.closeFrom();" in dialog
+    assert "openConversation: (id, kind) => {" in dialog
 
 
 def test_context_modules_stay_focused() -> None:

@@ -102,6 +102,9 @@
    * and 240 on the picker, from when it lived in a narrower dialog. */
   --filter-rail: 180px;
   --pack-card-min: 260px;
+  /* An ancestor crumb in a modal's trail: capped, so an ancestor never pushes
+   * ✕ or the tools off the head. */
+  --crumb-max: 180px;
 
   /* The two horizontal rules that cross the whole window.
    *

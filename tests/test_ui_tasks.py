@@ -25,7 +25,7 @@ HARNESS_MODULES = [
     JS / "core" / "store.js", JS / "core" / "bus.js",
     JS / "core" / "format.js", JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
-    JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
     JS / "shell" / "places.js", JS / "shell" / "agent-routes.js",
     # tasks-place.js scopes the board to the operator's floor through it.
@@ -34,8 +34,8 @@ HARNESS_MODULES = [
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
     TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
-    TASKS / "tasks-cancel.js", TASKS / "tasks-menu.js", TASKS / "tasks-archive.js",
-    TASKS / "tasks-toolbar.js", TASKS / "tasks-place.js",
+    TASKS / "tasks-cancel.js", TASKS / "task-layers.js", TASKS / "tasks-menu.js",
+    TASKS / "tasks-archive.js", TASKS / "tasks-toolbar.js", TASKS / "tasks-place.js",
 ]
 
 DETAIL_HARNESS = Path(__file__).resolve().parent / "js_task_detail_harness.cjs"
@@ -45,7 +45,7 @@ DETAIL_HARNESS = Path(__file__).resolve().parent / "js_task_detail_harness.cjs"
 DETAIL_MODULES = [
     JS / "core" / "dom.js", JS / "core" / "avatar.js", JS / "core" / "format.js",
     JS / "core" / "specialty.js", JS / "core" / "gates.js",
-    JS / "core" / "overlay-focus.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-deliverables.js",
     TASKS / "task-events.js", TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
@@ -447,11 +447,21 @@ def test_a_linked_task_opens_as_a_layer_over_the_one_it_came_from() -> None:
     From inside a task, following a link is a step deeper — ‹ walks back to the
     task it came from. Clicking a card in the list is a new errand, so any
     open task layers close first.
+
+    The stack of open task layers moved to places/tasks/task-layers.js when the
+    desk became its second opener; the page asks it rather than keeping one.
     """
+    layers = (TASKS / "task-layers.js").read_text(encoding="utf-8")
+    assert "let details = [];" in layers
+    assert "onNavigate: push," in layers
+    open_body = layers.split("function open(taskId) {", 1)[1].split("\n        }", 1)[0]
+    assert open_body.index("closeAll();") < open_body.index("push(taskId);")
+    push_body = layers.split("function push(taskId) {", 1)[1].split("\n        }", 1)[0]
+    assert "closeAll" not in push_body
     place = (TASKS / "tasks-place.js").read_text(encoding="utf-8")
-    assert "let details = [];" in place
-    assert "onNavigate: pushDetail," in place
-    open_body = place.split("function openDetail(taskId) {", 1)[1].split("\n    }", 1)[0]
-    assert "closeDetails();" in open_body
-    push_body = place.split("function pushDetail(taskId) {", 1)[1].split("\n    }", 1)[0]
-    assert "closeDetails" not in push_body
+    assert "BossModTaskLayers.create({" in place
+    assert "const card = (task) => renderCard(task, (taskId) => layers.open(taskId));" in place
+    assert "const archiveCard = (task) => renderCard(task, (taskId) => layers.push(taskId));" in place
+    for gone in ("let details", "function showDetail(", "function openDetail(",
+                 "function pushDetail(", "function closeDetails("):
+        assert gone not in place, gone

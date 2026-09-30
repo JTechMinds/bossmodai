@@ -12,7 +12,9 @@
  * The hand-rolled overlay became core/overlays.js's panel modal, so the viewer
  * traps focus, answers Esc, and returns focus to whatever opened it. Its
  * controls — View/Edit/Save/Print — sit in the frame's tools slot, on the head
- * row beside the ✕, and the body is the file.
+ * row beside the ✕, and the body is the file. Above it sits a static folder
+ * line (house root, chevrons, no file name — the title already names it), in
+ * the desk browser's form rather than a typed `/` path.
  *
  * The authenticated fetch arrives through `deps.api`. An image element pointed
  * straight at an /api path cannot carry the X-BossMod-Token header, so image
@@ -31,11 +33,43 @@ const BossModFileViewer = (() => {
     let sheet = null;
     let objectUrl = null;
 
+    /**
+     * The static folder line under the head: where the open file lives.
+     *
+     * The last crumb is the file itself, which the modal title (and its
+     * trail) already names, so it is left out. The root is a house glyph with
+     * the server's own label kept as its accessible name (`/` from the desk,
+     * `Company` from company files), and separators are chevrons — the same
+     * form as the desk browser's crumbs and the modal trail. Nothing here is
+     * a button: the viewer shows a path, it does not navigate one.
+     *
+     * The glyphs are lucide placeholders; openSheet paints the body.
+     *
+     * @param {Array<{path: string, label?: string, name?: string,
+     *   agent_name?: string}>} crumbs  The payload's breadcrumbs, root first,
+     *   file last.
+     * @returns {HTMLElement|null} The folder line, or null when the file sits
+     *   directly under the root (or the payload has no trail): a lone house
+     *   says nothing the title does not, and h() drops a null child.
+     */
     function breadcrumbs(crumbs) {
+        const folders = (Array.isArray(crumbs) ? crumbs : []).slice(0, -1);
+        if (folders.length < 2) return null;
         const row = h('div', { class: 'file-view-crumbs' });
-        (Array.isArray(crumbs) ? crumbs : []).forEach((crumb, index) => {
-            if (index > 0) row.append(h('span', { class: 'file-crumb-sep' }, '/'));
-            row.append(h('span', { class: 'file-crumb' }, String(crumb.label || crumb.name || '')));
+        folders.forEach((crumb, index) => {
+            if (index > 0) {
+                row.append(h('i', {
+                    'data-lucide': 'chevron-right', class: 'file-crumb-sep', 'aria-hidden': 'true',
+                }));
+            }
+            const label = String(crumb.label || crumb.name || '');
+            if (crumb.path === '/') {
+                row.append(
+                    h('i', { 'data-lucide': 'house', class: 'file-view-root', 'aria-hidden': 'true' }),
+                    h('span', { class: 'visually-hidden' }, label));
+            } else {
+                row.append(h('span', { class: 'file-crumb' }, label));
+            }
             if (crumb.agent_name) {
                 row.append(h('span', { class: 'file-crumb-agent' }, `(${crumb.agent_name})`));
             }
@@ -219,11 +253,17 @@ const BossModFileViewer = (() => {
 
     /**
      * Show one file in the panel modal.
+     *
+     * Both render paths hand over a finished body here, so this is where its
+     * glyphs (the folder line's house and chevrons) are painted: createModal
+     * paints only the head it builds.
+     *
      * @param {{title: string, body: HTMLElement, tools: HTMLElement[],
      *   closeOnBackdrop: () => boolean}} options
      * @returns {void}
      */
     function openSheet({ title, body, tools, closeOnBackdrop }) {
+        BossModIcons.paint(body, 'file-viewer');
         sheet = BossModOverlays.createModal({
             title,
             body,

@@ -113,6 +113,9 @@ eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModNeedShape = Bo
 // rather than stubbed: a stub would prove a button exists and nothing about
 // what opening it does.
 eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
+// core/modal-trail.js (a modal head's trail and ‹, split from overlays.js)
+// is the overlays slot's SIBLING, for the five-lists reason given below.
+eval(`${fs.readFileSync(path.join(path.dirname(process.argv[10]), "modal-trail.js"), "utf8")}\n;global.BossModModalTrail = BossModModalTrail;\n`);
 eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
 // Both section headers' `⋯` (shell/roster-header-menu.js) and the People
 // half's "Show roles" switch behind its own. Loaded as SIBLINGS of the

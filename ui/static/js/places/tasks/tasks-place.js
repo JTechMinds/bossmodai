@@ -31,8 +31,9 @@ const BossModTasksPlace = (() => {
     let summaryLine = null;
     let headerEl = null;
     let bodyEl = null;
-    /** The open task layers, base first. */
-    let details = [];
+    /** The task layers this page opens (places/tasks/task-layers.js). Built
+     *  in mount(), once the canceller it cancels through exists. */
+    let layers = null;
     /** The open Archive, or null. */
     let archive = null;
     let refreshTimer = null;
@@ -90,9 +91,9 @@ const BossModTasksPlace = (() => {
     }
 
     /** A card on the page opens its task as a new errand. */
-    const card = (task) => renderCard(task, openDetail);
+    const card = (task) => renderCard(task, (taskId) => layers.open(taskId));
     /** A card in Archive opens its task as a layer, so ‹ returns to Archive. */
-    const archiveCard = (task) => renderCard(task, pushDetail);
+    const archiveCard = (task) => renderCard(task, (taskId) => layers.push(taskId));
 
     function paint() {
         const visible = BossModFloorScope.filterTasks(ctxRef.store.getState(), DATA.filterTasks(tasks, toolbar.filters()));
@@ -176,12 +177,6 @@ const BossModTasksPlace = (() => {
         toolbar.setSelectedCount(selected.size);
     }
 
-    /** Close every open task layer, top first. */
-    function closeDetails() {
-        details.slice().reverse().forEach((handle) => handle.close());
-        details = [];
-    }
-
     /** Put Archive away, if it is open. */
     function closeArchive() {
         if (!archive) return;
@@ -190,40 +185,9 @@ const BossModTasksPlace = (() => {
         open.close();
     }
 
-    /**
-     * Open one task as a layer over whatever is on screen.
-     *
-     * @param {string} taskId
-     * @returns {void}
-     */
-    function showDetail(taskId) {
-        const handle = BossModTaskDetail.openTaskDetail({
-            api: ctxRef.api,
-            taskId,
-            tasks,
-            colorOf,
-            onNavigate: pushDetail,
-            onCancel: (task) => canceller.cancelOne(task),
-            onOpenChat: openChat,
-            onClose: () => { details = details.filter((item) => item !== handle); },
-        });
-        details.push(handle);
-    }
-
-    /** A card in the list: a new errand, so any open task layers go first. */
-    function openDetail(taskId) {
-        closeDetails();
-        showDetail(taskId);
-    }
-
-    /** A link inside a task: one step deeper — ‹ walks back to the task it came from. */
-    function pushDetail(taskId) {
-        showDetail(taskId);
-    }
-
     /** Archive, fresh: the page's own layers go first, as for any new errand. */
     function openArchive() {
-        closeDetails();
+        layers.closeAll();
         closeArchive();
         archive = BossModTasksArchive.open({
             tasks: lastOlder,
@@ -243,7 +207,7 @@ const BossModTasksPlace = (() => {
     function openChat(task) {
         const target = DATA.chatTargetFor(task);
         if (!target) throw new Error(`[tasks] no chat to open for task "${task.id}"`);
-        closeDetails();
+        layers.closeAll();
         closeArchive();
         BossModAgentRoutes.openConversation(
             { store: ctxRef.store, navigate: ctxRef.navigate }, target.id, target.kind);
@@ -261,7 +225,7 @@ const BossModTasksPlace = (() => {
                 'That task is not in the list.'));
             return;
         }
-        openDetail(id);
+        layers.open(id);
     }
 
     function openAssign() {
@@ -323,6 +287,13 @@ const BossModTasksPlace = (() => {
                 },
                 onError: paintError,
             });
+            layers = BossModTaskLayers.create({
+                api: ctx.api,
+                getTasks: () => tasks,
+                colorOf,
+                onCancel: (task) => canceller.cancelOne(task),
+                onOpenChat: openChat,
+            });
 
             clear(el);
             summaryLine = h('p', { class: 'place-summary' }, '');
@@ -379,8 +350,9 @@ const BossModTasksPlace = (() => {
             load.next();
             if (toolbar) toolbar.destroy();
             if (menu) menu.destroy();
-            closeDetails();
+            if (layers) layers.closeAll();
             closeArchive();
+            layers = null;
             toolbar = null;
             menu = null;
             canceller = null;

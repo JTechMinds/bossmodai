@@ -70,6 +70,7 @@ CONTEXT_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "conversation" / "empty-state.js",
@@ -133,6 +134,17 @@ CONTEXT_MODULES = [
     JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
+    # A desk task row opens the task as a layer over the desk: the Tasks
+    # place's loader, detail, canceller and layer controller, and the desk's
+    # opener over them (index.html loads the desk after all of these).
+    JS / "places" / "tasks" / "tasks-data.js",
+    JS / "places" / "tasks" / "task-deliverables.js",
+    JS / "places" / "tasks" / "task-events.js",
+    JS / "places" / "tasks" / "task-detail-sections.js",
+    JS / "places" / "tasks" / "task-detail.js",
+    JS / "places" / "tasks" / "tasks-cancel.js",
+    JS / "places" / "tasks" / "task-layers.js",
+    JS / "context" / "desk-task-opener.js",
     JS / "shell" / "agent-routes.js",
     JS / "context" / "desk-dialog.js",
     JS / "extensions" / "extensions-api.js",
@@ -187,6 +199,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",
@@ -542,6 +555,7 @@ def test_the_overflow_menu_is_keyboard_operable() -> None:
     """
     harness = HERE / "js_overlays_harness.cjs"
     args = ["node", str(harness), str(JS / "core/dom.js"), str(JS / "core/overlay-focus.js"),
+            str(JS / "core/modal-trail.js"),
             str(JS / "core/overlays.js"), str(JS / "core/menu.js")]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr or result.stdout

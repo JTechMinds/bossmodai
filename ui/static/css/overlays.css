@@ -88,10 +88,10 @@
 /* The head: the conversation header's row, floated. --bar is the app's rhythm
    line, so a dialog's title bar is the same height as the chat header behind
    it, and the hairline is the same hairline. Every dialog has one now — the
-   title, then whatever the caller put beside it, then the frame's ✕. A `lead`
-   sits before the title on this same row, so `‹ Add agent` reads as one thing
-   — the chevron spent a round as a bordered square in the band below, aligned
-   to nothing and filling nothing. */
+   ‹, the trail ending in the title, then whatever the caller put beside it,
+   then the frame's ✕. The ‹ sits on this same row, so `‹ Agents › Code
+   Auditor` reads as one thing — a chevron spent a round as a bordered square
+   in the band below, aligned to nothing and filling nothing. */
 .modal-head {
   /* Positioned so a head tool's `⋯` panel (the task detail's) can hang from
      it; .menu is placed against its container. */
@@ -134,18 +134,49 @@
    this head IS that row. Lucide's unsized 24px outweighed the ✕ beside it. */
 .modal-tools .header-icon-btn svg { width: 14px; height: 14px; }
 
-/* A lead is sometimes more than one control — the Agents dialog puts both of
-   its panes' back chevrons in one wrapper, and at most one is showing. The
-   wrapper must not become a flex item of its own, or the head's gap would
-   open around an empty box; `contents` hands its children to the head row. */
-.modal-lead { display: contents; }
-
-/* The lead control is put away with the `hidden` PROPERTY, and `.btn` sets
+/* The frame's ‹ is put away with the `hidden` PROPERTY, and `.btn` sets
    `display: inline-flex` — an author declaration, which outranks the UA's
-   `[hidden] { display: none }` outright. Without this the step-one dialog
-   showed a Back chevron that had nowhere to go back to. Same guard, and same
-   reason, as .agent-add-body's below. */
+   `[hidden] { display: none }` outright. Without this a base layer showed a
+   Back chevron that had nowhere to go back to. Same guard, and same reason,
+   as .agent-add-body's below. */
 .modal-head [hidden] { display: none !important; }
+
+/* The TRAIL: every layer beneath this one and every step inside them, then
+   the title (core/overlays.js renderTrail). One flex row nested in the head's,
+   so the title stays the thing that ellipsizes: the nav, the list and each
+   item all give up their minimum width, and the current item shrinks far
+   ahead of its ancestors — each of which is capped at --crumb-max anyway. */
+.modal-trail { flex: 0 1 auto; min-width: 0; }
+.modal-trail ol {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+.modal-trail li { flex: 0 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
+.modal-trail li[aria-current="page"] { flex-shrink: 100; }
+
+/* An ancestor: the title's size so the row reads as one heading, a step
+   lighter and muted so the current crumb is still the one that stands out.
+   base.css's 24px minimum target applies — it is a button. */
+.modal-crumb {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: var(--crumb-max);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.modal-crumb:hover { color: var(--ink); text-decoration: underline; }
+
+.modal-crumb-sep { flex: none; width: 14px; height: 14px; color: var(--hint); }
+.modal-crumb-gap { color: var(--hint); }
 
 /* min-height: 0 is what actually lets a flex child scroll — without it the
    body grows to its content and the panel overflows the viewport instead. */

@@ -116,7 +116,7 @@ documentStub.createElement = (tag) => {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
-    "BossModConsentCard", "BossModOverlayFocus", "BossModOverlays", "BossModMenu",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlays", "BossModMenu",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeedCoalesce", "BossModNeeds", "BossModNeedsBar",
@@ -142,9 +142,13 @@ const NAMES = [
     "BossModAgentAddPane", "BossModAgentDialogSlot",
     "BossModFloorScope",
     "BossModAgentEdit", "BossModAgentsDialog", "BossModDeskPanel",
-    // The desk's task rows wear the Tasks place's status labels, and its Chat
-    // tool is the one conversation route; both are read at call time.
-    "BossModTasksColumns", "BossModAgentRoutes", "BossModDeskDialog",
+    // The desk's task rows wear the Tasks place's status labels and open the
+    // task as a layer over the desk through the Tasks place's own loader,
+    // detail, canceller and layer controller; its Chat tool is the one
+    // conversation route. All are read at call time.
+    "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables", "BossModTaskEvents",
+    "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel", "BossModTaskLayers",
+    "BossModDeskTaskOpener", "BossModAgentRoutes", "BossModDeskDialog",
     // The chat place hands agent conversations the Browser Vision screen.
     "BossModExtensionsApi", "BossModBrowserVisionStatus", "BossModExtensionsLive",
     // The desk panel's Extensions section (read at call time, so after it).
@@ -318,6 +322,19 @@ const updates = [];
 // What GET /api/tasks/board answers for Jim: one task, so the desk's Tasks
 // section has a row to click. Everyone else carries nothing.
 const JIM_TASK = { id: "t1", title: "Write TDD specs", status: "complete" };
+// What GET /api/tasks answers: the whole list a task layer resolves its
+// parent and subtasks from. Jim's task, and an open subtask of it — open, so
+// its `⋯` offers Cancel.
+const TASK_LIST = [
+    { ...JIM_TASK, assigned_to: "a1" },
+    { id: "t2", title: "Draft M5.3 list", status: "in_progress", parent_task_id: "t1", assigned_to: "a1" },
+];
+// Set by the section that proves a failed list read is said on the desk.
+let taskListFails = false;
+// How many board reads the desk's Tasks section has made: a cancel re-reads.
+let boardReads = 0;
+// Every POST /api/tasks/cancel body, in order.
+const cancels = [];
 // What GET /api/agents/{id} answers, shaped as the server's `Agent`: the desk
 // footer reads the workspace and model off it, and Remove reads the NAME its
 // warning is about.
@@ -386,7 +403,16 @@ function api(url, init) {
         if (!createSucceeds) return jsonResponse({ detail: "Name already taken" }, 409);
         return jsonResponse({ id: `new-${creates.length}` });
     }
+    if (String(url) === "/api/tasks") {
+        if (taskListFails) return jsonResponse({ detail: "boom" }, 500);
+        return jsonResponse(TASK_LIST);
+    }
+    if (String(url) === "/api/tasks/cancel" && init && init.method === "POST") {
+        cancels.push(JSON.parse(init.body));
+        return jsonResponse({ cancelled: JSON.parse(init.body).task_ids });
+    }
     if (String(url).startsWith("/api/tasks/board")) {
+        boardReads += 1;
         const scoped = /agent_id=a1&scope=self/.test(String(url));
         return jsonResponse({ sections: { closed: scoped ? [JIM_TASK] : [] } });
     }
@@ -727,8 +753,10 @@ async function main() {
             + `${JSON.stringify(diagnosticsNav)} with ${modals().length} dialogs`);
     }
 
-    // A task row is a way into the task, and "See all" into the agent's list;
-    // both leave the desk behind them.
+    // A task row opens the task as a LAYER over the desk — the head's trail
+    // reads `Jim › Write TDD specs` and ‹ comes back to the desk. It used to
+    // leave for the Tasks place, closing the desk with no way back to it.
+    // "See all" is a place, not a detail, and still leaves.
     desk.open("a1");
     await drain();
     const taskRow = inDesk(".desk-task");
@@ -740,12 +768,89 @@ async function main() {
     if (!taskRowIsAButtonWithTheSharedPill) {
         throw new Error("a desk task must be a button wearing the shared status pill");
     }
+    /** The top task layer, known by what its body holds. */
+    const taskLayers = () => modals().filter((panel) => panel.querySelectorAll(".task-detail").length === 1);
+    const topTaskLayer = () => taskLayers()[taskLayers().length - 1];
+    const trailOf = (panel) => panel.querySelector(".modal-trail").querySelectorAll("li")
+        .map((node) => node.textContent).join(" › ");
+    const navigatedBeforeTask = navigated.length;
     await taskRow.dispatchClick();
     await drain();
-    const taskNav = navigated[navigated.length - 1];
-    const taskRowOpensTheTask = taskNav.placeId === "tasks"
-        && JSON.stringify(taskNav.params) === JSON.stringify({ taskId: "t1" })
-        && modals().length === 0;
+    const taskRowOpensTheTask = taskLayers().length === 1
+        && navigated.length === navigatedBeforeTask
+        && Boolean(deskModal()) && deskModal().hidden === true
+        && topTaskLayer().getAttribute("aria-label") === "Write TDD specs"
+        && trailOf(topTaskLayer()) === "Jim › Write TDD specs"
+        && topTaskLayer().querySelector(".modal-back").getAttribute("aria-label") === "Back to Jim";
+    // A subtask link is one step deeper: three crumbs, ‹ back to its parent.
+    await topTaskLayer().querySelector(".task-detail-subtask").dispatchClick();
+    await drain();
+    const aSubtaskPushesAThirdCrumb = taskLayers().length === 2
+        && trailOf(topTaskLayer()) === "Jim › Write TDD specs › Draft M5.3 list"
+        && topTaskLayer().querySelector(".modal-back").getAttribute("aria-label")
+            === "Back to Write TDD specs";
+    // Cancel from the open subtask: asked, posted, and the desk's rows re-read
+    // with the stale task layers gone.
+    const boardReadsBeforeCancel = boardReads;
+    await topTaskLayer().querySelector("#task-options").dispatchClick();
+    await drain();
+    await topTaskLayer().querySelector("#ct-cancel-task-btn").dispatchClick();
+    await drain();
+    const cancelConfirm = modals().find((panel) => panel.textContent.includes("Cancel this task?"));
+    await cancelConfirm.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+        .find((btn) => btn.textContent === "Cancel tasks").dispatchClick();
+    await drain();
+    const aCancelRefreshesTheDeskRows = cancels.length === 1
+        && JSON.stringify(cancels[0]) === JSON.stringify({ task_ids: ["t2"] })
+        && taskLayers().length === 0 && modals().length === 1
+        && deskModal().hidden === false
+        && boardReads > boardReadsBeforeCancel
+        && Boolean(inDesk(".desk-task"));
+    // ‹ from a task opened over the desk comes back to the desk.
+    await inDesk(".desk-task").dispatchClick();
+    await drain();
+    await topTaskLayer().querySelector(".modal-back").dispatchClick();
+    await drain();
+    const taskBackReturnsToTheDesk = taskLayers().length === 0 && modals().length === 1
+        && deskModal().hidden === false;
+    // A list that cannot be read is said above the rows, which stay.
+    taskListFails = true;
+    await inDesk(".desk-task").dispatchClick();
+    await drain();
+    taskListFails = false;
+    const tasksSectionErrors = inDesk(".desk-tasks").querySelectorAll(".context-error")
+        .map((node) => node.textContent);
+    const aFailedTaskListIsSaidOnTheDesk = tasksSectionErrors.join("|") === "Could not open that task."
+        && taskLayers().length === 0 && modals().length === 1
+        && inDesk(".desk-tasks").querySelectorAll(".desk-task").length === 1;
+    if (!taskRowOpensTheTask || !aSubtaskPushesAThirdCrumb || !aCancelRefreshesTheDeskRows
+        || !taskBackReturnsToTheDesk || !aFailedTaskListIsSaidOnTheDesk) {
+        throw new Error(`a task row must open the task over the desk: opens ${taskRowOpensTheTask}, `
+            + `subtask ${aSubtaskPushesAThirdCrumb}, cancel ${aCancelRefreshesTheDeskRows}, `
+            + `back ${taskBackReturnsToTheDesk}, failed read ${aFailedTaskListIsSaidOnTheDesk}`);
+    }
+    // Leaving closes the desk AND everything stacked on it: a desk opened over
+    // an open task layer takes the task with it, and an agent removed while a
+    // task is open over their desk leaves nothing orphaned.
+    await inDesk(".desk-task").dispatchClick();
+    await drain();
+    desk.open("a2");
+    await drain();
+    const anotherDeskClosesTheWholeStack = modals().length === 1 && taskLayers().length === 0
+        && deskModal().getAttribute("aria-label") === "Laura";
+    desk.open("a1");
+    await drain();
+    await inDesk(".desk-task").dispatchClick();
+    await drain();
+    store.setState({ roster: ROSTER.filter((row) => row.id !== "a1") });
+    await drain();
+    const aRemovalClosesTheWholeStack = modals().length === 0;
+    store.setState({ roster: ROSTER });
+    await drain();
+    if (!anotherDeskClosesTheWholeStack || !aRemovalClosesTheWholeStack) {
+        throw new Error(`leaving must close the desk and every layer on it: another desk `
+            + `${anotherDeskClosesTheWholeStack}, removal ${aRemovalClosesTheWholeStack}`);
+    }
     desk.open("a1");
     await drain();
     await inDesk(".desk-section-action").dispatchClick();
@@ -754,9 +859,8 @@ async function main() {
     const seeAllOpensTheAgentsTasks = allNav.placeId === "tasks"
         && JSON.stringify(allNav.params) === JSON.stringify({ agentFilter: "a1" })
         && modals().length === 0;
-    if (!taskRowOpensTheTask || !seeAllOpensTheAgentsTasks) {
-        throw new Error(`a task row and See all must close the desk and open Tasks, got `
-            + `${JSON.stringify(taskNav)} ${JSON.stringify(allNav)}`);
+    if (!seeAllOpensTheAgentsTasks) {
+        throw new Error(`See all must close the desk and open Tasks, got ${JSON.stringify(allNav)}`);
     }
 
     // ─── Remove says what a delete destroys, and whose ───
@@ -894,7 +998,15 @@ async function main() {
     if (!opensSharedViewer) {
         throw new Error("clicking a note must open the shared file viewer over the desk");
     }
-    BossModFileViewer.close();
+    // Closing the desk closes what is stacked on it too (the modal's
+    // closeFrom): a viewer left over the screen would be an orphan.
+    desk.close();
+    await drain();
+    const closingTheDeskClosesTheViewerOverIt = modals().length === 0;
+    if (!closingTheDeskClosesTheViewerOverIt) {
+        throw new Error(`closing the desk must close the viewer over it, got ${modals().length} dialogs`);
+    }
+    desk.open("a1");
     await drain();
 
     // A subfolder is handed to the desk browser, which is the thing that
@@ -1130,8 +1242,12 @@ async function main() {
         throw new Error(`step two pins Cancel and the primary, got `
             + stepTwoPinned.join("|"));
     }
-    if (!hire.querySelector("#agent-add-back")) {
-        throw new Error("step two lost the back chevron above its form");
+    // Step two is a crumb on the frame's trail, and the frame's ‹ goes back.
+    const hireBack = () => hire.querySelector(".modal-head").querySelector(".modal-back");
+    const hireTrail = hire.querySelector(".modal-trail").querySelectorAll("li")
+        .map((node) => node.textContent).join(" › ");
+    if (!hireBack() || hireBack().hidden || hireTrail !== "Agents › New agent") {
+        throw new Error(`step two lost the way back above its form, trail "${hireTrail}"`);
     }
     if (!hire.querySelector("#agent-form")) {
         throw new Error("picking a cell must build the form in the same dialog");
@@ -1185,9 +1301,9 @@ async function main() {
 
     // Cancel is the SECOND action on step two: the first is Back, which must
     // leave the dialog open with the draft in it.
-    // Back is the body's chevron now, not a footer button — so this clicks
-    // the control the operator actually sees at the top-left of step two.
-    await hire.querySelector("#agent-add-back").dispatchClick();
+    // Back is the frame's ‹ now, not a footer button — so this clicks the
+    // control the operator actually sees at the top-left of step two.
+    await hireBack().dispatchClick();
     await drain();
     if (modals().length !== 1) throw new Error("Back must not close the dialog");
     // Returning to step one is proven by the row emptying again AND by the
@@ -1924,6 +2040,13 @@ async function main() {
         optionsMenuHoldsTheRest,
         taskRowIsAButtonWithTheSharedPill,
         taskRowOpensTheTask,
+        aSubtaskPushesAThirdCrumb,
+        aCancelRefreshesTheDeskRows,
+        taskBackReturnsToTheDesk,
+        aFailedTaskListIsSaidOnTheDesk,
+        anotherDeskClosesTheWholeStack,
+        aRemovalClosesTheWholeStack,
+        closingTheDeskClosesTheViewerOverIt,
         seeAllOpensTheAgentsTasks,
         removeClosesTheDesk,
         aRenameRetitlesTheDesk,

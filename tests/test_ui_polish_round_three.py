@@ -436,6 +436,7 @@ CONTEXT_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "conversation" / "empty-state.js",
@@ -499,6 +500,17 @@ CONTEXT_MODULES = [
     JS / "context" / "agents-dialog.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
+    # A desk task row opens the task as a layer over the desk: the Tasks
+    # place's loader, detail, canceller and layer controller, and the desk's
+    # opener over them (index.html loads the desk after all of these).
+    JS / "places" / "tasks" / "tasks-data.js",
+    JS / "places" / "tasks" / "task-deliverables.js",
+    JS / "places" / "tasks" / "task-events.js",
+    JS / "places" / "tasks" / "task-detail-sections.js",
+    JS / "places" / "tasks" / "task-detail.js",
+    JS / "places" / "tasks" / "tasks-cancel.js",
+    JS / "places" / "tasks" / "task-layers.js",
+    JS / "context" / "desk-task-opener.js",
     JS / "shell" / "agent-routes.js",
     JS / "context" / "desk-dialog.js",
     JS / "extensions" / "extensions-api.js",
@@ -569,7 +581,7 @@ def test_the_wide_modal_keeps_the_shared_keyboard_contract() -> None:
     level, where the behaviour lives.
     """
     payload = _run("js_overlays_harness.cjs",
-                   [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/overlays.js",
+                   [JS / "core/dom.js", JS / "core/overlay-focus.js", JS / "core/modal-trail.js", JS / "core/overlays.js",
                     JS / "core/menu.js"])
     assert payload["panelModalIsMarked"] is True
     assert payload["panelModalTrapsTabAcrossItsBody"] is True
@@ -645,6 +657,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "consent-card.js",
     JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     CONVERSATION / "empty-state.js",

@@ -75,7 +75,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, overlays, menu, rowMeta,
+    dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, modalTrail, overlays, menu, rowMeta,
     places, scopeModule, floorApi, floorSwitcher, header, rosterHeaderMenu, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
     rosterThreads, agentRoutes, roster, footer,
 ] = process.argv.slice(2);
@@ -92,6 +92,7 @@ load(agentStatus, "BossModAgentStatus");
 load(needShape, "BossModNeedShape");
 load(rowMeta, "BossModRosterRowMeta");
 load(overlayFocus, "BossModOverlayFocus");
+load(modalTrail, "BossModModalTrail");
 load(overlays, "BossModOverlays");
 load(menu, "BossModMenu");
 load(places, "BossModPlaces");

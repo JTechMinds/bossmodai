@@ -4,7 +4,9 @@
  * The one destructive path the Tasks place has, kept in one file so the confirmation
  * cannot be bypassed by a second caller. Both entry points ask first, through
  * the focus-trapped dialog rather than the browser's native one, which cannot
- * be styled, cannot be tested, and blocks the event loop.
+ * be styled, cannot be tested, and blocks the event loop. The desk's task
+ * layers cancel through a canceller built here too
+ * (context/desk-task-opener.js), so that path asks the same question.
  */
 const BossModTasksCancel = (() => {
     const COLUMNS = BossModTasksColumns;
