@@ -19,7 +19,7 @@ from core.bm_cli.results import error_result, success_result
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 
 from .contacts import EMAIL_RE, ContactBook, ContactBookError, ContactError, InvalidAddress
-from .formatting import render_body
+from .formatting import EmailStyles, render_body
 from .graph import (
     Address,
     GraphAuthError,
@@ -57,6 +57,10 @@ class Ms365MailDefaults(BaseModel):
     preview_chars: int = Field(ge=1)
     # Most new messages one wake check delivers; the rest follow next check.
     wake_batch_max: int = Field(ge=1)
+    # Inline CSS for tables in sent mail; clients ignore <style> blocks.
+    html_table_style: str = Field(min_length=1)
+    html_header_cell_style: str = Field(min_length=1)
+    html_cell_style: str = Field(min_length=1)
 
     @model_validator(mode="after")
     def _default_within_max(self) -> "Ms365MailDefaults":
@@ -115,6 +119,11 @@ class MailCommands:
         self._id_map_for = id_map_for
         self._contacts_for = contacts_for
         self._defaults = defaults
+        self._email_styles = EmailStyles(
+            table=defaults.html_table_style,
+            header_cell=defaults.html_header_cell_style,
+            cell=defaults.html_cell_style,
+        )
 
     def handle(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:
         """Run one ``mail`` command for ``ctx.agent``.
@@ -271,7 +280,7 @@ class MailCommands:
             [Address(name=c.name or "", address=c.address) for c in cc],
             subject,
             # Agents write Markdown; it goes out formatted (plan E5).
-            render_body(text),
+            render_body(text, self._email_styles),
         )
         sent = "sent to " + ", ".join(c.display() for c in to)
         if cc:
@@ -304,7 +313,7 @@ class MailCommands:
         # left the inbox fails here rather than after a send attempt.
         original = mailbox.get_message(graph_id)
         # Agents write Markdown; replies go out formatted like sends.
-        mailbox.reply(graph_id, render_body(text), reply_all)
+        mailbox.reply(graph_id, render_body(text, self._email_styles), reply_all)
         sender_only, everyone = _reply_audience(original, mailbox.mailbox)
         recipients = everyone if reply_all else sender_only
         sent = f"sent reply to {_join(recipients)}"

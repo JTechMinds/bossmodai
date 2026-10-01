@@ -202,6 +202,15 @@ def test_send_to_addresses_echoes_who_it_went_to(env) -> None:
     assert "To: a@x.com, b@x.com\nCc: c@x.com\nSubject: Daily report" in result.prompt_content
 
 
+def test_a_sent_table_carries_the_configured_inline_styles(env) -> None:
+    result = env.run("mail send a@x.com --subject Roster", "| Name | Role |\n|---|---|\n| Gene | CEO |")
+    assert result.ok, result.prompt_content
+    body_html = env.state["mailbox"].calls[0][4]
+    assert f'<table style="{DEFAULTS.html_table_style}">' in body_html
+    assert f'<th style="{DEFAULTS.html_header_cell_style}">Name</th>' in body_html
+    assert f'<td style="{DEFAULTS.html_cell_style}">Gene</td>' in body_html
+
+
 def _with_others() -> FakeMailbox:
     """A message to the agent and Gene, cc Kseniia (and the sender again, in another case)."""
     return FakeMailbox(

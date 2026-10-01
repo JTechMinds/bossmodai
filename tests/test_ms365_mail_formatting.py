@@ -16,7 +16,16 @@ _PACKAGE = import_package(_ENTRY)
 auth = importlib.import_module(f"{_PACKAGE.__name__}.auth")
 formatting = importlib.import_module(f"{_PACKAGE.__name__}.formatting")
 
-render = formatting.render_body
+_DEFAULTS = _ENTRY.manifest.defaults
+STYLES = formatting.EmailStyles(
+    table=_DEFAULTS["html_table_style"],
+    header_cell=_DEFAULTS["html_header_cell_style"],
+    cell=_DEFAULTS["html_cell_style"],
+)
+
+
+def render(markdown_text: str) -> str:
+    return formatting.render_body(markdown_text, STYLES)
 
 
 def test_headings_lists_bold_and_links_render() -> None:
@@ -42,6 +51,36 @@ def test_single_newlines_become_line_breaks() -> None:
 def test_bare_urls_are_not_linkified_and_no_style_is_added() -> None:
     html = render("see https://example.com")
     assert "<a " not in html and "style=" not in html
+
+
+def test_a_pipe_table_gets_the_configured_inline_styles() -> None:
+    html = render("| Name | Role |\n|---|---|\n| Gene | CEO |")
+    assert f'<table style="{STYLES.table}">' in html
+    assert f'<th style="{STYLES.header_cell}">Name</th>' in html
+    assert f'<td style="{STYLES.cell}">Gene</td>' in html
+    assert "|" not in html
+
+
+def test_column_alignment_is_kept_after_the_configured_style() -> None:
+    html = render("| Name | Role |\n|:---|:---:|\n| Gene | CEO |")
+    assert f'<th style="{STYLES.header_cell}text-align:center">Role</th>' in html
+    assert f'<td style="{STYLES.cell}text-align:center">CEO</td>' in html
+    assert f'<td style="{STYLES.cell}text-align:left">Gene</td>' in html
+
+
+def test_strikethrough_renders() -> None:
+    assert render("~~x~~") == "<div><p><s>x</s></p>\n</div>"
+
+
+def test_raw_table_and_script_markup_stay_escaped() -> None:
+    html = render("<table><tr><td>x</td></tr></table>\n\nHi <script>alert(1)</script>")
+    assert "<table" not in html and "<td" not in html and "<script>" not in html
+    assert "&lt;table&gt;" in html and "&lt;script&gt;alert(1)&lt;/script&gt;" in html
+
+
+def test_non_table_markup_gets_no_style() -> None:
+    html = render("## Heading\n\nText\n\n- one\n- two")
+    assert html == "<div><h2>Heading</h2>\n<p>Text</p>\n<ul>\n<li>one</li>\n<li>two</li>\n</ul>\n</div>"
 
 
 def test_mail_send_posts_the_rendered_body_as_html(tmp_path) -> None:
