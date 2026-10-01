@@ -198,7 +198,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("workspace_host_roots", "", "cli_policy"),
     # Commands whose replay is harmful: a failed turn that ran one is not
     # retried (core.bm_cli.retry_policy). One command prefix per line.
-    ("cli_no_retry_commands", "mail send\nmail reply\nmail archive", "cli_policy"),
+    # Operator additions only: extensions declare their own in their
+    # manifest (command.no_retry), so the seed is empty.
+    ("cli_no_retry_commands", "", "cli_policy"),
 
     # ── Nest git (self-host remotes) ──
     # Host Enable stays off until a Shell probe sees a credential helper

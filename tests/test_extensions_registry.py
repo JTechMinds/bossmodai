@@ -187,6 +187,75 @@ def test_a_load_failure_is_stamped_too(tmp_path: Path) -> None:
     assert result.data["extension_id"] == "no-live2"
 
 
+# ─── command.no_retry: extension-declared subcommands that must not repeat ───
+
+
+def _manifest_with_no_retry(no_retry: list[str], **overrides: Any) -> dict[str, Any]:
+    data = _manifest(**overrides)
+    data["command"] = {**data["command"], "no_retry": no_retry}
+    return data
+
+
+def test_a_manifest_declaring_no_retry_subcommands_is_valid(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_manifest_with_no_retry(["send", "reply all", "x-2"])), encoding="utf-8")
+    assert load_manifest(path).command.no_retry == ("send", "reply all", "x-2")
+
+
+def test_no_retry_defaults_to_nothing(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_manifest()), encoding="utf-8")
+    assert load_manifest(path).command.no_retry == ()
+
+
+@pytest.mark.parametrize("no_retry, fragment", [
+    ([""], "must be lowercase words"),
+    (["   "], "must be lowercase words"),
+    (["Send"], "must be lowercase words"),
+    (["send  now"], "must be lowercase words"),
+    ([" send"], "must be lowercase words"),
+    (["send", "send"], "duplicate no_retry entries: send"),
+    (["demo send"], "must not repeat the command name"),
+])
+def test_bad_no_retry_entries_are_rejected(tmp_path: Path, no_retry: list[str], fragment: str) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_manifest_with_no_retry(no_retry)), encoding="utf-8")
+    with pytest.raises(ManifestError, match=fragment):
+        load_manifest(path)
+
+
+def test_a_declared_subcommand_that_ran_blocks_retry(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "demo-ext", _manifest_with_no_retry(["send"]))
+    handler = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["demo"]
+    set_enabled("demo-ext", True)
+    ctx = _ctx()
+
+    sent = handler(ctx, _parsed("demo send a@x.com"), None)
+    assert sent.ok and sent.blocks_retry is True
+    assert sent.data == {"extension_id": "demo-ext"}  # still stamped
+    assert handler(ctx, _parsed("demo read 1"), None).blocks_retry is False
+    assert handler(ctx, _parsed("demo"), None).blocks_retry is False
+
+
+def test_a_disabled_extension_does_not_block_retry(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "demo-ext", _manifest_with_no_retry(["send"]))
+    handler = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["demo"]
+    result = handler(_ctx(), _parsed("demo send a@x.com"), None)
+    assert "EXTENSION_DISABLED" in result.prompt_content
+    assert result.blocks_retry is False
+
+
+def test_a_load_failure_does_not_block_retry(tmp_path: Path) -> None:
+    _write_ext(
+        tmp_path, "no-live3",
+        _manifest_with_no_retry(["send"], ext_id="no-live3", command="nolive3", live_view=True),
+    )
+    set_enabled("no-live3", True)
+    result = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["nolive3"](_ctx(), _parsed("nolive3 send"), None)
+    assert "EXTENSION_LOAD_FAILED" in result.prompt_content
+    assert result.blocks_retry is False
+
+
 def test_core_commands_are_not_stamped() -> None:
     agent = db.create_agent("Iris", role="Researcher")
     result = execute_bm_cli(agent, db.get_agent_state(agent.id), "pwd")

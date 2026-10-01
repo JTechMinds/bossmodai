@@ -60,7 +60,7 @@ const BossModCliPolicySettings = (() => {
         cli_no_retry_commands: {
             order: 70,
             label: 'Never retry these commands',
-            description: 'If a turn fails after running one of these commands, BossMod does not retry it automatically, so the command is not repeated (for example, an email is not sent twice). You are notified instead. One command per line, matched from the start (for example "mail send"). Everything else is retried. Leave empty to retry everything.',
+            description: 'If a turn fails after running one of these commands, BossMod does not retry it automatically, so the command is not repeated. You are notified instead. One command per line, matched from the start of the command. Extensions mark their own commands that must not repeat; you don\'t need to list those here. Leave empty to retry everything else.',
             type: 'textarea',
         },
     };

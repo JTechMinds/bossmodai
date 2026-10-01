@@ -4,6 +4,11 @@ Each valid extension adds one virtual command (its ``command.name``). The
 handler is registered at import from the static discovery, so the command is
 always known to the parser and policy (virtual commands are auto-allowed);
 whether it RUNS is decided per call from the live enabled set.
+
+An extension declares the subcommands whose replay is harmful in its manifest
+(``command.no_retry``); the handler marks ``blocks_retry`` on a result whose
+subcommand is declared, once the extension's own handler has run. Core never
+names an extension's commands.
 """
 
 from __future__ import annotations
@@ -87,10 +92,29 @@ def _stamped(result: BossModCliResult, ext_id: str) -> BossModCliResult:
 
 
 def _handler_for(entry: ExtensionEntry) -> CliHandler:
+    """Build the CLI handler for one extension's command.
+
+    The handler answers ``EXTENSION_DISABLED`` when the extension is off and
+    ``EXTENSION_LOAD_FAILED`` when it cannot load; otherwise it runs the
+    extension's ``handle``. Only on that path, a result whose subcommand is in
+    the manifest's ``command.no_retry`` gets ``blocks_retry=True``: the
+    handler ran, so an outside effect may have happened. Every result is
+    stamped with the extension id.
+
+    Args:
+        entry: A valid discovered extension.
+
+    Returns:
+        The handler, keyed by the caller under ``entry.manifest.command.name``.
+    """
     name = entry.manifest.name
+    command_name = entry.manifest.command.name
+    # Full command prefixes, e.g. ("demo", "send"), as retry_policy matches them.
+    no_retry = tuple((command_name, *item.split()) for item in entry.manifest.command.no_retry)
 
     def run(ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:
         from core.bm_cli.results import error_result
+        from core.bm_cli.retry_policy import blocks_retry
 
         if not is_enabled(entry.id):
             # A disabled extension releases what it held (e.g. browsers) the
@@ -107,7 +131,8 @@ def _handler_for(entry: ExtensionEntry) -> CliHandler:
             instance = load_extension(entry)
         except ExtensionLoadError as exc:
             return error_result(parsed.raw, f"EXTENSION_LOAD_FAILED: {exc}", cwd=ctx.cwd)
-        return instance.handle(ctx, parsed, body)
+        result = instance.handle(ctx, parsed, body)
+        return replace(result, blocks_retry=True) if blocks_retry(parsed, no_retry) else result
 
     def handler(ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:
         # Every result this extension's command returns, success or error, is

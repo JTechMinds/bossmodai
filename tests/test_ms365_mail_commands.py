@@ -24,6 +24,11 @@ ids = importlib.import_module(f"{_PACKAGE.__name__}.ids")
 DEFAULTS = commands.Ms365MailDefaults.model_validate(_ENTRY.manifest.defaults)
 
 
+def test_the_manifest_declares_send_reply_and_archive_as_no_retry() -> None:
+    assert _ENTRY.valid, _ENTRY
+    assert _ENTRY.manifest.command.no_retry == ("send", "reply", "archive")
+
+
 def _summary(n: int, *, read: bool = False, preview: str = "Hello there", received=None, prefix="GRAPH-ID") -> object:
     return graph.MessageSummary(
         id=f"{prefix}-{n}", subject=f"Subject {n}", sender=graph.Address("Alice Doe", "alice@x.com"),

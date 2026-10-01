@@ -1,11 +1,17 @@
 """BossMod AI — The no-retry command list.
 
 A failed turn is retried automatically unless it ran a command whose replay
-is harmful (an email sent twice). Those commands are named, as data, in the
-``cli_no_retry_commands`` setting: one command prefix per line, editable in
-Settings → CLI Policy. This module parses that list and matches a parsed
-command against it; ``core.bm_cli.runtime`` marks a result whose listed
-command reached its handler (``BossModCliResult.blocks_retry``).
+is harmful (a message sent twice). Two sources mark such commands, both as
+data:
+
+* Extensions declare their own unsafe subcommands in their manifest
+  (``command.no_retry``); ``core.extensions.cli_bridge`` applies them.
+* The operator's additions live in the ``cli_no_retry_commands`` setting:
+  one command prefix per line, editable in Settings → CLI Policy.
+
+This module parses that list and matches a parsed command against it;
+``core.bm_cli.runtime`` marks a result whose listed command reached its
+handler (``BossModCliResult.blocks_retry``).
 """
 
 from __future__ import annotations
@@ -31,7 +37,7 @@ def parse_no_retry_list(raw: str) -> tuple[tuple[str, ...], ...]:
     Pure. One entry per line; each line is trimmed, and a line that is blank
     after trimming is skipped (blank lines between entries are formatting,
     not data). Each entry is split on whitespace and lowercased, so
-    ``"Mail  Send"`` becomes ``("mail", "send")``.
+    ``"Deploy  Prod"`` becomes ``("deploy", "prod")``.
 
     Args:
         raw: The setting's stored value.
@@ -78,9 +84,9 @@ def blocks_retry(parsed: ParsedCliCommand, entries: Iterable[tuple[str, ...]]) -
 
     Pure. The command's words are its canonical name followed by its args,
     lowercased; it matches an entry when those words start with the entry's
-    words. ``("mail", "send")`` matches ``mail send a@x.com --subject s`` but
-    not ``mail read`` or ``mailx send``, and an entry longer than the command
-    never matches.
+    words. ``("deploy", "prod")`` matches ``deploy prod --now`` but not
+    ``deploy staging`` or ``deployx prod``, and an entry longer than the
+    command never matches.
 
     Args:
         parsed: The command as parsed by ``parse_cli_command``.

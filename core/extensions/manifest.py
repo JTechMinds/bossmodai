@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Literal, Mapping
 
@@ -14,6 +15,9 @@ MANIFEST_FILE = "manifest.json"
 _ID_PATTERN = r"^[a-z][a-z0-9-]{1,40}$"
 # A command name is typed by agents as the first CLI token.
 _COMMAND_PATTERN = r"^[a-z][a-z0-9-]{1,15}$"
+# A no_retry entry is matched word by word against the parsed (lowercased)
+# command, so it is lowercase words with single spaces.
+_NO_RETRY_PATTERN = r"^[a-z0-9-]+( [a-z0-9-]+)*$"
 
 
 class ManifestError(Exception):
@@ -25,12 +29,30 @@ class _Strict(BaseModel):
 
 
 class CommandSpec(_Strict):
-    """The one CLI command namespace an extension adds (``bv …``)."""
+    """The one CLI command namespace an extension adds (``bv …``).
+
+    ``no_retry`` lists subcommand prefixes (the words after ``name``) whose
+    replay is harmful; a failed turn that ran one is not retried
+    (``core.extensions.cli_bridge`` marks the result).
+    """
 
     name: str = Field(pattern=_COMMAND_PATTERN)
     summary: str = Field(min_length=1)
     usage: str = Field(min_length=1)
     help: str = Field(min_length=1)
+    no_retry: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _no_retry_are_subcommand_prefixes(self) -> "CommandSpec":
+        for entry in self.no_retry:
+            if not re.fullmatch(_NO_RETRY_PATTERN, entry):
+                raise ValueError(f"no_retry entry {entry!r} must be lowercase words separated by single spaces")
+            if entry.split()[0] == self.name:
+                raise ValueError(f"no_retry entry {entry!r} must not repeat the command name {self.name!r}")
+        duplicates = sorted({entry for entry in self.no_retry if self.no_retry.count(entry) > 1})
+        if duplicates:
+            raise ValueError(f"duplicate no_retry entries: {', '.join(duplicates)}")
+        return self
 
 
 class RequiresSpec(_Strict):

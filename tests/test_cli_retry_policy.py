@@ -35,8 +35,8 @@ def teardown_function() -> None:
 
 
 def test_parse_skips_blank_lines_and_trims_and_lowercases() -> None:
-    raw = "\n  Mail   Send  \n\n\t\nmail reply\n   \nGIT push\n"
-    assert parse_no_retry_list(raw) == (("mail", "send"), ("mail", "reply"), ("git", "push"))
+    raw = "\n  Deploy   Prod  \n\n\t\ndeploy rollback\n   \nGIT push\n"
+    assert parse_no_retry_list(raw) == (("deploy", "prod"), ("deploy", "rollback"), ("git", "push"))
 
 
 def test_parse_of_only_blank_lines_is_empty() -> None:
@@ -44,46 +44,47 @@ def test_parse_of_only_blank_lines_is_empty() -> None:
 
 
 def test_parse_keeps_crlf_entries_clean() -> None:
-    assert parse_no_retry_list("mail send\r\nmail reply\r\n") == (("mail", "send"), ("mail", "reply"))
+    assert parse_no_retry_list("deploy prod\r\ndeploy rollback\r\n") == (("deploy", "prod"), ("deploy", "rollback"))
 
 
 @pytest.mark.parametrize("command", [
-    "mail send a@x.com --subject s",
-    "mail send",
-    "MAIL Send A@x.com --subject s",
-    "mail reply m4bd23eff --all",
+    "deploy prod --now",
+    "deploy prod",
+    "DEPLOY Prod --Now",
+    "deploy rollback v12 --force",
 ])
 def test_a_listed_prefix_matches(command: str) -> None:
-    entries = parse_no_retry_list("mail send\nmail reply")
+    entries = parse_no_retry_list("deploy prod\ndeploy rollback")
     assert blocks_retry(parse_cli_command(command), entries) is True
 
 
 @pytest.mark.parametrize("command", [
-    "mail read m4bd23eff",
-    "mailx send a@x.com",
-    "mail sender a@x.com",
-    "mail",
+    "deploy staging",
+    "deployx prod",
+    "deploy production",
+    "deploy",
     "status",
 ])
 def test_an_unlisted_command_does_not_match(command: str) -> None:
-    entries = parse_no_retry_list("mail send\nmail reply")
+    entries = parse_no_retry_list("deploy prod\ndeploy rollback")
     assert blocks_retry(parse_cli_command(command), entries) is False
 
 
 def test_an_entry_longer_than_the_command_does_not_match() -> None:
-    entries = parse_no_retry_list("mail send now")
-    assert blocks_retry(parse_cli_command("mail send"), entries) is False
-    assert blocks_retry(parse_cli_command("mail send now please"), entries) is True
+    entries = parse_no_retry_list("deploy prod now")
+    assert blocks_retry(parse_cli_command("deploy prod"), entries) is False
+    assert blocks_retry(parse_cli_command("deploy prod now please"), entries) is True
 
 
 def test_an_empty_list_matches_nothing() -> None:
-    assert blocks_retry(parse_cli_command("mail send a@x.com"), ()) is False
+    assert blocks_retry(parse_cli_command("deploy prod --now"), ()) is False
 
 
-def test_the_seeded_list_names_mail_send_reply_and_archive() -> None:
-    assert load_no_retry_list() == (("mail", "send"), ("mail", "reply"), ("mail", "archive"))
+def test_the_seeded_list_is_empty_for_operator_additions() -> None:
+    # Extensions declare their own no-retry subcommands in their manifest.
     row = next(item for item in db.get_settings() if item.key == SETTING_KEY)
-    assert row.category == "cli_policy"
+    assert row.value == "" and row.category == "cli_policy"
+    assert load_no_retry_list() == ()
 
 
 def test_an_operator_edit_is_read_live() -> None:
