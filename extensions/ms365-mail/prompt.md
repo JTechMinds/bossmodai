@@ -7,5 +7,5 @@ You have your own email mailbox. Use the `mail` command to read and send email; 
 - Save addresses you use often with `mail contacts add <addr> --name <text>`; list them with `mail contacts`.
 - You can send to saved contacts by name: `mail send alice --subject …`, or mix names and addresses separated by commas.
 - Write mail in Markdown (headings, lists, bold, links, tables); it is sent formatted. Attachments are not supported yet.
-- When new mail arrives you are woken with a list of it; read and reply as needed.
+- When new mail arrives you are woken with a list of it (ids like [m3f9a21c]): `mail read <id>` each one you need to act on, then `mail reply <id>` (add `--all` when the others on it should see your answer) or `mail archive <id>` once it's handled.
 - Keep your inbox manageable: `mail inbox` shows how many messages and unread you have; archive mail you have handled with `mail archive <id>`; find older mail with `mail search <words>`, which covers inbox and archive; `mail sent` lists what you already sent, so check it before sending something twice.

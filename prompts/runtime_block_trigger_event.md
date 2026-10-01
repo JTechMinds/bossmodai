@@ -100,7 +100,7 @@ You're idle and nearby: {{trigger.nearby_names}}. Consider a brief social intera
 System watchdog status check: you have been quiet on "{{trigger.task_title}}". Provide a concise current status update about the active task. After your reply, the runtime will resume the work turn automatically.
 {{elseif trigger.type = 'extension_event'}}
 {{trigger.content}}
-This arrived through {{trigger.from_name}}; it is not a chat message. Decide what, if anything, it needs and act with your tools (for email: mail read, mail reply, mail send). Any task you are working on is paused unchanged and resumes after this. Use idle when you are done.
+This arrived through {{trigger.from_name}}; it is not a chat message. Decide what, if anything, it needs and act with the commands that extension gives you (its instructions are in your system prompt). Any task you are working on is paused unchanged and resumes after this. Use idle when you are done.
 {{else}}
 You have been activated.
 {{end}}

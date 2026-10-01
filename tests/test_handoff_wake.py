@@ -10,6 +10,7 @@ round does not.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -763,6 +764,13 @@ def test_awoken_channel_turn_has_a_soft_pass_line() -> None:
     assert _ECHO_PASS not in Path("prompts/system_prompt.md").read_text(encoding="utf-8")
     for path in Path("prompts/personalities").glob("*.md"):
         assert _ECHO_PASS not in path.read_text(encoding="utf-8")
+
+
+def test_trigger_event_prompt_names_no_extension_commands() -> None:
+    # Core prompts stay extension-agnostic: each extension teaches its own
+    # commands through its prompt block, injected only when it is enabled.
+    trigger_event = load_default_prompt("runtime_block_trigger_event")
+    assert re.search(r"\bmail (read|reply|send|archive)\b", trigger_event) is None
 
 
 def test_channel_accept_records_a_sticky_work_bind() -> None:

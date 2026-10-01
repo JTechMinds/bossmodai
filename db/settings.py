@@ -427,9 +427,9 @@ def reconcile_work_commit_resume_prompt() -> None:
     )
 
 
-# The ``extension_event`` branch (an extension woke the agent, e.g. new email)
-# lives in the trigger-event row. Seeding never overwrites it, so it moves to
-# the shipped default once per database.
+# The ``extension_event`` branch (an extension woke the agent, e.g. new mail
+# from a mailbox extension) lives in the trigger-event row. Seeding never
+# overwrites it, so it moves to the shipped default once per database.
 _EXTENSION_EVENT_PROMPT_KEY = "runtime_block_trigger_event"
 _EXTENSION_EVENT_PROMPT_RECONCILED = "extension_event_prompt_reconciled"
 
