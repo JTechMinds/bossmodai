@@ -335,18 +335,20 @@ class GraphMailbox:
             "saveToSentItems": True,
         })
 
-    def reply(self, message_id: str, body: str, reply_all: bool) -> None:
-        """Reply to the sender (or everyone) of one inbox message; ``body`` is the comment.
+    def reply(self, message_id: str, body_html: str, reply_all: bool) -> None:
+        """Reply to the sender (or everyone) of one inbox message; ``body_html`` is the comment.
 
-        Plain text on purpose: Graph documents ``comment`` or ``message.body``
-        (not both), and only the comment is placed above the quoted original;
-        a ``message.body`` replaces the whole body, dropping the thread.
+        ``body_html`` is the rendered HTML from ``formatting.render_body``.
+        Graph places the comment above the quoted original and renders it as
+        HTML (as Outlook shows it). ``message.body`` is not used: Graph
+        documents ``comment`` or ``message.body`` (not both), and a
+        ``message.body`` replaces the whole body, dropping the quoted thread.
 
         Raises:
             GraphAuthError, GraphUnreachable, GraphHttpError.
         """
         action = "replyAll" if reply_all else "reply"
-        self._call("POST", f"{_INBOX}/{_quoted_id(message_id)}/{action}", json={"comment": body})
+        self._call("POST", f"{_INBOX}/{_quoted_id(message_id)}/{action}", json={"comment": body_html})
 
     def _call(
         self,

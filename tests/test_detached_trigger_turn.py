@@ -155,24 +155,84 @@ async def test_the_snapshot_is_untouched_and_idle_ends_the_turn(monkeypatch: pyt
     assert current.status == "active" and current.kind == "work"
 
 
+_DONE_STEP = '{"act":"done","data":{"sum":"finished"},"th":"done"}'
+
+
 @pytest.mark.parametrize("step", [
-    '{"act":"done","data":{"sum":"finished"},"th":"done"}',
+    _DONE_STEP,
     '{"act":"wait","data":{"why":"waiting on Alice"},"th":"wait"}',
     '{"act":"block","data":{"why":"blocked on access"},"th":"block"}',
 ])
 @pytest.mark.asyncio
-async def test_task_state_actions_are_refused(monkeypatch: pytest.MonkeyPatch, step: str) -> None:
+async def test_a_refused_task_state_action_is_feedback_and_idle_completes_the_turn(
+    monkeypatch: pytest.MonkeyPatch, step: str,
+) -> None:
     agent, task, activity = _working_agent_with_snapshot()
     before = _snapshot_bytes(activity.id)
-    _script(monkeypatch, [step])
+    prompts = _script(monkeypatch, [step, _IDLE_STEP])
+    trigger = _claimed_trigger(agent.id, "extension_event", _EVENT_PAYLOAD)
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    # The refusal reached the model in the same turn, as a refusal.
+    assert len(prompts) == 2
+    feedback = prompts[1][-1]["content"]
+    assert feedback.startswith("Your previous action was rejected by the runtime: ")
+    assert "your task is paused unchanged" in feedback
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.status == "completed" and row.retry_count == 0
+    assert [item["id"] for item in db.list_agent_triggers(agent.id) if item["trigger_type"] == "extension_event"] == [row.id]
+    assert db.get_task(task.id).status == "active"
+    assert db.get_activity(activity.id).status == "active"
+    assert _snapshot_bytes(activity.id) == before
+
+
+@pytest.mark.asyncio
+async def test_refusals_past_the_repair_budget_fail_a_turn_that_ran_nothing_as_retryable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, task, activity = _working_agent_with_snapshot()
+    before = _snapshot_bytes(activity.id)
+    _script(monkeypatch, [_DONE_STEP] * 3)
 
     outcome = await run_turn(agent, db.get_agent_state(agent.id), _event_trigger())
 
     assert outcome.trigger_status == "failed"
     assert "your task is paused unchanged" in (outcome.diagnostic_error or "")
+    # Nothing ran, so a retry replays nothing.
+    assert outcome.retryable is True
     assert db.get_task(task.id).status == "active"
-    assert db.get_activity(activity.id).status == "active"
     assert _snapshot_bytes(activity.id) == before
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_that_ran_an_action_then_failed_is_exhausted_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, task, activity = _working_agent_with_snapshot()
+    before = _live_state(task.id, activity.id)
+    _script(monkeypatch, [_STATUS_STEP, _DONE_STEP, _DONE_STEP, _DONE_STEP])
+    outcomes: list[Any] = []
+
+    async def _recording_run_turn(*args: Any, **kwargs: Any):
+        outcome = await run_turn(*args, **kwargs)
+        outcomes.append(outcome)
+        return outcome
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _recording_run_turn)
+    trigger = _claimed_trigger(agent.id, "extension_event", _EVENT_PAYLOAD)
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    [outcome] = outcomes
+    assert outcome.trigger_status == "failed" and outcome.retryable is False
+    # The retry limit is not spent: the trigger fails at once, with no retry.
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.status == "failed" and row.retry_count == 0
+    assert _live_state(task.id, activity.id) == before
+    [notice] = _operator_dms(agent.id)
+    assert notice.startswith("I hit repeated runtime failures while handling an extension event")
+    assert "your task is paused unchanged" in notice
 
 
 @pytest.mark.asyncio
@@ -307,6 +367,8 @@ async def test_l1_no_progress_in_a_detached_turn_fails_the_turn_without_touching
     outcome = await run_turn(agent, db.get_agent_state(agent.id), _event_trigger())
 
     assert outcome.trigger_status == "failed"
+    # The turn already ran actions and a detached turn freezes nothing.
+    assert outcome.retryable is False
     assert (outcome.diagnostic_error or "").startswith("Guardian [no_progress]: ")
     assert outcome.result["event"] == "guardian_violation"
     assert outcome.steps[-1]["error"].startswith("Guardian [no_progress]: ")
@@ -578,10 +640,13 @@ async def test_r3_a_gate_deny_posts_no_blocked_line_on_the_task_thread(monkeypat
 async def test_r3_walk_and_meeting_actions_are_refused(monkeypatch: pytest.MonkeyPatch, step: str) -> None:
     agent, task, activity = _working_agent_with_snapshot()
     before = _live_state(task.id, activity.id)
-    _script(monkeypatch, [step])
+    # Each refusal is fed back within the repair budget; the third ends the turn.
+    prompts = _script(monkeypatch, [step] * 3)
 
     outcome = await run_turn(agent, db.get_agent_state(agent.id), _event_trigger())
 
+    assert len(prompts) == 3
+    assert "is not available while handling an extension event." in prompts[1][-1]["content"]
     assert outcome.trigger_status == "failed"
     assert "is not available while handling an extension event." in (outcome.diagnostic_error or "")
     assert db.get_activity(activity.id).status == "active"

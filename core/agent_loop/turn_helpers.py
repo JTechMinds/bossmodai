@@ -57,20 +57,22 @@ def _build_continuation_instruction(
 ) -> str:
     """Build the next-step instruction after a non-terminal execution action."""
     detail = result.get("detail", action_name)
+    # A refusal is a refusal in every context; the per-kind "action executed"
+    # prompts below would misreport it as a success.
+    if result.get("event") == "world_feedback":
+        expected_action = result.get("expected_action") or ""
+        if not isinstance(expected_action, str):
+            expected_action = ""
+        expected_actions = result.get("expected_actions") or []
+        if not isinstance(expected_actions, list):
+            expected_actions = []
+        expected = ", ".join([expected_action.strip(), *[str(item).strip() for item in expected_actions if str(item).strip()]])
+        expected = expected.strip(", ").strip()
+        return _render_loop_prompt(
+            "internal_loop_execution_continue_work_world_feedback",
+            detail=(detail + (f" Expected: {expected}." if expected else "")),
+        )
     if active_activity_kind == "work":
-        if result.get("event") == "world_feedback":
-            expected_action = result.get("expected_action") or ""
-            if not isinstance(expected_action, str):
-                expected_action = ""
-            expected_actions = result.get("expected_actions") or []
-            if not isinstance(expected_actions, list):
-                expected_actions = []
-            expected = ", ".join([expected_action.strip(), *[str(item).strip() for item in expected_actions if str(item).strip()]])
-            expected = expected.strip(", ").strip()
-            return _render_loop_prompt(
-                "internal_loop_execution_continue_work_world_feedback",
-                detail=(detail + (f" Expected: {expected}." if expected else "")),
-            )
         missing_deliverables = result.get("missing_deliverables") or []
         if missing_deliverables:
             first = missing_deliverables[0]

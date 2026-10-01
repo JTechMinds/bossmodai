@@ -104,6 +104,9 @@ async def _run_decision_turn(
 ) -> TurnOutcome:
     """Handle a single-turn direct request by producing a structured decision."""
     step_traces: list[dict[str, Any]] = []
+    # Every failure exit retries only when this is empty: decision-turn CLI
+    # steps are not limited to reads (writes, mail) and nothing is frozen
+    # here, so a retry after one would replay its side effects.
     executed_actions: list[str] = []
     total_prompt_tokens = 0
     total_completion_tokens = 0
@@ -202,6 +205,7 @@ async def _run_decision_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
+                    retryable=not executed_actions,
                     result=result,
                     error=str(exc),
                     action=None,
@@ -321,6 +325,7 @@ async def _run_decision_turn(
                     model_source=model_source,
                     initial_context_json=initial_context_json,
                     outcome=TurnOutcome.failure(
+                        retryable=not executed_actions,
                         result=early_fail,
                         error=early_fail.get("detail") or "say could not post before actions",
                         action=cli_call.model_dump(),
@@ -400,6 +405,7 @@ async def _run_decision_turn(
                     model_source=model_source,
                     initial_context_json=initial_context_json,
                     outcome=TurnOutcome.failure(
+                        retryable=not executed_actions,
                         result=result,
                         error=peek_verdict.steer,
                         action=cli_call.model_dump(),
@@ -564,6 +570,7 @@ async def _run_decision_turn(
                     model_source=model_source,
                     initial_context_json=initial_context_json,
                     outcome=TurnOutcome.failure(
+                        retryable=not executed_actions,
                         result=early_fail,
                         error=early_fail.get("detail") or "say could not post before actions",
                         action=host_call.model_dump(),
@@ -703,6 +710,7 @@ async def _run_decision_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
+                    retryable=not executed_actions,
                     result=result,
                     error=validation_error,
                     action=decision.model_dump(),

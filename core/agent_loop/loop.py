@@ -179,6 +179,8 @@ async def _run_bound_turn(
             model_source=model_source,
             initial_context_json=initial_context_json,
             outcome=TurnOutcome.failure(
+                # No action has run: a retry replays nothing.
+                retryable=True,
                 result=result,
                     error="Trigger requires active work activity",
                 action=None,

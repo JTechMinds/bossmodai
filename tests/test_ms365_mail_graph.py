@@ -84,6 +84,22 @@ def test_every_request_stays_under_the_mailbox_root() -> None:
     ]
 
 
+def test_reply_posts_the_given_html_as_the_comment() -> None:
+    posted = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        posted.append((request.url.path.rsplit("/", 1)[1], json.loads(request.content)))
+        return httpx.Response(202, json={})
+
+    mailbox = _mailbox(handler)
+    mailbox.reply("AAMk-1", "<div><p><strong>Hi</strong></p>\n</div>", reply_all=False)
+    mailbox.reply("AAMk-1", "<div><p>All</p>\n</div>", reply_all=True)
+    assert posted == [
+        ("reply", {"comment": "<div><p><strong>Hi</strong></p>\n</div>"}),
+        ("replyAll", {"comment": "<div><p>All</p>\n</div>"}),
+    ]
+
+
 @pytest.mark.parametrize("hostile", ["AA/../../users/ceo@contoso.com", "AA?$select=x", "AA#frag", "../sendMail"])
 def test_a_message_id_with_path_characters_is_quoted_and_stays_in_scope(hostile: str) -> None:
     seen = []

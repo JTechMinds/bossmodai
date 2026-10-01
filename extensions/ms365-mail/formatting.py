@@ -1,4 +1,4 @@
-"""Microsoft 365 Mailbox — agents write mail in Markdown; it is sent as HTML.
+"""Microsoft 365 Mailbox — agents write mail in Markdown; sends and replies go out as HTML.
 
 ``html: False`` makes markdown-it escape any raw HTML in the agent's text, so
 the only markup in the result is what the Markdown itself produced and no

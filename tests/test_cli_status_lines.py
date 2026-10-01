@@ -229,7 +229,9 @@ async def test_an_execution_turn_bv_open_posts_the_browsing_line_to_the_task_ori
     )
     _script(monkeypatch, [
         '{"act":"cli","data":{"cmd":"bv open example.com"},"th":"look"}',
-        '{"act":"idle","data":{},"th":"looked"}',
+        # idle is refused on an active task; each refusal is fed back until
+        # the repair budget is spent, which ends the turn.
+        *['{"act":"idle","data":{},"th":"looked"}'] * 3,
     ])
     trigger = {"type": "activity_resumed", "task_id": task.id, "content": "Resume.", "source_channel": "work"}
     await run_turn(agent, db.get_agent_state(agent.id), trigger)
@@ -324,7 +326,9 @@ async def test_an_execution_turn_bv_command_announces_the_live_view(sink, monkey
     activity_runtime.activate_work_activity(agent.id, task, task_status="active")
     _script(monkeypatch, [
         '{"act":"cli","data":{"cmd":"bv open example.com"},"th":"look"}',
-        '{"act":"idle","data":{},"th":"looked"}',
+        # idle is refused on an active task; each refusal is fed back until
+        # the repair budget is spent, which ends the turn.
+        *['{"act":"idle","data":{},"th":"looked"}'] * 3,
     ])
     trigger = {"type": "activity_resumed", "task_id": task.id, "content": "Resume.", "source_channel": "work"}
     await run_turn(agent, db.get_agent_state(agent.id), trigger)

@@ -17,6 +17,7 @@ from core.agent_loop.turn_context import (
     _determine_mode,
 )
 from core.agent_loop.turn_helpers import (
+    _build_continuation_instruction,
     _build_decision_repair_messages,
     _build_execution_repair_messages,
     _summarize_action_chain,
@@ -112,6 +113,18 @@ def test_repair_builders_keep_roles_and_error() -> None:
     assert execution_msgs[0]["role"] == "system"
     assert execution_msgs[-1]["role"] == "user"
     assert "bad act" in execution_msgs[0]["content"]
+
+
+def test_a_runtime_refusal_reads_as_a_refusal_in_every_context() -> None:
+    refusal = {"event": "world_feedback", "detail": '"complete" is not available here'}
+    for kind in (None, "work", "conversation", "meeting", "break"):
+        text = _build_continuation_instruction(result=refusal, action_name="done", active_activity_kind=kind)
+        assert text.startswith('Your previous action was rejected by the runtime: "complete" is not available here'), kind
+        assert "Do NOT repeat the rejected action." in text
+    executed = _build_continuation_instruction(
+        result={"event": "bm_cli_result", "detail": "ran status"}, action_name="bm_cli", active_activity_kind=None,
+    )
+    assert executed.startswith("Action executed: ran status.")
 
 
 def test_both_turn_types_map_cli_results_with_the_one_mapper() -> None:

@@ -73,7 +73,7 @@ class MailboxLike(Protocol):
     def get_message(self, message_id: str) -> Message: ...
     def mark_read(self, message_id: str) -> None: ...
     def send(self, to: Sequence[Address], cc: Sequence[Address], subject: str, body_html: str) -> None: ...
-    def reply(self, message_id: str, body: str, reply_all: bool) -> None: ...
+    def reply(self, message_id: str, body_html: str, reply_all: bool) -> None: ...
 
 
 class CommandError(ValueError):
@@ -215,12 +215,19 @@ class MailCommands:
             f"Attachments: {'yes (attachments cannot be opened yet)' if message.has_attachments else 'none'}",
         ]
         body_lines = message.body.replace("\r\n", "\n").split("\n") if message.body.strip() else ["(empty)"]
+        short = args[0].strip().lower()
+        sender_only, everyone = _reply_audience(message, mailbox.mailbox)
+        # Who each reply form reaches, shown where the agent decides (not left
+        # to an implicit default).
+        reply_lines = [f"mail reply {short}        → {_join(sender_only)}"]
+        if len(everyone) > len(sender_only):
+            reply_lines.append(f"mail reply {short} --all  → {_join(everyone)}")
         return success_result(
             command=parsed.raw,
             detail=f"mail: read {args[0]}",
             kind=KIND,
-            data={"mailbox": mailbox.mailbox, "id": args[0].strip().lower()},
-            sections=[("MESSAGE", header), ("BODY", body_lines)],
+            data={"mailbox": mailbox.mailbox, "id": short},
+            sections=[("MESSAGE", header), ("BODY", body_lines), ("REPLY", reply_lines)],
             cwd=ctx.cwd,
         )
 
@@ -274,15 +281,27 @@ class MailCommands:
         # Read first: the result names who the reply went to, and an id that
         # left the inbox fails here rather than after a send attempt.
         original = mailbox.get_message(graph_id)
-        mailbox.reply(graph_id, text, reply_all)
-        sender = original.sender.display() if original.sender else "the sender"
-        sent = f"sent reply to {sender}" + (" and everyone on the message" if reply_all else "")
+        # Agents write Markdown; replies go out formatted like sends.
+        mailbox.reply(graph_id, render_body(text), reply_all)
+        sender_only, everyone = _reply_audience(original, mailbox.mailbox)
+        recipients = everyone if reply_all else sender_only
+        sent = f"sent reply to {_join(recipients)}"
+        lines = [sent, f"Subject: Re: {original.subject or '(no subject)'}"]
+        left_out = [address for address in everyone if address not in recipients]
+        if left_out:
+            # A fact only: an instruction to re-send would invite a duplicate.
+            lines.append(f"Not included: {_join(left_out)}")
         return success_result(
             command=parsed.raw,
             detail=f"mail: {sent}",
             kind=KIND,
-            data={"mailbox": mailbox.mailbox, "id": opts.positional[0].strip().lower(), "reply_all": reply_all},
-            sections=[("SENT", [sent, f"Subject: Re: {original.subject or '(no subject)'}"])],
+            data={
+                "mailbox": mailbox.mailbox,
+                "id": opts.positional[0].strip().lower(),
+                "reply_all": reply_all,
+                "to": [address.address for address in recipients],
+            },
+            sections=[("SENT", lines)],
             cwd=ctx.cwd,
         )
 
@@ -381,6 +400,37 @@ def _resolve(book: ContactBook, raw: str) -> list[Contact]:
             seen.add(key)
             resolved.append(contact)
     return resolved
+
+
+def _reply_audience(message: Message, own: str) -> tuple[list[Address], list[Address]]:
+    """Who ``mail reply`` and ``mail reply --all`` reach, for display (pure).
+
+    Graph decides the real recipients; this only describes them, in Graph's
+    order: the sender, then To, then Cc. Duplicates (case-insensitive by
+    address) and the agent's own mailbox are left out.
+
+    Args:
+        message: The message being answered.
+        own: The agent's mailbox address.
+
+    Returns:
+        ``(sender_only, everyone)``; ``sender_only`` is empty when the message
+        has no sender (or the agent sent it), and is always a prefix of
+        ``everyone``.
+    """
+    seen = {own.lower()}
+    everyone: list[Address] = []
+    for address in [*([message.sender] if message.sender else []), *message.to, *message.cc]:
+        key = address.address.lower()
+        if key not in seen:
+            seen.add(key)
+            everyone.append(address)
+    sender_counted = message.sender is not None and message.sender.address.lower() != own.lower()
+    return (everyone[:1] if sender_counted else []), everyone
+
+
+def _join(addresses: Sequence[Address]) -> str:
+    return ", ".join(address.display() for address in addresses) or "(no one)"
 
 
 def format_utc(moment: datetime) -> str:

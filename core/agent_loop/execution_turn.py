@@ -254,8 +254,9 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried; freeze so the retry resumes from these steps.
-            _freeze_if_live(
+            # A failed turn is retried only from a frozen transcript or before any
+            # action ran; otherwise a retry would replay external side effects.
+            frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
                 initial_len=initial_len,
@@ -272,6 +273,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
+                    retryable=frozen or not executed_actions,
                     result=result,
                     error=str(exc),
                     action=action,
@@ -367,8 +369,9 @@ async def _run_execution_turn(
             }
             await manager.broadcast_activity(**result)
             result["parse_steer"] = True
-            # A failed turn is retried; freeze so the retry resumes from these steps.
-            _freeze_if_live(
+            # A failed turn is retried only from a frozen transcript or before any
+            # action ran; otherwise a retry would replay external side effects.
+            frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
                 initial_len=initial_len,
@@ -385,6 +388,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
+                    retryable=frozen or not executed_actions,
                     result=result,
                     error=steer,
                     action=action,
@@ -420,14 +424,46 @@ async def _run_execution_turn(
         )
         if validation_error:
             logger.warning("Contextual action validation failed for %s: %s", agent.name, validation_error)
+            if execution_repair_attempts < _MAX_EXECUTION_REPAIR_ATTEMPTS:
+                # The refusal text is written for the agent: hand it back in
+                # this turn so it can correct course, instead of failing a
+                # turn whose earlier actions may already have side effects.
+                execution_repair_attempts += 1
+                result = {"event": "world_feedback", "detail": validation_error, "agent_name": agent.name}
+                step_traces.append(
+                    _build_step_trace(
+                        step_index=action_count,
+                        context_snapshot=prompt_delta,
+                        raw_response=last_response_content,
+                        action=action,
+                        result=result,
+                        prompt_tokens=step_prompt_tokens,
+                        completion_tokens=step_completion_tokens,
+                        total_tokens=step_total_tokens,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                        error=validation_error,
+                    )
+                )
+                step_messages = _step_messages(
+                    action_name=action_name,
+                    response_content=response.content,
+                    result=result,
+                    active_activity_kind=active_activity.kind if active_activity else None,
+                )
+                context.extend(step_messages)
+                next_step_delta = _serialize_trace_value(step_messages)
+                step_messages = []
+                await breathe()
+                continue
             result = {
                 "event": "agent_error",
                 "detail": f"{agent.name} returned an invalid task action",
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried; freeze so the retry resumes from these steps.
-            _freeze_if_live(
+            # A failed turn is retried only from a frozen transcript or before any
+            # action ran; otherwise a retry would replay external side effects.
+            frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
                 initial_len=initial_len,
@@ -444,6 +480,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
+                    retryable=frozen or not executed_actions,
                     result=result,
                     error=validation_error,
                     action=action,
@@ -644,8 +681,9 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried; freeze so the retry resumes from these steps.
-            _freeze_if_live(
+            # A failed turn is retried only from a frozen transcript or before any
+            # action ran; otherwise a retry would replay external side effects.
+            frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
                 initial_len=initial_len,
@@ -662,6 +700,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
+                    retryable=frozen or not executed_actions,
                     result=result,
                     error=f"Guardian [{violation.rule}]: {violation.detail}",
                     action=action,
@@ -705,6 +744,7 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
+            frozen = False  # a detached turn binds no work activity to freeze
             return await _finalize_turn(
                 agent=agent,
                 trigger=trigger,
@@ -714,6 +754,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
+                    retryable=frozen or not executed_actions,
                     result=result,
                     error=f"Guardian [{violation.rule}]: {violation.detail}",
                     action=action,
@@ -920,22 +961,27 @@ def _freeze_if_live(
     context: list[dict[str, str]],
     fingerprints: list[str],
     no_progress_checkpoints: int,
-) -> None:
+) -> bool:
     """Freeze the working transcript when the turn's work activity is still live.
 
     Live means active or paused on a non-terminal task: an interrupt,
     approval, consent, walk, wait, block or no-progress exit. A terminal exit
     (done, drop, deleg, cancel) has already ended the activity, and ending an
-    activity deletes its snapshot, so nothing is frozen for it.
+    activity deletes its snapshot, so nothing is frozen for it. A detached
+    turn has no work activity and never freezes.
+
+    Returns:
+        ``True`` only when ``freeze_work_turn`` ran, so a retry of this turn
+        resumes from the frozen steps instead of replaying them.
     """
     if work_activity is None:
-        return
+        return False
     current = db.get_activity(work_activity.id)
     if current is None or current.status not in {"active", "paused"}:
-        return
+        return False
     task = db.get_task(current.task_id) if current.task_id else None
     if task is not None and not activity_runtime.is_live_work_task(task):
-        return
+        return False
     freeze_work_turn(
         agent=agent,
         activity=current,
@@ -944,3 +990,4 @@ def _freeze_if_live(
         fingerprints=fingerprints,
         no_progress_checkpoints=no_progress_checkpoints,
     )
+    return True

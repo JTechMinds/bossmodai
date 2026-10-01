@@ -12,7 +12,12 @@ DiagnosticStatus = Literal["success", "error", "skipped"]
 
 @dataclass(slots=True)
 class TurnOutcome:
-    """Structured result of a trigger execution."""
+    """Structured result of a trigger execution.
+
+    ``retryable`` only matters on a failure: the dispatcher retries a failed
+    trigger only when it is ``True``, i.e. when a retry cannot replay side
+    effects the failed turn already had.
+    """
 
     result: dict[str, Any] = field(default_factory=dict)
     trigger_status: TriggerExecutionStatus = "completed"
@@ -25,6 +30,7 @@ class TurnOutcome:
     completion_tokens: int = 0
     total_tokens: int = 0
     steps: list[dict[str, Any]] = field(default_factory=list)
+    retryable: bool = True
 
     @classmethod
     def success(
@@ -56,6 +62,7 @@ class TurnOutcome:
     def failure(
         cls,
         *,
+        retryable: bool,
         result: dict[str, Any],
         error: str,
         action: dict[str, Any] | None,
@@ -66,6 +73,25 @@ class TurnOutcome:
         total_tokens: int,
         steps: list[dict[str, Any]] | None = None,
     ) -> "TurnOutcome":
+        """A failed turn; the trigger is retried only when ``retryable``.
+
+        Args:
+            retryable: Required, so every failure site decides: ``True`` only
+                when a retry cannot replay external side effects (nothing
+                ran yet, or the transcript was frozen for resumption).
+            result: The event result broadcast for the failure.
+            error: The diagnostic error text.
+            action: The last parsed action, if any.
+            action_summary: The turn's action chain.
+            raw_response: The last LLM response.
+            prompt_tokens: Prompt tokens spent this turn.
+            completion_tokens: Completion tokens spent this turn.
+            total_tokens: Total tokens spent this turn.
+            steps: The step traces.
+
+        Returns:
+            A ``failed``/``error`` outcome.
+        """
         return cls(
             result=result,
             trigger_status="failed",
@@ -78,6 +104,7 @@ class TurnOutcome:
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
             steps=list(steps or []),
+            retryable=retryable,
         )
 
     @classmethod

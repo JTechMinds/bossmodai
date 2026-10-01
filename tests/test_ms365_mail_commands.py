@@ -37,9 +37,11 @@ class FakeMailbox:
 
     mailbox = "reports@contoso.com"
 
-    def __init__(self, messages=None, has_more=False) -> None:
+    def __init__(self, messages=None, has_more=False, to=None, cc=None) -> None:
         self.messages = messages if messages is not None else [_summary(1), _summary(2, read=True)]
         self.has_more = has_more
+        self.to = to if to is not None else [graph.Address("", "reports@contoso.com")]
+        self.cc = cc if cc is not None else []
         self.calls: list[tuple] = []
 
     def list_inbox(self, top, skip, unread_only):
@@ -52,7 +54,7 @@ class FakeMailbox:
         summary = next(m for m in self.messages if m.id == message_id)
         return graph.Message(
             id=summary.id, subject=summary.subject, sender=summary.sender,
-            to=[graph.Address("", "reports@contoso.com")], cc=[], received=summary.received,
+            to=self.to, cc=self.cc, received=summary.received,
             is_read=summary.is_read, has_attachments=False, body="Line one\r\nLine two",
         )
 
@@ -62,8 +64,8 @@ class FakeMailbox:
     def send(self, to, cc, subject, body_html):
         self.calls.append(("send", [a.address for a in to], [a.address for a in cc], subject, body_html))
 
-    def reply(self, message_id, body, reply_all):
-        self.calls.append(("reply", message_id, body, reply_all))
+    def reply(self, message_id, body_html, reply_all):
+        self.calls.append(("reply", message_id, body_html, reply_all))
 
 
 @pytest.fixture()
@@ -195,16 +197,59 @@ def test_send_to_addresses_echoes_who_it_went_to(env) -> None:
     assert "sent to a@x.com, b@x.com; cc c@x.com" in result.prompt_content
 
 
+def _with_others() -> FakeMailbox:
+    """A message to the agent and Gene, cc Kseniia (and the sender again, in another case)."""
+    return FakeMailbox(
+        to=[graph.Address("Agent", "REPORTS@contoso.com"), graph.Address("Gene", "gene@x.com")],
+        cc=[graph.Address("Kseniia", "kseniia@x.com"), graph.Address("", "ALICE@x.com")],
+    )
+
+
 def test_reply_and_reply_all(env) -> None:
+    env.state["mailbox"] = _with_others()
     env.run("mail inbox")
     short = ids.short_id("GRAPH-ID-1")
     assert not env.run(f"mail reply {short}").ok  # no body
-    one = env.run(f"mail reply {short}", "Thanks")
+    one = env.run(f"mail reply {short}", "**Thanks**\n- one")
     everyone = env.run(f"mail reply {short} --all", "Thanks all")
     assert one.ok and everyone.ok
     replies = [call for call in env.state["mailbox"].calls if call[0] == "reply"]
-    assert replies == [("reply", "GRAPH-ID-1", "Thanks", False), ("reply", "GRAPH-ID-1", "Thanks all", True)]
-    assert "sent reply to Alice Doe <alice@x.com> and everyone on the message" in everyone.prompt_content
+    assert replies == [
+        ("reply", "GRAPH-ID-1", "<div><p><strong>Thanks</strong></p>\n<ul>\n<li>one</li>\n</ul>\n</div>", False),
+        ("reply", "GRAPH-ID-1", "<div><p>Thanks all</p>\n</div>", True),
+    ]
+    assert "sent reply to Alice Doe <alice@x.com>\n" in one.prompt_content
+    assert "Not included: Gene <gene@x.com>, Kseniia <kseniia@x.com>" in one.prompt_content
+    assert one.data["to"] == ["alice@x.com"]
+    assert "sent reply to Alice Doe <alice@x.com>, Gene <gene@x.com>, Kseniia <kseniia@x.com>" in everyone.prompt_content
+    assert "Not included" not in everyone.prompt_content
+    assert everyone.data["to"] == ["alice@x.com", "gene@x.com", "kseniia@x.com"]
+
+
+def test_a_sender_only_reply_with_no_one_else_has_no_not_included_line(env) -> None:
+    env.run("mail inbox")
+    result = env.run(f"mail reply {ids.short_id('GRAPH-ID-1')}", "Thanks")
+    assert result.ok and "sent reply to Alice Doe <alice@x.com>" in result.prompt_content
+    assert "Not included" not in result.prompt_content
+
+
+def test_read_shows_who_each_reply_form_reaches(env) -> None:
+    env.state["mailbox"] = _with_others()
+    env.run("mail inbox")
+    short = ids.short_id("GRAPH-ID-1")
+    content = env.run(f"mail read {short}").prompt_content
+    assert f"mail reply {short}        → Alice Doe <alice@x.com>" in content
+    assert f"mail reply {short} --all  → Alice Doe <alice@x.com>, Gene <gene@x.com>, Kseniia <kseniia@x.com>" in content
+    reply_section = content.split("REPLY", 1)[1]
+    assert "contoso.com" not in reply_section.lower()
+
+
+def test_read_shows_only_the_sender_form_when_no_one_else_is_on_it(env) -> None:
+    env.run("mail inbox")
+    short = ids.short_id("GRAPH-ID-1")
+    content = env.run(f"mail read {short}").prompt_content
+    assert f"mail reply {short}        → Alice Doe <alice@x.com>" in content
+    assert "--all" not in content
 
 
 # ─── ids ───

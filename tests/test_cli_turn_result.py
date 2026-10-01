@@ -313,7 +313,9 @@ async def test_an_execution_turn_schedules_add_broadcasts_each_effect_once(sink,
         notification_channel_id=None, audit_author_name="Human Operator", audit_author_type="human",
     ).task
     activity_runtime.activate_work_activity(ada.id, task, task_status="active")
-    _script(monkeypatch, [_cli_step(), '{"act":"idle","data":{},"th":"done"}'])
+    # idle is refused on an active task; each refusal is fed back until the
+    # repair budget is spent, which ends the turn.
+    _script(monkeypatch, [_cli_step(), *['{"act":"idle","data":{},"th":"done"}'] * 3])
     trigger = {"type": "activity_resumed", "task_id": task.id, "content": "Resume.", "source_channel": "work"}
     await run_turn(ada, db.get_agent_state(ada.id), trigger)
 

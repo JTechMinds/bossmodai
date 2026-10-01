@@ -235,11 +235,6 @@ class TurnDispatcher:
             return text
         return text[: limit - 3].rstrip() + "..."
 
-    @staticmethod
-    def _is_retryable_outcome(trigger_status: str) -> bool:
-        """Return whether a trigger outcome should be retried automatically."""
-        return trigger_status == "failed"
-
     def _resolve_stuck_task(self, agent_id: str, trigger: dict[str, Any]):
         """Return the task that should be marked stalled after retry exhaustion, if any.
 
@@ -955,7 +950,9 @@ class TurnDispatcher:
                     agent=agent,
                     trigger=trigger,
                     failure_detail=outcome.diagnostic_error or "Turn failed",
-                    retryable=self._is_retryable_outcome(outcome.trigger_status),
+                    # The turn decides: a retry must not replay side effects
+                    # it already had (TurnOutcome.retryable).
+                    retryable=outcome.trigger_status == "failed" and outcome.retryable,
                 )
 
         except Exception as exc:
