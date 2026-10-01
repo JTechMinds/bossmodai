@@ -115,10 +115,19 @@ For the technically curious:
 
 ```bash
 uv sync                  # install dependencies
-uv run pytest -q         # run tests
+uv run pytest -q         # run all tests with up to 8 workers
 uv run python main.py    # start the backend directly
 ./run.sh                 # full desktop app launch
 ```
+
+Tests run in separate processes, each with its own temporary database and data
+directories. Each test file stays on one worker; collection order is preserved
+so the browser integration tests start early. UI harnesses also require Node.js
+with the built-in `node:test` mock-timer API.
+
+Use `uv run pytest -n 0 -q tests/test_ui_context.py` for a focused serial run or
+debugging. Add `--durations=20` to see the slowest test phases. To adjust parallelism,
+use `-n auto --maxprocesses=4` (or another worker cap).
 
 ### Local API authentication
 

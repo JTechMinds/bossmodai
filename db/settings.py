@@ -196,6 +196,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # Extra host directories a named absolute path may open/read/edit.
     # Empty = no extra host access (fail-closed). Not a full host mount.
     ("workspace_host_roots", "", "cli_policy"),
+    # Commands whose replay is harmful: a failed turn that ran one is not
+    # retried (core.bm_cli.retry_policy). One command prefix per line.
+    ("cli_no_retry_commands", "mail send\nmail reply", "cli_policy"),
 
     # ── Nest git (self-host remotes) ──
     # Host Enable stays off until a Shell probe sees a credential helper

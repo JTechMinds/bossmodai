@@ -25,9 +25,13 @@ dev-dependencies = [
     "pytest>=8.0.0",
     "pytest-asyncio>=0.25.0",
     "httpx>=0.28.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [tool.pytest.ini_options]
+# Start browser integration files early instead of sorting them behind large
+# collections of cheap unit tests. Keep each file on one isolated worker.
+addopts = "-n auto --maxprocesses=8 --dist=loadfile --no-loadscope-reorder"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]

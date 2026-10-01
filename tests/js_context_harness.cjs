@@ -11,6 +11,7 @@
  * injects it, so every door this drives opens the modal the app opens.
  */
 const fs = require("fs");
+const { mock } = require("node:test");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
@@ -20,35 +21,12 @@ require("./js_markdown_stub.cjs").installMarkdownStub(documentStub);
 const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
-// ─── Timers scheduled past the verdict ───
-//
-// context/agent-form-save.js hides its "Saved successfully" line three seconds
-// after a save lands. That is correct in the product and is left alone — but
-// this harness performs real saves now, and a pending timer keeps Node's event
-// loop alive: main() finished in ~60ms and the process sat there until 3060ms,
-// once per run, across every test body that spawns this file.
-//
-// So every timer is registered as it is scheduled and the run drops whatever
-// is still pending once the verdict has been written. It ends when its work is
-// done rather than when the product's last cosmetic timeout fires. Nothing is
-// silenced while the run is in progress: a timer that comes due before then
-// still fires, and any assertion that needed one still gets it.
-const pending = new Set();
-const nodeSetTimeout = global.setTimeout;
-global.setTimeout = (fn, ms, ...args) => {
-    const timer = nodeSetTimeout((...called) => {
-        pending.delete(timer);
-        return fn(...called);
-    }, ms, ...args);
-    pending.add(timer);
-    return timer;
-};
+// Exercise debounce deadlines without repeating seconds of wall-clock waits
+// in every test that runs this scenario. Promise turns and calendar dates stay
+// real; only setTimeout/clearTimeout use the clock we advance below.
+mock.timers.enable({ apis: ["setTimeout"] });
 global.window.setTimeout = global.setTimeout;
-
-function dropPendingTimers() {
-    pending.forEach((timer) => clearTimeout(timer));
-    pending.clear();
-}
+global.window.clearTimeout = global.clearTimeout;
 
 // ─── Enough of innerHTML for the agent form to be wired ───
 //
@@ -193,6 +171,12 @@ const { BossModStore, BossModBus, BossModNeeds } = global;
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };
+
+/** Advance timeout deadlines, then let their asynchronous work settle. */
+async function advance(ms) {
+    mock.timers.tick(ms);
+    await drain();
+}
 
 // context/agent-api.js and the form's bindings call the GLOBAL request helper
 // (api-auth.js patches window.fetch and every module reads it by name), so the
@@ -1067,7 +1051,6 @@ async function main() {
 
     // ─── 3a². Schedules: the rows, their states, the live repaint, the layer ───
 
-    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const scheduleRows = () => inDesk(".desk-schedules").querySelectorAll(".desk-schedule");
     const topLayer = () => modals()[modals().length - 1];
     // Every row time goes through the shared 24-hour formatter: spied on for
@@ -1144,11 +1127,15 @@ async function main() {
     const readsBefore = scheduleReads;
     bus.publish("activity", { event: "schedule_ran", detail: "x", agent_id: "a2", schedule_id: "z" });
     bus.publish("activity", { event: "task_created", detail: "x", agent_id: "a1" });
-    await wait(650);
+    await advance(650);
     const otherActivityIsIgnored = scheduleReads === readsBefore;
     bus.publish("activity", { event: "schedule_ran", detail: "x", agent_id: "a1", schedule_id: "s1", outcome: "fired" });
     bus.publish("activity", { event: "schedule_changed", detail: "x", agent_id: "a1", schedule_id: "s1" });
-    await wait(650);
+    await advance(499);
+    if (scheduleReads !== readsBefore) {
+        throw new Error("schedule events must wait for the 500ms debounce before refreshing");
+    }
+    await advance(1);
     const aScheduleRunRefreshesTheRows = scheduleReads === readsBefore + 1;
     if (!otherActivityIsIgnored || !aScheduleRunRefreshesTheRows) {
         throw new Error(`the Schedules section must repaint on its own runs only: ignored `
@@ -1318,7 +1305,11 @@ async function main() {
     // invalid draft says why and sends nothing.
     await runLayer.querySelector("#schedule-edit").dispatchClick();
     const previewsBefore = previewRequests.length;
-    await wait(400);
+    await advance(299);
+    if (previewRequests.length !== previewsBefore) {
+        throw new Error("a draft must wait for the 300ms debounce before requesting its preview");
+    }
+    await advance(1);
     const previewBody = previewRequests[previewRequests.length - 1];
     const theDraftIsPreviewed = previewRequests.length === previewsBefore + 1
         && previewBody.count === 5
@@ -1327,7 +1318,7 @@ async function main() {
     const firstTime = runLayer.querySelector(".schedule-time");
     firstTime.value = "";
     firstTime.dispatchEvent({ type: "input" });
-    await wait(400);
+    await advance(400);
     const anInvalidDraftIsSaidNotSent = previewRequests.length === previewsBefore + 1
         && runLayer.querySelector(".schedule-preview-error").textContent === "Fill in or remove the empty time.";
     await runLayer.querySelector("#schedule-discard").dispatchClick();
@@ -2642,9 +2633,8 @@ async function main() {
         aDegradedFormStillSaves,
         anEditWithNoConnectionStillSaves,
     }));
-    // The verdict is the last thing this harness has to say; a timer still
-    // pending behind it is the product's own cosmetic cleanup, not work.
-    dropPendingTimers();
+    // Cosmetic cleanup timers must not hold the harness open after its verdict.
+    mock.timers.reset();
 }
 
 main().catch((err) => {

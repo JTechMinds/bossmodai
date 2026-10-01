@@ -104,10 +104,10 @@ async def _run_decision_turn(
 ) -> TurnOutcome:
     """Handle a single-turn direct request by producing a structured decision."""
     step_traces: list[dict[str, Any]] = []
-    # Every failure exit retries only when this is empty: decision-turn CLI
-    # steps are not limited to reads (writes, mail) and nothing is frozen
-    # here, so a retry after one would replay its side effects.
     executed_actions: list[str] = []
+    # A failure exit is retried unless a command on the no-retry list
+    # (cli_no_retry_commands) ran this turn; nothing is frozen here.
+    retry_blocked = False
     total_prompt_tokens = 0
     total_completion_tokens = 0
     total_tokens = 0
@@ -205,7 +205,7 @@ async def _run_decision_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
-                    retryable=not executed_actions,
+                    retryable=not retry_blocked,
                     result=result,
                     error=str(exc),
                     action=None,
@@ -325,7 +325,7 @@ async def _run_decision_turn(
                     model_source=model_source,
                     initial_context_json=initial_context_json,
                     outcome=TurnOutcome.failure(
-                        retryable=not executed_actions,
+                        retryable=not retry_blocked,
                         result=early_fail,
                         error=early_fail.get("detail") or "say could not post before actions",
                         action=cli_call.model_dump(),
@@ -405,7 +405,7 @@ async def _run_decision_turn(
                     model_source=model_source,
                     initial_context_json=initial_context_json,
                     outcome=TurnOutcome.failure(
-                        retryable=not executed_actions,
+                        retryable=not retry_blocked,
                         result=result,
                         error=peek_verdict.steer,
                         action=cli_call.model_dump(),
@@ -501,6 +501,7 @@ async def _run_decision_turn(
                 **map_cli_result(agent, cli_result, command=cli_call.command, trigger=trigger),
                 "command": cli_result.command,
             }
+            retry_blocked = retry_blocked or bool(cli_turn_result.get("blocks_retry"))
             # The step's activity and operator lines, live, before any pause.
             await broadcast_cli_side_effects(manager, cli_turn_result, agent=agent)
             step_traces.append(
@@ -570,7 +571,7 @@ async def _run_decision_turn(
                     model_source=model_source,
                     initial_context_json=initial_context_json,
                     outcome=TurnOutcome.failure(
-                        retryable=not executed_actions,
+                        retryable=not retry_blocked,
                         result=early_fail,
                         error=early_fail.get("detail") or "say could not post before actions",
                         action=host_call.model_dump(),
@@ -710,7 +711,7 @@ async def _run_decision_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
-                    retryable=not executed_actions,
+                    retryable=not retry_blocked,
                     result=result,
                     error=validation_error,
                     action=decision.model_dump(),

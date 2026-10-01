@@ -18,7 +18,7 @@ from core.bm_cli.policy_engine import (
     policy_engine,
     _match_prefix,
 )
-from core.bm_cli.runtime import execute_approved_command
+from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
 from core.bm_cli.shell_executor import (
     PATH_JAIL_DENIED_EXIT_CODE,
     PathJailError,
@@ -549,3 +549,135 @@ def test_reconcile_inserts_missing_validate_on_clone_rules() -> None:
     assert ".venv/bin/pip" in always
     assert "git commit" in always
     assert "git commit" in always
+
+
+# ---------------------------------------------------------------------------
+# No-retry list: the result is marked only when a listed command ran
+# ---------------------------------------------------------------------------
+
+
+def _no_retry(*entries: str) -> None:
+    db.set_setting("cli_no_retry_commands", "\n".join(entries), "cli_policy")
+
+
+def test_a_listed_command_that_reached_its_handler_blocks_retry() -> None:
+    _no_retry("status", "cat")
+    agent = db.create_agent("Retry Marker")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    workspace = agent_artifact_dir(agent.storage_key)
+    try:
+        assert execute_bm_cli(agent, state, "status").blocks_retry is True
+        # The handler ran and failed: whether it had an effect cannot be known.
+        failed = execute_bm_cli(agent, state, "cat missing.md")
+        assert failed.ok is False and failed.blocks_retry is True
+        assert execute_bm_cli(agent, state, "pwd").blocks_retry is False
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_a_listed_command_denied_or_paused_for_approval_does_not_block_retry() -> None:
+    _enable_shell()
+    _no_retry("printenv", "pip install", "zz-unmatched-cmd")
+    agent = db.create_agent("Retry Gate")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+
+    denied = execute_bm_cli(agent, state, "printenv")
+    assert denied.ok is False and denied.approval_required is False
+    assert denied.blocks_retry is False
+
+    paused = execute_bm_cli(agent, state, "pip install pytest")
+    assert paused.approval_required is True
+    assert paused.blocks_retry is False
+
+    db.set_setting("cli_default_policy", "deny", "cli_policy")
+    by_default = execute_bm_cli(agent, state, "zz-unmatched-cmd --flag")
+    assert by_default.ok is False and by_default.approval_required is False
+    assert by_default.blocks_retry is False
+
+
+def test_an_approved_listed_command_that_ran_blocks_retry() -> None:
+    _no_retry("cat")
+    agent = db.create_agent("Retry Approved")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    workspace = agent_artifact_dir(agent.storage_key)
+    try:
+        (workspace / "notes.md").write_text("approved-ok", encoding="utf-8")
+        request = db.create_cli_approval_request(agent_id=agent.id, command="cat notes.md", cwd="/me")
+        ran = execute_approved_command(agent, state, "cat notes.md", approval_request_id=request.id)
+        assert ran.ok is True and ran.blocks_retry is True
+
+        other = db.create_cli_approval_request(agent_id=agent.id, command="ls", cwd="/me")
+        unlisted = execute_approved_command(agent, state, "ls", approval_request_id=other.id)
+        assert unlisted.blocks_retry is False
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_an_empty_list_runs_the_command_unmarked_and_edits_apply_live() -> None:
+    _no_retry()
+    agent = db.create_agent("Retry Empty")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    workspace = agent_artifact_dir(agent.storage_key)
+    try:
+        ran = execute_bm_cli(agent, state, "status")
+        assert ran.ok is True and ran.blocks_retry is False
+        _no_retry("status")
+        assert execute_bm_cli(agent, state, "status").blocks_retry is True
+        _no_retry("pwd")
+        assert execute_bm_cli(agent, state, "status").blocks_retry is False
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_a_missing_list_raises_before_the_handler_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.bm_cli import runtime
+    from core.bm_cli.retry_policy import NoRetryListError
+
+    calls: list[str] = []
+
+    def _spy(ctx, parsed, content):
+        calls.append(parsed.raw)
+        raise AssertionError("the handler must not run")
+
+    monkeypatch.setitem(runtime._HANDLERS, "status", _spy)
+    db.execute("DELETE FROM settings WHERE key = $1", ["cli_no_retry_commands"])
+    config.reload()
+    agent = db.create_agent("Retry Missing")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+
+    with pytest.raises(NoRetryListError, match="cli_no_retry_commands is missing"):
+        execute_bm_cli(agent, state, "status")
+    assert calls == []
+
+
+def test_a_missing_list_raises_before_an_approved_shell_command_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.bm_cli import runtime
+    from core.bm_cli.retry_policy import NoRetryListError
+
+    calls: list[str] = []
+
+    def _spy(command, **kwargs):
+        calls.append(command)
+        raise AssertionError("the shell must not run")
+
+    monkeypatch.setattr(runtime, "execute_shell_command", _spy)
+    db.execute("DELETE FROM settings WHERE key = $1", ["cli_no_retry_commands"])
+    config.reload()
+    agent = db.create_agent("Retry Missing Shell")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    workspace = agent_artifact_dir(agent.storage_key)
+    try:
+        request = db.create_cli_approval_request(agent_id=agent.id, command="ls", cwd="/me")
+        with pytest.raises(NoRetryListError):
+            execute_approved_command(agent, state, "ls", approval_request_id=request.id)
+        assert calls == []
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)

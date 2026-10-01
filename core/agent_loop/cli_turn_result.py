@@ -57,7 +57,8 @@ def map_cli_result(
     - the base fields: ``event`` (``bm_cli_result`` / ``bm_cli_error``),
       ``detail``, ``agent_name``, ``cli_prompt_content``,
       ``cli_image_paths``, ``cli_summary``, ``cli_status_lines``,
-      ``cli_extension_id``, ``counts_as_progress``,
+      ``cli_extension_id``, ``counts_as_progress``, ``blocks_retry`` (a
+      no-retry command ran; see ``core.bm_cli.retry_policy``),
       ``suppress_world_broadcast=True`` and ``suppress_activity_broadcast=True``;
     - the declared side effects (see the module docstring):
       ``origin_chrome`` becomes the first ``origin_status_messages`` entry,
@@ -117,6 +118,7 @@ def map_cli_result(
         # live-view nudge (see turn_helpers.announce_extension_result).
         "cli_extension_id": data.get("extension_id"),
         "counts_as_progress": cli_result_counts_as_progress(cli_result),
+        "blocks_retry": cli_result.blocks_retry,
         "suppress_world_broadcast": True,
         "suppress_activity_broadcast": True,
     }

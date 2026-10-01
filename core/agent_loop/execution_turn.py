@@ -231,6 +231,7 @@ async def _run_execution_turn(
     next_step_delta: str | None = None
     scheduled_triggers: list[dict[str, Any]] = []
     execution_repair_attempts = 0
+    retry_blocked = False
     step_messages: list[dict[str, str]] = []
 
     while True:
@@ -254,8 +255,8 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried only from a frozen transcript or before any
-            # action ran; otherwise a retry would replay external side effects.
+            # A failed turn is retried unless it ran a command on the no-retry list
+            # (cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
@@ -273,7 +274,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
-                    retryable=frozen or not executed_actions,
+                    retryable=frozen or not retry_blocked,
                     result=result,
                     error=str(exc),
                     action=action,
@@ -369,8 +370,8 @@ async def _run_execution_turn(
             }
             await manager.broadcast_activity(**result)
             result["parse_steer"] = True
-            # A failed turn is retried only from a frozen transcript or before any
-            # action ran; otherwise a retry would replay external side effects.
+            # A failed turn is retried unless it ran a command on the no-retry list
+            # (cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
@@ -388,7 +389,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
-                    retryable=frozen or not executed_actions,
+                    retryable=frozen or not retry_blocked,
                     result=result,
                     error=steer,
                     action=action,
@@ -461,8 +462,8 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried only from a frozen transcript or before any
-            # action ran; otherwise a retry would replay external side effects.
+            # A failed turn is retried unless it ran a command on the no-retry list
+            # (cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
@@ -480,7 +481,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
-                    retryable=frozen or not executed_actions,
+                    retryable=frozen or not retry_blocked,
                     result=result,
                     error=validation_error,
                     action=action,
@@ -572,6 +573,7 @@ async def _run_execution_turn(
                 )
             else:
                 result = await execute_action(action, agent, state, trigger, token_model=response.model)
+            retry_blocked = retry_blocked or bool(result.get("blocks_retry"))
         else:
             result = await execute_action(action, agent, state, trigger, token_model=response.model)
         active_task_id = bound_task_id(agent.id)
@@ -681,8 +683,8 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried only from a frozen transcript or before any
-            # action ran; otherwise a retry would replay external side effects.
+            # A failed turn is retried unless it ran a command on the no-retry list
+            # (cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
@@ -700,7 +702,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
-                    retryable=frozen or not executed_actions,
+                    retryable=frozen or not retry_blocked,
                     result=result,
                     error=f"Guardian [{violation.rule}]: {violation.detail}",
                     action=action,
@@ -754,7 +756,7 @@ async def _run_execution_turn(
                 model_source=model_source,
                 initial_context_json=initial_context_json,
                 outcome=TurnOutcome.failure(
-                    retryable=frozen or not executed_actions,
+                    retryable=frozen or not retry_blocked,
                     result=result,
                     error=f"Guardian [{violation.rule}]: {violation.detail}",
                     action=action,

@@ -2,8 +2,9 @@
  * BossMod AI — CLI Policy Settings tab.
  *
  * The `cli_policy` settings category: the shell executor switch, its timeout
- * and output ceiling, the approval timeout, the default policy, and the host
- * workspace roots. Ported from cli-policy-section.js unchanged.
+ * and output ceiling, the approval timeout, the default policy, the host
+ * workspace roots, and the commands a failed turn never retries. Ported from
+ * cli-policy-section.js unchanged.
  *
  * `SETTINGS_META` is the whole tab — the backend returns a flat key/value list
  * and this decides which keys are shown, in what order, as what control, and
@@ -54,6 +55,12 @@ const BossModCliPolicySettings = (() => {
             order: 60,
             label: 'Host workspace roots',
             description: 'Optional extra directories a named absolute path may open, read, or edit. One absolute directory per line. Empty means no extra host access — Company Files stays the shared project workspace outside the application install. This is not a full host mount. / , /etc, /proc, /sys, /dev, and /root are rejected.',
+            type: 'textarea',
+        },
+        cli_no_retry_commands: {
+            order: 70,
+            label: 'Never retry these commands',
+            description: 'If a turn fails after running one of these commands, BossMod does not retry it automatically, so the command is not repeated (for example, an email is not sent twice). You are notified instead. One command per line, matched from the start (for example "mail send"). Everything else is retried. Leave empty to retry everything.',
             type: 'textarea',
         },
     };

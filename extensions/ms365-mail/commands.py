@@ -3,22 +3,22 @@
 ``mail <verb> [args]``, free text in the body (the ``pref``/``write``
 convention): ``inbox``, ``read``, ``send``, ``reply`` and ``contacts``.
 Every failure is an explicit error result naming a code; nothing is retried
-or guessed. Recipients are resolved (addresses, or saved contact names)
-before any Graph call, and nothing is sent unless every one resolves.
+or guessed. Recipients are read and resolved (``recipients.py``) before any
+Graph call, and nothing is sent unless every one resolves.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Callable, Protocol, Sequence
+from typing import AbstractSet, Callable, Protocol, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.bm_cli.results import error_result, success_result
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 
-from .contacts import Contact, ContactBook, ContactBookError, ContactError
+from .contacts import EMAIL_RE, ContactBook, ContactBookError, ContactError, InvalidAddress
 from .formatting import render_body
 from .graph import (
     Address,
@@ -30,11 +30,12 @@ from .graph import (
     describe_graph_error,
 )
 from .ids import IdMap, IdMapError, UnknownMessageId
+from .recipients import RecipientError, parse_entry, resolve_list, split_entries
 
 KIND = "mail"
 _USAGE = 'USAGE: mail inbox|read|send|reply|contacts — run "learn mail" for details'
 _INBOX_USAGE = "mail inbox [--unread] [--limit N] [--skip N]"
-_SEND_USAGE = "mail send <to>[,<to>…] [--cc <a>[,<b>…]] --subject <text>   (message in the body)"
+_SEND_USAGE = "mail send <to…> [--to <…>] [--cc <…>] --subject <text>   (message in the body)"
 _REPLY_USAGE = "mail reply <id> [--all]   (reply in the body)"
 _CONTACTS_USAGE = "mail contacts [list] | mail contacts add <addr>[,<addr>…] [--name <text>] | mail contacts remove <addr>[,<addr>…]"
 NOT_CONFIGURED = "MAILBOX_NOT_CONFIGURED: no mailbox is set up for you; ask the operator to configure one at your desk"
@@ -83,8 +84,13 @@ class CommandError(ValueError):
 @dataclass(frozen=True)
 class _Args:
     positional: list[str]
-    values: dict[str, str]
+    values: dict[str, list[str]]
     switches: set[str]
+
+    def one(self, flag: str) -> str | None:
+        """The value of a non-repeatable flag (``_parse`` refuses it twice), or ``None``."""
+        given = self.values.get(flag)
+        return given[0] if given else None
 
 
 class MailCommands:
@@ -159,10 +165,10 @@ class MailCommands:
         opts = _parse(args, valued={"--limit", "--skip"}, switches={"--unread"}, usage=_INBOX_USAGE)
         if opts.positional:
             raise CommandError(f"USAGE: {_INBOX_USAGE} (unexpected {opts.positional[0]!r})")
-        limit = _int_flag(opts.values.get("--limit"), "--limit", self._defaults.inbox_default_limit)
+        limit = _int_flag(opts.one("--limit"), "--limit", self._defaults.inbox_default_limit)
         if not 1 <= limit <= self._defaults.inbox_max_limit:
             raise CommandError(f"LIMIT_OUT_OF_RANGE: --limit must be 1–{self._defaults.inbox_max_limit}, got {limit}")
-        skip = _int_flag(opts.values.get("--skip"), "--skip", 0)
+        skip = _int_flag(opts.one("--skip"), "--skip", 0)
         if skip < 0:
             raise CommandError(f"SKIP_OUT_OF_RANGE: --skip must be 0 or more, got {skip}")
         unread = "--unread" in opts.switches
@@ -232,24 +238,34 @@ class MailCommands:
         )
 
     def _send(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
-        opts = _parse(args, valued={"--cc", "--subject"}, switches=set(), usage=_SEND_USAGE)
-        if len(opts.positional) != 1:
-            raise CommandError(f"USAGE: {_SEND_USAGE}")
-        subject = opts.values.get("--subject", "").strip()
+        recipient_flags = {"--to", "--cc"}
+        opts = _parse(
+            args,
+            valued={"--to", "--cc", "--subject"},
+            switches=set(),
+            usage=_SEND_USAGE,
+            repeatable=recipient_flags,
+            continues=recipient_flags,
+        )
+        # Positional tokens rejoin with the space the tokenizer split them on,
+        # so "Gene Whiddon <g@x.com>, alice" reads as written.
+        to_values = ([" ".join(opts.positional)] if opts.positional else []) + opts.values.get("--to", [])
+        if not to_values:
+            raise CommandError("NO_RECIPIENT: name at least one address or saved contact")
+        subject = (opts.one("--subject") or "").strip()
         if not subject:
             raise CommandError("NO_SUBJECT: add --subject <text>")
         text = (body or "").strip()
         if not text:
             raise CommandError("NO_BODY: put the message in the body")
         book = self._contacts_for(ctx.agent.id)
-        to = _resolve(book, opts.positional[0])
-        cc = _resolve(book, opts.values["--cc"]) if "--cc" in opts.values else []
-        if not to:
-            raise CommandError("NO_RECIPIENT: name at least one address or saved contact")
+        to = resolve_list(book, _recipient_text(to_values))
+        cc_values = opts.values.get("--cc", [])
+        cc_all = resolve_list(book, _recipient_text(cc_values)) if cc_values else []
+        # The same person in To and Cc is harmless: they get it once, in To.
         in_to = {contact.address.lower() for contact in to}
-        twice = next((contact for contact in cc if contact.address.lower() in in_to), None)
-        if twice is not None:
-            raise CommandError(f"RECIPIENT_TWICE: {twice.address}")
+        cc = [contact for contact in cc_all if contact.address.lower() not in in_to]
+        also_in_to = [contact for contact in cc_all if contact.address.lower() in in_to]
         mailbox.send(
             [Address(name=c.name or "", address=c.address) for c in to],
             [Address(name=c.name or "", address=c.address) for c in cc],
@@ -260,12 +276,18 @@ class MailCommands:
         sent = "sent to " + ", ".join(c.display() for c in to)
         if cc:
             sent += "; cc " + ", ".join(c.display() for c in cc)
+        lines = [f"To: {', '.join(c.display() for c in to)}"]
+        if cc:
+            lines.append(f"Cc: {', '.join(c.display() for c in cc)}")
+        lines.append(f"Subject: {subject}")
+        if also_in_to:
+            lines.append(f"Also in To, so not repeated in Cc: {', '.join(c.display() for c in also_in_to)}")
         return success_result(
             command=parsed.raw,
             detail=f"mail: {sent}",
             kind=KIND,
             data={"mailbox": mailbox.mailbox, "to": [c.address for c in to], "cc": [c.address for c in cc]},
-            sections=[("SENT", [sent, f"Subject: {subject}"])],
+            sections=[("SENT", lines)],
             cwd=ctx.cwd,
         )
 
@@ -317,15 +339,29 @@ class MailCommands:
             return self._contacts_result(ctx, parsed, "CONTACTS", lines, len(contacts))
         if sub == "add":
             opts = _parse(rest, valued={"--name"}, switches=set(), usage=_CONTACTS_USAGE)
-            if len(opts.positional) != 1:
+            if not opts.positional:
                 raise CommandError(f"USAGE: {_CONTACTS_USAGE}")
-            result = book.add(_split(opts.positional[0]), opts.values.get("--name"))
-            lines = [f"added {c.display()}" for c in result.added] + [f"updated {c.display()}" for c in result.updated]
+            entries = _entries(opts.positional)
+            name = opts.one("--name")
+            if name is not None:
+                # --name is explicit and names exactly one address (enforced by add).
+                results = [book.add([address for _, address in entries], name)]
+            else:
+                # Check every address first, so a bad one saves nothing even
+                # though named entries are saved one call each.
+                for _, address in entries:
+                    if not EMAIL_RE.match(address):
+                        raise InvalidAddress(address)
+                results = [book.add([address], entry_name) for entry_name, address in entries]
+            lines = [f"added {c.display()}" for r in results for c in r.added]
+            lines += [f"updated {c.display()}" for r in results for c in r.updated]
             return self._contacts_result(ctx, parsed, "CONTACTS", lines, len(book.list()))
         if sub == "remove":
-            if len(rest) != 1:
+            opts = _parse(rest, valued=set(), switches=set(), usage=_CONTACTS_USAGE)
+            if not opts.positional:
                 raise CommandError(f"USAGE: {_CONTACTS_USAGE}")
-            removed = book.remove(_split(rest[0]))
+            # A "Name <address>" entry removes by its address only.
+            removed = book.remove([address for _, address in _entries(opts.positional)])
             return self._contacts_result(ctx, parsed, "CONTACTS", [f"removed {a}" for a in removed], len(book.list()))
         raise CommandError(f"USAGE: {_CONTACTS_USAGE}")
 
@@ -344,14 +380,44 @@ class MailCommands:
         return error_result(parsed.raw, message, cwd=ctx.cwd)
 
 
-def _parse(args: Sequence[str], *, valued: set[str], switches: set[str], usage: str) -> _Args:
+def _parse(
+    args: Sequence[str],
+    *,
+    valued: AbstractSet[str],
+    switches: AbstractSet[str],
+    usage: str,
+    repeatable: AbstractSet[str] = frozenset(),
+    continues: AbstractSet[str] = frozenset(),
+) -> _Args:
     """Split ``--flag value`` pairs, bare ``--switch`` flags and positionals.
 
+    The CLI tokenizes like a shell, so ``a@x.com, b@x.com`` arrives as two
+    tokens. A positional, and the value of a flag in ``continues``, therefore
+    keeps absorbing following non-``--`` tokens (joined by a space) while the
+    text so far ends with ``,`` or ``;`` or the next token starts with one.
+
+    Args:
+        args: The tokens after the verb.
+        valued: Flags that take a value.
+        switches: Bare flags.
+        usage: The usage line quoted in errors.
+        repeatable: Valued flags that may be given more than once; their
+            values accumulate in order. Any other valued flag given twice is
+            an error, never last-wins.
+        continues: Valued flags whose value follows the continuation rule.
+
+    Returns:
+        The positionals, every valued flag's values (one item unless
+        repeatable) and the switches found.
+
     Raises:
-        CommandError: An unknown ``--`` argument, or a valued flag with no value.
+        CommandError: An unknown ``--`` argument, a valued flag with no value,
+            a non-repeatable flag given twice (``USAGE``), or a bare token
+            right after a ``continues`` flag's value (``AMBIGUOUS_RECIPIENTS``:
+            it could belong to the flag or be a positional).
     """
     positional: list[str] = []
-    values: dict[str, str] = {}
+    values: dict[str, list[str]] = {}
     found: set[str] = set()
     index = 0
     while index < len(args):
@@ -362,14 +428,36 @@ def _parse(args: Sequence[str], *, valued: set[str], switches: set[str], usage: 
         elif token in valued:
             if index + 1 >= len(args):
                 raise CommandError(f"USAGE: {usage} ({token} needs a value)")
-            values[token] = args[index + 1]
-            index += 2
+            if token in values and token not in repeatable:
+                raise CommandError(f"USAGE: {usage} ({token} given twice)")
+            if token in continues:
+                value, index = _continued(args, index + 1)
+                if index < len(args) and not args[index].startswith("--"):
+                    raise CommandError(
+                        f"AMBIGUOUS_RECIPIENTS: {args[index]!r} follows {token} {value!r} — separate "
+                        f"{token} recipients with commas, or quote a name that has spaces"
+                    )
+            else:
+                value, index = args[index + 1], index + 2
+            values.setdefault(token, []).append(value)
         elif token.startswith("--"):
             raise CommandError(f"USAGE: {usage} (unknown argument {token!r})")
         else:
-            positional.append(token)
-            index += 1
+            value, index = _continued(args, index)
+            positional.append(value)
     return _Args(positional=positional, values=values, switches=found)
+
+
+def _continued(args: Sequence[str], index: int) -> tuple[str, int]:
+    """The token at ``index`` plus any it continues into; returns ``(text, next index)``."""
+    text = args[index]
+    index += 1
+    while index < len(args) and not args[index].startswith("--") and (
+        text.rstrip().endswith((",", ";")) or args[index].lstrip().startswith((",", ";"))
+    ):
+        text = f"{text} {args[index]}"
+        index += 1
+    return text, index
 
 
 def _int_flag(raw: str | None, flag: str, default: int) -> int:
@@ -381,25 +469,21 @@ def _int_flag(raw: str | None, flag: str, default: int) -> int:
         raise CommandError(f"USAGE: {flag} takes a whole number, got {raw!r}") from exc
 
 
-def _split(raw: str) -> list[str]:
-    """Comma-separated tokens; an empty token (``a,,b``) is refused rather than dropped."""
-    parts = [part.strip() for part in raw.split(",")]
-    if any(not part for part in parts):
-        raise CommandError(f"EMPTY_RECIPIENT: {raw!r} has an empty entry between commas")
-    return parts
+def _recipient_text(values: Sequence[str]) -> str:
+    """Join one field's recipient values (positional runs, repeated flags) into one list.
+
+    Raises:
+        RecipientError: ``EMPTY_RECIPIENT`` for a blank value (``--cc ""``),
+            which joining would otherwise hide.
+    """
+    if any(not value.strip() for value in values):
+        raise RecipientError("EMPTY_RECIPIENT", "an empty recipient was given")
+    return ", ".join(values)
 
 
-def _resolve(book: ContactBook, raw: str) -> list[Contact]:
-    """Resolve a comma list; a name and its own address count once."""
-    resolved: list[Contact] = []
-    seen: set[str] = set()
-    for token in _split(raw):
-        contact = book.resolve(token)
-        key = contact.address.lower()
-        if key not in seen:
-            seen.add(key)
-            resolved.append(contact)
-    return resolved
+def _entries(positional: Sequence[str]) -> list[tuple[str | None, str]]:
+    """Every ``(display_name, token)`` pair written in the positionals (``contacts add/remove``)."""
+    return [pair for entry in split_entries(" ".join(positional)) for pair in parse_entry(entry)]
 
 
 def _reply_audience(message: Message, own: str) -> tuple[list[Address], list[Address]]:

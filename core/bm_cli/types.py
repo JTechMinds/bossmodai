@@ -33,6 +33,8 @@ class BossModCliResult:
     # supersedes it (core.llm.attachment_parts.SUMMARY_KEY). Only kept on
     # results that carry image_paths.
     summary: str | None = None
+    # A command on the no-retry list reached its handler (core.bm_cli.retry_policy).
+    blocks_retry: bool = False
 
 
 @dataclass(frozen=True, slots=True)

@@ -206,9 +206,26 @@ async def test_refusals_past_the_repair_budget_fail_a_turn_that_ran_nothing_as_r
 
 
 @pytest.mark.asyncio
-async def test_a_detached_turn_that_ran_an_action_then_failed_is_exhausted_not_retried(
+async def test_a_detached_turn_that_ran_an_unlisted_command_then_failed_is_retryable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    agent, task, activity = _working_agent_with_snapshot()
+    before = _live_state(task.id, activity.id)
+    _script(monkeypatch, [_STATUS_STEP, _DONE_STEP, _DONE_STEP, _DONE_STEP])
+
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), _event_trigger())
+
+    assert outcome.trigger_status == "failed"
+    # `status` is not on the no-retry list, so replaying it is harmless.
+    assert outcome.retryable is True
+    assert _live_state(task.id, activity.id) == before
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_that_ran_a_listed_command_then_failed_is_exhausted_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db.set_setting("cli_no_retry_commands", "mail send\nstatus", "cli_policy")
     agent, task, activity = _working_agent_with_snapshot()
     before = _live_state(task.id, activity.id)
     _script(monkeypatch, [_STATUS_STEP, _DONE_STEP, _DONE_STEP, _DONE_STEP])
@@ -367,8 +384,8 @@ async def test_l1_no_progress_in_a_detached_turn_fails_the_turn_without_touching
     outcome = await run_turn(agent, db.get_agent_state(agent.id), _event_trigger())
 
     assert outcome.trigger_status == "failed"
-    # The turn already ran actions and a detached turn freezes nothing.
-    assert outcome.retryable is False
+    # Only `status` ran, and it is not on the no-retry list.
+    assert outcome.retryable is True
     assert (outcome.diagnostic_error or "").startswith("Guardian [no_progress]: ")
     assert outcome.result["event"] == "guardian_violation"
     assert outcome.steps[-1]["error"].startswith("Guardian [no_progress]: ")

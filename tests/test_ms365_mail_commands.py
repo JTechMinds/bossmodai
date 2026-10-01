@@ -179,7 +179,12 @@ def test_a_graph_failure_is_an_explicit_code(env) -> None:
 @pytest.mark.parametrize("raw, body, code", [
     ("mail send a@x.com --subject Hi", None, "NO_BODY"),
     ("mail send a@x.com --subject Hi", "   ", "NO_BODY"),
-    ("mail send --subject Hi", "text", "USAGE"),
+    ("mail send --subject Hi", "text", "NO_RECIPIENT"),
+    ("mail send --cc c@x.com --subject Hi", "text", "NO_RECIPIENT"),
+    ("mail send a@x.com --cc '' --subject Hi", "text", "EMPTY_RECIPIENT"),
+    ("mail send alice bob@x.com --subject Hi", "text", "AMBIGUOUS_RECIPIENTS"),
+    ("mail send a@x.com --cc c@x.com d@x.com --subject Hi", "text", "AMBIGUOUS_RECIPIENTS"),
+    ("mail send a@x.com --subject Hi --subject Again", "text", "USAGE"),
     ("mail send a@x.com", "text", "NO_SUBJECT"),
     ("mail send not-an-address@ --subject Hi", "text", "INVALID_ADDRESS"),
     ("mail send a@x.com,,b@x.com --subject Hi", "text", "EMPTY_RECIPIENT"),
@@ -194,7 +199,7 @@ def test_send_to_addresses_echoes_who_it_went_to(env) -> None:
     result = env.run("mail send a@x.com,b@x.com --cc c@x.com --subject 'Daily report'", "The report.")
     assert result.ok, result.prompt_content
     assert env.state["mailbox"].calls == [("send", ["a@x.com", "b@x.com"], ["c@x.com"], "Daily report", "<div><p>The report.</p>\n</div>")]
-    assert "sent to a@x.com, b@x.com; cc c@x.com" in result.prompt_content
+    assert "To: a@x.com, b@x.com\nCc: c@x.com\nSubject: Daily report" in result.prompt_content
 
 
 def _with_others() -> FakeMailbox:
@@ -388,7 +393,7 @@ def test_a_quoted_multi_word_name_in_a_comma_list_with_mixed_cc(env) -> None:
     result = env.run('mail send "Alice Doe",new@x.com --cc ops --subject "RCA: login outage"', "RCA text")
     assert result.ok, result.prompt_content
     assert env.state["mailbox"].calls == [("send", ["alice@contoso.com", "new@x.com"], ["ops@contoso.com"], "RCA: login outage", "<div><p>RCA text</p>\n</div>")]
-    assert "sent to Alice Doe <alice@contoso.com>, new@x.com; cc Ops Team <ops@contoso.com>" in result.prompt_content
+    assert "To: Alice Doe <alice@contoso.com>, new@x.com\nCc: Ops Team <ops@contoso.com>" in result.prompt_content
 
 
 def test_an_address_not_in_contacts_still_sends(env) -> None:
@@ -402,11 +407,113 @@ def test_a_name_and_its_own_address_are_sent_once(env) -> None:
     assert env.state["mailbox"].calls[0][1] == ["alice@contoso.com"]
 
 
-def test_the_same_person_in_to_and_cc_is_an_error(env) -> None:
+def test_the_same_person_in_to_and_cc_is_dropped_from_cc_and_reported(env) -> None:
     _seed(env)
-    result = env.run("mail send alice --cc alice@contoso.com --subject Hi", "text")
-    assert not result.ok and "RECIPIENT_TWICE: alice@contoso.com" in result.prompt_content
+    result = env.run("mail send alice --cc alice@contoso.com,ops --subject Hi", "text")
+    assert result.ok, result.prompt_content
+    assert env.state["mailbox"].calls[0][1:3] == (["alice@contoso.com"], ["ops@contoso.com"])
+    assert "Also in To, so not repeated in Cc: Alice Doe <alice@contoso.com>" in result.prompt_content
+    assert result.data["cc"] == ["ops@contoso.com"]
+
+
+# ─── frictionless recipient entry (revision R2), through real shell tokenization ───
+
+
+def _sent(env) -> tuple[list[str], list[str]]:
+    calls = [call for call in env.state["mailbox"].calls if call[0] == "send"]
+    assert len(calls) == 1, env.state["mailbox"].calls
+    return calls[0][1], calls[0][2]
+
+
+@pytest.mark.parametrize("raw", [
+    "mail send a@x.com, b@x.com --subject s",
+    "mail send a@x.com b@x.com --subject s",
+    "mail send a@x.com;b@x.com --subject s",
+    "mail send a@x.com ; b@x.com, --subject s",
+    "mail send a@x.com --to b@x.com --subject s",
+    "mail send --to a@x.com --to b@x.com --subject s",
+    "mail send --subject s a@x.com ,b@x.com",
+])
+def test_every_unambiguous_to_list_reaches_both(env, raw: str) -> None:
+    result = env.run(raw, "text")
+    assert result.ok, result.prompt_content
+    assert _sent(env) == (["a@x.com", "b@x.com"], [])
+
+
+def test_name_and_address_exactly_as_mail_read_shows_them(env) -> None:
+    _seed(env)
+    result = env.run("mail send Gene Whiddon <g@x.com>, alice --subject s", "text")
+    assert result.ok, result.prompt_content
+    assert _sent(env) == (["g@x.com", "alice@contoso.com"], [])
+    assert "To: Gene Whiddon <g@x.com>, Alice Doe <alice@contoso.com>" in result.prompt_content
+
+
+def test_an_unquoted_multi_word_contact_name_in_a_comma_list(env) -> None:
+    _seed(env)
+    result = env.run("mail send Alice Doe, Ops Team --subject s", "text")
+    assert result.ok, result.prompt_content
+    assert _sent(env) == (["alice@contoso.com", "ops@contoso.com"], [])
+
+
+def test_a_comma_continued_cc_lands_entirely_in_cc(env) -> None:
+    result = env.run("mail send t@x.com --cc a@x.com, b@x.com --subject s", "text")
+    assert result.ok, result.prompt_content
+    assert _sent(env) == (["t@x.com"], ["a@x.com", "b@x.com"])
+
+
+def test_repeated_cc_and_to_accumulate(env) -> None:
+    result = env.run(
+        "mail send t@x.com --to u@x.com --cc a@x.com --cc 'Bea <b@x.com>' --subject s", "text"
+    )
+    assert result.ok, result.prompt_content
+    assert _sent(env) == (["t@x.com", "u@x.com"], ["a@x.com", "b@x.com"])
+    assert "Cc: a@x.com, Bea <b@x.com>" in result.prompt_content
+
+
+def test_an_unknown_name_in_a_list_sends_nothing(env) -> None:
+    result = env.run("mail send a@x.com, Nobody Known --subject s", "text")
+    assert not result.ok and 'UNKNOWN_CONTACT: "Nobody Known"' in result.prompt_content
     assert env.state["mailbox"].calls == []
+
+
+def test_an_unquoted_cc_name_with_spaces_is_ambiguous_not_misrouted(env) -> None:
+    result = env.run("mail send t@x.com --cc Gene Whiddon <g@x.com> --subject s", "text")
+    assert not result.ok and "AMBIGUOUS_RECIPIENTS" in result.prompt_content
+    assert env.state["mailbox"].calls == []
+
+
+def test_a_repeated_non_repeatable_flag_is_a_usage_error(env) -> None:
+    result = env.run("mail inbox --limit 1 --limit 2")
+    assert not result.ok and "USAGE" in result.prompt_content and "(--limit given twice)" in result.prompt_content
+    assert env.state["mailbox"].calls == []
+
+
+def test_contacts_add_takes_a_comma_list_with_spaces(env) -> None:
+    result = env.run("mail contacts add a@x.com, b@x.com; c@x.com")
+    assert result.ok, result.prompt_content
+    assert [c.address for c in _book(env).list()] == ["a@x.com", "b@x.com", "c@x.com"]
+
+
+def test_contacts_add_saves_the_name_written_with_the_address(env) -> None:
+    result = env.run("mail contacts add Gene Whiddon <g@x.com>, plain@x.com")
+    assert result.ok, result.prompt_content
+    assert _book(env).list() == [
+        contacts_mod.Contact(address="g@x.com", name="Gene Whiddon"),
+        contacts_mod.Contact(address="plain@x.com", name=None),
+    ]
+
+
+def test_contacts_add_with_one_bad_address_saves_nothing(env) -> None:
+    result = env.run("mail contacts add Gene <g@x.com>, bad-address")
+    assert not result.ok and "INVALID_ADDRESS: bad-address" in result.prompt_content
+    assert _book(env).list() == []
+
+
+def test_contacts_remove_by_name_and_address_form(env) -> None:
+    env.run("mail contacts add a@x.com, g@x.com")
+    result = env.run("mail contacts remove Gene Whiddon <g@x.com>; a@x.com")
+    assert result.ok, result.prompt_content
+    assert _book(env).list() == []
 
 
 @pytest.mark.parametrize("name", ["a@b", "Doe, Alice", "   "])

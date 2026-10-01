@@ -498,20 +498,11 @@ def test_the_forms_recovery_tools_are_bound_to_the_form_not_the_stage() -> None:
 
 
 def test_the_context_harness_ends_when_its_work_does() -> None:
-    """Three of every 3.1 seconds this harness took were an idle timer.
+    """Debounce checks and cosmetic cleanup must not wait on the real clock.
 
-    context/agent-form-save.js hides its "Saved successfully" line three
-    seconds after a save lands. That is right, and it is untouched. But the
-    harness's own section 3d performs the first successful save it has ever
-    run, and a pending timer keeps Node's event loop alive: `main()` finished
-    at ~60ms and the process exited at ~3060ms, once for every test body that
-    spawns this file — twelve of them, across four files, or about half the
-    suite's wall clock.
-
-    The harness registers its timers and drops whatever is still pending once
-    the verdict is written. This pins that: the budget is far below the 3s hide
-    it is protecting against, and generous enough that it can only fail if a
-    timer is holding the process open again.
+    The harness advances timeout deadlines explicitly, then releases pending
+    timers after its verdict. The unchanged limit also catches a return to
+    the three-second feedback-hide timer keeping Node's event loop alive.
     """
     args = ["node", str(HARNESS)] + [str(path) for path in CONTEXT_MODULES]
     started = time.monotonic()

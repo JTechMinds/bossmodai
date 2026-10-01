@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable
@@ -41,6 +41,7 @@ from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_roots import PathOutsideRootsError, looks_like_named_absolute_path
 from core.bm_cli.host_path_consent import handle_named_path_consent, looks_like_command_flag
 from core.bm_cli.results import approval_required_result, error_result, shell_result, success_result
+from core.bm_cli.retry_policy import NoRetryListError, blocks_retry, load_no_retry_list
 from core.bm_cli.schedule_commands import handle_schedules
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
@@ -554,6 +555,7 @@ def execute_approved_command(
         return prepared
     parsed, shell_cwd, roots, timeout, max_output = prepared
 
+    listed = _on_no_retry_list(parsed)
     shell_exec = execute_shell_command(
         parsed.raw,
         cwd=shell_cwd,
@@ -630,12 +632,33 @@ def execute_approved_command(
         trigger_type=trigger_type,
         approval_request_id=approval_request_id,
     )
-    return result
+    return _mark_retry(result, listed)
 
 
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+def _on_no_retry_list(parsed: ParsedCliCommand) -> bool:
+    """Whether ``parsed`` is on the no-retry list, decided before it runs.
+
+    Called after every gate and immediately before the handler (virtual,
+    extension bridge or shell) runs, so a ``NoRetryListError`` (the settings
+    row is missing) surfaces while nothing has run yet, never after an
+    outside effect.
+    """
+    return blocks_retry(parsed, load_no_retry_list())
+
+
+def _mark_retry(result: BossModCliResult, listed: bool) -> BossModCliResult:
+    """Set ``blocks_retry`` on the result of a listed command whose handler ran.
+
+    Pure. Applied only where the handler ran, never on a parse error, deny or
+    approval/consent pause. A handler error still marks it: whether an
+    outside effect happened cannot be known once the handler ran.
+    """
+    return replace(result, blocks_retry=True) if listed else result
+
 
 def _maybe_shell_executor_consent(
     *,
@@ -1454,6 +1477,9 @@ def _execute_virtual(
         )
         return result
 
+    # Flipped just before the handler call, so a handler that raises still counts as run.
+    handler_ran = False
+    listed = False
     try:
         from core.bm_cli.workspace_preference import maybe_pause_for_workspace_preference
 
@@ -1468,7 +1494,13 @@ def _execute_virtual(
         if paused is not None:
             result = paused
         else:
+            listed = _on_no_retry_list(parsed)
+            handler_ran = True
             result = handler(CliExecutionContext(agent=agent, state=state, cwd=cwd_before), parsed, content)
+    except NoRetryListError:
+        # A ValueError, but a settings fault, not a command error: surface it
+        # instead of handing it to the agent as this command's result.
+        raise
     except PathOutsideRootsError as exc:
         raw_path = exc.raw_path or _named_path_from_command(parsed)
         if raw_path:
@@ -1534,7 +1566,8 @@ def _execute_virtual(
         result=result,
         trigger_type=trigger_type,
     )
-    return result
+    # A workspace-preference gate answered without running the handler.
+    return _mark_retry(result, listed) if handler_ran else result
 
 
 def _named_path_from_command(parsed: ParsedCliCommand) -> str | None:
@@ -1619,6 +1652,7 @@ def _execute_shell(
         return prepared
     parsed, shell_cwd, roots, timeout, max_output = prepared
 
+    listed = _on_no_retry_list(parsed)
     shell_exec = execute_shell_command(
         parsed.raw,
         cwd=shell_cwd,
@@ -1689,4 +1723,4 @@ def _execute_shell(
         result=result,
         trigger_type=trigger_type,
     )
-    return result
+    return _mark_retry(result, listed)
