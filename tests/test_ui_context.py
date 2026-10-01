@@ -787,6 +787,7 @@ def test_desk_schedules_section_and_layer() -> None:
         "repeatModeShowsOnlyItsControls", "anOvernightWindowIsRefusedHere", "aRepeatPostsMinutesAndAWindow",
         "aStoredRepeatEditsInHours", "runNowIsDisabledWhileRunning", "runNowStartsARealRun",
         "anOpenRunRefusalSaysWhy", "theDraftIsPreviewed", "anInvalidDraftIsSaidNotSent", "aNewScheduleCanBeSavedOff",
+        "anOpenRunShowsThePausedTone", "aSkipOffersTheOpenRun",
     ):
         assert payload[key] is True, key
     panel = _read(CONTEXT / "desk-panel.js")

@@ -41,6 +41,7 @@ from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 from core.bm_cli.host_roots import PathOutsideRootsError, looks_like_named_absolute_path
 from core.bm_cli.host_path_consent import handle_named_path_consent, looks_like_command_flag
 from core.bm_cli.results import approval_required_result, error_result, shell_result, success_result
+from core.bm_cli.schedule_commands import handle_schedules
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
 from core.bm_cli.state_commands import (
@@ -85,6 +86,7 @@ _HANDLERS: dict[str, CliHandler] = {
     "activity": handle_activity,
     "current-task": handle_current_task,
     "tasks": handle_tasks,
+    "schedules": handle_schedules,
     "recent-work": handle_recent_work,
     "location": handle_location,
     "my-board": handle_my_board,

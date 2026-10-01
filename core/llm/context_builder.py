@@ -22,7 +22,7 @@ from core.agent_loop.work_snapshot import paused_work_snapshot, render_paused_wo
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.extensions.prompt_blocks import render_extension_blocks
-from core.models import Agent, AgentState
+from core.models import SCHEDULE_TRIGGER_FIELDS, Agent, AgentState
 from core.models.notification import Notification
 from core.llm.attachment_parts import history_manifests, mark_trigger_attachments
 from core.llm.template_engine import render_template, syntax_guide
@@ -128,7 +128,7 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("file_guidance.required_files", "Comma-separated required file paths for the current work contract"),
     ("file_guidance.required_file_count", "Number of required file deliverables for the current work contract"),
     ("communication_snapshot.json", "Serialized authoritative communication snapshot JSON"),
-]
+] + [(f"trigger.{key}", text) for key, text in SCHEDULE_TRIGGER_FIELDS]
 AUTHORED_PROMPT_ALLOWED_PATHS = {name for name, _ in _AUTHORED_PROMPT_VARIABLES}
 
 
@@ -497,6 +497,7 @@ def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
         "source_channel": str(trigger.get("source_channel") or ""),
         "task_title": str(trigger.get("task_title") or ""),
         "task_description": str(trigger.get("task_description") or ""),
+        **{key: str(trigger.get(key) or "") for key, _ in SCHEDULE_TRIGGER_FIELDS},
         "task_status": str(trigger.get("task_status") or ""),
         "task_party": str(trigger.get("task_party") or ""),
         "attention_kind": str(trigger.get("attention_kind") or ""),

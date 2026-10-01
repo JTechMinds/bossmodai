@@ -37,6 +37,16 @@ TITLE_MAX_CHARS = 200
 INSTRUCTIONS_MAX_CHARS = 4000
 # How many upcoming runs one preview may ask for.
 PREVIEW_MAX_COUNT = 20
+# The schedule fields a scheduled task's ``task_assigned`` trigger payload
+# carries (core/agent_loop/activity_scheduler.py ``_schedule_payload``),
+# with the description the prompt editor shows for each ``trigger.<key>``
+# variable (core/llm/context_builder.py).
+SCHEDULE_TRIGGER_FIELDS: tuple[tuple[str, str], ...] = (
+    ("schedule_title", "Title of the schedule that created this task (scheduled tasks only)"),
+    ("schedule_summary", "The schedule's rule in words, e.g. 'Every weekday at 06:00' (scheduled tasks only)"),
+    ("schedule_next_run", "The schedule's next run on the host's clock; empty while it is switched off"),
+    ("schedule_enabled", "'true' or 'false': whether the schedule that created this task is on"),
+)
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 

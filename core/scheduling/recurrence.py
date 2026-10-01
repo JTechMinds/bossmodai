@@ -131,6 +131,25 @@ def next_occurrence(rule: RecurrenceRule, *, after: datetime) -> datetime:
     raise ValueError(f"no occurrence of {rule.model_dump_json()} within {horizon} days of {after.isoformat()}")
 
 
+def format_local_run(instant: datetime) -> str:
+    """One run as the operator and the agent read it: ``Thu 2 Oct 2026, 06:00`` on the host's clock.
+
+    Args:
+        instant: An aware instant.
+
+    Returns:
+        The weekday, day, month, year and 24-hour time in host-local time
+        (DST-correct for that instant).
+
+    Raises:
+        ValueError: ``instant`` is naive.
+    """
+    if instant.tzinfo is None:
+        raise ValueError("format_local_run takes an aware datetime")
+    local = instant.astimezone()
+    return f"{local:%a} {local.day} {local:%b %Y, %H:%M}"
+
+
 def upcoming(rule: RecurrenceRule, *, after: datetime, count: int) -> list[datetime]:
     """The next ``count`` runs of ``rule`` after ``after``, each strictly after the last.
 

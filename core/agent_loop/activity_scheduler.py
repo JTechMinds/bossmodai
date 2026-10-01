@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 import db
@@ -12,6 +13,7 @@ from core.agent_loop.task_origins import stamp_origin_channel_payload
 from core.agent_loop.task_roles import task_assignment_sender
 from core.agent_loop.work_binding import is_detached
 from core.models import Activity, AgentState, Task
+from core.scheduling.recurrence import describe, format_local_run, next_occurrence
 from core.tasking.resolution import OPEN_TASK_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -214,7 +216,14 @@ def assignment_wake_trigger(task: Task) -> dict[str, Any] | None:
 
 
 def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
-    """Build the durable trigger used to present a pending task assignment."""
+    """Build the durable trigger used to present a pending task assignment.
+
+    A task created by a schedule (``task.schedule_id``) also carries the
+    schedule in the payload, so the trigger block can tell the agent it is
+    one run of a recurring task (``prompts/runtime_block_trigger_event.md``)
+    on every presentation, first or re-presented: see
+    ``_schedule_payload``.
+    """
     sender = task_assignment_sender(task)
 
     spec = {
@@ -236,7 +245,41 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
         },
     }
     stamp_origin_channel_payload(spec["payload"], task)
+    spec["payload"].update(_schedule_payload(task))
     return spec
+
+
+def _schedule_payload(task: Task) -> dict[str, str]:
+    """The schedule fields of a scheduled task's ``task_assigned`` payload, or ``{}``.
+
+    Returns:
+        ``schedule_title``, ``schedule_summary`` (``describe``),
+        ``schedule_next_run`` (``format_local_run`` of the next run from now,
+        or ``""`` while the schedule is switched off) and
+        ``schedule_enabled`` (``"true"``/``"false"``). Empty when the task
+        has no ``schedule_id`` (any other task, or one whose schedule was
+        deleted, which nulls it), and when ``task`` was read just before its
+        schedule was deleted: a run of a deleted schedule is presented as an
+        ordinary task, which is what it now is.
+
+    Raises:
+        pydantic.ValidationError: The stored rule is corrupt.
+    """
+    if not task.schedule_id:
+        return {}
+    schedule = db.get_schedule(task.schedule_id)
+    if schedule is None:
+        return {}
+    next_run = (
+        format_local_run(next_occurrence(schedule.recurrence, after=datetime.now(timezone.utc)))
+        if schedule.enabled else ""
+    )
+    return {
+        "schedule_title": schedule.title,
+        "schedule_summary": describe(schedule.recurrence),
+        "schedule_next_run": next_run,
+        "schedule_enabled": "true" if schedule.enabled else "false",
+    }
 
 
 def build_task_follow_up_trigger(

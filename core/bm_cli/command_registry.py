@@ -376,6 +376,21 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "  tasks             — review task backlog and recent completions"
         ),
     ),
+    "schedules": VirtualCommandMeta(
+        name="schedules",
+        category="agent",
+        description="Your scheduled recurring tasks.",
+        usage_syntax="schedules",
+        help_text=(
+            "List your scheduled recurring tasks: each one's title, how often\n"
+            "it repeats, whether it is on, its next run, its last run, and the\n"
+            "last run's task. BossMod creates a task for every run and wakes\n"
+            "you then; a run whose task is still open makes later runs skip.\n"
+            "\n"
+            "Examples:\n"
+            "  schedules         — review what recurs and when it runs next"
+        ),
+    ),
     "recent-work": VirtualCommandMeta(
         name="recent-work",
         category="agent",

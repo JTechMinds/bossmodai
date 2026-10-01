@@ -262,7 +262,7 @@ def test_run_now_creates_the_task_and_wakes_the_agent(
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["task"]["schedule_id"] == schedule["id"]
-    assert body["task"]["description"].endswith("Manual run (Run now): Every weekday at 06:00, 12:00")
+    assert body["task"]["description"] == "Log in and read it."
     assert body["schedule"]["last_outcome"] == "fired"
     assert body["schedule"]["last_task_id"] == body["task"]["id"]
     assert body["schedule"]["enabled"] is False

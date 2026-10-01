@@ -1310,6 +1310,27 @@ async function main() {
             + `off ${aNewScheduleCanBeSavedOff}`);
     }
 
+    // A run left open makes every later run skip: the row says the schedule
+    // is paused, and the layer's Last run offers the run that holds it up.
+    Object.assign(SCHEDULES.a1.find((row) => row.id === "s1"), {
+        last_outcome: "skipped_open", last_occurrence_at: "2026-10-01T09:05:00Z",
+        last_task_id: "t9", last_task_status: "waiting",
+    });
+    desk.open("a1");
+    await drain();
+    const pausedRow = scheduleRows().find((node) => node.getAttribute("data-schedule-id") === "s1");
+    const anOpenRunShowsThePausedTone = pausedRow.querySelector(".desk-schedule-tone").textContent
+        === "Paused: last run still open";
+    await pausedRow.dispatchClick();
+    await drain();
+    const skippedLastRun = topLayer().querySelector(".schedule-last-run");
+    const aSkipOffersTheOpenRun = skippedLastRun.textContent.startsWith("Skipped ")
+        && Boolean(skippedLastRun.querySelector(".schedule-open-task"));
+    if (!anOpenRunShowsThePausedTone || !aSkipOffersTheOpenRun) {
+        throw new Error(`a paused schedule must say so: tone ${anOpenRunShowsThePausedTone}, `
+            + `open task ${aSkipOffersTheOpenRun}`);
+    }
+
     // Leaving the desk takes an open schedule layer with it.
     desk.open("a2");
     await drain();
@@ -2459,6 +2480,8 @@ async function main() {
         theDraftIsPreviewed,
         anInvalidDraftIsSaidNotSent,
         aNewScheduleCanBeSavedOff,
+        anOpenRunShowsThePausedTone,
+        aSkipOffersTheOpenRun,
         opensOnThePathItWasGiven,
         createOpensTheConversationOnly,
         drainsOnDestroy,

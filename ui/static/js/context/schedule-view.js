@@ -45,6 +45,9 @@ const BossModScheduleView = (() => {
         const text = schedule.last_outcome ? lines[schedule.last_outcome] : 'Not run yet';
         if (text === undefined) throw new Error(`[schedule-view] unknown outcome "${schedule.last_outcome}"`);
         const status = schedule.last_task_status;
+        // A skip points at the run still holding the schedule up, so the
+        // operator can reach it; last_task_status is null when that task is
+        // gone from the board, and then there is nothing to open.
         return h('span', { class: 'schedule-last-run' }, text,
             schedule.last_task_id && status ? h('button', {
                 class: 'btn-link schedule-open-task', type: 'button',

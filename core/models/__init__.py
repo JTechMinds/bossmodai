@@ -43,6 +43,7 @@ from core.models.notification import Notification, NotificationLink, TaskNotific
 from core.models.prompt_history import AgentPromptHistoryPolicy, AgentPromptHistoryPolicyUpdate
 from core.models.runtime import RuntimeCommand, RuntimeWorkerState
 from core.models.schedule import (
+    SCHEDULE_TRIGGER_FIELDS,
     AgentSchedule,
     RecurrenceRule,
     ScheduleCreate,
@@ -136,6 +137,7 @@ __all__ = [
     "RuntimeCommand",
     "RuntimeWorkerState",
     # Schedules
+    "SCHEDULE_TRIGGER_FIELDS",
     "AgentSchedule",
     "RecurrenceRule",
     "ScheduleCreate",

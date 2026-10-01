@@ -78,7 +78,8 @@ def test_a_due_run_creates_a_task_for_the_agent_and_returns_its_wake() -> None:
     assert stored.requester_id == HUMAN_SENDER_ID
     assert stored.source_channel == "api"
     assert stored.notification_policy == "completion_blocked"
-    assert stored.description.startswith("Log in and read the status page.\n\nScheduled run: Every day at 06:00")
+    # The instructions only: the agent learns it is one run of a schedule from the trigger block.
+    assert stored.description == "Log in and read the status page."
     assert run.trigger is not None
     assert run.trigger["trigger_type"] == "task_assigned"
     assert run.trigger["agent_id"] == ada.id and run.trigger["task_id"] == task.id
@@ -246,7 +247,7 @@ def test_run_now_creates_a_manual_run_and_records_it_fired_now() -> None:
     assert run.outcome == "fired" and run.changed is True
     task = db.get_task(run.task.id)
     assert task.schedule_id == schedule.id and task.assigned_to == ada.id
-    assert task.description == "Log in and read the status page.\n\nManual run (Run now): Every day at 06:00"
+    assert task.description == "Log in and read the status page."
     assert run.trigger["trigger_type"] == "task_assigned"
     assert run.origin_line["chat_message"]["agent_id"] == ada.id
     row = db.get_schedule(schedule.id)

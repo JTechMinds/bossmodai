@@ -31,7 +31,6 @@ from core.floors import is_on_vacation
 from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import AgentSchedule, RecurrenceRule, ScheduleOutcome
-from core.scheduling.recurrence import describe
 from core.tasking.service import create_or_bind_task
 from core.tasking.transitions import TERMINAL_TASK_STATUSES
 
@@ -199,7 +198,7 @@ def run_occurrence(
     if refusal is not None:
         return done("skipped_vacation" if refusal.reason == "vacation" else "skipped_open")
     try:
-        task, trigger, origin_line = _fire(schedule, due_at, manual=False)
+        task, trigger, origin_line = _fire(schedule)
     except Exception as exc:
         # One bad schedule must not stop the loop (as in
         # ExtensionWakeWatch.run_once); the failure is recorded on the row
@@ -215,8 +214,8 @@ def run_now(schedule_id: str, *, now: datetime) -> ScheduleRun:
     """Run the saved schedule once, now, as a real occurrence ("Run now").
 
     Works whether the schedule is enabled or not, and never enables it. The
-    task is created through ``_fire`` exactly as a scheduled run's is, with
-    the manual description line; ``fired`` is recorded with
+    task is created through ``_fire`` exactly as a scheduled run's is;
+    ``fired`` is recorded with
     ``last_occurrence_at = now``. The worker's timetable is not touched, so
     the next scheduled run stays where it was.
 
@@ -243,7 +242,7 @@ def run_now(schedule_id: str, *, now: datetime) -> ScheduleRun:
     if refusal is not None:
         raise refusal
     try:
-        task, trigger, origin_line = _fire(schedule, now, manual=True)
+        task, trigger, origin_line = _fire(schedule)
     except Exception as exc:
         # Recorded and raised to the operator who clicked, never swallowed.
         detail = f"{type(exc).__name__}: {exc}"
@@ -277,31 +276,25 @@ def _refusal(schedule: AgentSchedule) -> ScheduleRunRefused | None:
     return None
 
 
-def _fire(
-    schedule: AgentSchedule, due_at: datetime, *, manual: bool,
-) -> tuple[Task, dict[str, Any] | None, dict[str, Any]]:
+def _fire(schedule: AgentSchedule) -> tuple[Task, dict[str, Any] | None, dict[str, Any]]:
     """Create this occurrence's task, its wake trigger spec, and its persisted origin line.
 
     The task is the operator's (``requester=HUMAN_SENDER_ID``, source
     ``api``), so its status lines land in the operator's DM with the agent
     through ``origin_thread_target`` unless the policy is ``none``. The
-    description's last line tells a scheduled run (``Scheduled run: … — due
-    …``) from a Run now (``Manual run (Run now): …``).
+    description is the operator's instructions only: that this is one run of
+    a recurring task is told to the agent by the ``task_assigned`` trigger
+    block, from the schedule fields ``build_task_assigned_trigger`` adds,
+    resolved when the prompt is built rather than baked into the task.
 
     Raises:
         RuntimeError: Creation returned no task (an invariant breach).
         Whatever ``create_or_bind_task`` raises (``FloorDenied``,
         ``ValueError``, a database error).
     """
-    summary = describe(schedule.recurrence)
-    if manual:
-        trailer = f"Manual run (Run now): {summary}"
-    else:
-        local = due_at.astimezone()
-        trailer = f"Scheduled run: {summary} — due {local:%H:%M}, {local:%a} {local.day} {local:%b %Y}"
     result = create_or_bind_task(
         title=schedule.title,
-        description=f"{schedule.instructions}\n\n{trailer}",
+        description=schedule.instructions,
         project=None,
         assigned_to=schedule.agent_id,
         requester_id=HUMAN_SENDER_ID,

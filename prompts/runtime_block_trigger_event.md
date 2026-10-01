@@ -70,7 +70,19 @@ Decide whether to accept it, ask a clarifying question, defer it, or decline it.
 {{else}}
 You have an accepted task commitment: "{{trigger.task_title}}".
 {{end}}
-{{if trigger.task_description}}
+{{if trigger.schedule_summary}}
+This is a scheduled recurring task ({{trigger.schedule_summary}}). To see all of your scheduled recurring tasks, run `schedules`.
+The title of this task is: {{trigger.task_title}}
+The task description is:
+{{trigger.task_description}}
+{{if trigger.schedule_next_run}}
+The next run is: {{trigger.schedule_next_run}}
+This task is scheduled automatically: BossMod creates a new task for the next run and will wake you then.
+{{else}}
+This schedule is switched off, so no further runs are scheduled.
+{{end}}
+Perform this run's work now, then close this task out. Do not wait for the next run.
+{{elseif trigger.task_description}}
 Task description: {{trigger.task_description}}
 {{end}}
 {{if trigger.content}}

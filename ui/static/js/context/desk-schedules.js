@@ -4,7 +4,7 @@
  * One row per schedule: its title, its summary ("Every weekday at 06:00,
  * 12:00"), when it runs next ("Next: Tue 06:00", or "Off"), and a tone when
  * the last run went wrong ("Missed 06:00, computer was asleep" / "Last run
- * failed"). A row opens the schedule as a layer over the desk
+ * failed" / "Paused: last run still open"). A row opens the schedule as a layer over the desk
  * (context/schedule-layer.js); the section header's "New" opens a new one
  * (`openNew`, called by desk-panel.js, which owns the header).
  *
@@ -38,6 +38,8 @@ const BossModDeskSchedules = (() => {
             return `Missed ${localTime(schedule.last_occurrence_at, false)}, computer was asleep`;
         }
         if (schedule.last_outcome === 'failed') return 'Last run failed';
+        // An open run makes every later run skip; a schedule doing nothing must not look healthy.
+        if (schedule.last_outcome === 'skipped_open') return 'Paused: last run still open';
         return null;
     }
 
