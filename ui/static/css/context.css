@@ -247,10 +247,12 @@
 /* The rows every section lists. One card treatment: the hairline, the control
    radius, the panel ground, and the stronger hairline under the pointer. */
 .desk-tasks,
+.desk-schedules,
 .desk-notes,
 .desk-entries { display: flex; flex-direction: column; gap: 6px; }
 
 .desk-task,
+.desk-schedule,
 .desk-note,
 .desk-entry,
 .desk-ext {
@@ -269,6 +271,7 @@
 }
 
 .desk-task:hover,
+.desk-schedule:hover,
 .desk-note:hover,
 .desk-entry:hover { border-color: var(--line-strong); }
 
@@ -278,6 +281,36 @@
 
 .desk-task-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .desk-task .status-pill { flex: none; }
+
+/* ─── Desk schedules (context/desk-schedules.js) ───
+   The row: glyph, title over its summary (and a tone when the last run went
+   wrong), and when it runs next pushed to the far end. */
+.desk-schedule > svg { width: 14px; height: 14px; flex: none; color: var(--hint); }
+.desk-schedule-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.desk-schedule-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.desk-schedule-meta { font-size: 11px; color: var(--muted); word-break: break-word; }
+.desk-schedule-tone[data-tone="alert"] { font-size: 11px; color: var(--alert-ink); }
+.desk-schedule-next { flex: none; font-size: 11px; color: var(--hint); white-space: nowrap; }
+
+/* The schedule layer (context/schedule-layer.js): its own scroller, as
+   .task-detail is, and the same [hidden] guard for its flex children. */
+.schedule-layer { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.schedule-layer [hidden] { display: none !important; }
+.schedule-last-run { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
+
+/* The recurrence editor (context/schedule-fields.js): one field per row,
+   Every's number beside its unit, the weekday chips (.menu-segment), and the
+   times as rows with their remove button. */
+.schedule-fields { display: flex; flex-direction: column; gap: 12px; }
+.schedule-every-row,
+.schedule-time-row { display: flex; align-items: center; gap: 8px; }
+.schedule-every-row > .field-input,
+.schedule-month-day { width: 96px; }
+.schedule-unit { font-size: 13px; color: var(--muted); }
+.schedule-at,
+.schedule-times { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.schedule-time-row > .field-input { width: 128px; }
+.schedule-time-remove svg { width: 14px; height: 14px; }
 
 /* ─── Desk files ─── */
 

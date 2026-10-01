@@ -160,6 +160,15 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("meeting_invite_accept_timeout_seconds", "90", "simulation"),
     ("meeting_invite_arrival_timeout_seconds", "180", "simulation"),
 
+    # ── Schedules (core/scheduling/watch.py, runtime worker) ──
+    # Longest the schedule clock sleeps before re-reading the wall clock. The
+    # loop's sleep stops while the machine is suspended, so this bounds how
+    # late a run is noticed after a wake.
+    ("schedule_max_sleep_seconds", "60", "simulation"),
+    # How late a run may be handled and still fire; later is recorded as
+    # missed. Must be greater than schedule_max_sleep_seconds.
+    ("schedule_fire_grace_seconds", "120", "simulation"),
+
     # ── WebSocket ──
     ("ws_send_timeout_seconds", "5", "advanced"),
     ("trigger_claim_timeout_seconds", "300", "advanced"),

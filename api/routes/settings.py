@@ -158,6 +158,8 @@ POSITIVE_INT_SETTINGS = frozenset({
     "channel_idle_check_max_age_minutes",
     "channel_idle_check_max_wakes",
     "channel_idle_check_max_attempts",
+    "schedule_max_sleep_seconds",
+    "schedule_fire_grace_seconds",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
@@ -170,6 +172,8 @@ _POSITIVE_INT_SETTING_LABELS = {
     "channel_idle_check_max_age_minutes": "Idle check max age",
     "channel_idle_check_max_wakes": "Idle check max wakes",
     "channel_idle_check_max_attempts": "Idle check attempts",
+    "schedule_max_sleep_seconds": "Schedule clock re-check",
+    "schedule_fire_grace_seconds": "Schedule on-time window",
 }
 _NON_NEGATIVE_INT_SETTING_LABELS = {
     "channel_router_transcript_messages": "Router transcript lines",
@@ -190,7 +194,9 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
     (``channel_response_round_cap`` and the ``channel_idle_check_*``
     numbers) are read with ``config.get_int`` / ``get_float`` plus a
     fallback; they are rejected here so the operator's value is never
-    silently replaced by that fallback.
+    silently replaced by that fallback. The two ``schedule_*`` keys are read
+    with ``config.require_int`` by the runtime worker's schedule watch,
+    which refuses to run on a bad value.
 
     For the prefs limits it also requires section ≥ line +
     ``WARM_PREFIX_MAX_CHARS`` + the warm header and its newline, reading the

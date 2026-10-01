@@ -1,7 +1,8 @@
 /**
  * BossMod AI — the body and head of one agent's desk, for the desk modal.
  *
- * It composes rather than renders: Tasks is context/desk-tasks.js, Files is
+ * It composes rather than renders: Tasks is context/desk-tasks.js, Schedules
+ * is context/desk-schedules.js, Files is
  * context/desk-files.js, Notes is context/desk-notes.js, Extensions is
  * context/desk-extensions.js (hidden while no per-agent extension is enabled)
  * and Details is context/desk-actions.js, each owning its own request and its
@@ -15,7 +16,7 @@
  * read as one family. A module renders content and nothing else, so a header
  * cannot drift one module at a time.
  *
- * TWO COLUMNS: the work (Tasks, Files) in the main column, and who the agent
+ * TWO COLUMNS: the work (Tasks, Schedules, Files) in the main column, and who the agent
  * is (About, Details, Notes, Extensions) in the aside. The actions on the
  * agent are the HEAD's, as in every other modal: Chat and Edit role as icon
  * tools, and Diagnostics, Reset runtime and Remove behind the `⋯`
@@ -140,6 +141,11 @@ const BossModDeskPanel = (() => {
         // A row opens its task as a layer over this desk (context/desk-task-opener.js).
         const taskOpener = BossModDeskTaskOpener.create({ store, api, tasks, openConversation });
         const actions = BossModDeskActions.createDeskActions({ api, agentId, onRemoved });
+        // Recurring work; a run's task opens over the desk like a task row.
+        const schedules = BossModDeskSchedules.createDeskSchedules({
+            api, bus, agentId, agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
+            onOpenTask: (taskId) => { void taskOpener.open(taskId); },
+        });
         const files = BossModDeskFiles.createDeskFiles({ api, bus, agentId });
         // A folder inside /me/notes is the browser's job, not a second one.
         const notes = BossModDeskNotes.createDeskNotes({
@@ -186,6 +192,8 @@ const BossModDeskPanel = (() => {
                         // panel-level fact, not the list's.
                         onSelect: () => navigate('tasks', { agentFilter: agentId }),
                     }, tasks.element),
+                    section('Schedules', { label: 'New', icon: 'plus', onSelect: () => schedules.openNew() },
+                        schedules.element),
                     section('Files', null, files.element)),
                 h('aside', { class: 'desk-aside', 'aria-label': 'About this agent' },
                     section('About', null, h('div', { class: 'desk-about-block' },
@@ -347,6 +355,7 @@ const BossModDeskPanel = (() => {
                 // Nor may a task layer outlive the desk it was opened over.
                 taskOpener.destroy();
                 tasks.destroy();
+                schedules.destroy();
                 files.destroy();
                 notes.destroy();
                 deskExtensions.destroy();

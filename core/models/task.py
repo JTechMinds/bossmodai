@@ -59,6 +59,9 @@ class Task(BaseModel):
     notification_channel_id: str | None = None
     notification_policy_updated_at: datetime | None = None
     parent_task_id: str | None = None
+    # The schedule whose occurrence created this task (core/scheduling), or
+    # None for every other task. Detached to None when the schedule is deleted.
+    schedule_id: str | None = None
     cost_ceiling: float | None = None
     completion_summary: str | None = None
     status_note: str | None = None

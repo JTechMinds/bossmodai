@@ -263,6 +263,16 @@ def _seed_footprint(ada_id: str, bob_id: str) -> dict[str, Any]:
         title="a", kind="file", category="output",
     )
     _row("agent_triggers", agent_id=ada_id, trigger_type="social", source_channel="chat", payload="{}")
+    schedule = _row(
+        "agent_schedules", agent_id=ada_id, title="Status check", instructions="Read it.",
+        recurrence='{"frequency": "daily", "interval": 1, "times": ["06:00"], "weekdays": [], '
+        '"month_day": null, "start_date": "2026-09-01"}',
+        notification_policy="completion_blocked",
+    )
+    seeded["scheduled_run"] = _row(
+        "tasks", title="Status check", status="complete", assigned_to=bob_id, owner_id=bob_id,
+        requester_id=HUMAN_SENDER_ID, created_by=HUMAN_SENDER_ID, schedule_id=schedule["id"],
+    )["id"]
 
     workspace, prefs = agent_repository.owned_paths(_key(ada_id))
     (workspace / "notes.md").write_text("mine", encoding="utf-8")
@@ -303,8 +313,12 @@ def test_delete_removes_private_rows_and_detaches_shared_history() -> None:
         "cli_policy_rules WHERE agent_id = $1",
         "artifacts WHERE agent_id = $1",
         "agent_triggers WHERE agent_id = $1",
+        "agent_schedules WHERE agent_id = $1",
     ):
         assert _count(table, [ada.id]) == 0, table
+    # A run a deleted schedule created stays on the board, detached from it.
+    scheduled_run = db.get_task(seeded["scheduled_run"])
+    assert scheduled_run is not None and scheduled_run.schedule_id is None
     assert _count("notification_links WHERE notification_id = $1", [seeded["notification"]]) == 0
     assert _count("diagnostic_steps WHERE diagnostic_id = $1", [seeded["diagnostic"]]) == 0
 
@@ -963,6 +977,14 @@ def test_orphan_purge_applies_the_delete_rules_once(caplog: pytest.LogCaptureFix
             created_by=HUMAN_SENDER_ID, requester_id=HUMAN_SENDER_ID,
         )
         ghost_thread = _row("channels", name="Old", kind="manual", status="active", created_by=_GHOST)
+        ghost_schedule = _row(
+            "agent_schedules", agent_id=_GHOST, title="Old routine", instructions="Gone.",
+            recurrence="{}", notification_policy="none",
+        )
+        scheduled_run = _row(
+            "tasks", title="Old routine", status="complete", assigned_to=live.id, owner_id=live.id,
+            created_by=HUMAN_SENDER_ID, requester_id=HUMAN_SENDER_ID, schedule_id=ghost_schedule["id"],
+        )
         _row(
             "meeting_session_meta", session_id=session["id"], host_agent_id=_GHOST,
             meeting_mode="room", phase="active",
@@ -982,6 +1004,8 @@ def test_orphan_purge_applies_the_delete_rules_once(caplog: pytest.LogCaptureFix
         "channel_members": 1,
         "channel_response_candidates": 1,
         "meeting_response_candidates": 1,
+        "tasks.schedule_id": 1,
+        "agent_schedules": 1,
         "tasks.assigned_to": 1,
         "tasks.created_by": 2,
         "tasks.owner_id": 1,
@@ -1001,6 +1025,9 @@ def test_orphan_purge_applies_the_delete_rules_once(caplog: pytest.LogCaptureFix
     history = db.get_task(closed_task["id"])
     assert history.status == "complete"
     assert (history.created_by, history.requester_id, history.assigned_to) == (None, None, live.id)
+    # A run of the orphaned schedule stays, detached from the deleted schedule.
+    assert db.get_task(scheduled_run["id"]).schedule_id is None
+    assert _count("agent_schedules WHERE agent_id = $1", [_GHOST]) == 0
     untouched = db.get_task(human_task["id"])
     assert untouched.status == "active"
     assert untouched.created_by == HUMAN_SENDER_ID

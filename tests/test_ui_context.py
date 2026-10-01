@@ -101,6 +101,10 @@ CONTEXT_MODULES = [
     JS / "shell" / "floor-scope.js",
     CONTEXT / "agent-edit.js",
     CONTEXT / "agents-dialog.js",
+    # The desk's Schedules section: the recurrence editor, its layer, the section.
+    CONTEXT / "schedule-fields.js",
+    CONTEXT / "schedule-layer.js",
+    CONTEXT / "desk-schedules.js",
     CONTEXT / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks
@@ -758,6 +762,35 @@ def test_a_desk_task_opens_as_a_layer_over_the_desk() -> None:
     dialog = _read(CONTEXT / "desk-dialog.js")
     assert "if (current) current.modal.closeFrom();" in dialog
     assert "openConversation: (id, kind) => {" in dialog
+
+
+def test_desk_schedules_section_and_layer() -> None:
+    """The desk's Schedules section and the schedule layer, through the real desk.
+
+    The section renders rows (title, summary, next run, a missed-run tone),
+    its empty and error states, and retries; it repaints on a
+    ``schedule_ran``/``schedule_changed`` activity for its own agent only. A
+    row opens the layer over the desk, and an edit PATCHes only the changed
+    field; New opens the layer in edit mode, refuses weekly with no weekday
+    before any request, then POSTs the exact rule shape. Leaving the desk
+    closes an open schedule layer.
+    """
+    payload = _harness()
+    for key in (
+        "scheduleSectionRendersRows", "scheduleSectionSaysEmpty", "scheduleSectionSaysError",
+        "scheduleRetryRecovers", "otherActivityIsIgnored", "aScheduleRunRefreshesTheRows",
+        "aRowOpensTheScheduleLayer", "anEditPatchesOnlyWhatChanged", "newOpensInEditMode",
+        "weeklyNeedsAWeekday", "aCreatePostsTheExactRule", "leavingTheDeskClosesTheScheduleLayer",
+    ):
+        assert payload[key] is True, key
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert "section('Schedules', { label: 'New', icon: 'plus', onSelect: () => schedules.openNew() }," in panel
+    assert "schedules.destroy();" in panel
+    fields = _read(CONTEXT / "schedule-fields.js")
+    assert "BossModMenuSelect.create({" in fields
+    # Dropdowns are BossModMenuSelect; no module builds a native select.
+    for name in ("schedule-fields.js", "schedule-layer.js", "desk-schedules.js"):
+        assert "h('select'" not in _read(CONTEXT / name), name
 
 
 def test_context_modules_stay_focused() -> None:

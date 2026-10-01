@@ -207,6 +207,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _ensure_notification_link_target_kinds(con)
     _ensure_meeting_host_nullable(con)
     _ensure_cli_approval_origin_schema(con)
+    _ensure_runtime_command_types(con)
     _add_column_if_missing(
         con, "agent_triggers", "retry_count",
         "INTEGER NOT NULL DEFAULT 0",
@@ -287,6 +288,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     )
     _add_column_if_missing(
         con, "tasks", "closed_at", "TIMESTAMP",
+    )
+    _add_column_if_missing(
+        con, "tasks", "schedule_id", "VARCHAR",
     )
     _add_column_if_missing(
         con, "channel_response_rounds", "round_index",
@@ -1310,6 +1314,65 @@ def _create_task_events_table_if_missing(con: SQLiteCompatConnection) -> None:
         )
         """
     )
+
+
+def _ensure_runtime_command_types(con: SQLiteCompatConnection) -> None:
+    """Rebuild runtime_commands if its command_type CHECK lacks ``reload_schedules``.
+
+    The app queues ``reload_schedules`` after every schedule edit
+    (core/runtime/services.py). Rows are copied as they are, and the status
+    index the rebuild drops with the old table is recreated.
+    """
+    sql = _table_sql(con, "runtime_commands")
+    if not sql or "'reload_schedules'" in sql:
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS runtime_commands__new (
+                id             VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                command_type   VARCHAR NOT NULL
+                                  CHECK (command_type IN (
+                                      'wake_dispatcher',
+                                      'pause_runtime',
+                                      'resume_runtime',
+                                      'reset_agent_runtime',
+                                      'shutdown_runtime',
+                                      'reload_schedules'
+                                  )),
+                payload        TEXT NOT NULL,
+                status         VARCHAR NOT NULL DEFAULT 'queued'
+                                  CHECK (status IN ('queued', 'claimed', 'completed', 'failed')),
+                failure_reason TEXT,
+                claimed_at     TIMESTAMP,
+                completed_at   TIMESTAMP,
+                failed_at      TIMESTAMP,
+                created_at     TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO runtime_commands__new (
+                id, command_type, payload, status, failure_reason,
+                claimed_at, completed_at, failed_at, created_at
+            )
+            SELECT
+                id, command_type, payload, status, failure_reason,
+                claimed_at, completed_at, failed_at, created_at
+            FROM runtime_commands
+            """
+        )
+        con.execute("DROP TABLE runtime_commands")
+        con.execute("ALTER TABLE runtime_commands__new RENAME TO runtime_commands")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_runtime_commands_status_created "
+            "ON runtime_commands (status, created_at)"
+        )
+        logger.info("Migration: rebuilt runtime_commands to add reload_schedules")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
 
 
 def _table_sql(con: SQLiteCompatConnection, table: str) -> str:

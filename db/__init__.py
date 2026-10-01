@@ -360,6 +360,17 @@ from db.extension_agent_configs import (
 )
 from db.extension_wake_status import get_wake_status, record_wake_check
 
+# Per-agent recurring schedules (core/scheduling)
+from db.agent_schedules import (
+    create_schedule,
+    delete_schedule,
+    get_schedule,
+    list_enabled_schedules,
+    list_schedules_for_agent,
+    record_outcome,
+    update_schedule,
+)
+
 # AI Personalities
 from db.ai_personalities import (
     create_personality,
@@ -638,6 +649,14 @@ __all__ = [
     # Per-agent extension wake checks
     "get_wake_status",
     "record_wake_check",
+    # Agent schedules
+    "create_schedule",
+    "delete_schedule",
+    "get_schedule",
+    "list_enabled_schedules",
+    "list_schedules_for_agent",
+    "record_outcome",
+    "update_schedule",
     # AI Personalities
     "create_personality",
     "delete_personality",

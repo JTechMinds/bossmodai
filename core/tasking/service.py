@@ -83,9 +83,27 @@ def create_or_bind_task(
     audit_event_type: str = "assignment",
     audit_source_trigger_id: str | None = None,
     bind_task_id: str | None = None,
+    schedule_id: str | None = None,
 ) -> TaskCreateOrBindResult:
-    """Create a task only when the board does not already contain the workstream."""
+    """Create a task only when the board does not already contain the workstream.
+
+    ``schedule_id`` marks the task as one run of that schedule
+    (core/scheduling/runner.py) and always creates: board resolution
+    (``resolve_existing_task``) is skipped, because a scheduled occurrence is
+    a new run by definition; overlap with its own previous run is the
+    schedule's rule, not board dedupe. Everything else (the floor check,
+    the default owner, the creation event and the origin mirror) is the same
+    path every task takes.
+
+    Raises:
+        ValueError: ``bind_task_id`` is combined with ``schedule_id`` (a run
+            is never a reuse), or ``bind_task_id`` names no task.
+        FloorDenied: The assignment crosses floors.
+    """
     from core.floors import assert_assignment
+
+    if bind_task_id and schedule_id:
+        raise ValueError("bind_task_id and schedule_id cannot be combined")
 
     parent = db.get_task(parent_task_id) if parent_task_id else None
     assert_assignment(
@@ -122,16 +140,21 @@ def create_or_bind_task(
         created_by=created_by,
         parent_task=db.get_task(parent_task_id) if parent_task_id else None,
     )
-    deliverable_paths = _deliverable_paths_from_contract(work_contract)
-    resolution = resolve_existing_task(
-        assigned_to=assigned_to,
-        requester_id=requester_id,
-        owner_id=requested_owner_id,
-        parent_task_id=parent_task_id,
-        project=project,
-        title=title,
-        deliverable_paths=deliverable_paths,
-    )
+    if schedule_id:
+        resolution = TaskResolution(
+            outcome="create_new_task",
+            reason="A scheduled run is always a new task.",
+        )
+    else:
+        resolution = resolve_existing_task(
+            assigned_to=assigned_to,
+            requester_id=requester_id,
+            owner_id=requested_owner_id,
+            parent_task_id=parent_task_id,
+            project=project,
+            title=title,
+            deliverable_paths=_deliverable_paths_from_contract(work_contract),
+        )
     if resolution.outcome == "bind_existing_task" and resolution.task is not None:
         append_task_event(
             task_id=resolution.task.id,
@@ -159,6 +182,7 @@ def create_or_bind_task(
         source_channel=source_channel,
         notification_policy=notification_policy,
         notification_channel_id=notification_channel_id,
+        schedule_id=schedule_id,
     )
 
     rewritten_contract = rewrite_shared_work_contract(

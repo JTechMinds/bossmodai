@@ -62,7 +62,9 @@ class AgentRepository:
       ``agent_triggers``, ``artifacts`` rows, CLI audit (``bm_cli_events``)
       and approvals, host-path consent, agent-scoped ``cli_policy_rules``
       (deleted, never detached: a NULL ``agent_id`` means a global rule),
-      thread and meeting membership and response candidates.
+      thread and meeting membership and response candidates, and
+      ``agent_schedules`` (the runs they created stay on the board with
+      ``tasks.schedule_id`` set to NULL).
     - Shared history, kept with the agent detached (id set to NULL): channel
       and meeting messages, meetings it created or hosted, task events, tasks
       (owner, requester, assignee, creator), threads it created, thread host

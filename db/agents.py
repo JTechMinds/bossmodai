@@ -290,7 +290,7 @@ def delete_agent_rows(agent_id: str) -> bool:
     prompt-history policy is one of the rows this removes, and Add agent's
     Recent keeps it. Private rows (notifications, DMs, diagnostics, triggers,
     activities, CLI audit and approvals, agent-scoped CLI policy rules,
-    per-agent extension settings and wake checks, the companion rows) are deleted. Shared history (channel and meeting
+    per-agent extension settings and wake checks, schedules, the companion rows) are deleted. Shared history (channel and meeting
     messages, task events, tasks, channels, meetings it created or hosted)
     stays with this agent's id detached to NULL so teammates' transcripts stay
     whole. The storage key
@@ -377,6 +377,13 @@ def delete_agent_rows(agent_id: str) -> bool:
         execute("DELETE FROM agent_cli_state WHERE agent_id = $1", [agent_id])
         execute("DELETE FROM extension_agent_configs WHERE agent_id = $1", [agent_id])
         execute("DELETE FROM extension_wake_status WHERE agent_id = $1", [agent_id])
+        # schedules are private; the runs they created stay on the board, detached
+        execute(
+            "UPDATE tasks SET schedule_id = NULL "
+            "WHERE schedule_id IN (SELECT id FROM agent_schedules WHERE agent_id = $1)",
+            [agent_id],
+        )
+        execute("DELETE FROM agent_schedules WHERE agent_id = $1", [agent_id])
         execute("DELETE FROM agent_state WHERE agent_id = $1", [agent_id])
         retire_agent_storage_key(agent_id)
         delete_agent_storage_identity(agent_id)
@@ -409,6 +416,14 @@ _ORPHAN_STATEMENTS: tuple[tuple[str, str], ...] = (
         "meeting_response_candidates",
         "DELETE FROM meeting_response_candidates WHERE {missing:agent_id} RETURNING 1",
     ),
+    # Before the schedules go, as in delete_agent_rows: their runs stay on the
+    # board, detached, rather than pointing at a deleted schedule.
+    (
+        "tasks.schedule_id",
+        "UPDATE tasks SET schedule_id = NULL WHERE schedule_id IN "
+        "(SELECT id FROM agent_schedules WHERE {missing:agent_id}) RETURNING 1",
+    ),
+    ("agent_schedules", "DELETE FROM agent_schedules WHERE {missing:agent_id} RETURNING 1"),
     ("tasks.assigned_to", "UPDATE tasks SET assigned_to = NULL WHERE {missing:assigned_to} RETURNING 1"),
     ("tasks.created_by", "UPDATE tasks SET created_by = NULL WHERE {missing:created_by} RETURNING 1"),
     ("tasks.owner_id", "UPDATE tasks SET owner_id = NULL WHERE {missing:owner_id} RETURNING 1"),
@@ -429,7 +444,7 @@ def purge_orphan_agent_rows(non_agent_ids: Iterable[str]) -> dict[str, int]:
     Called only by ``core.agent_repository.AgentRepository.purge_orphans``,
     after it has cancelled the open tasks such ids own. The rules match
     ``delete_agent_rows``: private rows (diagnostics and their steps, DMs,
-    meeting participation, thread membership, response candidates) are
+    meeting participation, thread membership, response candidates, schedules) are
     deleted; shared rows (tasks, threads, meeting hosts) keep
     their row with the id set to NULL. NULL is never an orphan, and neither is any value in
     ``non_agent_ids`` (``HUMAN_SENDER_ID`` and the like), which are senders

@@ -42,6 +42,14 @@ from core.models.message import Message, MessageCreate
 from core.models.notification import Notification, NotificationLink, TaskNotificationSettings
 from core.models.prompt_history import AgentPromptHistoryPolicy, AgentPromptHistoryPolicyUpdate
 from core.models.runtime import RuntimeCommand, RuntimeWorkerState
+from core.models.schedule import (
+    AgentSchedule,
+    RecurrenceRule,
+    ScheduleCreate,
+    ScheduleOutcome,
+    ScheduleUpdate,
+    ScheduleView,
+)
 from core.models.settings import (
     AIConnection,
     AIConnectionCreate,
@@ -127,6 +135,13 @@ __all__ = [
     "AgentPromptHistoryPolicyUpdate",
     "RuntimeCommand",
     "RuntimeWorkerState",
+    # Schedules
+    "AgentSchedule",
+    "RecurrenceRule",
+    "ScheduleCreate",
+    "ScheduleOutcome",
+    "ScheduleUpdate",
+    "ScheduleView",
     # Settings
     "Setting",
     # AI Connections

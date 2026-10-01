@@ -34,6 +34,8 @@ const BossModTasksData = (() => {
         'task_completed',
         'task_resumed',
         'task_clarify',
+        // A schedule ran (core/scheduling/watch.py): a fired run is a new task.
+        'schedule_ran',
     ]);
 
     const DAY_MS = 24 * 60 * 60 * 1000;

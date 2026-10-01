@@ -14,6 +14,7 @@ RuntimeCommandType = Literal[
     "resume_runtime",
     "reset_agent_runtime",
     "shutdown_runtime",
+    "reload_schedules",
 ]
 
 RuntimeCommandStatus = Literal["queued", "claimed", "completed", "failed"]

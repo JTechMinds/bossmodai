@@ -220,6 +220,19 @@ class RuntimeServices:
             if self._process_is_running() and not db.has_open_runtime_command(["wake_dispatcher"]):
                 db.create_runtime_command("wake_dispatcher")
 
+    async def reload_schedules(self) -> None:
+        """Ask the runtime worker to rebuild its schedule timetable from the database.
+
+        Called after every schedule create, edit and delete. Files one
+        ``reload_schedules`` runtime command when the worker process is
+        running and none is already open, so a burst of edits collapses into
+        one reload; it does not wait for the worker. With no worker running
+        it does nothing: the worker loads every schedule fresh when it starts.
+        """
+        async with self._guard():
+            if self._process_is_running() and not db.has_open_runtime_command(["reload_schedules"]):
+                db.create_runtime_command("reload_schedules")
+
     async def reset_agent_runtime(self, agent_id: str) -> None:
         await self.start()
         async with self._guard():

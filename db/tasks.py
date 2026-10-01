@@ -19,7 +19,7 @@ _TASK_COLUMNS = (
     "t.status, twc.work_contract, "
     "tnp.source_channel, tnp.policy AS notification_policy, tnp.updated_at AS notification_policy_updated_at, "
     "tnt.channel_id AS notification_channel_id, "
-    "t.parent_task_id, t.cost_ceiling, t.completion_summary, "
+    "t.parent_task_id, t.schedule_id, t.cost_ceiling, t.completion_summary, "
     "t.status_note, t.watchdog_pinged_at, t.last_progress_at, t.last_heartbeat_at, "
     "t.last_activity, t.closed_at, t.created_at"
 )
@@ -70,8 +70,13 @@ def create_task(
     source_channel: str | None = None,
     notification_policy: str | None = None,
     notification_channel_id: str | None = None,
+    schedule_id: str | None = None,
 ) -> Task:
-    """Insert a new task."""
+    """Insert a new task.
+
+    ``schedule_id`` links a run to the schedule whose occurrence created it
+    (core/scheduling/runner.py); every other task leaves it ``None``.
+    """
     validated_work_contract = None
     if work_contract is not None:
         validated_work_contract = _validate_persisted_work_contract(work_contract)
@@ -90,11 +95,16 @@ def create_task(
 
     row = insert_returning_dict(
         f"""
-        INSERT INTO tasks (title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        INSERT INTO tasks (
+            title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id, schedule_id
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id
         """,
-        [title, description, project, assigned_to, resolved_requester_id, resolved_owner_id, created_by, parent_task_id],
+        [
+            title, description, project, assigned_to, resolved_requester_id, resolved_owner_id, created_by,
+            parent_task_id, schedule_id,
+        ],
     )
     task_id = row["id"]
     if validated_work_contract is not None:

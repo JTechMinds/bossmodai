@@ -502,6 +502,10 @@ CONTEXT_MODULES = [
     JS / "shell" / "floor-scope.js",
     JS / "context" / "agent-edit.js",
     JS / "context" / "agents-dialog.js",
+    # The desk's Schedules section (tests/js_context_harness.cjs NAMES).
+    JS / "context" / "schedule-fields.js",
+    JS / "context" / "schedule-layer.js",
+    JS / "context" / "desk-schedules.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks

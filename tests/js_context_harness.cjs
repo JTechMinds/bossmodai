@@ -142,7 +142,10 @@ const NAMES = [
     "BossModAgentFormTemplate", "BossModAgentDialogFooter",
     "BossModAgentAddPane", "BossModAgentDialogSlot",
     "BossModFloorScope",
-    "BossModAgentEdit", "BossModAgentsDialog", "BossModDeskPanel",
+    "BossModAgentEdit", "BossModAgentsDialog",
+    // The desk's Schedules section: the recurrence editor, its layer, the section.
+    "BossModScheduleFields", "BossModScheduleLayer", "BossModDeskSchedules",
+    "BossModDeskPanel",
     // The desk's task rows wear the Tasks place's status labels and open the
     // task as a layer over the desk through the Tasks place's own loader,
     // detail, task actions and layer controller; its Chat tool is the one
@@ -347,6 +350,26 @@ const AGENT_DETAIL = { id: "a1", name: "Jim", storage_key: "jim-workspace", mode
 // holds a promise, every GET /api/agents/{id} waits on it.
 let heldAgentDetail = null;
 
+// What GET /api/agents/{id}/schedules answers, per agent: Jim has one weekday
+// schedule whose last run was missed; everyone else has none. A POST appends.
+const SCHEDULE_ONE = {
+    id: "s1", agent_id: "a1", title: "Status check", instructions: "Read the status page.",
+    recurrence: {
+        frequency: "weekly", interval: 1, times: ["06:00", "12:00"], weekdays: [0, 1, 2, 3, 4],
+        month_day: null, start_date: "2026-09-01",
+    },
+    notification_policy: "completion_blocked", enabled: true,
+    last_occurrence_at: "2026-09-29T10:00:00Z", last_outcome: "missed", last_outcome_detail: null,
+    last_task_id: null, created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
+    summary: "Every weekday at 06:00, 12:00", next_run_at: "2026-09-30T10:00:00Z", last_task_status: null,
+};
+const SCHEDULES = { a1: [SCHEDULE_ONE], a2: [], a3: [] };
+// Set by the section that proves a failed read is said, with a retry.
+let schedulesFail = false;
+// How many schedule list reads, and every schedule write, in order.
+let scheduleReads = 0;
+const scheduleWrites = [];
+
 // The one browser API the real submit path needs that the shared fake does not
 // carry. Node HAS a FormData and its constructor REFUSES an argument, so
 // `new FormData(form)` threw, the save's own catch reported it as a failed
@@ -422,6 +445,32 @@ function api(url, init) {
         boardReads += 1;
         const scoped = /agent_id=a1&scope=self/.test(String(url));
         return jsonResponse({ sections: { closed: scoped ? [JIM_TASK] : [] } });
+    }
+    const agentSchedules = String(url).match(/^\/api\/agents\/([^/]+)\/schedules$/);
+    if (agentSchedules) {
+        const agentId = agentSchedules[1];
+        if (init && init.method === "POST") {
+            const body = JSON.parse(init.body);
+            scheduleWrites.push({ method: "POST", url: String(url), body });
+            const row = {
+                ...SCHEDULE_ONE, ...body, id: `s${scheduleWrites.length + 1}`, agent_id: agentId,
+                enabled: true, last_outcome: null, last_occurrence_at: null, summary: "Every week on Mon at 06:00",
+            };
+            SCHEDULES[agentId].push(row);
+            return jsonResponse(row, 201);
+        }
+        scheduleReads += 1;
+        if (schedulesFail) return jsonResponse({ detail: "boom" }, 500);
+        return jsonResponse(SCHEDULES[agentId] || []);
+    }
+    const oneSchedule = String(url).match(/^\/api\/schedules\/([^/]+)$/);
+    if (oneSchedule && init && (init.method === "PATCH" || init.method === "DELETE")) {
+        const body = init.body ? JSON.parse(init.body) : null;
+        scheduleWrites.push({ method: init.method, url: String(url), body });
+        if (init.method === "DELETE") return Promise.resolve({ ok: true, status: 204, json: () => Promise.reject(new Error("no body")) });
+        const stored = Object.values(SCHEDULES).flat().find((row) => row.id === oneSchedule[1]);
+        Object.assign(stored, body);
+        return jsonResponse({ ...stored });
     }
     if (url.startsWith("/api/needs")) {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
@@ -713,10 +762,14 @@ async function main() {
         throw new Error(`the desk lost ${lost.join(", ")}; sections `
             + `${sectionLabels.join("/")} details "${deskText(".fact-list")}"`);
     }
-    // "See all" belongs to the Tasks header.
-    const seeAll = deskModal().querySelectorAll(".desk-section-action");
-    if (seeAll.length !== 1 || seeAll[0].textContent !== "See all") {
-        throw new Error(`Tasks owes its header a "See all", got ${seeAll.length}`);
+    // "See all" belongs to the Tasks header, and "New" to the Schedules one.
+    const sectionActions = deskModal().querySelectorAll(".desk-section").map((node) => {
+        const action = node.children[0].querySelector(".desk-section-action");
+        return `${node.children[0].children[0].textContent}:${action ? action.textContent : ""}`;
+    });
+    if (!sectionActions.includes("Tasks:See all") || !sectionActions.includes("Schedules:New")
+        || sectionActions.filter((entry) => !entry.endsWith(":")).length !== 2) {
+        throw new Error(`Tasks owes its header a "See all" and Schedules a "New", got ${sectionActions.join("|")}`);
     }
     // The actions on the agent are the HEAD's: Chat and Edit role as tools,
     // and the other three behind the `⋯`, the destructive two marked.
@@ -979,6 +1032,135 @@ async function main() {
         && store.getState().conversationKind === "agent";
     if (!chatToolOpensTheConversation) {
         throw new Error("the desk's Chat tool must close the desk and open the conversation");
+    }
+
+    // ─── 3a². Schedules: the rows, their states, the live repaint, the layer ───
+
+    const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    const scheduleRows = () => inDesk(".desk-schedules").querySelectorAll(".desk-schedule");
+    const topLayer = () => modals()[modals().length - 1];
+    desk.open("a1");
+    await drain();
+    const row0 = scheduleRows()[0];
+    const scheduleSectionRendersRows = scheduleRows().length === 1
+        && row0.getAttribute("data-schedule-id") === "s1"
+        && row0.querySelector(".desk-schedule-title").textContent === "Status check"
+        && row0.querySelector(".desk-schedule-meta").textContent === "Every weekday at 06:00, 12:00"
+        && row0.querySelector(".desk-schedule-next").textContent.startsWith("Next: ")
+        && row0.querySelector(".desk-schedule-tone").textContent.startsWith("Missed ")
+        && row0.querySelector(".desk-schedule-tone").textContent.endsWith(", computer was asleep");
+    desk.open("a2");
+    await drain();
+    const scheduleSectionSaysEmpty = inDesk(".desk-schedules").textContent === "No schedules yet.";
+    schedulesFail = true;
+    desk.open("a3");
+    await drain();
+    schedulesFail = false;
+    const scheduleSectionSaysError = inDesk(".desk-schedules").querySelectorAll(".context-error")
+        .map((node) => node.textContent).join("|") === "Could not load schedules.";
+    await inDesk("#desk-schedules-retry").dispatchClick();
+    await drain();
+    const scheduleRetryRecovers = inDesk(".desk-schedules").textContent === "No schedules yet.";
+    if (!scheduleSectionRendersRows || !scheduleSectionSaysEmpty || !scheduleSectionSaysError
+        || !scheduleRetryRecovers) {
+        throw new Error(`the Schedules section must render its states: rows ${scheduleSectionRendersRows}, `
+            + `empty ${scheduleSectionSaysEmpty}, error ${scheduleSectionSaysError}, retry ${scheduleRetryRecovers}`);
+    }
+
+    // A run of THIS agent's schedule repaints the rows; another agent's, or
+    // an unrelated event, does not.
+    desk.open("a1");
+    await drain();
+    const readsBefore = scheduleReads;
+    bus.publish("activity", { event: "schedule_ran", detail: "x", agent_id: "a2", schedule_id: "z" });
+    bus.publish("activity", { event: "task_created", detail: "x", agent_id: "a1" });
+    await wait(650);
+    const otherActivityIsIgnored = scheduleReads === readsBefore;
+    bus.publish("activity", { event: "schedule_ran", detail: "x", agent_id: "a1", schedule_id: "s1", outcome: "fired" });
+    bus.publish("activity", { event: "schedule_changed", detail: "x", agent_id: "a1", schedule_id: "s1" });
+    await wait(650);
+    const aScheduleRunRefreshesTheRows = scheduleReads === readsBefore + 1;
+    if (!otherActivityIsIgnored || !aScheduleRunRefreshesTheRows) {
+        throw new Error(`the Schedules section must repaint on its own runs only: ignored `
+            + `${otherActivityIsIgnored}, refreshed ${aScheduleRunRefreshesTheRows} (${scheduleReads - readsBefore})`);
+    }
+
+    // A row opens the schedule as a layer; Edit mode PATCHes only what changed.
+    await scheduleRows()[0].dispatchClick();
+    await drain();
+    const viewLayer = topLayer();
+    const aRowOpensTheScheduleLayer = modals().length === 2 && deskModal().hidden === true
+        && viewLayer.getAttribute("aria-label") === "Status check"
+        && viewLayer.querySelector(".fact-list").textContent.includes("Every weekday at 06:00, 12:00")
+        && viewLayer.querySelector(".switch-row").getAttribute("aria-checked") === "true";
+    await viewLayer.querySelector("#schedule-edit").dispatchClick();
+    await drain();
+    viewLayer.querySelector(".task-detail-title-input").value = "Status check (prod)";
+    const writesBeforeEdit = scheduleWrites.length;
+    await viewLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const editWrite = scheduleWrites[writesBeforeEdit];
+    const anEditPatchesOnlyWhatChanged = scheduleWrites.length === writesBeforeEdit + 1
+        && editWrite.method === "PATCH" && editWrite.url === "/api/schedules/s1"
+        && JSON.stringify(editWrite.body) === JSON.stringify({ title: "Status check (prod)" })
+        && viewLayer.querySelector("#schedule-edit").hidden === false;
+    await viewLayer.querySelector(".modal-back").dispatchClick();
+    await drain();
+
+    // New opens the layer in edit mode. Weekly with no weekday is said on the
+    // spot and nothing is sent; with one, the POST carries the exact rule.
+    await deskModal().querySelectorAll(".desk-section-action")
+        .find((node) => node.textContent === "New").dispatchClick();
+    await drain();
+    const newLayer = topLayer();
+    const newOpensInEditMode = newLayer.getAttribute("aria-label") === "New schedule"
+        && newLayer.querySelector("#schedule-edit").hidden === true
+        && newLayer.querySelector("#schedule-save").hidden === false;
+    newLayer.querySelector(".task-detail-title-input").value = "Weekly report";
+    newLayer.querySelector(".task-detail-description-input").value = "Summarise the week.";
+    await newLayer.querySelector(".schedule-fields").querySelector(".menu-select-trigger").dispatchClick();
+    await drain();
+    await newLayer.querySelectorAll(".menu-select-option")
+        .find((node) => node.textContent === "Weekly").dispatchClick();
+    await drain();
+    newLayer.querySelector(".schedule-time").value = "06:00";
+    const writesBeforeCreate = scheduleWrites.length;
+    await newLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const weeklyNeedsAWeekday = scheduleWrites.length === writesBeforeCreate
+        && newLayer.querySelector(".schedule-layer-error").textContent.includes("Pick at least one weekday.");
+    await newLayer.querySelector("[data-weekday=\"0\"]").dispatchClick();
+    await newLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+    const createWrite = scheduleWrites[writesBeforeCreate];
+    const aCreatePostsTheExactRule = scheduleWrites.length === writesBeforeCreate + 1
+        && createWrite.method === "POST" && createWrite.url === "/api/agents/a1/schedules"
+        && JSON.stringify(createWrite.body) === JSON.stringify({
+            title: "Weekly report",
+            instructions: "Summarise the week.",
+            recurrence: {
+                frequency: "weekly", interval: 1, times: ["06:00"], weekdays: [0], month_day: null, start_date: today,
+            },
+            notification_policy: "completion_blocked",
+        })
+        // Saved, it is that schedule's view now, titled by it.
+        && newLayer.querySelector(".modal-title").textContent === "Weekly report"
+        && newLayer.querySelector("#schedule-edit").hidden === false;
+    // Leaving the desk takes an open schedule layer with it.
+    desk.open("a2");
+    await drain();
+    const leavingTheDeskClosesTheScheduleLayer = modals().length === 1
+        && deskModal().getAttribute("aria-label") === "Laura";
+    desk.close();
+    await drain();
+    if (!aRowOpensTheScheduleLayer || !anEditPatchesOnlyWhatChanged || !newOpensInEditMode
+        || !weeklyNeedsAWeekday || !aCreatePostsTheExactRule || !leavingTheDeskClosesTheScheduleLayer) {
+        throw new Error(`the schedule layer: opens ${aRowOpensTheScheduleLayer}, patch `
+            + `${anEditPatchesOnlyWhatChanged} ${JSON.stringify(editWrite)}, new ${newOpensInEditMode}, `
+            + `weekday ${weeklyNeedsAWeekday}, create ${aCreatePostsTheExactRule} ${JSON.stringify(createWrite)}, `
+            + `leaving ${leavingTheDeskClosesTheScheduleLayer}`);
     }
 
     // ─── 3b. Notes read the agent's workspace, not a column ───
@@ -2093,6 +2275,18 @@ async function main() {
         aRenameRetitlesTheDesk,
         anAgentGoneFromTheRosterClosesTheDesk,
         chatToolOpensTheConversation,
+        scheduleSectionRendersRows,
+        scheduleSectionSaysEmpty,
+        scheduleSectionSaysError,
+        scheduleRetryRecovers,
+        otherActivityIsIgnored,
+        aScheduleRunRefreshesTheRows,
+        aRowOpensTheScheduleLayer,
+        anEditPatchesOnlyWhatChanged,
+        newOpensInEditMode,
+        weeklyNeedsAWeekday,
+        aCreatePostsTheExactRule,
+        leavingTheDeskClosesTheScheduleLayer,
         opensOnThePathItWasGiven,
         createOpensTheConversationOnly,
         drainsOnDestroy,

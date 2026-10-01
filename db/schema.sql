@@ -328,6 +328,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_heartbeat_at TIMESTAMP DEFAULT current_timestamp,
     last_activity  TIMESTAMP DEFAULT current_timestamp,
     closed_at      TIMESTAMP,
+    schedule_id    VARCHAR,
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -617,7 +618,8 @@ CREATE TABLE IF NOT EXISTS runtime_commands (
                           'pause_runtime',
                           'resume_runtime',
                           'reset_agent_runtime',
-                          'shutdown_runtime'
+                          'shutdown_runtime',
+                          'reload_schedules'
                       )),
     payload        TEXT NOT NULL,
     status         VARCHAR NOT NULL DEFAULT 'queued'
@@ -1018,3 +1020,29 @@ CREATE TABLE IF NOT EXISTS extension_wake_status (
     last_new_count INTEGER,
     PRIMARY KEY (extension_id, agent_id)
 );
+
+-- Per-agent recurring schedules (core/scheduling). recurrence is a
+-- RecurrenceRule as JSON. The runtime worker keeps when each runs next in
+-- memory; a row stores only the rule and the last outcome it recorded.
+-- last_task_id is the task the last fired run created. tasks.schedule_id
+-- points back here and is set to NULL when the schedule is deleted. An
+-- agent's rows are deleted with the agent (db.agents.delete_agent_rows).
+CREATE TABLE IF NOT EXISTS agent_schedules (
+    id                  VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    agent_id            VARCHAR NOT NULL REFERENCES agents(id),
+    title               VARCHAR NOT NULL,
+    instructions        TEXT    NOT NULL,
+    recurrence          TEXT    NOT NULL,
+    notification_policy VARCHAR NOT NULL
+                            CHECK (notification_policy IN ('none', 'completion_blocked', 'all')),
+    enabled             BOOLEAN NOT NULL DEFAULT 1,
+    last_occurrence_at  TIMESTAMP,
+    last_outcome        VARCHAR
+                            CHECK (last_outcome IN ('fired', 'missed', 'skipped_open', 'skipped_vacation', 'failed')),
+    last_outcome_detail TEXT,
+    last_task_id        VARCHAR,
+    created_at          TIMESTAMP DEFAULT current_timestamp,
+    updated_at          TIMESTAMP DEFAULT current_timestamp
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_schedules_agent ON agent_schedules(agent_id);

@@ -20,6 +20,7 @@ from core.agent_loop.watchdog import watchdog
 from core.extensions.loader import shutdown_loaded_extensions
 from core.extensions.wake_service import extension_wake_watch
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
+from core.scheduling.watch import schedule_watch
 from core.world.simulation import simulation
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,9 @@ class RuntimeController:
     async def wake_dispatcher(self) -> None:
         dispatcher.notify()
 
+    async def reload_schedules(self) -> None:
+        schedule_watch.reload()
+
     async def reset_agent_runtime(self, agent_id: str) -> None:
         await dispatcher.reset_agent(agent_id)
         simulation.clear_agent_path(agent_id)
@@ -62,8 +66,10 @@ class RuntimeController:
         meeting_watchdog.start()
         channel_idle_watch.start()
         extension_wake_watch.start()
+        schedule_watch.start()
 
     async def _stop_services(self) -> None:
+        await schedule_watch.stop()
         await extension_wake_watch.stop()
         await channel_idle_watch.stop()
         await meeting_watchdog.stop()
@@ -197,6 +203,9 @@ class RuntimeWorker:
             return
         if command_type == "resume_runtime":
             await self._controller.resume()
+            return
+        if command_type == "reload_schedules":
+            await self._controller.reload_schedules()
             return
         if command_type == "reset_agent_runtime":
             await self._controller.reset_agent_runtime(payload["agent_id"])
