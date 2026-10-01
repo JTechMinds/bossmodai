@@ -616,7 +616,7 @@ def execute_approved_command(
         cwd=cwd_before,
     )
     if system_audit:
-        from core.bm_cli.cli_auto_approve import attach_system_audit
+        from core.bm_cli.approval_gate import attach_system_audit
 
         result = attach_system_audit(result, system_audit)
     record_bm_cli_event(
@@ -1220,7 +1220,7 @@ class _ThreadAutoGate:
     card_why: str = ""
 
 
-def _maybe_thread_auto_approve(
+def _maybe_auto_approve(
     *,
     agent: Agent,
     parsed: ParsedCliCommand,
@@ -1230,19 +1230,19 @@ def _maybe_thread_auto_approve(
     trigger_type: str | None,
     channel_id: str | None,
 ) -> _ThreadAutoGate:
-    """Auto-approve one opted-in approval_required command, or leave a card.
+    """Auto-approve one approval_required command through the gate, or leave a card.
 
     A host-guardrail refusal is a path-jail block. System AI never sees it.
-    A card keeps ``card_why`` when the thread flag is on, so the operator
-    sees why the toggle did not run the command.
+    A card keeps ``card_why`` when auto-approve is on, so the operator
+    sees why it did not run the command.
     """
-    from core.bm_cli.cli_auto_approve import (
+    from core.bm_cli.approval_gate import (
         audit_line,
         log_system_auto_approve,
-        plan_thread_auto_approve,
+        plan_auto_approve,
     )
 
-    plan = plan_thread_auto_approve(
+    plan = plan_auto_approve(
         agent,
         parsed,
         cwd_before,
@@ -1269,7 +1269,7 @@ def _maybe_thread_auto_approve(
 
     from core.agent_loop.work_binding import current_turn_detached
 
-    timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
+    timeout_minutes = config.require_int("cli_approval_timeout_minutes")
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
     try:
         approval = db.create_cli_approval_request(
@@ -1352,7 +1352,7 @@ def _handle_approval_required(
             executor=getattr(policy, "executor", "shell"),
         )
 
-    auto = _maybe_thread_auto_approve(
+    auto = _maybe_auto_approve(
         agent=agent,
         parsed=parsed,
         content=content,
@@ -1366,7 +1366,7 @@ def _handle_approval_required(
 
     from core.agent_loop.work_binding import current_turn_detached
 
-    timeout_minutes = config.get_int("cli_approval_timeout_minutes") or 60
+    timeout_minutes = config.require_int("cli_approval_timeout_minutes")
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
 
     try:

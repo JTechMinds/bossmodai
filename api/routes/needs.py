@@ -205,7 +205,7 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
 
 def _auto_approve_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     """Recent System AI approvals, so the audit line is visible in Needs."""
-    from core.bm_cli.cli_auto_approve import AUDIT_PREFIX
+    from core.bm_cli.approval_gate import AUDIT_PREFIX
 
     items = []
     for request in db.list_cli_approval_requests(

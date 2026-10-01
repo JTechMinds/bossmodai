@@ -188,6 +188,11 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("cli_shell_timeout_seconds", "30", "cli_policy"),
     ("cli_shell_max_output_bytes", "65536", "cli_policy"),
     ("cli_approval_timeout_minutes", "60", "cli_policy"),
+    # Auto-approve review context (core.bm_cli.approval_gate.context):
+    # recent conversation lines, and floor-wide operator Approve/Reject
+    # precedents, sent to System AI with each reviewed command.
+    ("cli_auto_approve_context_messages", "20", "cli_policy"),
+    ("cli_auto_approve_precedent_limit", "15", "cli_policy"),
     # Unmatched commands. Prior factory default was deny;
     # reconcile_factory_cli_default_policy moves an untouched deny once.
     # seed_defaults inserts this row only when it is missing, so an

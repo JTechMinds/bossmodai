@@ -27,6 +27,7 @@ _PROMPT_FILE_BY_KEY = {
     "internal_cli_authoritative_tasks": "internal/cli_authoritative_tasks.md",
     "internal_cli_authoritative_recent_work": "internal/cli_authoritative_recent_work.md",
     "internal_cli_authoritative_location": "internal/cli_authoritative_location.md",
+    "internal_cli_auto_approve_review": "internal/cli_auto_approve_review.md",
     "internal_loop_approval_rejected_result": "internal/loop_approval_rejected_result.md",
     "internal_loop_approval_review_followup": "internal/loop_approval_review_followup.md",
     "internal_loop_execution_cli_followup": "internal/loop_execution_cli_followup.md",

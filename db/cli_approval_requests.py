@@ -174,33 +174,59 @@ def list_approval_requests(
     )
 
 
-def list_thread_manual_approvals(
-    channel_id: str,
+def list_human_cli_decisions(
+    agent_ids: list[str],
     *,
+    limit: int,
     excluded_note: str,
-    limit: int = 40,
+    argv0: str | None = None,
 ) -> list[CliApprovalRequest]:
-    """Return recent human Approves in one thread, newest first.
+    """Return recent operator Approve and Reject decisions, newest first.
 
-    System rows are not manual. ``excluded_note`` drops Always-allow, which
-    is a policy rule rather than thread advice.
+    Rows decided by ``system`` (System AI or housekeeping) are not operator
+    decisions and are left out. ``excluded_note`` drops Always-allow rows,
+    which are policy rules rather than precedent.
+
+    Args:
+        agent_ids: Agents whose requests count (the gate passes every agent
+            on one floor). An empty list returns no rows.
+        limit: Maximum number of rows.
+        excluded_note: The decision note that marks an Always-allow resolve.
+        argv0: When set, only commands that are exactly ``argv0`` or start
+            with ``argv0`` followed by a space.
+
+    Returns:
+        Approved and rejected requests with a non-system ``decision_by``,
+        ordered by ``decided_at`` descending.
     """
-    token = (channel_id or "").strip()
-    if not token:
+    ids = [token for token in (item.strip() for item in agent_ids) if token]
+    if not ids:
         return []
+    params: list[object] = [*ids, excluded_note]
+    placeholders = ", ".join(f"${index}" for index in range(1, len(ids) + 1))
+    argv0_clause = ""
+    if argv0 is not None:
+        # Escape LIKE wildcards so a name such as ``a_b`` matches only itself.
+        escaped = argv0.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        params.extend([argv0, f"{escaped} %"])
+        argv0_clause = (
+            f"AND (command = ${len(params) - 1} OR command LIKE ${len(params)} ESCAPE '\\')"
+        )
+    params.append(limit)
     return fetch_all(
         f"""
         SELECT {_ALL_COLUMNS}
         FROM cli_approval_requests
-        WHERE channel_id = $1
-          AND status = 'approved'
+        WHERE agent_id IN ({placeholders})
+          AND status IN ('approved', 'rejected')
           AND decision_by IS NOT NULL
           AND decision_by != 'system'
-          AND (decision_note IS NULL OR decision_note != $2)
+          AND (decision_note IS NULL OR decision_note != ${len(ids) + 1})
+          {argv0_clause}
         ORDER BY decided_at DESC, id DESC
-        LIMIT $3
+        LIMIT ${len(params)}
         """,
-        [token, excluded_note, limit],
+        params,
         CliApprovalRequest,
     )
 
