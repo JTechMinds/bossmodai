@@ -80,8 +80,8 @@ def test_an_empty_list_matches_nothing() -> None:
     assert blocks_retry(parse_cli_command("mail send a@x.com"), ()) is False
 
 
-def test_the_seeded_list_names_mail_send_and_mail_reply() -> None:
-    assert load_no_retry_list() == (("mail", "send"), ("mail", "reply"))
+def test_the_seeded_list_names_mail_send_reply_and_archive() -> None:
+    assert load_no_retry_list() == (("mail", "send"), ("mail", "reply"), ("mail", "archive"))
     row = next(item for item in db.get_settings() if item.key == SETTING_KEY)
     assert row.category == "cli_policy"
 

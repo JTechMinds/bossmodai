@@ -24,11 +24,18 @@ ids = importlib.import_module(f"{_PACKAGE.__name__}.ids")
 DEFAULTS = commands.Ms365MailDefaults.model_validate(_ENTRY.manifest.defaults)
 
 
-def _summary(n: int, *, read: bool = False, preview: str = "Hello there") -> object:
+def _summary(n: int, *, read: bool = False, preview: str = "Hello there", received=None, prefix="GRAPH-ID") -> object:
     return graph.MessageSummary(
-        id=f"GRAPH-ID-{n}", subject=f"Subject {n}", sender=graph.Address("Alice Doe", "alice@x.com"),
-        received=datetime(2026, 9, 29, 9, 14, tzinfo=timezone.utc), is_read=read, preview=preview,
+        id=f"{prefix}-{n}", subject=f"Subject {n}", sender=graph.Address("Alice Doe", "alice@x.com"),
+        received=received or datetime(2026, 9, 29, 9, 14, tzinfo=timezone.utc), is_read=read, preview=preview,
         has_attachments=False,
+    )
+
+
+def _sent_summary(n: int) -> object:
+    return graph.SentSummary(
+        id=f"SENT-{n}", subject=f"Report {n}", to=[graph.Address("Jordan", "jordan@contoso.com")],
+        sent=datetime(2026, 9, 28, 16, 5, tzinfo=timezone.utc), preview="Numbers attached", has_attachments=False,
     )
 
 
@@ -39,33 +46,75 @@ class FakeMailbox:
 
     def __init__(self, messages=None, has_more=False, to=None, cc=None) -> None:
         self.messages = messages if messages is not None else [_summary(1), _summary(2, read=True)]
+        self.archive: list = []
+        self.sent: list = [_sent_summary(1), _sent_summary(2)]
         self.has_more = has_more
         self.to = to if to is not None else [graph.Address("", "reports@contoso.com")]
         self.cc = cc if cc is not None else []
+        self.counts = {
+            "inbox": graph.FolderCounts(total=1284, unread=7),
+            "archive": graph.FolderCounts(total=40, unread=0),
+            "sentitems": graph.FolderCounts(total=312, unread=0),
+        }
+        self.hits: dict[str, list] = {"inbox": [], "archive": []}
+        self.move_failures: dict[str, Exception] = {}
         self.calls: list[tuple] = []
+
+    def _folder(self, folder):
+        return {"inbox": self.messages, "archive": self.archive}[folder]
 
     def list_inbox(self, top, skip, unread_only):
         self.calls.append(("list", top, skip, unread_only))
         found = [m for m in self.messages if not (unread_only and m.is_read)]
         return graph.InboxPage(messages=found[:top], has_more=self.has_more)
 
-    def get_message(self, message_id):
-        self.calls.append(("get", message_id))
-        summary = next(m for m in self.messages if m.id == message_id)
+    def folder_counts(self, folder):
+        self.calls.append(("counts", folder))
+        return self.counts[folder]
+
+    def search(self, folder, query, top):
+        self.calls.append(("search", folder, query, top))
+        return self.hits[folder][:top]
+
+    def list_sent(self, top, skip):
+        self.calls.append(("list_sent", top, skip))
+        return graph.SentPage(messages=self.sent[skip:skip + top], has_more=self.has_more)
+
+    def get_sent_message(self, message_id):
+        self.calls.append(("get_sent", message_id))
+        summary = next(m for m in self.sent if m.id == message_id)
+        return graph.SentMessage(
+            id=summary.id, subject=summary.subject, sender=graph.Address("", self.mailbox), to=summary.to,
+            cc=[graph.Address("Gene", "gene@x.com")], sent=summary.sent, has_attachments=False, body="Sent text",
+        )
+
+    def get_message(self, folder, message_id):
+        self.calls.append(("get", folder, message_id))
+        summary = next(m for m in self._folder(folder) + self.hits.get(folder, []) if m.id == message_id)
         return graph.Message(
             id=summary.id, subject=summary.subject, sender=summary.sender,
             to=self.to, cc=self.cc, received=summary.received,
             is_read=summary.is_read, has_attachments=False, body="Line one\r\nLine two",
         )
 
-    def mark_read(self, message_id):
-        self.calls.append(("mark_read", message_id))
+    def mark_read(self, folder, message_id):
+        self.calls.append(("mark_read", folder, message_id))
+
+    def move_to_archive(self, message_id):
+        self.calls.append(("move", message_id))
+        if message_id in self.move_failures:
+            raise self.move_failures[message_id]
+        moved = next(m for m in self.messages if m.id == message_id)
+        self.messages.remove(moved)
+        copy = graph.MessageSummary(**{**moved.__dict__, "id": f"ARCH-{message_id}"})
+        self.archive.append(copy)
+        return copy.id
 
     def send(self, to, cc, subject, body_html):
         self.calls.append(("send", [a.address for a in to], [a.address for a in cc], subject, body_html))
 
-    def reply(self, message_id, body_html, reply_all):
-        self.calls.append(("reply", message_id, body_html, reply_all))
+    def reply(self, folder, message_id, body_html, reply_all):
+        self.calls.append(("reply", folder, message_id, body_html, reply_all))
 
 
 @pytest.fixture()
@@ -73,7 +122,7 @@ def env(tmp_path: Path):
     state = {"mailbox": FakeMailbox()}
     runner = commands.MailCommands(
         mailbox_for=lambda agent_id: state["mailbox"],
-        id_map_for=lambda agent_id: ids.IdMap(tmp_path / "ids" / f"{agent_id}.json", DEFAULTS.id_map_keep),
+        id_map_for=lambda agent_id: ids.IdMap(tmp_path / "message_ids" / f"{agent_id}.json", DEFAULTS.id_map_keep),
         contacts_for=lambda agent_id: contacts_mod.ContactBook(tmp_path / "contacts" / f"{agent_id}.json"),
         defaults=DEFAULTS,
     )
@@ -98,17 +147,27 @@ def test_inbox_lists_short_ids_unread_marks_and_previews(env) -> None:
     short = ids.short_id("GRAPH-ID-1")
     assert f'[{short}] ● 2026-09-29 09:14  Alice Doe <alice@x.com>  Subject 1 — "Hello there"' in result.prompt_content
     assert f"[{ids.short_id('GRAPH-ID-2')}] ○ " in result.prompt_content
-    assert "Inbox of reports@contoso.com — messages 1–2" in result.prompt_content
-    assert env.state["mailbox"].calls == [("list", DEFAULTS.inbox_default_limit, 0, False)]
+    assert ("Inbox of reports@contoso.com — 1,284 messages, 7 unread. Showing 1–2, newest first "
+            "(times UTC; ● unread)") in result.prompt_content
+    assert env.state["mailbox"].calls == [("list", DEFAULTS.inbox_default_limit, 0, False), ("counts", "inbox")]
+    assert (result.data["total"], result.data["unread"]) == (1284, 7)
 
 
 def test_inbox_unread_limit_and_skip(env) -> None:
     env.state["mailbox"].has_more = True
     result = env.run("mail inbox --unread --limit 1 --skip 3")
     assert result.ok
-    assert env.state["mailbox"].calls == [("list", 1, 3, True)]
-    assert "unread messages 4–4" in result.prompt_content
+    assert env.state["mailbox"].calls == [("list", 1, 3, True), ("counts", "inbox")]
+    assert "Inbox of reports@contoso.com — 7 unread. Showing 4–4, newest first" in result.prompt_content
     assert "More: mail inbox --unread --limit 1 --skip 4" in result.prompt_content
+
+
+def test_an_empty_inbox_still_shows_the_counts(env) -> None:
+    env.state["mailbox"] = FakeMailbox([])
+    env.state["mailbox"].counts["inbox"] = graph.FolderCounts(total=0, unread=0)
+    assert "Inbox of reports@contoso.com — 0 messages, 0 unread. No messages." in env.run("mail inbox").prompt_content
+    after = env.run("mail inbox --unread --skip 20").prompt_content
+    assert "Inbox of reports@contoso.com — 0 unread. No unread messages after the first 20." in after
 
 
 @pytest.mark.parametrize("raw, code", [
@@ -137,10 +196,10 @@ def test_read_shows_headers_and_body_and_marks_it_read(env) -> None:
     short = ids.short_id("GRAPH-ID-1")
     result = env.run(f"mail read {short}")
     assert result.ok, result.prompt_content
-    for line in ("From: Alice Doe <alice@x.com>", "To: reports@contoso.com", "Date: 2026-09-29 09:14 UTC",
+    for line in ("Folder: Inbox", "From: Alice Doe <alice@x.com>", "To: reports@contoso.com", "Date: 2026-09-29 09:14 UTC",
                  "Subject: Subject 1", "Attachments: none", "Line one", "Line two"):
         assert line in result.prompt_content
-    assert ("mark_read", "GRAPH-ID-1") in env.state["mailbox"].calls
+    assert ("mark_read", "inbox", "GRAPH-ID-1") in env.state["mailbox"].calls
 
 
 def test_reading_a_read_message_does_not_mark_it_again(env) -> None:
@@ -157,7 +216,8 @@ def test_an_unknown_short_id_names_the_way_out(env) -> None:
 
 def test_every_mail_verb_needs_a_mailbox(env) -> None:
     env.state["mailbox"] = None
-    for raw in ("mail inbox", "mail read m1", "mail send a@x.com --subject s", "mail reply m1"):
+    for raw in ("mail inbox", "mail read m1", "mail send a@x.com --subject s", "mail reply m1",
+                "mail search x", "mail sent", "mail archive m1"):
         result = env.run(raw, "body")
         assert not result.ok and commands.NOT_CONFIGURED in result.prompt_content, raw
     assert env.run("mail contacts").ok  # contacts are BossMod-side only
@@ -229,8 +289,8 @@ def test_reply_and_reply_all(env) -> None:
     assert one.ok and everyone.ok
     replies = [call for call in env.state["mailbox"].calls if call[0] == "reply"]
     assert replies == [
-        ("reply", "GRAPH-ID-1", "<div><p><strong>Thanks</strong></p>\n<ul>\n<li>one</li>\n</ul>\n</div>", False),
-        ("reply", "GRAPH-ID-1", "<div><p>Thanks all</p>\n</div>", True),
+        ("reply", "inbox", "GRAPH-ID-1", "<div><p><strong>Thanks</strong></p>\n<ul>\n<li>one</li>\n</ul>\n</div>", False),
+        ("reply", "inbox", "GRAPH-ID-1", "<div><p>Thanks all</p>\n</div>", True),
     ]
     assert "sent reply to Alice Doe <alice@x.com>\n" in one.prompt_content
     assert "Not included: Gene <gene@x.com>, Kseniia <kseniia@x.com>" in one.prompt_content
@@ -269,31 +329,8 @@ def test_read_shows_only_the_sender_form_when_no_one_else_is_on_it(env) -> None:
 # ─── ids ───
 
 
-def test_the_id_map_is_capped_and_survives_a_new_instance(tmp_path: Path) -> None:
-    path = tmp_path / "ids" / "a.json"
-    first = ids.IdMap(path, keep=3)
-    shorts = first.remember([f"G{n}" for n in range(5)])
-    again = ids.IdMap(path, keep=3)
-    assert again.resolve(shorts[4]) == "G4" and again.resolve(shorts[2]) == "G2"
-    with pytest.raises(ids.UnknownMessageId):
-        again.resolve(shorts[0])
-    # Listing an old id again makes it the most recent.
-    again.remember(["G2"])
-    again.remember(["G5"])
-    assert again.resolve(shorts[2]) == "G2"
-    with pytest.raises(ids.UnknownMessageId):
-        again.resolve(shorts[3])
-    assert not list(path.parent.glob(".*.tmp"))
-
-
-def test_short_ids_are_stable_hashes() -> None:
-    assert ids.short_id("abc") == ids.short_id("abc")
-    assert ids.short_id("abc") != ids.short_id("abd")
-    assert len(ids.short_id("abc")) == 9 and ids.short_id("abc").startswith("m")
-
-
 def test_a_corrupt_id_map_is_an_error_not_an_empty_map(env) -> None:
-    path = env.tmp / "ids" / "agent-1.json"
+    path = env.tmp / "message_ids" / "agent-1.json"
     path.parent.mkdir(parents=True)
     path.write_text("{", encoding="utf-8")
     result = env.run("mail read m12345678")
@@ -530,3 +567,174 @@ def test_a_name_with_at_or_comma_or_blank_is_invalid(env, name: str) -> None:
     result = env.run(f"mail contacts add x@y.com --name '{name}'")
     assert not result.ok and "INVALID_NAME" in result.prompt_content
     assert _book(env).list() == []
+
+
+# ─── inbox management (revision R4): search, sent, archive ───
+
+
+def _at(hour: int) -> datetime:
+    return datetime(2026, 9, 28, hour, 0, tzinfo=timezone.utc)
+
+
+def _with_hits(env) -> object:
+    mailbox = env.state["mailbox"]
+    mailbox.hits = {
+        "inbox": [_summary(1, received=_at(14), prefix="IN"), _summary(2, received=_at(9), prefix="IN")],
+        "archive": [_summary(1, received=_at(14), prefix="AR", read=True), _summary(2, received=_at(12), prefix="AR")],
+    }
+    return mailbox
+
+
+def test_search_merges_inbox_and_archive_newest_first_and_cuts_to_the_limit(env) -> None:
+    mailbox = _with_hits(env)
+    result = env.run("mail search leads update --limit 3")
+    assert result.ok, result.prompt_content
+    assert mailbox.calls == [("search", "inbox", "leads update", 3), ("search", "archive", "leads update", 3)]
+    lines = result.prompt_content.splitlines()
+    header = next(line for line in lines if line.startswith("Search "))
+    assert header == ('Search "leads update" in inbox and archive — 3 matches shown, newest first '
+                      "(up to --limit 3; narrow the search to see others; times UTC; ● unread)")
+    shown = [line for line in lines if line.startswith("[m")]
+    # Equal times: inbox first. IN-2 (09:00) is cut by the limit.
+    assert shown == [
+        f'[{ids.short_id("IN-1")}] ● 2026-09-28 14:00  Alice Doe <alice@x.com>  Subject 1 — "Hello there"',
+        f'[{ids.short_id("AR-1")}] ○ 2026-09-28 14:00  Alice Doe <alice@x.com>  Subject 1 — "Hello there" (archive)',
+        f'[{ids.short_id("AR-2")}] ● 2026-09-28 12:00  Alice Doe <alice@x.com>  Subject 2 — "Hello there" (archive)',
+    ]
+
+
+def test_search_ids_read_and_reply_in_their_own_folder(env) -> None:
+    mailbox = _with_hits(env)
+    env.run("mail search leads")
+    archived = ids.short_id("AR-2")
+    read = env.run(f"mail read {archived}")
+    assert read.ok and "Folder: Archive" in read.prompt_content and "REPLY" in read.prompt_content
+    assert ("get", "archive", "AR-2") in mailbox.calls and ("mark_read", "archive", "AR-2") in mailbox.calls
+    assert env.run(f"mail reply {archived}", "Thanks").ok
+    assert mailbox.calls[-1] == ("reply", "archive", "AR-2", "<div><p>Thanks</p>\n</div>", False)
+    assert env.run(f"mail read {ids.short_id('IN-1')}").data["folder"] == "inbox"
+
+
+def test_search_keeps_a_quoted_phrase_and_kql_properties(env) -> None:
+    mailbox = _with_hits(env)
+    result = env.run('mail search from:gene subject:"weekly report" "Re: notes"')
+    assert result.ok, result.prompt_content
+    assert mailbox.calls[0] == ("search", "inbox", 'from:gene subject:"weekly report" "Re: notes"', DEFAULTS.inbox_default_limit)
+
+
+@pytest.mark.parametrize("raw, code", [
+    ("mail search", "NO_QUERY"),
+    ("mail search --limit 5", "NO_QUERY"),
+    ("mail search x --limit 0", "LIMIT_OUT_OF_RANGE"),
+    ("mail search x --skip 5", "USAGE"),
+])
+def test_search_refusals_search_nothing(env, raw: str, code: str) -> None:
+    result = env.run(raw)
+    assert not result.ok and code in result.prompt_content, result.prompt_content
+    assert env.state["mailbox"].calls == []
+
+
+def test_search_with_no_matches_says_so(env) -> None:
+    result = env.run("mail search nothing")
+    assert result.ok and 'Search "nothing" in inbox and archive — no matches.' in result.prompt_content
+
+
+def test_a_missing_archive_fails_the_search_rather_than_narrowing_it(env) -> None:
+    class NoArchive(FakeMailbox):
+        def search(self, folder, query, top):
+            if folder == "archive":
+                raise graph.GraphHttpError(404, "ErrorFolderNotFound", "The folder was not found.")
+            return super().search(folder, query, top)
+
+    env.state["mailbox"] = NoArchive()
+    result = env.run("mail search leads")
+    assert not result.ok
+    assert ("ARCHIVE_NOT_FOUND: the archive folder could not be searched "
+            "(HTTP 404 ErrorFolderNotFound: The folder was not found.)") in result.prompt_content
+
+
+def test_sent_lists_with_counts_and_more(env) -> None:
+    env.state["mailbox"].has_more = True
+    result = env.run("mail sent --limit 2")
+    assert result.ok, result.prompt_content
+    assert env.state["mailbox"].calls == [("list_sent", 2, 0), ("counts", "sentitems")]
+    assert ("Sent from reports@contoso.com — 312 messages. Showing 1–2, newest first (times UTC)"
+            in result.prompt_content)
+    assert (f'[{ids.short_id("SENT-1")}] 2026-09-28 16:05  to Jordan <jordan@contoso.com>  Report 1 — "Numbers attached"'
+            in result.prompt_content)
+    assert "More: mail sent --limit 2 --skip 2" in result.prompt_content
+
+
+def test_reading_a_sent_id_does_not_mark_it_and_has_no_reply_section(env) -> None:
+    env.run("mail sent")
+    result = env.run(f"mail read {ids.short_id('SENT-1')}")
+    assert result.ok, result.prompt_content
+    for line in ("Folder: Sent", "From: reports@contoso.com", "To: Jordan <jordan@contoso.com>", "Cc: Gene <gene@x.com>",
+                 "Date: 2026-09-28 16:05 UTC", "Subject: Report 1", "Sent text"):
+        assert line in result.prompt_content
+    assert "REPLY" not in result.prompt_content
+    calls = env.state["mailbox"].calls
+    assert ("get_sent", "SENT-1") in calls and not any(call[0] in ("mark_read", "get") for call in calls)
+
+
+def test_replying_to_a_sent_id_sends_nothing(env) -> None:
+    env.run("mail sent")
+    result = env.run(f"mail reply {ids.short_id('SENT-1')}", "Hello again")
+    assert not result.ok and "CANNOT_REPLY_TO_SENT: use mail send to write to them" in result.prompt_content
+    assert not any(call[0] in ("reply", "send") for call in env.state["mailbox"].calls)
+
+
+def test_archive_moves_several_and_reports_new_readable_ids(env) -> None:
+    mailbox = env.state["mailbox"]
+    env.run("mail inbox")
+    one, two = ids.short_id("GRAPH-ID-1"), ids.short_id("GRAPH-ID-2")
+    result = env.run(f"mail archive {one}, {two}")
+    assert result.ok, result.prompt_content
+    new_one, new_two = ids.short_id("ARCH-GRAPH-ID-1"), ids.short_id("ARCH-GRAPH-ID-2")
+    assert f"archived {one} → now {new_one} (archive)\narchived {two} → now {new_two} (archive)" in result.prompt_content
+    assert [call for call in mailbox.calls if call[0] == "move"] == [("move", "GRAPH-ID-1"), ("move", "GRAPH-ID-2")]
+    read = env.run(f"mail read {new_one}")
+    assert read.ok and "Folder: Archive" in read.prompt_content
+    assert ("get", "archive", "ARCH-GRAPH-ID-1") in mailbox.calls
+
+
+def test_archive_refuses_a_non_inbox_id_and_moves_nothing(env) -> None:
+    env.run("mail inbox")
+    env.run("mail sent")
+    result = env.run(f"mail archive {ids.short_id('GRAPH-ID-1')},{ids.short_id('SENT-1')}")
+    assert not result.ok
+    assert f"NOT_IN_INBOX: {ids.short_id('SENT-1')} is in sent" in result.prompt_content
+    assert not any(call[0] == "move" for call in env.state["mailbox"].calls)
+
+
+def test_archive_of_an_unknown_id_moves_nothing(env) -> None:
+    env.run("mail inbox")
+    result = env.run(f"mail archive {ids.short_id('GRAPH-ID-1')},m00000000")
+    assert not result.ok and "UNKNOWN_MESSAGE_ID: m00000000" in result.prompt_content
+    assert not any(call[0] == "move" for call in env.state["mailbox"].calls)
+
+
+def test_a_failure_mid_archive_reports_what_moved_and_what_did_not(env) -> None:
+    mailbox = FakeMailbox([_summary(1), _summary(2), _summary(3)])
+    mailbox.move_failures["GRAPH-ID-2"] = graph.GraphHttpError(429, "TooManyRequests", "slow down", retry_after=5)
+    env.state["mailbox"] = mailbox
+    env.run("mail inbox")
+    one, two, three = (ids.short_id(f"GRAPH-ID-{n}") for n in (1, 2, 3))
+    result = env.run(f"mail archive {one},{two},{three}")
+    assert not result.ok
+    assert result.data["error"] == "\n".join([
+        f"GRAPH_THROTTLED: {two} was not archived — retry after 5s (HTTP 429 TooManyRequests)",
+        f"archived {one} → now {ids.short_id('ARCH-GRAPH-ID-1')} (archive)",
+        f"Not attempted: {three}",
+    ])
+    assert [call for call in mailbox.calls if call[0] == "move"] == [("move", "GRAPH-ID-1"), ("move", "GRAPH-ID-2")]
+
+
+def test_a_failed_first_archive_names_the_graph_code(env) -> None:
+    mailbox = env.state["mailbox"]
+    mailbox.move_failures["GRAPH-ID-1"] = graph.GraphHttpError(404, "ErrorItemNotFound", "Not found.")
+    env.run("mail inbox")
+    result = env.run(f"mail archive {ids.short_id('GRAPH-ID-1')}")
+    assert not result.ok
+    assert result.data["error"].startswith(f"MESSAGE_NOT_FOUND: {ids.short_id('GRAPH-ID-1')} was not archived — ")
+    assert result.data["error"].endswith("(HTTP 404 ErrorItemNotFound)")

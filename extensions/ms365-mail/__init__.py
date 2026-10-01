@@ -50,13 +50,16 @@ from .wake import MailWake, WakeStore
 
 logger = logging.getLogger(__name__)
 
-_IDS_DIRNAME = "ids"
+# The id map format changed to [short, folder, id]; old ids/ files are not read.
+_IDS_DIRNAME = "message_ids"
 _CONTACTS_DIRNAME = "contacts"
 _WAKE_DIRNAME = "wake"
 # Agent ids name files under the data dir, so they must stay plain.
 _AGENT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _VIEW_INBOX = "inbox"
 _VIEW_SENT = "sent"
+# The id map folder each operator view lists and opens.
+_VIEW_FOLDERS = {_VIEW_INBOX: "inbox", _VIEW_SENT: "sentitems"}
 _INBOX_COLUMNS = [
     AgentViewColumn(key="subject", label="Subject"),
     AgentViewColumn(key="from", label="From"),
@@ -206,7 +209,7 @@ class Ms365MailExtension:
 
     def _inbox_page(self, agent_id: str, mailbox: GraphMailbox, *, skip: int, top: int) -> AgentViewPage:
         page = mailbox.list_inbox(top=top, skip=skip, unread_only=False)
-        shorts = self._id_map_for(agent_id).remember(message.id for message in page.messages)
+        shorts = self._id_map_for(agent_id).remember("inbox", (message.id for message in page.messages))
         rows = [
             AgentViewRow(
                 id=short,
@@ -223,7 +226,7 @@ class Ms365MailExtension:
 
     def _sent_page(self, agent_id: str, mailbox: GraphMailbox, *, skip: int, top: int) -> AgentViewPage:
         page = mailbox.list_sent(top=top, skip=skip)
-        shorts = self._id_map_for(agent_id).remember(message.id for message in page.messages)
+        shorts = self._id_map_for(agent_id).remember("sentitems", (message.id for message in page.messages))
         rows = [
             AgentViewRow(
                 id=short,
@@ -242,18 +245,22 @@ class Ms365MailExtension:
         marked read, so the agent's ``--unread`` queue is unchanged by the operator looking).
 
         Raises:
-            AgentViewError: No mailbox, an unknown id, or a Graph failure (a
-                plain sentence).
+            AgentViewError: No mailbox, an unknown id (including an id the
+                agent listed in another folder than ``view``), or a Graph
+                failure (a plain sentence).
             ValueError: ``view`` is not ``inbox`` or ``sent``.
         """
-        if view not in (_VIEW_INBOX, _VIEW_SENT):
+        if view not in _VIEW_FOLDERS:
             raise ValueError(f"unknown view {view!r}")
         mailbox = self._view_mailbox(agent_id)
         try:
-            graph_id = self._id_map_for(agent_id).resolve(item_id)
+            ref = self._id_map_for(agent_id).resolve(item_id)
+            if ref.folder != _VIEW_FOLDERS[view]:
+                # e.g. an id the agent archived or found by search: not in this view.
+                raise AgentViewError("UNKNOWN_MESSAGE_ID", VIEW_UNKNOWN_MESSAGE)
             if view == _VIEW_SENT:
-                return _sent_item(mailbox.get_sent_message(graph_id))
-            return _inbox_item(mailbox.get_message(graph_id))
+                return _sent_item(mailbox.get_sent_message(ref.graph_id))
+            return _inbox_item(mailbox.get_message(ref.folder, ref.graph_id))
         except UnknownMessageId as exc:
             raise AgentViewError("UNKNOWN_MESSAGE_ID", VIEW_UNKNOWN_MESSAGE) from exc
         except IdMapError as exc:

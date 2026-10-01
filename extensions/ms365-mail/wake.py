@@ -202,7 +202,7 @@ class MailWake:
             if next_state != state:
                 store.write(next_state)
             return None
-        shorts = self._id_map_for(agent_id).remember(message.id for message in deliver)
+        shorts = self._id_map_for(agent_id).remember("inbox", (message.id for message in deliver))
         return WakeBatch(
             agent_id=agent_id,
             title=f"New email in {mailbox.mailbox}",

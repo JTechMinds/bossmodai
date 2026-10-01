@@ -115,8 +115,8 @@ def test_a_new_unread_message_is_a_line_with_a_resolvable_short_id(env) -> None:
     assert batch.title == f"New email in {MAILBOX}"
     short = ids.short_id("NEW-1")
     assert batch.lines == [f'[{short}] Alice Doe <alice@x.com> — Subject NEW-1 — "Hello there"']
-    id_map = ids.IdMap(env.tmp / "ids" / f"{AGENT}.json", 500)
-    assert id_map.resolve(short) == "NEW-1"
+    id_map = ids.IdMap(env.tmp / "message_ids" / f"{AGENT}.json", 500)
+    assert id_map.resolve(short) == ids.MessageRef(folder="inbox", graph_id="NEW-1")
 
 
 def test_the_query_filters_unread_since_the_cursor_oldest_first_under_the_inbox(env) -> None:

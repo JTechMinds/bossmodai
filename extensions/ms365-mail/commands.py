@@ -1,7 +1,8 @@
 """Microsoft 365 Mailbox — the ``mail`` subcommands.
 
 ``mail <verb> [args]``, free text in the body (the ``pref``/``write``
-convention): ``inbox``, ``read``, ``send``, ``reply`` and ``contacts``.
+convention): ``inbox``, ``read``, ``send``, ``reply``, ``search``, ``sent``,
+``archive`` and ``contacts``. Argument parsing lives in ``args.py``.
 Every failure is an explicit error result naming a code; nothing is retried
 or guessed. Recipients are read and resolved (``recipients.py``) before any
 Graph call, and nothing is sent unless every one resolves.
@@ -9,35 +10,47 @@ Graph call, and nothing is sent unless every one resolves.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import re
 from datetime import datetime, timezone
-from typing import AbstractSet, Callable, Protocol, Sequence
+from itertools import groupby
+from typing import Callable, Protocol, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.bm_cli.results import error_result, success_result
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 
+from .args import CommandError, int_flag, parse_args
 from .contacts import EMAIL_RE, ContactBook, ContactBookError, ContactError, InvalidAddress
 from .formatting import EmailStyles, render_body
 from .graph import (
     Address,
+    FolderCounts,
     GraphAuthError,
     GraphHttpError,
     GraphUnreachable,
     InboxPage,
     Message,
+    MessageSummary,
+    SentMessage,
+    SentPage,
+    SentSummary,
     describe_graph_error,
 )
-from .ids import IdMap, IdMapError, UnknownMessageId
+from .ids import Folder, IdMap, IdMapError, MessageRef, UnknownMessageId
 from .recipients import RecipientError, parse_entry, resolve_list, split_entries
 
 KIND = "mail"
-_USAGE = 'USAGE: mail inbox|read|send|reply|contacts — run "learn mail" for details'
+_USAGE = 'USAGE: mail inbox|read|send|reply|search|sent|archive|contacts — run "learn mail" for details'
 _INBOX_USAGE = "mail inbox [--unread] [--limit N] [--skip N]"
+_SEARCH_USAGE = "mail search <text> [--limit N]"
+_SENT_USAGE = "mail sent [--limit N] [--skip N]"
+_ARCHIVE_USAGE = "mail archive <id>[,<id>…]"
 _SEND_USAGE = "mail send <to…> [--to <…>] [--cc <…>] --subject <text>   (message in the body)"
 _REPLY_USAGE = "mail reply <id> [--all]   (reply in the body)"
 _CONTACTS_USAGE = "mail contacts [list] | mail contacts add <addr>[,<addr>…] [--name <text>] | mail contacts remove <addr>[,<addr>…]"
+# How a folder is named to the agent (the Folder: line, NOT_IN_INBOX).
+_FOLDER_LABELS: dict[str, str] = {"inbox": "Inbox", "archive": "Archive", "sentitems": "Sent"}
 NOT_CONFIGURED = "MAILBOX_NOT_CONFIGURED: no mailbox is set up for you; ask the operator to configure one at your desk"
 
 
@@ -75,26 +88,15 @@ class MailboxLike(Protocol):
     mailbox: str
 
     def list_inbox(self, top: int, skip: int, unread_only: bool) -> InboxPage: ...
-    def get_message(self, message_id: str) -> Message: ...
-    def mark_read(self, message_id: str) -> None: ...
+    def folder_counts(self, folder: Folder) -> FolderCounts: ...
+    def search(self, folder: Folder, query: str, top: int) -> list[MessageSummary]: ...
+    def list_sent(self, top: int, skip: int) -> SentPage: ...
+    def get_sent_message(self, message_id: str) -> SentMessage: ...
+    def get_message(self, folder: Folder, message_id: str) -> Message: ...
+    def mark_read(self, folder: Folder, message_id: str) -> None: ...
+    def move_to_archive(self, message_id: str) -> str: ...
     def send(self, to: Sequence[Address], cc: Sequence[Address], subject: str, body_html: str) -> None: ...
-    def reply(self, message_id: str, body_html: str, reply_all: bool) -> None: ...
-
-
-class CommandError(ValueError):
-    """A usage or precondition error; the message goes to the agent as is."""
-
-
-@dataclass(frozen=True)
-class _Args:
-    positional: list[str]
-    values: dict[str, list[str]]
-    switches: set[str]
-
-    def one(self, flag: str) -> str | None:
-        """The value of a non-repeatable flag (``_parse`` refuses it twice), or ``None``."""
-        given = self.values.get(flag)
-        return given[0] if given else None
+    def reply(self, folder: Folder, message_id: str, body_html: str, reply_all: bool) -> None: ...
 
 
 class MailCommands:
@@ -147,6 +149,9 @@ class MailCommands:
                 "read": self._read,
                 "send": self._send,
                 "reply": self._reply,
+                "search": self._search,
+                "sent": self._sent,
+                "archive": self._archive,
             }.get(verb)
             if runner is None:
                 return self._error(ctx, parsed, _USAGE)
@@ -171,25 +176,22 @@ class MailCommands:
     # ── verbs ──────────────────────────────────────────────────────────────
 
     def _inbox(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
-        opts = _parse(args, valued={"--limit", "--skip"}, switches={"--unread"}, usage=_INBOX_USAGE)
+        opts = parse_args(args, valued={"--limit", "--skip"}, switches={"--unread"}, usage=_INBOX_USAGE)
         if opts.positional:
             raise CommandError(f"USAGE: {_INBOX_USAGE} (unexpected {opts.positional[0]!r})")
-        limit = _int_flag(opts.one("--limit"), "--limit", self._defaults.inbox_default_limit)
-        if not 1 <= limit <= self._defaults.inbox_max_limit:
-            raise CommandError(f"LIMIT_OUT_OF_RANGE: --limit must be 1–{self._defaults.inbox_max_limit}, got {limit}")
-        skip = _int_flag(opts.one("--skip"), "--skip", 0)
-        if skip < 0:
-            raise CommandError(f"SKIP_OUT_OF_RANGE: --skip must be 0 or more, got {skip}")
+        limit, skip = self._page_flags(opts)
         unread = "--unread" in opts.switches
         page = mailbox.list_inbox(top=limit, skip=skip, unread_only=unread)
-        shorts = self._id_map_for(ctx.agent.id).remember(message.id for message in page.messages)
+        counts = mailbox.folder_counts("inbox")
+        shorts = self._id_map_for(ctx.agent.id).remember("inbox", (message.id for message in page.messages))
         scope = "unread messages" if unread else "messages"
+        totals = f"{counts.unread:,} unread" if unread else f"{counts.total:,} messages, {counts.unread:,} unread"
         if not page.messages:
-            header = f"Inbox of {mailbox.mailbox}: no {scope}" + (f" after the first {skip}" if skip else "") + "."
+            header = f"Inbox of {mailbox.mailbox} — {totals}. No {scope}" + (f" after the first {skip}" if skip else "") + "."
             lines = [header]
         else:
             first, last = skip + 1, skip + len(page.messages)
-            lines = [f"Inbox of {mailbox.mailbox} — {scope} {first}–{last}, newest first (times UTC; ● unread)"]
+            lines = [f"Inbox of {mailbox.mailbox} — {totals}. Showing {first}–{last}, newest first (times UTC; ● unread)"]
             lines += [self._inbox_line(short, message) for short, message in zip(shorts, page.messages)]
             if page.has_more:
                 more = f"mail inbox{' --unread' if unread else ''} --limit {limit} --skip {last}"
@@ -198,10 +200,35 @@ class MailCommands:
             command=parsed.raw,
             detail=f"mail: {len(page.messages)} {scope}",
             kind=KIND,
-            data={"mailbox": mailbox.mailbox, "count": len(page.messages), "has_more": page.has_more},
+            data={
+                "mailbox": mailbox.mailbox,
+                "count": len(page.messages),
+                "has_more": page.has_more,
+                "total": counts.total,
+                "unread": counts.unread,
+            },
             sections=[("INBOX", lines)],
             cwd=ctx.cwd,
         )
+
+    def _page_flags(self, opts) -> tuple[int, int]:
+        """``(limit, skip)`` from ``--limit``/``--skip``, bounded like ``mail inbox``.
+
+        Raises:
+            CommandError: ``LIMIT_OUT_OF_RANGE``, ``SKIP_OUT_OF_RANGE``, or
+                ``USAGE`` for a value that is not a whole number.
+        """
+        limit = self._limit_flag(opts)
+        skip = int_flag(opts.one("--skip"), "--skip", 0)
+        if skip < 0:
+            raise CommandError(f"SKIP_OUT_OF_RANGE: --skip must be 0 or more, got {skip}")
+        return limit, skip
+
+    def _limit_flag(self, opts) -> int:
+        limit = int_flag(opts.one("--limit"), "--limit", self._defaults.inbox_default_limit)
+        if not 1 <= limit <= self._defaults.inbox_max_limit:
+            raise CommandError(f"LIMIT_OUT_OF_RANGE: --limit must be 1–{self._defaults.inbox_max_limit}, got {limit}")
+        return limit
 
     def _inbox_line(self, short: str, message) -> str:
         mark = "○" if message.is_read else "●"
@@ -213,12 +240,30 @@ class MailCommands:
     def _read(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
         if len(args) != 1:
             raise CommandError("USAGE: mail read <id>")
-        graph_id = self._id_map_for(ctx.agent.id).resolve(args[0])
-        message = mailbox.get_message(graph_id)
-        if not message.is_read:
-            # Opening an email marks it read (D7), so --unread is a work queue.
-            mailbox.mark_read(graph_id)
+        ref = self._id_map_for(ctx.agent.id).resolve(args[0])
+        short = args[0].strip().lower()
+        if ref.folder == "sentitems":
+            sections = _sent_message_sections(mailbox.get_sent_message(ref.graph_id))
+        else:
+            message = mailbox.get_message(ref.folder, ref.graph_id)
+            if not message.is_read:
+                # Opening an email marks it read (D7), so --unread is a work queue.
+                mailbox.mark_read(ref.folder, ref.graph_id)
+            sections = self._received_sections(short, ref, message, mailbox.mailbox)
+        return success_result(
+            command=parsed.raw,
+            detail=f"mail: read {args[0]}",
+            kind=KIND,
+            data={"mailbox": mailbox.mailbox, "id": short, "folder": ref.folder},
+            sections=sections,
+            cwd=ctx.cwd,
+        )
+
+    @staticmethod
+    def _received_sections(short: str, ref: MessageRef, message: Message, own: str) -> list[tuple[str, list[str]]]:
+        """MESSAGE, BODY and REPLY sections for an inbox or archive message (pure)."""
         header = [
+            f"Folder: {_FOLDER_LABELS[ref.folder]}",
             f"From: {message.sender.display() if message.sender else '(no sender)'}",
             f"To: {', '.join(a.display() for a in message.to) or '(none)'}",
         ]
@@ -229,26 +274,17 @@ class MailCommands:
             f"Subject: {message.subject or '(no subject)'}",
             f"Attachments: {'yes (attachments cannot be opened yet)' if message.has_attachments else 'none'}",
         ]
-        body_lines = message.body.replace("\r\n", "\n").split("\n") if message.body.strip() else ["(empty)"]
-        short = args[0].strip().lower()
-        sender_only, everyone = _reply_audience(message, mailbox.mailbox)
+        sender_only, everyone = _reply_audience(message, own)
         # Who each reply form reaches, shown where the agent decides (not left
         # to an implicit default).
         reply_lines = [f"mail reply {short}        → {_join(sender_only)}"]
         if len(everyone) > len(sender_only):
             reply_lines.append(f"mail reply {short} --all  → {_join(everyone)}")
-        return success_result(
-            command=parsed.raw,
-            detail=f"mail: read {args[0]}",
-            kind=KIND,
-            data={"mailbox": mailbox.mailbox, "id": short},
-            sections=[("MESSAGE", header), ("BODY", body_lines), ("REPLY", reply_lines)],
-            cwd=ctx.cwd,
-        )
+        return [("MESSAGE", header), ("BODY", _body_lines(message.body)), ("REPLY", reply_lines)]
 
     def _send(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
         recipient_flags = {"--to", "--cc"}
-        opts = _parse(
+        opts = parse_args(
             args,
             valued={"--to", "--cc", "--subject"},
             switches=set(),
@@ -301,19 +337,21 @@ class MailCommands:
         )
 
     def _reply(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
-        opts = _parse(args, valued=set(), switches={"--all"}, usage=_REPLY_USAGE)
+        opts = parse_args(args, valued=set(), switches={"--all"}, usage=_REPLY_USAGE)
         if len(opts.positional) != 1:
             raise CommandError(f"USAGE: {_REPLY_USAGE}")
         text = (body or "").strip()
         if not text:
             raise CommandError("NO_BODY: put the reply in the body")
-        graph_id = self._id_map_for(ctx.agent.id).resolve(opts.positional[0])
+        ref = self._id_map_for(ctx.agent.id).resolve(opts.positional[0])
+        if ref.folder == "sentitems":
+            raise CommandError("CANNOT_REPLY_TO_SENT: use mail send to write to them")
         reply_all = "--all" in opts.switches
         # Read first: the result names who the reply went to, and an id that
-        # left the inbox fails here rather than after a send attempt.
-        original = mailbox.get_message(graph_id)
+        # left its folder fails here rather than after a send attempt.
+        original = mailbox.get_message(ref.folder, ref.graph_id)
         # Agents write Markdown; replies go out formatted like sends.
-        mailbox.reply(graph_id, render_body(text, self._email_styles), reply_all)
+        mailbox.reply(ref.folder, ref.graph_id, render_body(text, self._email_styles), reply_all)
         sender_only, everyone = _reply_audience(original, mailbox.mailbox)
         recipients = everyone if reply_all else sender_only
         sent = f"sent reply to {_join(recipients)}"
@@ -336,6 +374,149 @@ class MailCommands:
             cwd=ctx.cwd,
         )
 
+    def _search(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
+        """``mail search <text> [--limit N]`` over the inbox and the archive together.
+
+        Two Graph searches (one per folder, ``$top`` = the limit, no paging),
+        merged newest first by ``received`` (ties: inbox first) and cut to the
+        limit. A failure of either search is the command's error; it never
+        narrows to the inbox alone (``ARCHIVE_NOT_FOUND`` when Graph answers
+        404 for the archive).
+        """
+        opts = parse_args(args, valued={"--limit"}, switches=set(), usage=_SEARCH_USAGE)
+        query = _search_query(_without_flag(args, "--limit"))
+        if not query:
+            raise CommandError(f"NO_QUERY: {_SEARCH_USAGE}")
+        limit = self._limit_flag(opts)
+        inbox = [("inbox", message) for message in mailbox.search("inbox", query, limit)]
+        try:
+            archive = [("archive", message) for message in mailbox.search("archive", query, limit)]
+        except GraphHttpError as exc:
+            if exc.status != 404:
+                raise
+            # describe_graph_error's 404 sentence is about a message; here the folder is missing.
+            raise CommandError(
+                f"ARCHIVE_NOT_FOUND: the archive folder could not be searched (HTTP 404 {exc.code}: {exc.message})"
+            ) from exc
+        # sorted() is stable with reverse=True, so equal times keep inbox first.
+        found = sorted(inbox + archive, key=lambda pair: pair[1].received, reverse=True)[:limit]
+        id_map = self._id_map_for(ctx.agent.id)
+        shorts: list[str] = []
+        # One write per run of same-folder results keeps the map's recency in result order.
+        for folder, run in groupby(found, key=lambda pair: pair[0]):
+            shorts += id_map.remember(folder, (message.id for _, message in run))
+        if not found:
+            lines = [f'Search "{query}" in inbox and archive — no matches.']
+        else:
+            lines = [
+                f'Search "{query}" in inbox and archive — {len(found)} matches shown, newest first '
+                f"(up to --limit {limit}; narrow the search to see others; times UTC; ● unread)"
+            ]
+            lines += [
+                self._inbox_line(short, message) + (" (archive)" if folder == "archive" else "")
+                for short, (folder, message) in zip(shorts, found)
+            ]
+        return success_result(
+            command=parsed.raw,
+            detail=f"mail: {len(found)} matches",
+            kind=KIND,
+            data={"mailbox": mailbox.mailbox, "query": query, "count": len(found)},
+            sections=[("SEARCH", lines)],
+            cwd=ctx.cwd,
+        )
+
+    def _sent(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
+        opts = parse_args(args, valued={"--limit", "--skip"}, switches=set(), usage=_SENT_USAGE)
+        if opts.positional:
+            raise CommandError(f"USAGE: {_SENT_USAGE} (unexpected {opts.positional[0]!r})")
+        limit, skip = self._page_flags(opts)
+        page = mailbox.list_sent(top=limit, skip=skip)
+        counts = mailbox.folder_counts("sentitems")
+        shorts = self._id_map_for(ctx.agent.id).remember("sentitems", (message.id for message in page.messages))
+        totals = f"{counts.total:,} messages"
+        if not page.messages:
+            lines = [f"Sent from {mailbox.mailbox} — {totals}. No messages" + (f" after the first {skip}" if skip else "") + "."]
+        else:
+            first, last = skip + 1, skip + len(page.messages)
+            lines = [f"Sent from {mailbox.mailbox} — {totals}. Showing {first}–{last}, newest first (times UTC)"]
+            lines += [self._sent_line(short, message) for short, message in zip(shorts, page.messages)]
+            if page.has_more:
+                lines.append(f"More: mail sent --limit {limit} --skip {last}")
+        return success_result(
+            command=parsed.raw,
+            detail=f"mail: {len(page.messages)} sent messages",
+            kind=KIND,
+            data={
+                "mailbox": mailbox.mailbox,
+                "count": len(page.messages),
+                "has_more": page.has_more,
+                "total": counts.total,
+            },
+            sections=[("SENT", lines)],
+            cwd=ctx.cwd,
+        )
+
+    def _sent_line(self, short: str, message: SentSummary) -> str:
+        to = ", ".join(address.display() for address in message.to) or "(no one)"
+        subject = message.subject or "(no subject)"
+        preview = _clip(" ".join(message.preview.split()), self._defaults.preview_chars)
+        return f"[{short}] {format_utc(message.sent)}  to {to}  {subject} — \"{preview}\""
+
+    def _archive(self, ctx, parsed, args, body, mailbox: MailboxLike) -> BossModCliResult:
+        """``mail archive <id>[,<id>…]``: move inbox messages to the Archive folder.
+
+        Every id is resolved, and must be an inbox message, before the first
+        move (``UNKNOWN_MESSAGE_ID`` / ``NOT_IN_INBOX``: nothing moves). Graph
+        gives a moved message a new id, which is remembered under ``archive``
+        and reported (``archived m1 → now m9 (archive)``).
+
+        Failure: moves are not transactional. If Graph refuses a move, the
+        result is an error whose first line is the code, the id that failed
+        and Graph's HTTP status and code, followed by the moves that did
+        happen before it (``archived … → now …``) and ``Not attempted: …``
+        for the ids after it. Nothing is retried.
+        """
+        opts = parse_args(args, valued=set(), switches=set(), usage=_ARCHIVE_USAGE)
+        if not opts.positional:
+            raise CommandError(f"USAGE: {_ARCHIVE_USAGE}")
+        shorts: list[str] = []
+        for entry in split_entries(" ".join(opts.positional)):
+            short = entry.lower()
+            # The same id twice is one request; a second move would find the old id gone.
+            if short not in shorts:
+                shorts.append(short)
+        id_map = self._id_map_for(ctx.agent.id)
+        refs = [id_map.resolve(short) for short in shorts]
+        for short, ref in zip(shorts, refs):
+            if ref.folder != "inbox":
+                raise CommandError(
+                    f"NOT_IN_INBOX: {short} is in {_FOLDER_LABELS[ref.folder].lower()} — only inbox messages can be "
+                    "archived; nothing was moved"
+                )
+        done: list[str] = []
+        for index, (short, ref) in enumerate(zip(shorts, refs)):
+            try:
+                new_id = mailbox.move_to_archive(ref.graph_id)
+            except (GraphAuthError, GraphUnreachable, GraphHttpError) as exc:
+                # Graph's own code is kept: a 404 here can mean the message
+                # left the inbox or the mailbox has no Archive folder.
+                code, message = describe_graph_error(exc)
+                graph_code = f" (HTTP {exc.status} {exc.code})" if isinstance(exc, GraphHttpError) else ""
+                report = [f"{code}: {short} was not archived — {message}{graph_code}", *done]
+                if shorts[index + 1:]:
+                    report.append(f"Not attempted: {', '.join(shorts[index + 1:])}")
+                return self._error(ctx, parsed, "\n".join(report))
+            new_short = id_map.remember("archive", [new_id])[0]
+            done.append(f"archived {short} → now {new_short} (archive)")
+        return success_result(
+            command=parsed.raw,
+            detail=f"mail: archived {len(done)}",
+            kind=KIND,
+            data={"mailbox": mailbox.mailbox, "archived": len(done)},
+            sections=[("ARCHIVED", done)],
+            cwd=ctx.cwd,
+        )
+
     def _contacts(self, ctx, parsed, args, agent_id: str) -> BossModCliResult:
         book = self._contacts_for(agent_id)
         sub = args[0].lower() if args else "list"
@@ -347,7 +528,7 @@ class MailCommands:
             lines = [c.display() for c in contacts] or ["No saved contacts. Add one with: mail contacts add <addr>"]
             return self._contacts_result(ctx, parsed, "CONTACTS", lines, len(contacts))
         if sub == "add":
-            opts = _parse(rest, valued={"--name"}, switches=set(), usage=_CONTACTS_USAGE)
+            opts = parse_args(rest, valued={"--name"}, switches=set(), usage=_CONTACTS_USAGE)
             if not opts.positional:
                 raise CommandError(f"USAGE: {_CONTACTS_USAGE}")
             entries = _entries(opts.positional)
@@ -366,7 +547,7 @@ class MailCommands:
             lines += [f"updated {c.display()}" for r in results for c in r.updated]
             return self._contacts_result(ctx, parsed, "CONTACTS", lines, len(book.list()))
         if sub == "remove":
-            opts = _parse(rest, valued=set(), switches=set(), usage=_CONTACTS_USAGE)
+            opts = parse_args(rest, valued=set(), switches=set(), usage=_CONTACTS_USAGE)
             if not opts.positional:
                 raise CommandError(f"USAGE: {_CONTACTS_USAGE}")
             # A "Name <address>" entry removes by its address only.
@@ -389,93 +570,67 @@ class MailCommands:
         return error_result(parsed.raw, message, cwd=ctx.cwd)
 
 
-def _parse(
-    args: Sequence[str],
-    *,
-    valued: AbstractSet[str],
-    switches: AbstractSet[str],
-    usage: str,
-    repeatable: AbstractSet[str] = frozenset(),
-    continues: AbstractSet[str] = frozenset(),
-) -> _Args:
-    """Split ``--flag value`` pairs, bare ``--switch`` flags and positionals.
-
-    The CLI tokenizes like a shell, so ``a@x.com, b@x.com`` arrives as two
-    tokens. A positional, and the value of a flag in ``continues``, therefore
-    keeps absorbing following non-``--`` tokens (joined by a space) while the
-    text so far ends with ``,`` or ``;`` or the next token starts with one.
-
-    Args:
-        args: The tokens after the verb.
-        valued: Flags that take a value.
-        switches: Bare flags.
-        usage: The usage line quoted in errors.
-        repeatable: Valued flags that may be given more than once; their
-            values accumulate in order. Any other valued flag given twice is
-            an error, never last-wins.
-        continues: Valued flags whose value follows the continuation rule.
-
-    Returns:
-        The positionals, every valued flag's values (one item unless
-        repeatable) and the switches found.
-
-    Raises:
-        CommandError: An unknown ``--`` argument, a valued flag with no value,
-            a non-repeatable flag given twice (``USAGE``), or a bare token
-            right after a ``continues`` flag's value (``AMBIGUOUS_RECIPIENTS``:
-            it could belong to the flag or be a positional).
-    """
-    positional: list[str] = []
-    values: dict[str, list[str]] = {}
-    found: set[str] = set()
-    index = 0
-    while index < len(args):
-        token = args[index]
-        if token in switches:
-            found.add(token)
-            index += 1
-        elif token in valued:
-            if index + 1 >= len(args):
-                raise CommandError(f"USAGE: {usage} ({token} needs a value)")
-            if token in values and token not in repeatable:
-                raise CommandError(f"USAGE: {usage} ({token} given twice)")
-            if token in continues:
-                value, index = _continued(args, index + 1)
-                if index < len(args) and not args[index].startswith("--"):
-                    raise CommandError(
-                        f"AMBIGUOUS_RECIPIENTS: {args[index]!r} follows {token} {value!r} — separate "
-                        f"{token} recipients with commas, or quote a name that has spaces"
-                    )
-            else:
-                value, index = args[index + 1], index + 2
-            values.setdefault(token, []).append(value)
-        elif token.startswith("--"):
-            raise CommandError(f"USAGE: {usage} (unknown argument {token!r})")
+def _without_flag(args: Sequence[str], flag: str) -> list[str]:
+    """``args`` without ``flag`` and the value after it (``parse_args`` has already validated them)."""
+    kept: list[str] = []
+    skip_next = False
+    for token in args:
+        if skip_next:
+            skip_next = False
+        elif token == flag:
+            skip_next = True
         else:
-            value, index = _continued(args, index)
-            positional.append(value)
-    return _Args(positional=positional, values=values, switches=found)
+            kept.append(token)
+    return kept
 
 
-def _continued(args: Sequence[str], index: int) -> tuple[str, int]:
-    """The token at ``index`` plus any it continues into; returns ``(text, next index)``."""
-    text = args[index]
-    index += 1
-    while index < len(args) and not args[index].startswith("--") and (
-        text.rstrip().endswith((",", ";")) or args[index].lstrip().startswith((",", ";"))
-    ):
-        text = f"{text} {args[index]}"
-        index += 1
-    return text, index
+_KQL_PROPERTY_RE = re.compile(r"^([A-Za-z]+):(.+)$", re.DOTALL)
+# Searchable message properties per Graph's "Use the $search query parameter"
+# docs; any other "word:" (e.g. "Re:") is ordinary text.
+_KQL_PROPERTIES = frozenset({
+    "attachment", "bcc", "body", "cc", "from", "hasattachment", "importance", "kind",
+    "participants", "received", "recipients", "sent", "size", "subject", "to",
+})
 
 
-def _int_flag(raw: str | None, flag: str, default: int) -> int:
-    if raw is None:
-        return default
-    try:
-        return int(raw)
-    except ValueError as exc:
-        raise CommandError(f"USAGE: {flag} takes a whole number, got {raw!r}") from exc
+def _search_query(words: Sequence[str]) -> str:
+    """The search text as the agent wrote it, from the shell-split words (pure).
+
+    The CLI tokenizer drops quotes, so a word holding whitespace was a quoted
+    phrase: it is quoted again, after the property name for KQL
+    (``subject:"weekly report"``), so the phrase is not split into words.
+    """
+    rebuilt: list[str] = []
+    for word in words:
+        if not any(char.isspace() for char in word):
+            rebuilt.append(word)
+            continue
+        match = _KQL_PROPERTY_RE.match(word)
+        if match and match.group(1).lower() in _KQL_PROPERTIES:
+            rebuilt.append(f'{match.group(1)}:"{match.group(2)}"')
+        else:
+            rebuilt.append(f'"{word}"')
+    return " ".join(rebuilt).strip()
+
+
+def _body_lines(body: str) -> list[str]:
+    return body.replace("\r\n", "\n").split("\n") if body.strip() else ["(empty)"]
+
+
+def _sent_message_sections(message: SentMessage) -> list[tuple[str, list[str]]]:
+    """MESSAGE and BODY sections for a Sent Items message; no REPLY section (pure)."""
+    header = [f"Folder: {_FOLDER_LABELS['sentitems']}"]
+    if message.sender:
+        header.append(f"From: {message.sender.display()}")
+    header.append(f"To: {', '.join(a.display() for a in message.to) or '(none)'}")
+    if message.cc:
+        header.append(f"Cc: {', '.join(a.display() for a in message.cc)}")
+    header += [
+        f"Date: {format_utc(message.sent)} UTC",
+        f"Subject: {message.subject or '(no subject)'}",
+        f"Attachments: {'yes (attachments cannot be opened yet)' if message.has_attachments else 'none'}",
+    ]
+    return [("MESSAGE", header), ("BODY", _body_lines(message.body))]
 
 
 def _recipient_text(values: Sequence[str]) -> str:

@@ -4,10 +4,12 @@ Scope is enforced by construction (plan D3): there is no generic request
 method. Every public method passes a literal suffix to ``_call``, the URL is
 ``graph_base + /users/{mailbox} + suffix``, message ids are quoted with no
 safe characters, and ``_call`` refuses any URL outside this mailbox's root.
-Reads stay under ``/mailFolders/inbox/messages`` and, for the operator's
-read-only Sent tab only, ``/mailFolders/sentitems/messages`` (agents get no
-sent listing); the only other endpoint is ``/sendMail``. ``@odata.nextLink``
-is never followed: paging is ``$skip``.
+Message paths come only from ``_messages_path`` over a closed folder set
+(``ids.Folder``): ``/mailFolders/{inbox,archive,sentitems}/messages``. The
+other endpoints are the folder counts read ``/mailFolders/{folder}``, the
+move ``/mailFolders/inbox/messages/{id}/move`` (inbox → archive only) and
+``/sendMail``. ``@odata.nextLink`` is never followed: paging is ``$skip``,
+and search does not page at all.
 
 BossMod limits itself to this mailbox; the client secret itself is
 tenant-wide and can reach other mailboxes.
@@ -23,11 +25,10 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from .auth import AccessToken, GraphAuthError, GraphUnreachable, TokenProvider
+from .ids import FOLDERS, Folder
 
-_INBOX = "/mailFolders/inbox/messages"
-# "sentitems" is Graph's well-known name for Sent Items (mailFolder resource
-# docs, "Well-known folder names"); it works whatever the mailbox's locale.
-_SENT = "/mailFolders/sentitems/messages"
+# Folder names are Graph's well-known names (mailFolder resource docs,
+# "Well-known folder names"); they work whatever the mailbox's locale.
 _SENT_SUMMARY_FIELDS = "id,subject,toRecipients,sentDateTime,bodyPreview,hasAttachments"
 _SENT_MESSAGE_FIELDS = "id,subject,from,toRecipients,ccRecipients,sentDateTime,hasAttachments,body"
 _SUMMARY_FIELDS = "id,subject,from,receivedDateTime,isRead,bodyPreview,hasAttachments"
@@ -40,6 +41,7 @@ _TEXT_BODY = 'outlook.body-content-type="text"'
 
 __all__ = [
     "Address",
+    "FolderCounts",
     "GraphAuthError",
     "GraphHttpError",
     "GraphMailbox",
@@ -91,8 +93,16 @@ class Address:
 
 
 @dataclass(frozen=True)
+class FolderCounts:
+    """A folder's message totals, as Graph reports them."""
+
+    total: int
+    unread: int
+
+
+@dataclass(frozen=True)
 class MessageSummary:
-    """One inbox row."""
+    """One inbox or archive row."""
 
     id: str
     subject: str
@@ -219,7 +229,7 @@ class GraphMailbox:
         }
         if unread_only:
             params["$filter"] = _UNREAD_FILTER
-        payload = self._json(self._call("GET", _INBOX, params=params))
+        payload = self._json(self._call("GET", _messages_path("inbox"), params=params))
         items = payload.get("value")
         if not isinstance(items, list):
             raise _unreadable("the inbox listing has no value array")
@@ -252,15 +262,91 @@ class GraphMailbox:
             "$orderby": "receivedDateTime asc",
             "$top": str(top),
         }
-        payload = self._json(self._call("GET", _INBOX, params=params))
+        payload = self._json(self._call("GET", _messages_path("inbox"), params=params))
         items = payload.get("value")
         if not isinstance(items, list):
             raise _unreadable("the inbox listing has no value array")
         has_more = isinstance(payload.get("@odata.nextLink"), str)
         return InboxPage(messages=[_summary(item) for item in items], has_more=has_more)
 
+    def folder_counts(self, folder: Folder) -> FolderCounts:
+        """Return a folder's total and unread message counts.
+
+        ``GET /mailFolders/{folder}`` with ``totalItemCount`` and
+        ``unreadItemCount``, Graph's documented way to count a folder.
+
+        Raises:
+            GraphScopeError: ``folder`` is not in the closed set.
+            GraphHttpError: Graph refused, or a count is missing or not an
+                integer (``UnreadableResponse``).
+            GraphAuthError, GraphUnreachable.
+        """
+        _check_folder(folder)
+        payload = self._json(self._call(
+            "GET", f"/mailFolders/{folder}", params={"$select": "totalItemCount,unreadItemCount"},
+        ))
+        return FolderCounts(
+            total=_required_count(payload, "totalItemCount", folder),
+            unread=_required_count(payload, "unreadItemCount", folder),
+        )
+
+    def search(self, folder: Folder, query: str, top: int) -> list[MessageSummary]:
+        """Return up to ``top`` messages in ``folder`` matching ``query``.
+
+        Graph's ``$search`` matches from, subject and body by default and
+        accepts KQL properties (``from:``, ``subject:``…) inside the quoted
+        string. Results come in Graph's documented order (by sent date, newest
+        first). ``$skip`` and ``$orderby`` are not sent: their support together
+        with ``$search`` on messages is not documented, so search does not page.
+
+        Args:
+            folder: ``inbox`` or ``archive``.
+            query: The search text as the agent wrote it.
+            top: Most results (the caller bounds it).
+
+        Raises:
+            GraphScopeError: ``folder`` is not ``inbox`` or ``archive``.
+            GraphAuthError, GraphUnreachable, GraphHttpError (404 when the
+            mailbox has no such folder).
+        """
+        if folder not in ("inbox", "archive"):
+            raise GraphScopeError(f"search covers inbox and archive only, not {folder!r}")
+        params = {
+            "$search": _search_clause(query),
+            "$top": str(top),
+            "$select": _SUMMARY_FIELDS,
+        }
+        payload = self._json(self._call("GET", _messages_path(folder), params=params))
+        items = payload.get("value")
+        if not isinstance(items, list):
+            raise _unreadable(f"the {folder} search has no value array")
+        return [_summary(item) for item in items]
+
+    def move_to_archive(self, message_id: str) -> str:
+        """Move one inbox message to the Archive folder and return its new Graph id.
+
+        Graph's move creates a copy in the destination and removes the
+        original, so the old id stops working.
+
+        Raises:
+            GraphHttpError: Graph refused (404 when the message or the
+                Archive folder is missing), or the response has no id
+                (``UnreadableResponse``).
+            GraphAuthError, GraphUnreachable.
+        """
+        response = self._call(
+            "POST",
+            f"{_messages_path('inbox')}/{_quoted_id(message_id)}/move",
+            json={"destinationId": "archive"},
+        )
+        payload = self._json(response)
+        new_id = payload.get("id")
+        if not isinstance(new_id, str) or not new_id:
+            raise _unreadable("the moved message has no id")
+        return new_id
+
     def list_sent(self, top: int, skip: int) -> SentPage:
-        """Return one page of Sent Items, newest first (operator view only).
+        """Return one page of Sent Items, newest first.
 
         Raises:
             GraphAuthError, GraphUnreachable, GraphHttpError.
@@ -271,7 +357,7 @@ class GraphMailbox:
             "$top": str(top),
             "$skip": str(skip),
         }
-        payload = self._json(self._call("GET", _SENT, params=params))
+        payload = self._json(self._call("GET", _messages_path("sentitems"), params=params))
         items = payload.get("value")
         if not isinstance(items, list):
             raise _unreadable("the sent listing has no value array")
@@ -279,7 +365,7 @@ class GraphMailbox:
         return SentPage(messages=[_sent_summary(item) for item in items], has_more=has_more)
 
     def get_sent_message(self, message_id: str) -> SentMessage:
-        """Return one Sent Items message with its body as plain text (operator view only).
+        """Return one Sent Items message with its body as plain text.
 
         Raises:
             GraphAuthError, GraphUnreachable, GraphHttpError (404 when it is
@@ -287,34 +373,36 @@ class GraphMailbox:
         """
         response = self._call(
             "GET",
-            f"{_SENT}/{_quoted_id(message_id)}",
+            f"{_messages_path('sentitems')}/{_quoted_id(message_id)}",
             params={"$select": _SENT_MESSAGE_FIELDS},
             headers={"Prefer": _TEXT_BODY},
         )
         return _sent_message(self._json(response))
 
-    def get_message(self, message_id: str) -> Message:
-        """Return one inbox message with its body as plain text.
+    def get_message(self, folder: Folder, message_id: str) -> Message:
+        """Return one inbox or archive message with its body as plain text.
 
         Raises:
+            GraphScopeError: ``folder`` is not ``inbox`` or ``archive``.
             GraphAuthError, GraphUnreachable, GraphHttpError (404 when it is
-            not in this inbox).
+            not in that folder).
         """
         response = self._call(
             "GET",
-            f"{_INBOX}/{_quoted_id(message_id)}",
+            f"{_received_path(folder)}/{_quoted_id(message_id)}",
             params={"$select": _MESSAGE_FIELDS},
             headers={"Prefer": _TEXT_BODY},
         )
         return _message(self._json(response))
 
-    def mark_read(self, message_id: str) -> None:
-        """Mark one inbox message read.
+    def mark_read(self, folder: Folder, message_id: str) -> None:
+        """Mark one inbox or archive message read.
 
         Raises:
+            GraphScopeError: ``folder`` is not ``inbox`` or ``archive``.
             GraphAuthError, GraphUnreachable, GraphHttpError.
         """
-        self._call("PATCH", f"{_INBOX}/{_quoted_id(message_id)}", json={"isRead": True})
+        self._call("PATCH", f"{_received_path(folder)}/{_quoted_id(message_id)}", json={"isRead": True})
 
     def send(self, to: Sequence[Address], cc: Sequence[Address], subject: str, body_html: str) -> None:
         """Send a new HTML message from this mailbox (saved to Sent Items).
@@ -335,8 +423,8 @@ class GraphMailbox:
             "saveToSentItems": True,
         })
 
-    def reply(self, message_id: str, body_html: str, reply_all: bool) -> None:
-        """Reply to the sender (or everyone) of one inbox message; ``body_html`` is the comment.
+    def reply(self, folder: Folder, message_id: str, body_html: str, reply_all: bool) -> None:
+        """Reply to the sender (or everyone) of one inbox or archive message; ``body_html`` is the comment.
 
         ``body_html`` is the rendered HTML from ``formatting.render_body``.
         Graph places the comment above the quoted original and renders it as
@@ -345,10 +433,13 @@ class GraphMailbox:
         ``message.body`` replaces the whole body, dropping the quoted thread.
 
         Raises:
+            GraphScopeError: ``folder`` is not ``inbox`` or ``archive``.
             GraphAuthError, GraphUnreachable, GraphHttpError.
         """
         action = "replyAll" if reply_all else "reply"
-        self._call("POST", f"{_INBOX}/{_quoted_id(message_id)}/{action}", json={"comment": body_html})
+        self._call(
+            "POST", f"{_received_path(folder)}/{_quoted_id(message_id)}/{action}", json={"comment": body_html}
+        )
 
     def _call(
         self,
@@ -459,6 +550,47 @@ def friendly_config_error(exc: GraphAuthError | GraphUnreachable | GraphHttpErro
     if exc.status == 404:
         return CONFIG_MAILBOX_NOT_FOUND
     return CONFIG_FAILED
+
+
+def _check_folder(folder: str) -> None:
+    """Raises ``GraphScopeError`` unless ``folder`` is in the closed set (a caller bug, never input)."""
+    if folder not in FOLDERS:
+        raise GraphScopeError(f"refusing folder {folder!r}")
+
+
+def _messages_path(folder: Folder) -> str:
+    """``/mailFolders/{folder}/messages`` for a folder in the closed set (D3).
+
+    Raises:
+        GraphScopeError: Any other folder.
+    """
+    _check_folder(folder)
+    return f"/mailFolders/{folder}/messages"
+
+
+def _received_path(folder: Folder) -> str:
+    """The messages path of a folder holding received mail (``inbox`` or ``archive``).
+
+    Raises:
+        GraphScopeError: Any other folder; sent mail has its own methods.
+    """
+    if folder not in ("inbox", "archive"):
+        raise GraphScopeError(f"refusing folder {folder!r} for a received message")
+    return _messages_path(folder)
+
+
+def _search_clause(query: str) -> str:
+    """The ``$search`` value: the query in double quotes, ``\\`` and ``"`` backslash-escaped (pure)."""
+    escaped = query.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def _required_count(payload: dict[str, Any], key: str, folder: str) -> int:
+    value = payload.get(key)
+    # bool is an int subclass; a JSON true is not a count.
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise _unreadable(f"the {folder} folder has no {key}")
+    return value
 
 
 def _quoted_id(message_id: str) -> str:
