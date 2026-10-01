@@ -283,11 +283,14 @@
 .desk-task .status-pill { flex: none; }
 
 /* ─── Desk schedules (context/desk-schedules.js) ───
-   The row: glyph, title over its summary (and a tone when the last run went
-   wrong), and when it runs next pushed to the far end. */
+   The row: glyph, title (with a lock when the agent may not change it) over
+   its summary (and "by <agent>", and a tone when the last run went wrong),
+   and when it runs next pushed to the far end. */
 .desk-schedule > svg { width: 14px; height: 14px; flex: none; color: var(--hint); }
 .desk-schedule-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
 .desk-schedule-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The lock beside the title: the agent may not change this schedule. */
+.desk-schedule-lock { display: inline-block; width: 12px; height: 12px; margin-left: 6px; vertical-align: -1px; color: var(--hint); }
 .desk-schedule-meta { font-size: 11px; color: var(--muted); word-break: break-word; }
 .desk-schedule-tone[data-tone="alert"] { font-size: 11px; color: var(--alert-ink); }
 .desk-schedule-next { flex: none; font-size: 11px; color: var(--hint); white-space: nowrap; }

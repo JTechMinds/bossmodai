@@ -4,7 +4,8 @@
  * One row per schedule: its title, its summary ("Every weekday at 06:00,
  * 12:00"), when it runs next ("Next: Tue 06:00", or "Off"), and a tone when
  * the last run went wrong ("Missed 06:00, computer was asleep" / "Last run
- * failed" / "Paused: last run still open"). A row opens the schedule as a layer over the desk
+ * failed" / "Paused: last run still open"), plus "· by <agent>" when an
+ * agent set it up and a lock glyph when the agent may not change it. A row opens the schedule as a layer over the desk
  * (context/schedule-layer.js); the section header's "New" opens a new one
  * (`openNew`, called by desk-panel.js, which owns the header).
  *
@@ -90,8 +91,13 @@ const BossModDeskSchedules = (() => {
             },
                 h('i', { 'data-lucide': 'calendar-clock', 'aria-hidden': 'true' }),
                 h('span', { class: 'desk-schedule-main' },
-                    h('span', { class: 'desk-schedule-title' }, String(schedule.title)),
-                    h('span', { class: 'desk-schedule-meta' }, String(schedule.summary)),
+                    h('span', { class: 'desk-schedule-title' }, String(schedule.title),
+                        schedule.agent_can_change ? null : h('i', {
+                            class: 'desk-schedule-lock', 'data-lucide': 'lock', role: 'img',
+                            'aria-label': 'Agent cannot change this', 'data-tooltip': 'Agent cannot change this',
+                        })),
+                    h('span', { class: 'desk-schedule-meta' }, String(schedule.summary),
+                        schedule.created_by_name ? ` · by ${schedule.created_by_name}` : ''),
                     tone ? h('span', { class: 'desk-schedule-tone', 'data-tone': 'alert' }, tone) : null),
                 h('span', { class: 'desk-schedule-next' },
                     schedule.enabled && schedule.next_run_at ? `Next: ${localTime(schedule.next_run_at, true)}` : 'Off'));

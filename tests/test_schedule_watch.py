@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import db
+from core.models.message import HUMAN_SENDER_ID
 from core import config
 from core.models.schedule import RecurrenceRule
 from core.runtime.events import NullRuntimeEventSink, runtime_events
@@ -100,7 +101,7 @@ def _schedule(agent_id: str, *, at: str = "06:00", title: str = "Status check"):
         recurrence=RecurrenceRule.model_validate(
             {"frequency": "daily", "interval": 1, "times": [at], "start_date": "2026-09-01"},
         ),
-        notification_policy="completion_blocked", enabled=True,
+        notification_policy="completion_blocked", enabled=True, created_by=HUMAN_SENDER_ID, agent_can_change=False,
     )
 
 
@@ -293,7 +294,7 @@ async def test_schedule_ran_is_broadcast_on_change_and_every_fire_but_once_per_s
             "frequency": "daily", "interval": 1, "every_minutes": 1,
             "window_start": "00:00", "window_end": "23:59", "start_date": "2026-09-01",
         }),
-        notification_policy="completion_blocked", enabled=True,
+        notification_policy="completion_blocked", enabled=True, created_by=HUMAN_SENDER_ID, agent_can_change=False,
     )
     clock = Clock(DUE - timedelta(seconds=5))
     watch = ScheduleWatch(clock=clock)

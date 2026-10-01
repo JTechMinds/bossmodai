@@ -54,7 +54,7 @@ def _rule() -> RecurrenceRule:
 def _schedule(agent_id: str, *, title: str = "Check the status page", enabled: bool = True):
     return db.create_schedule(
         agent_id=agent_id, title=title, instructions="Log in and read the status page.",
-        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled,
+        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled, created_by=HUMAN_SENDER_ID, agent_can_change=False,
     )
 
 

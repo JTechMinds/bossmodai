@@ -292,6 +292,14 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "tasks", "schedule_id", "VARCHAR",
     )
+    # Schedules from before agents could manage them: set up by the operator
+    # ('__human__' is HUMAN_SENDER_ID) and locked against agent changes.
+    _add_column_if_missing(
+        con, "agent_schedules", "created_by", "VARCHAR NOT NULL DEFAULT '__human__'",
+    )
+    _add_column_if_missing(
+        con, "agent_schedules", "agent_can_change", "BOOLEAN NOT NULL DEFAULT 0",
+    )
     _add_column_if_missing(
         con, "channel_response_rounds", "round_index",
         "INTEGER NOT NULL DEFAULT 1",

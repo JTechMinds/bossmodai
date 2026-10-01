@@ -364,6 +364,7 @@ from db.extension_wake_status import get_wake_status, record_wake_check
 from db.agent_schedules import (
     create_schedule,
     delete_schedule,
+    find_schedules_by_prefix,
     get_schedule,
     list_enabled_schedules,
     list_schedules_for_agent,
@@ -652,6 +653,7 @@ __all__ = [
     # Agent schedules
     "create_schedule",
     "delete_schedule",
+    "find_schedules_by_prefix",
     "get_schedule",
     "list_enabled_schedules",
     "list_schedules_for_agent",

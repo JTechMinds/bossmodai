@@ -788,6 +788,7 @@ def test_desk_schedules_section_and_layer() -> None:
         "aStoredRepeatEditsInHours", "runNowIsDisabledWhileRunning", "runNowStartsARealRun",
         "anOpenRunRefusalSaysWhy", "theDraftIsPreviewed", "anInvalidDraftIsSaidNotSent", "aNewScheduleCanBeSavedOff",
         "anOpenRunShowsThePausedTone", "aSkipOffersTheOpenRun",
+        "theLockAndTheAuthorShow", "setUpByShows", "theLockSwitchPatches", "createSendsTheLock",
     ):
         assert payload[key] is True, key
     panel = _read(CONTEXT / "desk-panel.js")

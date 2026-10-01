@@ -45,6 +45,7 @@ from core.models.runtime import RuntimeCommand, RuntimeWorkerState
 from core.models.schedule import (
     SCHEDULE_TRIGGER_FIELDS,
     AgentSchedule,
+    AgentScheduleUpdate,
     RecurrenceRule,
     ScheduleCreate,
     ScheduleOutcome,
@@ -139,6 +140,7 @@ __all__ = [
     # Schedules
     "SCHEDULE_TRIGGER_FIELDS",
     "AgentSchedule",
+    "AgentScheduleUpdate",
     "RecurrenceRule",
     "ScheduleCreate",
     "ScheduleOutcome",

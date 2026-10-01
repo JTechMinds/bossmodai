@@ -57,6 +57,7 @@ _PROMPT_FILE_BY_KEY = {
     "internal_managed_writer_section": "internal/managed_writer_section.md",
     "internal_managed_writer_section_rewrite": "internal/managed_writer_section_rewrite.md",
     "internal_managed_writer_error_guidance": "internal/managed_writer_error_guidance.md",
+    "internal_schedule_locked": "internal/schedule_locked.md",
 }
 _DEFAULT_PERSONALITY_FILES: tuple[tuple[str, str], ...] = (
     ("Research Analyst", "personalities/research_analyst.md"),

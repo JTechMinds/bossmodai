@@ -17,11 +17,13 @@ from db.crud import build_update, execute, insert_returning_dict, query, query_o
 
 _SCHEDULE_COLUMNS = (
     "id, agent_id, title, instructions, recurrence, notification_policy, enabled, "
-    "last_occurrence_at, last_outcome, last_outcome_detail, last_task_id, created_at, updated_at"
+    "last_occurrence_at, last_outcome, last_outcome_detail, last_task_id, created_by, agent_can_change, "
+    "created_at, updated_at"
 )
 
-# What an operator edit may change. The outcome columns are record_outcome's.
-_EDITABLE_COLUMNS = {"title", "instructions", "recurrence", "notification_policy", "enabled"}
+# What an edit may change. The outcome columns are record_outcome's; who may
+# change agent_can_change is the service's rule (core/scheduling/service.py).
+_EDITABLE_COLUMNS = {"title", "instructions", "recurrence", "notification_policy", "enabled", "agent_can_change"}
 
 
 def _schedule_from_row(row: dict[str, Any]) -> AgentSchedule:
@@ -45,6 +47,8 @@ def create_schedule(
     recurrence: RecurrenceRule,
     notification_policy: str,
     enabled: bool,
+    created_by: str,
+    agent_can_change: bool,
 ) -> AgentSchedule:
     """Insert one schedule for ``agent_id``.
 
@@ -55,6 +59,8 @@ def create_schedule(
         recurrence: The validated rule; stored as JSON.
         notification_policy: ``none``, ``completion_blocked`` or ``all``.
         enabled: Whether the worker runs it.
+        created_by: ``HUMAN_SENDER_ID`` (the operator) or the creating agent's id.
+        agent_can_change: Whether the agent may change it.
 
     Returns:
         The stored schedule.
@@ -65,11 +71,16 @@ def create_schedule(
     """
     row = insert_returning_dict(
         """
-        INSERT INTO agent_schedules (agent_id, title, instructions, recurrence, notification_policy, enabled)
-        VALUES ($1, $2, $3, $4, $5, $6)
+        INSERT INTO agent_schedules (
+            agent_id, title, instructions, recurrence, notification_policy, enabled, created_by, agent_can_change
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING id
         """,
-        [agent_id, title, instructions, recurrence.model_dump_json(), notification_policy, enabled],
+        [
+            agent_id, title, instructions, recurrence.model_dump_json(), notification_policy, enabled,
+            created_by, agent_can_change,
+        ],
     )
     # Re-read rather than hydrate the RETURNING row: SQLite reports no
     # declared column types there, so its timestamps would come back as text.
@@ -102,6 +113,30 @@ def list_schedules_for_agent(agent_id: str) -> list[AgentSchedule]:
     return [_schedule_from_row(row) for row in rows]
 
 
+def find_schedules_by_prefix(agent_id: str, prefix: str) -> list[AgentSchedule]:
+    """Return ``agent_id``'s schedules whose id starts with ``prefix``, oldest first.
+
+    For the agent's ``schedules`` command, which shows short ids. Compared
+    with ``substr`` rather than ``LIKE``, so ``_`` and ``%`` in a prefix are
+    not wildcards.
+
+    Raises:
+        ValueError: ``prefix`` is empty.
+        pydantic.ValidationError: A stored rule is corrupt.
+    """
+    if not prefix:
+        raise ValueError("find_schedules_by_prefix needs a non-empty prefix")
+    rows = query(
+        f"""
+        SELECT {_SCHEDULE_COLUMNS} FROM agent_schedules
+        WHERE agent_id = $1 AND substr(id, 1, length($2)) = $2
+        ORDER BY created_at, id
+        """,
+        [agent_id, prefix],
+    )
+    return [_schedule_from_row(row) for row in rows]
+
+
 def list_enabled_schedules() -> list[AgentSchedule]:
     """Return every enabled schedule, oldest first: the worker's timetable load.
 
@@ -120,7 +155,8 @@ def update_schedule(schedule_id: str, **fields: Any) -> AgentSchedule | None:
     Args:
         schedule_id: The schedule to change.
         **fields: Any of ``title``, ``instructions``, ``recurrence`` (a
-            ``RecurrenceRule``), ``notification_policy`` and ``enabled``.
+            ``RecurrenceRule``), ``notification_policy``, ``enabled`` and
+            ``agent_can_change``.
 
     Returns:
         The stored schedule, or ``None`` when there is no such row.

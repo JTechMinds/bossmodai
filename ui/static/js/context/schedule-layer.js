@@ -66,8 +66,8 @@ const BossModScheduleLayer = (() => {
         let [fields, notify, preview, menu] = [null, null, null, null];
         /** Run now, built once the schedule is saved. */
         let runNow = null;
-        /** The Enabled switch's value for a schedule not yet created (it has no row to PATCH). */
-        let createEnabled = true;
+        /** The switches' values for a schedule not yet created (it has no row to PATCH yet). */
+        const draftFlags = { enabled: true, agent_can_change: false };
 
         const titleInput = h('input', {
             class: 'task-detail-title-input task-detail-edit-field', type: 'text', maxlength: '200',
@@ -84,10 +84,16 @@ const BossModScheduleLayer = (() => {
         const errorSlot = h('div', { class: 'schedule-layer-error', role: 'alert' });
         errorSlot.hidden = true;
         const column = h('div', { class: 'task-detail-column' });
-        const enabled = BossModSwitch.create({
-            label: 'Enabled', pressed: current ? current.enabled : createEnabled,
-            onChange: (on) => { if (current) void setEnabled(on); else createEnabled = on; },
+        /** A switch saved on the spot for a stored schedule, held in draftFlags before that. */
+        const flagSwitch = (field, label) => BossModSwitch.create({
+            label, pressed: current ? current[field] : draftFlags[field],
+            onChange: (on) => { if (current) void saveFlag(field, label, on); else draftFlags[field] = on; },
         });
+        const switches = {
+            enabled: flagSwitch('enabled', 'Enabled'),
+            agent_can_change: flagSwitch('agent_can_change', 'Agent can change this'),
+        };
+        const switchElements = () => [switches.enabled.element, switches.agent_can_change.element];
 
         const tool = (id, icon, cls, label, onclick, extra) => h('button', {
             class: cls, id, type: 'button', 'aria-label': label, 'data-tooltip': label, onclick, ...(extra || {}),
@@ -113,15 +119,15 @@ const BossModScheduleLayer = (() => {
         /** Paint the column for the current state: the view, or edit mode. */
         function render() {
             if (editing) {
-                column.replaceChildren(errorSlot, ...(current ? [] : [enabled.element]), section('Rule', fields.element),
+                column.replaceChildren(errorSlot, ...(current ? [] : switchElements()), section('Rule', fields.element),
                     preview.element, section('Notify', notify.element), section('Instructions', instructions));
             } else {
-                enabled.set(current.enabled);
+                Object.keys(switches).forEach((field) => switches[field].set(current[field]));
                 runNow = runNow || VIEW.runNowControl({
                     api, scheduleId: () => current.id, onOpenTask,
                     onRan: (row) => { current = row; if (!editing) render(); onChanged(row); },
                 });
-                column.replaceChildren(errorSlot, h('div', { class: 'schedule-run-row' }, enabled.element, runNow.element),
+                column.replaceChildren(errorSlot, h('div', { class: 'schedule-run-row' }, ...switchElements(), runNow.element),
                     VIEW.facts(current, { onOpenTask }), section('Instructions', instructions));
             }
             BossModIcons.paint(column, 'schedule-layer');
@@ -228,7 +234,7 @@ const BossModScheduleLayer = (() => {
             const policy = notify.getValue();
             if (!current) {
                 return { payload: {
-                    title, instructions: text, recurrence: read.rule, notification_policy: policy, enabled: createEnabled,
+                    title, instructions: text, recurrence: read.rule, notification_policy: policy, ...draftFlags,
                 } };
             }
             const payload = {};
@@ -268,17 +274,17 @@ const BossModScheduleLayer = (() => {
             onChanged(row);
         }
 
-        /** The switch saves on the spot; a refusal flips it back and says why. */
-        async function setEnabled(on) {
+        /** A switch saves on the spot (`enabled`, `agent_can_change`); a refusal flips it back and says why. */
+        async function saveFlag(field, label, on) {
             show(null);
             let row;
             try {
-                row = await API.update(api, current.id, { enabled: on });
+                row = await API.update(api, current.id, { [field]: on });
             } catch (err) {
-                console.error('[schedule-layer] could not change Enabled', err);
+                console.error(`[schedule-layer] could not change ${field}`, err);
                 if (closed) return;
-                enabled.set(!on);
-                show(VIEW.callout('alert', on ? 'Could not turn the schedule on' : 'Could not turn the schedule off',
+                switches[field].set(!on);
+                show(VIEW.callout('alert', `Could not turn “${label}” ${on ? 'on' : 'off'}`,
                     (err && err.message) || 'The request failed.'));
                 return;
             }

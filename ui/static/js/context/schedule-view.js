@@ -56,8 +56,8 @@ const BossModScheduleView = (() => {
     }
 
     /**
-     * The facts block: Repeats (the server's summary), Next run (or Off),
-     * Last run, and Notify.
+     * The facts block: Set up by (only when an agent set it up), Repeats
+     * (the server's summary), Next run (or Off), Last run, and Notify.
      *
      * @param {object} schedule  A ScheduleView.
      * @param {{onOpenTask: (taskId: string) => void}} options
@@ -69,6 +69,7 @@ const BossModScheduleView = (() => {
         if (typeof onOpenTask !== 'function') throw new Error('[schedule-view] onOpenTask is required');
         const policy = NOTIFY.find((item) => item.value === schedule.notification_policy);
         return BossModFactList.create([
+            ...(schedule.created_by_name ? [{ label: 'Set up by', value: String(schedule.created_by_name) }] : []),
             { label: 'Repeats', value: String(schedule.summary) },
             { label: 'Next run', value: schedule.next_run_at ? BossModFormat.formatDateTime(schedule.next_run_at) : 'Off' },
             { label: 'Last run', value: lastRun(schedule, onOpenTask) },

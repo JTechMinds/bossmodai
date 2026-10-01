@@ -1041,6 +1041,12 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
                             CHECK (last_outcome IN ('fired', 'missed', 'skipped_open', 'skipped_vacation', 'failed')),
     last_outcome_detail TEXT,
     last_task_id        VARCHAR,
+    -- Who set it up: '__human__' (core.models.message.HUMAN_SENDER_ID, the
+    -- operator) or the agent's id.
+    created_by          VARCHAR NOT NULL DEFAULT '__human__',
+    -- Whether the agent may change it (operator-only). Operator-created
+    -- schedules start locked; agent-created ones start unlocked.
+    agent_can_change    BOOLEAN NOT NULL DEFAULT 0,
     created_at          TIMESTAMP DEFAULT current_timestamp,
     updated_at          TIMESTAMP DEFAULT current_timestamp
 );

@@ -176,13 +176,15 @@ def test_every_mutation_queues_one_reload_while_the_worker_runs(
     assert _open_reloads() == 1
 
 
-def test_no_reload_is_queued_while_no_worker_runs(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    # Pinned rather than read from the process-wide singleton, which an
-    # earlier test in the run may have left holding a process handle.
+def test_a_reload_is_queued_as_a_db_command_whatever_runs(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The reload is a database command now (service.request_reload), written
+    # from any process; a starting worker clears open commands and loads fresh.
     monkeypatch.setattr(runtime_services, "_process_is_running", lambda: False)
     ada = db.create_agent("Ada", role="Operator")
     assert client.post(f"/api/agents/{ada.id}/schedules", json=_body()).status_code == 201
-    assert _open_reloads() == 0
+    assert _open_reloads() == 1
 
 
 def test_every_mutation_announces_schedule_changed_for_the_agent(
@@ -354,3 +356,29 @@ def test_preview_is_not_captured_by_a_schedule_id_route() -> None:
     assert probe.post(f"/api/agents/{ada.id}/schedules", json=_body()).status_code == 201
     response = probe.post("/api/schedules/preview", json={"recurrence": RULE, "count": 1})
     assert response.status_code == 200 and "next_runs" in response.json()
+
+
+# ─── The operator's lock and who set it up ───
+
+
+def test_the_operator_creates_locked_and_can_open_or_lock_it(client: TestClient) -> None:
+    ada = db.create_agent("Ada", role="Operator")
+    view = _created(client, ada.id)
+    assert (view["agent_can_change"], view["created_by"], view["created_by_name"]) == (False, "__human__", None)
+    opened = client.patch(f"/api/schedules/{view['id']}", json={"agent_can_change": True})
+    assert opened.status_code == 200, opened.text
+    assert opened.json()["agent_can_change"] is True
+    open_from_start = _created(client, ada.id, title="Open", agent_can_change=True)
+    assert open_from_start["agent_can_change"] is True
+
+
+def test_an_agent_created_schedule_names_its_agent(client: TestClient) -> None:
+    from core.models.schedule import ScheduleCreate
+    from core.scheduling.service import ScheduleActor, create_schedule
+
+    ada = db.create_agent("Ada", role="Operator")
+    create_schedule(
+        ada.id, ScheduleCreate.model_validate(_body()), actor=ScheduleActor("agent", ada.id),
+    )
+    listed = client.get(f"/api/agents/{ada.id}/schedules").json()
+    assert (listed[0]["created_by"], listed[0]["created_by_name"], listed[0]["agent_can_change"]) == (ada.id, "Ada", True)

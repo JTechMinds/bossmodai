@@ -54,6 +54,16 @@ PREF_FORMS: tuple[str, ...] = (
     "pref list",
 )
 
+SCHEDULE_FORMS: tuple[str, ...] = (
+    "schedules                 — same as schedules list",
+    "schedules list",
+    "schedules add             — with body: the schedule as JSON",
+    "schedules edit <id>       — with body: the fields to change as JSON",
+    "schedules on <id>",
+    "schedules off <id>",
+    "schedules remove <id>",
+)
+
 # ---------------------------------------------------------------------------
 # Command registry — every built-in virtual command
 # ---------------------------------------------------------------------------
@@ -379,16 +389,42 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
     "schedules": VirtualCommandMeta(
         name="schedules",
         category="agent",
-        description="Your scheduled recurring tasks.",
-        usage_syntax="schedules",
+        description="List and manage your scheduled recurring tasks.",
+        usage_syntax="schedules [list|add|edit <id>|on <id>|off <id>|remove <id>]",
         help_text=(
-            "List your scheduled recurring tasks: each one's title, how often\n"
-            "it repeats, whether it is on, its next run, its last run, and the\n"
-            "last run's task. BossMod creates a task for every run and wakes\n"
-            "you then; a run whose task is still open makes later runs skip.\n"
+            "List and manage your scheduled recurring tasks: work BossMod hands\n"
+            "you on a timetable. BossMod creates a task for every run and wakes\n"
+            "you then; a run whose task is still open makes later runs skip, so\n"
+            "do each run's work and close its task. Your schedules only.\n"
+            "\n"
+            "Usage:\n"
+            + "".join(f"  {form}\n" for form in SCHEDULE_FORMS)
+            + "\n"
+            "<id> is the first 8 characters shown by schedules list (or more).\n"
+            "\n"
+            "add body (JSON): title, instructions, recurrence, and optionally\n"
+            "notification_policy (completion_blocked | all | none) and enabled.\n"
+            "recurrence: frequency (daily | weekly | monthly), interval, start_date\n"
+            "(YYYY-MM-DD), weekdays (weekly; 0=Mon … 6=Sun), month_day (monthly),\n"
+            "and either times [\"HH:MM\", …] or every_minutes with window_start\n"
+            "and window_end (HH:MM, same day).\n"
+            "edit body (JSON): any of title, instructions, recurrence,\n"
+            "notification_policy. Use on/off to switch a schedule.\n"
+            "\n"
+            "Lock: a schedule the operator has not opened to you answers every\n"
+            "change with who to contact. The operator sees every change you make.\n"
             "\n"
             "Examples:\n"
-            "  schedules         — review what recurs and when it runs next"
+            "  schedules add — every 5 minutes, all day:\n"
+            '    {"title": "Ping the operator", "instructions": "Send a short ping.",\n'
+            '     "recurrence": {"frequency": "daily", "interval": 1, "start_date": "2026-10-01",\n'
+            '       "every_minutes": 5, "window_start": "00:00", "window_end": "23:59"}}\n'
+            "  schedules add — weekdays at 09:00:\n"
+            '    {"title": "Check GitHub", "instructions": "Review new issues.",\n'
+            '     "recurrence": {"frequency": "weekly", "interval": 1, "start_date": "2026-10-01",\n'
+            '       "weekdays": [0, 1, 2, 3, 4], "times": ["09:00"]}}\n'
+            "  schedules off 1a2b3c4d   — pause one\n"
+            "  schedules                — review what recurs and when it runs next"
         ),
     ),
     "recent-work": VirtualCommandMeta(

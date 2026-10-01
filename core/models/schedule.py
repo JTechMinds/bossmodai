@@ -176,6 +176,9 @@ class AgentSchedule(BaseModel):
 
     ``last_task_id`` is the task the last *fired* occurrence created; the
     runner reads it to skip an occurrence while that task is still open.
+    ``created_by`` is ``HUMAN_SENDER_ID`` or the agent that set it up, and
+    ``agent_can_change`` whether the agent may change it (only the operator
+    sets that; core/scheduling/service.py).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -191,6 +194,8 @@ class AgentSchedule(BaseModel):
     last_outcome: ScheduleOutcome | None = None
     last_outcome_detail: str | None = None
     last_task_id: str | None = None
+    created_by: str
+    agent_can_change: bool
     created_at: datetime
     updated_at: datetime
 
@@ -200,7 +205,9 @@ class ScheduleCreate(BaseModel):
 
     ``title`` becomes each run's task title and ``instructions`` its
     description. ``notification_policy`` defaults to the same
-    ``completion_blocked`` that POST /api/tasks uses.
+    ``completion_blocked`` that POST /api/tasks uses. Also the body of an
+    agent's ``schedules add``. ``agent_can_change`` is the operator's
+    choice (unset: locked); the service refuses it from an agent.
 
     Raises:
         pydantic.ValidationError: An unknown field, a blank or over-long
@@ -214,6 +221,7 @@ class ScheduleCreate(BaseModel):
     recurrence: RecurrenceRule
     notification_policy: TaskNotificationPolicy = "completion_blocked"
     enabled: bool = True
+    agent_can_change: bool | None = None
 
     @model_validator(mode="after")
     def _clean(self) -> "ScheduleCreate":
@@ -243,25 +251,57 @@ class ScheduleUpdate(BaseModel):
     recurrence: RecurrenceRule | None = None
     notification_policy: TaskNotificationPolicy | None = None
     enabled: bool | None = None
+    agent_can_change: bool | None = None
 
     @model_validator(mode="after")
     def _validate_changes(self) -> "ScheduleUpdate":
-        present = self.model_fields_set
-        if not present:
-            raise ValueError(
-                "A schedule edit needs at least one of title, instructions, recurrence, "
-                "notification_policy or enabled"
-            )
-        for name in present:
-            if getattr(self, name) is None:
-                raise ValueError(f"A schedule's {name} cannot be null")
-        if "title" in present:
-            self.title = _clean_text(self.title, label="title", max_chars=TITLE_MAX_CHARS)
-        if "instructions" in present:
-            self.instructions = _clean_text(
-                self.instructions, label="instructions", max_chars=INSTRUCTIONS_MAX_CHARS,
-            )
+        _check_edit(self)
         return self
+
+
+class AgentScheduleUpdate(BaseModel):
+    """The body of an agent's ``schedules edit <id>``: its own edit of a schedule.
+
+    The operator's edit without ``enabled`` (``schedules on``/``off``) and
+    without ``agent_can_change`` (operator-only, so refused as an unknown
+    field). Same rules otherwise.
+
+    Raises:
+        pydantic.ValidationError: No field, an unknown field (including
+            ``agent_can_change`` and ``enabled``), a ``null`` field, a blank
+            or too-long ``title``/``instructions``, or an invalid rule.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str | None = None
+    instructions: str | None = None
+    recurrence: RecurrenceRule | None = None
+    notification_policy: TaskNotificationPolicy | None = None
+
+    @model_validator(mode="after")
+    def _validate_changes(self) -> "AgentScheduleUpdate":
+        _check_edit(self)
+        return self
+
+
+def _check_edit(edit: BaseModel) -> None:
+    """The rules every schedule edit shares; strips ``title``/``instructions`` in place.
+
+    Raises:
+        ValueError: No field present, a present field is ``null``, or a
+            blank or too-long title or instructions.
+    """
+    present = edit.model_fields_set
+    if not present:
+        raise ValueError(f"A schedule edit needs at least one of {', '.join(type(edit).model_fields)}")
+    for name in present:
+        if getattr(edit, name) is None:
+            raise ValueError(f"A schedule's {name} cannot be null")
+    if "title" in present:
+        edit.title = _clean_text(edit.title, label="title", max_chars=TITLE_MAX_CHARS)
+    if "instructions" in present:
+        edit.instructions = _clean_text(edit.instructions, label="instructions", max_chars=INSTRUCTIONS_MAX_CHARS)
 
 
 class ScheduleView(AgentSchedule):
@@ -271,11 +311,14 @@ class ScheduleView(AgentSchedule):
     ``next_run_at`` the next occurrence after the request time (``None``
     while disabled), and ``last_task_status`` the status of the last fired
     run's task (``None`` when there is none, or it no longer exists).
+    ``created_by_name`` is the agent's name when an agent set it up, else
+    ``None``.
     """
 
     summary: str
     next_run_at: datetime | None = None
     last_task_status: TaskStatus | None = None
+    created_by_name: str | None = None
 
 
 class ScheduleRunResult(BaseModel):

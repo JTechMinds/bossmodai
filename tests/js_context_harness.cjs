@@ -361,6 +361,7 @@ const SCHEDULE_ONE = {
         month_day: null, start_date: "2026-09-01",
     },
     notification_policy: "completion_blocked", enabled: true,
+    created_by: "__human__", agent_can_change: false, created_by_name: null,
     last_occurrence_at: "2026-09-29T10:00:00Z", last_outcome: "missed", last_outcome_detail: null,
     last_task_id: null, created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
     summary: "Every weekday at 06:00, 12:00", next_run_at: "2026-09-30T10:00:00Z", last_task_status: null,
@@ -1173,6 +1174,7 @@ async function main() {
             },
             notification_policy: "completion_blocked",
             enabled: true,
+            agent_can_change: false,
         })
         // Saved, it is that schedule's view now, titled by it.
         && newLayer.querySelector(".modal-title").textContent === "Weekly report"
@@ -1329,6 +1331,61 @@ async function main() {
     if (!anOpenRunShowsThePausedTone || !aSkipOffersTheOpenRun) {
         throw new Error(`a paused schedule must say so: tone ${anOpenRunShowsThePausedTone}, `
             + `open task ${aSkipOffersTheOpenRun}`);
+    }
+
+    // The lock: an operator schedule shows the lock glyph; the switch beside
+    // Enabled PATCHes `agent_can_change` on the spot. An agent's own schedule
+    // reads "by <agent>" on the row and "Set up by" in the facts. Create
+    // sends the switch (default off).
+    SCHEDULES.a1.push({
+        ...SCHEDULE_ONE, id: "s9", title: "Agent's own", created_by: "a1", created_by_name: "Jim",
+        agent_can_change: true, last_outcome: null, last_task_id: null, last_task_status: null,
+    });
+    desk.open("a1");
+    await drain();
+    const rowOf = (id) => scheduleRows().find((node) => node.getAttribute("data-schedule-id") === id);
+    const theLockAndTheAuthorShow = Boolean(rowOf("s1").querySelector(".desk-schedule-lock"))
+        && rowOf("s1").querySelector(".desk-schedule-lock").getAttribute("aria-label") === "Agent cannot change this"
+        && !rowOf("s9").querySelector(".desk-schedule-lock")
+        && rowOf("s9").querySelector(".desk-schedule-meta").textContent.endsWith(" · by Jim");
+    await rowOf("s9").dispatchClick();
+    await drain();
+    const ownLayer = topLayer();
+    const setUpByShows = ownLayer.querySelector(".fact-list").textContent.includes("Set up by")
+        && ownLayer.querySelector(".fact-list").textContent.includes("Jim");
+    await ownLayer.querySelector(".modal-back").dispatchClick();
+    await drain();
+    await rowOf("s1").dispatchClick();
+    await drain();
+    const lockLayer = topLayer();
+    const lockSwitch = lockLayer.querySelectorAll(".switch-row")
+        .find((node) => node.textContent === "Agent can change this");
+    const writesBeforeLock = scheduleWrites.length;
+    await lockSwitch.dispatchClick();
+    await drain();
+    const theLockSwitchPatches = scheduleWrites.length === writesBeforeLock + 1
+        && scheduleWrites[writesBeforeLock].method === "PATCH"
+        && JSON.stringify(scheduleWrites[writesBeforeLock].body) === JSON.stringify({ agent_can_change: true });
+    await lockLayer.querySelector(".modal-back").dispatchClick();
+    await drain();
+    await deskModal().querySelectorAll(".desk-section-action")
+        .find((node) => node.textContent === "New").dispatchClick();
+    await drain();
+    const lockCreate = topLayer();
+    lockCreate.querySelector(".task-detail-title-input").value = "Opened";
+    lockCreate.querySelector(".task-detail-description-input").value = "Yours to manage.";
+    lockCreate.querySelector(".schedule-time").value = "08:00";
+    await lockCreate.querySelectorAll(".switch-row")
+        .find((node) => node.textContent === "Agent can change this").dispatchClick();
+    const writesBeforeOpenCreate = scheduleWrites.length;
+    await lockCreate.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const createSendsTheLock = scheduleWrites.length === writesBeforeOpenCreate + 1
+        && scheduleWrites[writesBeforeOpenCreate].body.agent_can_change === true
+        && scheduleWrites[writesBeforeOpenCreate].body.enabled === true;
+    if (!theLockAndTheAuthorShow || !setUpByShows || !theLockSwitchPatches || !createSendsTheLock) {
+        throw new Error(`the lock: row ${theLockAndTheAuthorShow}, set up by ${setUpByShows}, `
+            + `switch ${theLockSwitchPatches}, create ${createSendsTheLock}`);
     }
 
     // Leaving the desk takes an open schedule layer with it.
@@ -2482,6 +2539,10 @@ async function main() {
         aNewScheduleCanBeSavedOff,
         anOpenRunShowsThePausedTone,
         aSkipOffersTheOpenRun,
+        theLockAndTheAuthorShow,
+        setUpByShows,
+        theLockSwitchPatches,
+        createSendsTheLock,
         opensOnThePathItWasGiven,
         createOpensTheConversationOnly,
         drainsOnDestroy,

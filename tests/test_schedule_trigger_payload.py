@@ -17,6 +17,7 @@ from pathlib import Path
 import pytest
 
 import db
+from core.models.message import HUMAN_SENDER_ID
 from core import config
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.bm_cli.command_registry import VIRTUAL_COMMAND_REGISTRY
@@ -64,7 +65,7 @@ def _scheduled_task(*, enabled: bool = True, title: str = "Ping me"):
     ada = db.create_agent("Ada", role="Operator")
     schedule = db.create_schedule(
         agent_id=ada.id, title=title, instructions="Send the operator a ping.",
-        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled,
+        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled, created_by=HUMAN_SENDER_ID, agent_can_change=False,
     )
     run = run_now(schedule.id, now=NOW)
     return ada, schedule, db.get_task(run.task.id)
@@ -153,7 +154,7 @@ def test_schedules_lists_only_the_callers_schedules() -> None:
     bob = db.create_agent("Bob", role="Operator")
     db.create_schedule(
         agent_id=bob.id, title="Bob's routine", instructions="x", recurrence=_rule(),
-        notification_policy="none", enabled=True,
+        notification_policy="none", enabled=True, created_by=HUMAN_SENDER_ID, agent_can_change=False,
     )
     result = execute_bm_cli(ada, db.get_agent_state(ada.id), "schedules")
     assert result.ok, result.prompt_content
@@ -164,8 +165,8 @@ def test_schedules_lists_only_the_callers_schedules() -> None:
     )
     assert row["next_run"] and row["last_run"] == format_local_run(NOW)
     assert "Bob's routine" not in result.prompt_content
-    line = next(text for text in result.prompt_content.splitlines() if text.startswith("Ping me |"))
-    assert f"| on | {row['next_run']} | fired {format_local_run(NOW)} | {task.id} (pending)" in line
+    line = next(text for text in result.prompt_content.splitlines() if text.startswith(f"{row['id'][:8]} | Ping me |"))
+    assert f"| on | no (ask the operator) | {row['next_run']} | fired {format_local_run(NOW)} | {task.id} (pending)" in line
 
 
 def test_schedules_with_none_says_so() -> None:
@@ -179,7 +180,8 @@ def test_schedules_with_none_says_so() -> None:
 def test_schedules_is_a_listed_agent_command_with_help() -> None:
     meta = VIRTUAL_COMMAND_REGISTRY["schedules"]
     assert (meta.category, meta.usage_syntax, meta.description) == (
-        "agent", "schedules", "Your scheduled recurring tasks.",
+        "agent", "schedules [list|add|edit <id>|on <id>|off <id>|remove <id>]",
+        "List and manage your scheduled recurring tasks.",
     )
     ada = db.create_agent("Ada", role="Operator")
     state = db.get_agent_state(ada.id)
