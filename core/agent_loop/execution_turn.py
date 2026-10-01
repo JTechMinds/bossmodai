@@ -21,6 +21,7 @@ from core.agent_loop.soft_blocks import (
 from core.agent_loop.liveness import classify_step, next_stale_streak, record_action_liveness, step_fingerprint
 from core.agent_loop.work_binding import bound_activity, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import freeze_work_turn
+from core.agent_loop.cli_turn_result import broadcast_cli_activity, map_cli_result
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.task_origins import consent_origin_channel_id
@@ -34,7 +35,6 @@ from core.agent_loop.turn_helpers import (
     _build_execution_repair_messages,
     _build_managed_writer_progress_reporter,
     _build_step_trace,
-    _cli_result_to_turn_result,
     _finalize_turn,
     _has_pending_interrupts,
     _render_loop_prompt,
@@ -530,8 +530,8 @@ async def _run_execution_turn(
                 step_prompt_tokens += managed_write.prompt_tokens
                 step_completion_tokens += managed_write.completion_tokens
                 step_total_tokens += managed_write.total_tokens
-                result = _cli_result_to_turn_result(
-                    agent, managed_write.cli_result, trigger=trigger
+                result = map_cli_result(
+                    agent, managed_write.cli_result, command=cli_command, trigger=trigger
                 )
             else:
                 result = await execute_action(action, agent, state, trigger, token_model=response.model)
@@ -567,6 +567,8 @@ async def _run_execution_turn(
                 agent_name=result.get("agent_name"),
                 extra=result.get("activity_extra"),
             )
+        # A CLI command's declared announcement (cli_turn_result); none elsewhere.
+        await broadcast_cli_activity(manager, result)
 
         chat_message = result.get("chat_message")
         if chat_message:
@@ -607,7 +609,7 @@ async def _run_execution_turn(
                 desk_path=channel_message.get("desk_path"),
                 task_id=channel_message.get("task_id"),
             )
-        await broadcast_origin_status_messages(result, agent=agent)
+        await broadcast_origin_status_messages(result, agent=agent, sink=manager)
 
         await emit_chat_notifications(
             agent=agent,
@@ -755,7 +757,7 @@ async def _run_execution_turn(
             )
             result.pop("channel_message", None)
             result.pop("chat_message", None)
-            await broadcast_origin_status_messages(result, agent=agent)
+            await broadcast_origin_status_messages(result, agent=agent, sink=manager)
             step_traces.append(
                 _build_step_trace(
                     step_index=action_count,

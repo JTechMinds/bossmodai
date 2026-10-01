@@ -7,13 +7,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from core.agent_loop.cli_turn_result import map_cli_result
 from core.agent_loop.task_origins import consent_origin_channel_id
 from core.agent_loop.work_binding import bound_task_id
 from core.bm_cli import execute_bm_cli
 from core.loop_breathing import run_shell_off_request_loop
 from core.bm_cli.host_path_consent import request_host_path_access
 from core.bm_cli.session import get_cli_cwd
-from core.bm_cli.types import BossModCliResult
 from core.models import Agent, AgentState
 
 
@@ -36,7 +36,7 @@ async def _handle_bm_cli(
         trigger_type=(trigger or {}).get("type") if isinstance(trigger, dict) else None,
         channel_id=channel_id,
     )
-    result = _cli_action_result(agent, cli_result, command=command, trigger=trigger)
+    result = map_cli_result(agent, cli_result, command=command, trigger=trigger)
     # The channel this command ran for, so the turn posts its status lines to
     # the same place (see turn_helpers.post_cli_status_lines).
     result["cli_channel_id"] = channel_id
@@ -63,72 +63,9 @@ async def _handle_request_host_access(
         task_id=task_id,
         channel_id=channel_id,
     )
-    result = _cli_action_result(
+    result = map_cli_result(
         agent, cli_result, command="request_host_access", trigger=trigger
     )
     if cli_result.ok and not cli_result.consent_required:
         result["event"] = "host_path_already_allowed"
-    return result
-
-
-def _cli_action_result(
-    agent: Agent,
-    cli_result: BossModCliResult,
-    *,
-    command: str,
-    trigger: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Map a CLI / host-access result onto the execution-turn payload."""
-    from core.agent_loop.blocked_origin import surface_cli_gate_block
-    from core.agent_loop.liveness import cli_result_counts_as_progress
-    from core.models.host_path_consent import consent_turn_event
-
-    result = {
-        "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
-        "detail": cli_result.detail,
-        "agent_name": agent.name,
-        "cli_prompt_content": cli_result.prompt_content,
-        "cli_image_paths": list(cli_result.image_paths),
-        "cli_summary": cli_result.summary,
-        # Operator one-liners a command asked for (validated where they are posted).
-        "cli_status_lines": (cli_result.data or {}).get("status_lines", []),
-        # Which extension produced it (stamped by the CLI bridge), for the
-        # live-view nudge (see turn_helpers.announce_extension_result).
-        "cli_extension_id": (cli_result.data or {}).get("extension_id"),
-        "counts_as_progress": cli_result_counts_as_progress(cli_result),
-        "suppress_world_broadcast": True,
-        "suppress_activity_broadcast": not (
-            cli_result.approval_required or cli_result.consent_required
-        ),
-    }
-    data = cli_result.data or {}
-    chrome = data.get("origin_chrome")
-    if isinstance(chrome, dict) and chrome:
-        extras = result.setdefault("origin_status_messages", [])
-        extras.append(chrome)
-    audit = data.get("audit")
-    if isinstance(audit, str) and audit.strip():
-        result["audit"] = audit
-        result["approved_by"] = "system"
-    surface_cli_gate_block(
-        result, agent=agent, trigger=trigger, cli_result=cli_result
-    )
-    if cli_result.approval_required:
-        data = cli_result.data or {}
-        card = data.get("cli_approval") if isinstance(data.get("cli_approval"), dict) else {}
-        result["approval_required"] = True
-        result["approval_request_id"] = cli_result.approval_request_id
-        result["cli_approval"] = card
-        result["event"] = "cli_approval_required"
-        result["detail"] = f"{agent.name} requests approval: {command}"
-    if cli_result.consent_required:
-        data = cli_result.data or {}
-        card = data.get("host_path_consent") if isinstance(data.get("host_path_consent"), dict) else {}
-        result["consent_required"] = True
-        result["consent_request_id"] = cli_result.consent_request_id
-        result["consent_reused"] = bool(data.get("consent_reused"))
-        result["host_path_consent"] = card
-        event, detail = consent_turn_event(agent.name, card)
-        result["event"] = event
-        result["detail"] = detail
     return result

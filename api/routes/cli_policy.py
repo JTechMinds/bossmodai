@@ -288,7 +288,16 @@ async def simulator_execute(body: CliSimulatorExecuteBody):
     Default is dry-run (parse + policy only). Writes and shell require
     ``execute=true`` (or ``dry_run=false``). Approval-required commands still
     return the approval gate without creating a request on dry-run.
+
+    A real run shows its side effects live the way an agent turn does
+    (``broadcast_cli_side_effects`` with the websocket ``manager``): a
+    command's declared operator line and activity (e.g. ``schedules`` repaints
+    the desk), and an approval/consent result's activity. It never posts a
+    gate deny's ``Blocked —`` line or wakes an owner (``surface_gate_block``
+    off): a simulation is not the agent being blocked. A dry run has no side
+    effects to show.
     """
+    from core.agent_loop.cli_turn_result import broadcast_cli_side_effects, map_cli_result
     from core.bm_cli.runtime import execute_bm_cli, preview_bm_cli
     from core.loop_breathing import run_shell_off_request_loop
 
@@ -313,6 +322,8 @@ async def simulator_execute(body: CliSimulatorExecuteBody):
             body.content,
             trigger_type="simulator",
         )
+        mapped = map_cli_result(agent, cli_result, command=body.command.strip(), surface_gate_block=False)
+        await broadcast_cli_side_effects(manager, mapped, agent=agent)
     else:
         cli_result = preview_bm_cli(
             agent,

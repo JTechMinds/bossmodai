@@ -15,7 +15,7 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, ensure_local_api_token, install_local_api_auth
 from api.routes import router
 from core import config
-from core.agent_loop.actions_cli import _cli_action_result
+from core.agent_loop.cli_turn_result import map_cli_result
 from core.bm_cli.cli_auto_approve import (
     AUDIT_PREFIX,
     NOT_ASKED_OPAQUE,
@@ -175,7 +175,7 @@ def test_toggle_on_auto_approves_a_project_delete(monkeypatch: pytest.MonkeyPatc
     assert approved[0].decision_by == "system"
     assert approved[0].decision_note == line
 
-    mapped = _cli_action_result(agent, result, command="rm notes.txt")
+    mapped = map_cli_result(agent, result, command="rm notes.txt")
     assert mapped["audit"] == line
     assert mapped["approved_by"] == "system"
 

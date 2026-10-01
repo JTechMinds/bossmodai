@@ -1,4 +1,4 @@
-"""Shared turn helpers: repair prompts, traces, CLI results, skip/finalize."""
+"""Shared turn helpers: repair prompts, traces, CLI status lines, skip/finalize."""
 
 from __future__ import annotations
 
@@ -287,100 +287,6 @@ def _build_step_trace(
         "duration_ms": duration_ms,
         "error": error,
     }
-
-def _cli_result_to_turn_result(
-    agent: Agent,
-    cli_result,
-    trigger: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    """Convert one BossMod CLI result into the standard turn-local action result."""
-    from core.agent_loop.blocked_origin import surface_cli_gate_block
-    from core.agent_loop.liveness import cli_result_counts_as_progress
-    from core.models.host_path_consent import consent_turn_event
-
-    result = {
-        "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
-        "detail": cli_result.detail,
-        "agent_name": agent.name,
-        "cli_prompt_content": cli_result.prompt_content,
-        "cli_image_paths": list(cli_result.image_paths),
-        "cli_summary": cli_result.summary,
-        "counts_as_progress": cli_result_counts_as_progress(cli_result),
-        "suppress_world_broadcast": True,
-        "suppress_activity_broadcast": True,
-    }
-    surface_cli_gate_block(
-        result, agent=agent, trigger=trigger, cli_result=cli_result
-    )
-    cli_data = cli_result.data or {}
-    if cli_data.get("managed_writer_attempted") or cli_data.get("managed_writer_used"):
-        call_count = int(cli_data.get("managed_calls") or cli_data.get("managed_chunks") or 0)
-        completed = bool(cli_data.get("managed_writer_completed") or cli_data.get("managed_writer_used"))
-        strategy = str(cli_data.get("managed_strategy") or "managed")
-        strategy_label = strategy.replace("_", "-")
-        section_count = int(cli_data.get("managed_sections") or 0)
-        batch_file_count = int(cli_data.get("batch_file_count") or 0)
-        section_suffix = (
-            f", {section_count} section{'s' if section_count != 1 else ''}"
-            if section_count > 0 and strategy == "sectioned"
-            else ""
-        )
-        if batch_file_count > 0:
-            suffix = (
-                f"via batch writer ({batch_file_count} file{'s' if batch_file_count != 1 else ''}, "
-                f"{call_count} call{'s' if call_count != 1 else ''}, {strategy_label}{section_suffix})"
-                if completed
-                else (
-                    f"after batch writer attempt ({batch_file_count} file{'s' if batch_file_count != 1 else ''}, "
-                    f"{call_count} call{'s' if call_count != 1 else ''}, {strategy_label}{section_suffix})"
-                )
-            )
-        else:
-            suffix = (
-                f"via managed writer ({strategy_label}, {call_count} call{'s' if call_count != 1 else ''}{section_suffix})"
-                if completed
-                else f"after managed writer attempt ({strategy_label}, {call_count} call{'s' if call_count != 1 else ''}{section_suffix})"
-            )
-        result["detail"] = f"{cli_result.detail} {suffix}"
-        result["managed_writer"] = {
-            "attempted": True,
-            "used": bool(cli_data.get("managed_writer_used")),
-            "completed": completed,
-            "strategy": strategy,
-            "calls": call_count,
-            "chunks": call_count,
-            "sections": section_count,
-            "bytes": int(cli_data.get("managed_bytes") or 0),
-            "prompt_tokens": int(cli_data.get("managed_prompt_tokens") or 0),
-            "completion_tokens": int(cli_data.get("managed_completion_tokens") or 0),
-            "total_tokens": int(cli_data.get("managed_total_tokens") or 0),
-        }
-    if cli_data.get("batch_writer_attempted") or cli_data.get("batch_writer_used"):
-        result["batch_writer"] = {
-            "attempted": True,
-            "used": bool(cli_data.get("batch_writer_used")),
-            "completed": bool(cli_data.get("batch_writer_completed") or cli_data.get("batch_writer_used")),
-            "file_count": int(cli_data.get("batch_file_count") or 0),
-            "files": cli_data.get("batch_files") or [],
-        }
-    if getattr(cli_result, "approval_required", False):
-        card = cli_data.get("cli_approval") if isinstance(cli_data.get("cli_approval"), dict) else {}
-        result["approval_required"] = True
-        result["approval_request_id"] = getattr(cli_result, "approval_request_id", None)
-        result["cli_approval"] = card
-        result["event"] = "cli_approval_required"
-        result["suppress_activity_broadcast"] = False
-    if getattr(cli_result, "consent_required", False):
-        card = cli_data.get("host_path_consent") if isinstance(cli_data.get("host_path_consent"), dict) else {}
-        result["consent_required"] = True
-        result["consent_request_id"] = getattr(cli_result, "consent_request_id", None)
-        result["consent_reused"] = bool(cli_data.get("consent_reused"))
-        result["host_path_consent"] = card
-        event, detail = consent_turn_event(agent.name, card)
-        result["event"] = event
-        result["detail"] = detail
-        result["suppress_activity_broadcast"] = False
-    return result
 
 def _build_managed_writer_progress_reporter(
     agent: Agent,

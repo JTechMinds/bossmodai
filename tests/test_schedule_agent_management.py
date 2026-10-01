@@ -2,8 +2,8 @@
 
 The service rules for both actors, the migration of the two new columns,
 the agent's ``schedules`` subcommands end to end through ``execute_bm_cli``,
-the operator's DM note and reload for every change, and the worker's
-announcement of an agent change.
+the operator's DM note, declared activity and reload for every change, and
+the worker's reload, which only syncs (Revision 7).
 """
 
 from __future__ import annotations
@@ -139,15 +139,13 @@ def test_the_operator_can_change_the_lock() -> None:
     assert edited.title == "Mine now"
 
 
-def test_request_reload_deduplicates_and_an_agent_change_names_its_agent() -> None:
+def test_request_reload_always_deduplicates_and_carries_no_announcement() -> None:
+    service.request_reload()
     service.request_reload()
     service.request_reload()
     assert _reloads() == [{}]
-    service.request_reload(changed_agent_id="a1", detail="Ada changed it")
-    # Order-free: two rows written in one second have no stable order.
-    assert sorted(_reloads(), key=len) == [{}, {"agent_id": "a1", "detail": "Ada changed it"}]
-    with pytest.raises(ValueError):
-        service.request_reload(changed_agent_id="a1")
+    with pytest.raises(TypeError):
+        service.request_reload(changed_agent_id="a1", detail="Ada changed it")
 
 
 # ─── Migration ───
@@ -227,11 +225,14 @@ def test_add_edit_off_on_remove_end_to_end_with_notes_and_reloads() -> None:
         'Ada switched on "Ping": Every day, every 5 minutes',
         'Ada removed "Ping": Every day, every 5 minutes',
     ]
-    # Every change asked the worker to sync, naming the agent for its desk.
-    assert [item["agent_id"] for item in _reloads()] == [ada.id] * 5
-    assert sorted(item["detail"] for item in _reloads()) == sorted([
-        'Ada scheduled "Ping the operator": Every day, every 5 minutes', *notes,
-    ])
+    # Every change asked the worker to sync (one open row: no worker claimed it)...
+    assert _reloads() == [{}]
+    # ...and declares the desk's repaint for the turn to broadcast.
+    activities = [result.data["activity"] for result in (added, edited, off, on, removed)]
+    assert activities == [
+        {"event": "schedule_changed", "detail": detail, "extra": {"agent_id": ada.id, "schedule_id": schedule.id}}
+        for detail in ['Ada scheduled "Ping the operator": Every day, every 5 minutes', *notes]
+    ]
 
 
 def test_list_is_the_default_and_shows_short_ids() -> None:
@@ -312,7 +313,7 @@ def test_usage_errors_list_the_forms() -> None:
         assert "schedules remove <id>" in result.prompt_content, command
 
 
-# ─── The worker announces an agent change ───
+# ─── The worker's reload only syncs ───
 
 
 class _Sink(NullRuntimeEventSink):
@@ -323,7 +324,7 @@ class _Sink(NullRuntimeEventSink):
         self.activities.append({"event": event, "detail": detail, "agent_name": agent_name, "extra": extra})
 
 
-async def test_the_worker_syncs_and_announces_an_agent_change(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_the_worker_reload_syncs_and_announces_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     from core.runtime import worker
 
     reloads: list[str] = []
@@ -331,14 +332,10 @@ async def test_the_worker_syncs_and_announces_an_agent_change(monkeypatch: pytes
     sink = _Sink()
     runtime_events.set_sink(sink)
     try:
-        ada = db.create_agent("Ada", role="Operator")
         controller = worker.RuntimeController()
-        await controller.reload_schedules({})
-        await controller.reload_schedules({"agent_id": ada.id, "detail": 'Ada scheduled "Ping": Every day'})
+        await controller.reload_schedules()
+        await controller.reload_schedules()
     finally:
         runtime_events.set_sink(NullRuntimeEventSink())
     assert reloads == ["reload", "reload"]
-    assert sink.activities == [{
-        "event": "schedule_changed", "detail": 'Ada scheduled "Ping": Every day', "agent_name": "Ada",
-        "extra": {"agent_id": ada.id},
-    }]
+    assert sink.activities == []

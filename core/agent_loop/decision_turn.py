@@ -16,6 +16,7 @@ from core.agent_loop.decision_contract import (
 )
 from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
+from core.agent_loop.cli_turn_result import broadcast_cli_side_effects, map_cli_result
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.decision_parse_fail import (
     decision_repair_attempt_limit,
@@ -38,7 +39,6 @@ from core.agent_loop.turn_helpers import (
     _build_decision_timeout_repair_messages,
     _build_managed_writer_progress_reporter,
     _build_step_trace,
-    _cli_result_to_turn_result,
     _finalize_turn,
     _serialize_trace_value,
     _summarize_action_chain,
@@ -492,9 +492,11 @@ async def _run_decision_turn(
                 )
 
             cli_turn_result = {
-                **_cli_result_to_turn_result(agent, cli_result, trigger=trigger),
+                **map_cli_result(agent, cli_result, command=cli_call.command, trigger=trigger),
                 "command": cli_result.command,
             }
+            # The step's activity and operator lines, live, before any pause.
+            await broadcast_cli_side_effects(manager, cli_turn_result, agent=agent)
             step_traces.append(
                 _build_step_trace(
                     step_index=len(step_traces) + 1,
@@ -595,6 +597,7 @@ async def _run_decision_turn(
                     action_name="request_host_access",
                 )
             host_result = await execute_action(host_call.model_dump(), agent, state, trigger)
+            await broadcast_cli_side_effects(manager, host_result, agent=agent)
             step_traces.append(
                 _build_step_trace(
                     step_index=len(step_traces) + 1,
@@ -797,7 +800,7 @@ async def _run_decision_turn(
                 desk_path=channel_message.get("desk_path"),
                 task_id=channel_message.get("task_id"),
             )
-        await broadcast_origin_status_messages(result, agent=agent)
+        await broadcast_origin_status_messages(result, agent=agent, sink=manager)
 
         step_traces.append(
             _build_step_trace(
@@ -986,7 +989,12 @@ async def _finalize_origin_chrome_pause(
     result: dict[str, Any],
     start: float,
 ) -> TurnOutcome:
-    """Project origin chrome (Approve or consent) and end the decision turn."""
+    """Project origin chrome (Approve or consent) and end the decision turn.
+
+    The step's activity and lines already went out through
+    ``broadcast_cli_side_effects`` (called after every CLI step), so this
+    only projects the card.
+    """
     del state
     await emit_chat_notifications(
         agent=agent,
@@ -994,11 +1002,6 @@ async def _finalize_origin_chrome_pause(
         active_activity=activity_runtime.get_active_activity(agent.id),
         action=action,
         result=result,
-    )
-    await manager.broadcast_activity(
-        event=result.get("event", "host_path_consent_required"),
-        detail=result.get("detail", ""),
-        agent_name=result.get("agent_name"),
     )
     return await _finalize_turn(
         agent=agent,

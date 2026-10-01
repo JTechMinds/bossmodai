@@ -181,17 +181,23 @@ async def emit_chat_notifications(
             await manager.broadcast_feed_update(chat_notification["feed_entry"])
 
 
-async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Agent) -> None:
-    """Broadcast extra origin-thread lines that did not become the primary reply."""
-    from core.runtime.events import runtime_events as manager
+async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Agent, sink: Any) -> None:
+    """Broadcast extra origin-thread lines that did not become the primary reply.
 
+    Args:
+        result: A turn result; its ``origin_status_messages`` are sent, except
+            the entry that is its ``channel_message`` / ``chat_message`` (the
+            caller broadcasts that one itself).
+        agent: The turn's agent; a line's default author name.
+        sink: Where to broadcast: the worker's ``runtime_events`` in a turn.
+    """
     primary_channel = result.get("channel_message")
     primary_chat = result.get("chat_message")
     for extra in result.get("origin_status_messages") or []:
         if extra is primary_channel or extra is primary_chat:
             continue
         if extra.get("channel_id"):
-            await manager.broadcast_channel_message(
+            await sink.broadcast_channel_message(
                 channel_id=extra["channel_id"],
                 content=extra["content"],
                 author_type=extra.get("author_type") or "system",
@@ -205,7 +211,7 @@ async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Age
             )
             continue
         if extra.get("agent_id"):
-            await manager.broadcast_chat_message(
+            await sink.broadcast_chat_message(
                 agent_id=extra["agent_id"],
                 content=extra["content"],
                 from_type=extra.get("from_type") or "system",

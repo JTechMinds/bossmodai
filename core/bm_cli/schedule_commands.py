@@ -62,7 +62,8 @@ def handle_schedules(
     Returns:
         A ``success_result`` of kind ``schedules`` (for a change, the stored
         schedule's list line, with the operator's DM note under
-        ``data["origin_chrome"]`` for the turn to broadcast), or an
+        ``data["origin_chrome"]`` and the ``schedule_changed`` activity under
+        ``data["activity"]`` for the turn to broadcast), or an
         ``error_result``: usage (listing the forms), a body that is not a JSON
         object, the validation sentences, an unknown, too-short or ambiguous
         id, or the operator's locked message, exactly.
@@ -141,11 +142,25 @@ def _change(
 def _changed(
     context: CliExecutionContext, parsed: ParsedCliCommand, verb: AgentScheduleVerb, schedule: AgentSchedule,
 ) -> BossModCliResult:
-    """Sync the worker, note the change in the operator's DM, and answer with the schedule."""
+    """Sync the worker, note the change in the operator's DM, and answer with the schedule.
+
+    The note and the desk's ``schedule_changed`` repaint are declared on the
+    result (``origin_chrome``, ``activity``; see
+    core/agent_loop/cli_turn_result.py) for the turn to broadcast: this
+    handler runs off the event loop.
+    """
     line = agent_change_line(context.agent, verb, schedule)
-    service.request_reload(changed_agent_id=context.agent.id, detail=line)
+    service.request_reload()
     posted = note_agent_change(context.agent, verb, schedule)
-    data: dict[str, Any] = {"action": verb, "schedule_id": schedule.id}
+    data: dict[str, Any] = {
+        "action": verb,
+        "schedule_id": schedule.id,
+        "activity": {
+            "event": "schedule_changed",
+            "detail": line,
+            "extra": {"agent_id": context.agent.id, "schedule_id": schedule.id},
+        },
+    }
     chrome = posted.get("chat_message")
     if chrome:
         data["origin_chrome"] = chrome

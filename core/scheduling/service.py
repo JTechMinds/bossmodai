@@ -203,30 +203,18 @@ def delete_schedule(schedule_id: str, *, actor: ScheduleActor) -> AgentSchedule:
     return schedule
 
 
-def request_reload(*, changed_agent_id: str | None = None, detail: str | None = None) -> None:
+def request_reload() -> None:
     """Ask the runtime worker to sync its schedule timetable with the database.
 
     Writes a ``reload_schedules`` runtime command, whatever process calls
-    it; the worker's command loop applies it within its poll. Without
-    ``changed_agent_id`` it is de-duplicated (a burst of edits is one sync).
-    With it (an agent's own change, made where nothing can broadcast), every
-    request is its own row, because the worker also announces
-    ``schedule_changed`` for that agent from it so the desk repaints. A row
-    written while no worker runs is harmless: a starting worker clears open
-    commands and loads every schedule fresh.
-
-    Args:
-        changed_agent_id: The agent whose schedules an agent change touched.
-        detail: The announcement's sentence; required with ``changed_agent_id``.
-
-    Raises:
-        ValueError: ``changed_agent_id`` without ``detail``, or the reverse.
+    it; the worker's command loop applies it within its poll. It is
+    de-duplicated: while one is still open, another request adds nothing
+    (a burst of edits is one sync). It only syncs; telling the UI about a
+    change is the caller's job (the API route's broadcast, or an agent
+    command's declared ``activity``). A row written while no worker runs is
+    harmless: a starting worker clears open commands and loads every
+    schedule fresh.
     """
-    if bool(changed_agent_id) != bool(detail):
-        raise ValueError("changed_agent_id and detail go together")
-    if changed_agent_id:
-        db.create_runtime_command(RELOAD_COMMAND, {"agent_id": changed_agent_id, "detail": detail})
-        return
     if not db.has_open_runtime_command([RELOAD_COMMAND]):
         db.create_runtime_command(RELOAD_COMMAND)
 

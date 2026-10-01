@@ -9,7 +9,7 @@ from core.agent_loop import decision_runtime, loop
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
 from core.agent_loop.decision_turn import _is_decision_turn, _run_decision_turn
 from core.agent_loop.execution_turn import _run_execution_turn
-from core.agent_loop.loop import _cli_result_to_turn_result, run_turn
+from core.agent_loop.loop import run_turn
 from core.agent_loop.turn_context import (
     _COMMUNICATION_TRIGGER_TYPES,
     _DECISION_TRIGGER_TYPES,
@@ -19,7 +19,6 @@ from core.agent_loop.turn_context import (
 from core.agent_loop.turn_helpers import (
     _build_decision_repair_messages,
     _build_execution_repair_messages,
-    _cli_result_to_turn_result as helpers_cli_result,
     _summarize_action_chain,
 )
 
@@ -30,7 +29,6 @@ def test_public_exports_still_import_from_loop_and_decision_runtime() -> None:
     assert callable(summarize_decision)
     assert run_turn is loop.run_turn
     assert apply_decision is decision_runtime.apply_decision
-    assert _cli_result_to_turn_result is helpers_cli_result
 
 
 def test_decision_and_execution_loops_live_outside_router() -> None:
@@ -116,16 +114,20 @@ def test_repair_builders_keep_roles_and_error() -> None:
     assert "bad act" in execution_msgs[0]["content"]
 
 
-def test_cli_result_helper_still_imported_from_loop() -> None:
-    cli_result = SimpleNamespace(
+def test_both_turn_types_map_cli_results_with_the_one_mapper() -> None:
+    from core.agent_loop import actions_cli, decision_turn, execution_turn
+    from core.agent_loop.cli_turn_result import map_cli_result
+    from core.bm_cli.types import BossModCliResult
+
+    assert decision_turn.map_cli_result is execution_turn.map_cli_result is actions_cli.map_cli_result is map_cli_result
+    cli_result = BossModCliResult(
+        command="cat notes.md",
         ok=True,
         detail="read notes.md",
         prompt_content="BOSSMOD CLI RESULT\ncommand: cat notes.md\n\nSTDOUT:\nok",
         data={},
-        image_paths=(),
-        summary=None,
     )
-    result = _cli_result_to_turn_result(SimpleNamespace(name="Ada"), cli_result)
+    result = map_cli_result(SimpleNamespace(name="Ada"), cli_result, command="cat notes.md")
     assert result["event"] == "bm_cli_result"
     assert result["cli_prompt_content"] == cli_result.prompt_content
     assert result["suppress_world_broadcast"] is True

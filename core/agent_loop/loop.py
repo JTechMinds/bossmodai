@@ -39,7 +39,6 @@ from core.agent_loop.turn_context import (
 from core.agent_loop.work_binding import bind_turn, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, mark_restored, restore_work_turn
 from core.agent_loop.turn_helpers import (
-    _cli_result_to_turn_result,
     _finalize_turn,
     _skip_turn,
 )
@@ -50,8 +49,7 @@ import db
 
 logger = logging.getLogger(__name__)
 
-# Re-export for existing tests (HA-SEC-P1-01).
-__all__ = ["run_turn", "_cli_result_to_turn_result"]
+__all__ = ["run_turn"]
 
 
 async def run_turn(

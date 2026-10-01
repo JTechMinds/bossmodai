@@ -52,24 +52,14 @@ class RuntimeController:
     async def wake_dispatcher(self) -> None:
         dispatcher.notify()
 
-    async def reload_schedules(self, payload: dict[str, Any]) -> None:
-        """Sync the schedule timetable, and announce an agent's own change.
+    async def reload_schedules(self) -> None:
+        """Sync the schedule timetable with the database.
 
         The command comes from ``core.scheduling.service.request_reload``.
-        When an agent changed its schedules (its CLI runs off the loop, where
-        nothing can broadcast), the payload names it and the sentence, and
-        ``schedule_changed`` goes out here so its desk repaints.
+        It carries no payload and announces nothing: the change's own caller
+        tells the UI.
         """
         schedule_watch.reload()
-        agent_id = payload.get("agent_id")
-        if agent_id:
-            agent = db.get_agent(agent_id)
-            await runtime_events.broadcast_activity(
-                event="schedule_changed",
-                detail=str(payload["detail"]),
-                agent_name=agent.name if agent is not None else None,
-                extra={"agent_id": agent_id},
-            )
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         await dispatcher.reset_agent(agent_id)
@@ -221,7 +211,7 @@ class RuntimeWorker:
             await self._controller.resume()
             return
         if command_type == "reload_schedules":
-            await self._controller.reload_schedules(payload)
+            await self._controller.reload_schedules()
             return
         if command_type == "reset_agent_runtime":
             await self._controller.reset_agent_runtime(payload["agent_id"])

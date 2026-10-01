@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from core.agent_loop.loop import _cli_result_to_turn_result
+from core.agent_loop.cli_turn_result import map_cli_result
 from core.bm_cli.results import (
     CLI_TOOL_RESULT_BEGIN,
     CLI_TOOL_RESULT_END,
@@ -16,6 +16,7 @@ from core.bm_cli.results import (
     lint_source_for_system_role_cli_wrap,
     wrap_cli_tool_message,
 )
+from core.bm_cli.types import BossModCliResult
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 _SCAN_ROOTS = (
@@ -43,16 +44,15 @@ def test_wrap_cli_tool_message_rejects_system_role() -> None:
 
 
 def test_cli_continuation_builder_never_emits_system_for_cli_output() -> None:
-    cli_result = SimpleNamespace(
+    cli_result = BossModCliResult(
+        command="cat notes.md",
         ok=True,
         detail="read notes.md",
         prompt_content="BOSSMOD CLI RESULT\ncommand: cat notes.md\n\nSTDOUT:\nsecret sauce",
         data={},
-        image_paths=(),
-        summary=None,
     )
     agent = SimpleNamespace(name="Ada")
-    turn_result = _cli_result_to_turn_result(agent, cli_result)
+    turn_result = map_cli_result(agent, cli_result, command="cat notes.md")
 
     assert turn_result["cli_prompt_content"] == cli_result.prompt_content
     assert "role" not in turn_result
