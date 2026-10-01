@@ -22,7 +22,7 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
 from core.agent_loop.channel_rounds import begin_channel_response
 from core.agent_loop.decision_runtime import apply_decision
-from core.agent_loop.dispatcher import TurnDispatcher
+from core.agent_loop.dispatcher import RETRIES_EXHAUSTED_STALL_REASON, TurnDispatcher
 from core.agent_loop.notifications import emit_chat_notifications, project_chat_notifications
 from core.agent_loop.task_origin_mirrors import (
     format_done_claim_label,
@@ -673,6 +673,7 @@ async def test_retry_exhaustion_stall_posts_to_origin_channel() -> None:
         agent=jimothy,
         failure_detail="CLI timed out",
         task=creation.task,
+        stall_reason=RETRIES_EXHAUSTED_STALL_REASON,
     )
     messages = db.list_channel_messages(channel.id)
     assert any((item.content or "").startswith(_named(jimothy, "Stalled —")) for item in messages)

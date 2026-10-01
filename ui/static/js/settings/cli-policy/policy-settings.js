@@ -56,6 +56,7 @@ const BossModCliPolicySettings = (() => {
             label: 'Host workspace roots',
             description: 'Optional extra directories a named absolute path may open, read, or edit. One absolute directory per line. Empty means no extra host access — Company Files stays the shared project workspace outside the application install. This is not a full host mount. / , /etc, /proc, /sys, /dev, and /root are rejected.',
             type: 'textarea',
+            placeholder: '/home/you/src',
         },
         cli_no_retry_commands: {
             order: 70,
@@ -137,7 +138,7 @@ const BossModCliPolicySettings = (() => {
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
                     <textarea data-cli-setting-input="${escAttr(s.key)}" rows="4"
                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono"
-                              placeholder="/home/you/src">${esc(s.value || '')}</textarea>`;
+                              ${meta.placeholder ? `placeholder="${escAttr(meta.placeholder)}"` : ''}>${esc(s.value || '')}</textarea>`;
             } else {
                 html += `
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>

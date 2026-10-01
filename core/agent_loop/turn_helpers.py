@@ -478,6 +478,38 @@ async def announce_extension_result(agent: Agent, data: dict[str, Any] | None) -
         await manager.broadcast_extension_live(ext_id, agent.id)
 
 
+def record_retry_block(trigger: dict[str, Any], result: dict[str, Any]) -> bool:
+    """Return whether a step's result blocks retry, persisting it on the trigger row.
+
+    A result blocks retry when a command marked no-retry reached its handler
+    (``result["blocks_retry"]``, set by ``map_cli_result``). The fact is
+    written to the trigger row at once (``db.mark_trigger_retry_blocked``),
+    because crash recovery (an exception escaping the turn, or a dead
+    worker) runs after the turn's local state is gone. Callers short-circuit
+    (``retry_blocked or record_retry_block(...)``) so the row is written once.
+
+    A trigger dict without ``trigger_id`` has no row to mark; only the
+    return value is used then. The dispatcher always sets it, so this is
+    only a direct ``run_turn`` call (tests).
+
+    Args:
+        trigger: The turn's trigger dict.
+        result: The step's mapped result.
+
+    Returns:
+        Whether this result blocks a retry.
+
+    Raises:
+        LookupError: ``trigger_id`` names no trigger row.
+    """
+    if not result.get("blocks_retry"):
+        return False
+    trigger_id = trigger.get("trigger_id")
+    if isinstance(trigger_id, str) and trigger_id:
+        db.mark_trigger_retry_blocked(trigger_id)
+    return True
+
+
 async def _skip_turn(
     agent: Agent,
     trigger: dict[str, Any],

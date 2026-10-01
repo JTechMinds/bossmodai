@@ -51,6 +51,15 @@ _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "s
 _REBUILDABLE_BACKLOG_TRIGGER_TYPES = ["task_assigned", "activity_resumed", "watchdog_status_ping", "social"]
 _WORK_REPLAN_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 LEASE_HEARTBEAT_SECONDS = 10.0
+# Why a failed trigger was given up on: shown in the stalled task's reason,
+# its status note and the operator's stall notice.
+RETRIES_EXHAUSTED_STALL_REASON = "Runtime exhausted automatic retries"
+NOT_RETRIED_NO_REPEAT_REASON = "Not retried (a command that must not repeat had already run)"
+NOT_RETRIED_ATTACHMENT_REASON = "Not retried (an attached file is no longer available)"
+_BLOCKED_ORPHAN_DETAIL = (
+    "The runtime stopped during a turn that had already run a command that must not repeat, "
+    "so it was not restarted"
+)
 
 
 def _runtime_is_paused() -> bool:
@@ -86,6 +95,9 @@ class TurnDispatcher:
         # -> agent_name, so a waiter whose trigger vanished gets its idle.
         self._painted_queued: dict[tuple[str, str | None], str] = {}
         self._social_timers: dict[str, asyncio.TimerHandle] = {}
+        # Claimed orphans whose turn already ran a no-retry command, found by
+        # start() and failed once by _loop (start() is sync; failing is async).
+        self._blocked_orphans: list[Any] = []
 
     def start(self) -> None:
         if self._running:
@@ -96,6 +108,9 @@ class TurnDispatcher:
         recovered = db.requeue_stale_triggers(claim_timeout, force=True)
         if recovered:
             logger.warning("Requeued %d stale claimed triggers", recovered)
+        # Left claimed by the requeue: re-running them would replay a command
+        # that must not repeat. _loop fails them before its first claim.
+        self._blocked_orphans = db.list_claimed_retry_blocked_triggers()
         # After the requeue, so recovered triggers count as live: a round
         # with no queued or claimed trigger can never advance again. Rounds
         # younger than the claim timeout are left alone: the app process may
@@ -260,14 +275,19 @@ class TurnDispatcher:
         agent: Any,
         failure_detail: str,
         task: Any | None,
+        stall_reason: str,
         subject: str = "the request",
     ) -> None:
         """Persist and broadcast a requester-visible stuck notice.
 
         Args:
-            agent: The agent whose trigger exhausted its retries.
+            agent: The agent whose trigger was given up on.
             failure_detail: The short last-error text.
             task: The stalled task; ``None`` for a trigger with no task.
+            stall_reason: Why the trigger was given up on
+                (``RETRIES_EXHAUSTED_STALL_REASON`` or one of the
+                ``NOT_RETRIED_*_REASON`` constants); prefixes the stalled
+                task's status line.
             subject: What the agent was handling, named in the task-less
                 notice (a chat is "the request"; a detached trigger is not).
         """
@@ -276,7 +296,7 @@ class TurnDispatcher:
                 kind="stalled",
                 agent=agent,
                 task=task,
-                reason=f"Runtime exhausted automatic retries: {failure_detail}",
+                reason=f"{stall_reason}: {failure_detail}",
             )
         else:
             content = (
@@ -327,8 +347,25 @@ class TurnDispatcher:
         agent: Any,
         trigger: dict[str, Any],
         failure_detail: str,
+        stall_reason: str,
     ) -> None:
-        """Fail the trigger permanently, reconcile state, and surface the stall."""
+        """Fail the trigger permanently, reconcile state, and surface the stall.
+
+        Args:
+            agent: The trigger's agent.
+            trigger: The dispatcher's trigger dict (``trigger_id`` required).
+            failure_detail: The short last-error text, stored on the row.
+            stall_reason: Why the trigger is given up on:
+                ``RETRIES_EXHAUSTED_STALL_REASON`` when retries ran out, or
+                the ``NOT_RETRIED_*_REASON`` constant naming why it was never
+                retryable (``NOT_RETRIED_NO_REPEAT_REASON`` also for an
+                orphan recovered after a crash). Used in the stalled task's
+                reason, status note, cancelled-activity detail and the
+                operator's notice.
+
+        A stale claim generation (the row was requeued and reclaimed) is
+        logged at warning and nothing else is touched.
+        """
         trigger_id = trigger["trigger_id"]
         claim_generation = self._claim_generation_for(trigger)
         failed = db.fail_agent_trigger(
@@ -350,18 +387,20 @@ class TurnDispatcher:
             transition_task(
                 task.id,
                 "stalled",
-                reason=f"Runtime exhausted automatic retries: {failure_detail}",
+                reason=f"{stall_reason}: {failure_detail}",
                 actor="BossMod",
-                status_note=f"Runtime exhausted automatic retries: {failure_detail}",
+                status_note=f"{stall_reason}: {failure_detail}",
                 watchdog_pinged_at=None,
             )
             db.cancel_open_activities(
                 agent.id,
-                detail=f"Cancelled after retry exhaustion: {failure_detail}",
+                detail=f"Cancelled ({stall_reason}): {failure_detail}",
             )
             db.delete_agent_work_snapshots(agent.id)
             activity_runtime.refresh_agent_status(agent.id)
-            await self._notify_human_of_stuck_turn(agent=agent, failure_detail=failure_detail, task=task)
+            await self._notify_human_of_stuck_turn(
+                agent=agent, failure_detail=failure_detail, task=task, stall_reason=stall_reason,
+            )
             await manager.broadcast_activity(
                 event="task_stalled",
                 detail=f'Task "{task.title}" stalled after retry exhaustion',
@@ -385,6 +424,7 @@ class TurnDispatcher:
                 agent=agent,
                 failure_detail=failure_detail,
                 task=None,
+                stall_reason=stall_reason,
                 subject="an extension event",
             )
         else:
@@ -393,7 +433,9 @@ class TurnDispatcher:
                 detail=f"Turn failed while processing {trigger.get('type', 'trigger')}: {failure_detail}",
             )
             if trigger.get("type") == "human_chat":
-                await self._notify_human_of_stuck_turn(agent=agent, failure_detail=failure_detail, task=None)
+                await self._notify_human_of_stuck_turn(
+                    agent=agent, failure_detail=failure_detail, task=None, stall_reason=stall_reason,
+                )
         await manager.broadcast_activity(
             event="agent_error",
             detail=f"{agent.name} failed while processing a trigger",
@@ -410,13 +452,33 @@ class TurnDispatcher:
         agent: Any,
         trigger: dict[str, Any],
         failure_detail: str,
-        retryable: bool,
+        not_retried_reason: str | None,
     ) -> None:
-        """Route every failed turn through one retry-or-exhaust decision path."""
+        """Route every failed turn through one retry-or-exhaust decision path.
+
+        Args:
+            agent: The trigger's agent.
+            trigger: The dispatcher's trigger dict (``trigger_id`` required).
+            failure_detail: The last-error text; shortened before it is stored.
+            not_retried_reason: ``None`` when the failure may be retried.
+                Otherwise the ``NOT_RETRIED_*_REASON`` constant naming why it
+                must not be, decided by the caller that knows (the turn's
+                outcome, or the escaped exception and the row's
+                ``retry_blocked``).
+
+        A retryable failure under the retry limit is requeued. Otherwise the
+        trigger is failed through ``_exhaust_failed_trigger`` with
+        ``not_retried_reason`` as the stall reason, or
+        ``RETRIES_EXHAUSTED_STALL_REASON`` when retries ran out.
+        """
         normalized_detail = self._short_error_detail(failure_detail)
         trigger_record = db.get_agent_trigger(trigger["trigger_id"])
         retry_limit = self._retry_limit()
-        if retryable and trigger_record is not None and trigger_record.retry_count < retry_limit:
+        if (
+            not_retried_reason is None
+            and trigger_record is not None
+            and trigger_record.retry_count < retry_limit
+        ):
             retried = db.retry_agent_trigger(
                 trigger["trigger_id"],
                 normalized_detail,
@@ -451,6 +513,7 @@ class TurnDispatcher:
             agent=agent,
             trigger=trigger,
             failure_detail=normalized_detail,
+            stall_reason=not_retried_reason or RETRIES_EXHAUSTED_STALL_REASON,
         )
 
     def _release_channel_seat(self, agent_id: str, trigger: dict[str, Any]) -> None:
@@ -560,7 +623,45 @@ class TurnDispatcher:
         finally:
             self.notify()
 
+    async def _fail_blocked_orphans(self) -> None:
+        """Fail the claimed orphans ``start()`` found with ``retry_blocked`` set.
+
+        Each one's turn died after running a command that must not repeat,
+        so it is failed through ``_exhaust_failed_trigger`` (task stalled,
+        operator told) rather than re-run. A row whose agent no longer
+        exists is failed directly (its channel seat released, as at launch)
+        and logged at warning. A row whose handling raises is logged with
+        its traceback and the others are still processed; if it was not yet
+        failed it stays claimed, so the next start tries again.
+        """
+        orphans, self._blocked_orphans = self._blocked_orphans, []
+        for row in orphans:
+            try:
+                agent = db.get_agent(row.agent_id)
+                if agent is None:
+                    logger.warning(
+                        "Failing retry-blocked trigger %s: agent %s no longer exists",
+                        row.id,
+                        row.agent_id,
+                    )
+                    if db.fail_agent_trigger(
+                        row.id,
+                        _BLOCKED_ORPHAN_DETAIL,
+                        claim_generation=row.claim_generation,
+                    ) is not None:
+                        self._release_channel_seat(row.agent_id, _turn_trigger(row))
+                    continue
+                await self._exhaust_failed_trigger(
+                    agent=agent,
+                    trigger=_turn_trigger(row),
+                    failure_detail=_BLOCKED_ORPHAN_DETAIL,
+                    stall_reason=NOT_RETRIED_NO_REPEAT_REASON,
+                )
+            except Exception:
+                logger.exception("Could not fail retry-blocked trigger %s", row.id)
+
     async def _loop(self) -> None:
+        await self._fail_blocked_orphans()
         while self._running:
             try:
                 # Pick up settings another process wrote (one integer read per wake).
@@ -592,14 +693,7 @@ class TurnDispatcher:
 
     async def _launch_claimed_trigger(self, candidate: Any) -> bool:
         """Start one claimed trigger. False means the lane should be released."""
-        payload = json.loads(candidate.payload) if candidate.payload else {}
-        payload.update({
-            "type": candidate.trigger_type,
-            "trigger_id": candidate.id,
-            "task_id": candidate.task_id,
-            "source_channel": candidate.source_channel,
-            "claim_generation": candidate.claim_generation,
-        })
+        payload = _turn_trigger(candidate)
         if db.payload_targets_archived_channel(payload):
             db.complete_agent_trigger(
                 candidate.id,
@@ -951,8 +1045,9 @@ class TurnDispatcher:
                     trigger=trigger,
                     failure_detail=outcome.diagnostic_error or "Turn failed",
                     # The turn decides: a retry must not replay side effects
-                    # it already had (TurnOutcome.retryable).
-                    retryable=outcome.trigger_status == "failed" and outcome.retryable,
+                    # it already had (TurnOutcome.retryable). Its only reason
+                    # for False is a no-retry command (retry_blocked).
+                    not_retried_reason=None if outcome.retryable else NOT_RETRIED_NO_REPEAT_REASON,
                 )
 
         except Exception as exc:
@@ -966,13 +1061,11 @@ class TurnDispatcher:
                     )
                 else:
                     await self._record_dispatcher_exception(agent=agent, trigger=trigger, exc=exc)
-                    # A missing attachment file will not reappear on retry;
-                    # retrying only burns calls. It is still recorded above.
                     await self._supervise_failed_turn(
                         agent=agent,
                         trigger=trigger,
                         failure_detail=str(exc),
-                        retryable=not isinstance(exc, AttachmentUnavailableError),
+                        not_retried_reason=_escaped_not_retried_reason(trigger, exc),
                     )
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")
@@ -1153,6 +1246,59 @@ class TurnDispatcher:
                 "nearby_names": [eligible_peer["name"]],
             },
         )
+
+
+def _turn_trigger(row: Any) -> dict[str, Any]:
+    """Return the trigger dict a turn runs on, built from a claimed trigger row.
+
+    The row's JSON payload with the row's identity and claim laid over it.
+    Shared by the normal launch and start-up recovery, so a recovered
+    orphan is shaped exactly like the trigger its turn ran on.
+
+    Args:
+        row: A claimed ``AgentTrigger``.
+
+    Returns:
+        The payload plus ``type``, ``trigger_id``, ``task_id``,
+        ``source_channel`` and ``claim_generation``.
+
+    Raises:
+        json.JSONDecodeError: The stored payload is not valid JSON.
+    """
+    payload = json.loads(row.payload) if row.payload else {}
+    payload.update({
+        "type": row.trigger_type,
+        "trigger_id": row.id,
+        "task_id": row.task_id,
+        "source_channel": row.source_channel,
+        "claim_generation": row.claim_generation,
+    })
+    return payload
+
+
+def _escaped_not_retried_reason(trigger: dict[str, Any], exc: Exception) -> str | None:
+    """Return why a turn whose exception escaped must not be retried, or ``None``.
+
+    A missing attachment file will not reappear on retry, so retrying only
+    burns calls. A turn that ran a no-retry command recorded it on the row
+    before raising, and replaying it would repeat that command.
+    """
+    if isinstance(exc, AttachmentUnavailableError):
+        return NOT_RETRIED_ATTACHMENT_REASON
+    if _retry_blocked(trigger):
+        return NOT_RETRIED_NO_REPEAT_REASON
+    return None
+
+
+def _retry_blocked(trigger: dict[str, Any]) -> bool:
+    """Return whether the trigger's row records that a no-retry command ran.
+
+    Read from the row, not the turn: an exception that escaped the turn took
+    its local state with it. A missing row means ``False``: there is nothing
+    left to replay.
+    """
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    return row.retry_blocked if row is not None else False
 
 
 def _trigger_channel_id(trigger: Any) -> str | None:

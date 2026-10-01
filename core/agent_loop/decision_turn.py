@@ -44,6 +44,7 @@ from core.agent_loop.turn_helpers import (
     _summarize_action_chain,
     announce_extension_result,
     post_cli_status_lines,
+    record_retry_block,
 )
 from core.agent_loop.task_origins import consent_origin_channel_id
 from core.bm_cli import BossModCliCall, execute_bm_cli
@@ -105,8 +106,9 @@ async def _run_decision_turn(
     """Handle a single-turn direct request by producing a structured decision."""
     step_traces: list[dict[str, Any]] = []
     executed_actions: list[str] = []
-    # A failure exit is retried unless a command on the no-retry list
-    # (cli_no_retry_commands) ran this turn; nothing is frozen here.
+    # A failure exit is retried unless it ran a command marked no-retry (an
+    # extension manifest's command.no_retry or the operator's
+    # cli_no_retry_commands); nothing is frozen here.
     retry_blocked = False
     total_prompt_tokens = 0
     total_completion_tokens = 0
@@ -501,7 +503,7 @@ async def _run_decision_turn(
                 **map_cli_result(agent, cli_result, command=cli_call.command, trigger=trigger),
                 "command": cli_result.command,
             }
-            retry_blocked = retry_blocked or bool(cli_turn_result.get("blocks_retry"))
+            retry_blocked = retry_blocked or record_retry_block(trigger, cli_turn_result)
             # The step's activity and operator lines, live, before any pause.
             await broadcast_cli_side_effects(manager, cli_turn_result, agent=agent)
             step_traces.append(

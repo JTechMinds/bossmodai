@@ -605,6 +605,7 @@ CREATE TABLE IF NOT EXISTS agent_triggers (
     claimed_at     TIMESTAMP,
     claim_generation INTEGER NOT NULL DEFAULT 0,
     claim_lease    VARCHAR,
+    retry_blocked  BOOLEAN NOT NULL DEFAULT FALSE,
     completed_at   TIMESTAMP,
     failed_at      TIMESTAMP,
     created_at     TIMESTAMP DEFAULT current_timestamp

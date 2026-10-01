@@ -26,7 +26,7 @@ from core.agent_loop.channel_rounds import (
     finalize_channel_response,
     start_channel_peer_round,
 )
-from core.agent_loop.dispatcher import TurnDispatcher
+from core.agent_loop.dispatcher import RETRIES_EXHAUSTED_STALL_REASON, TurnDispatcher
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.task_origin_mirrors import persist_origin_status_line
 from core.messaging import route_human_channel_message
@@ -813,7 +813,10 @@ async def test_exhausted_channel_turn_releases_its_seat(monkeypatch) -> None:
         "trigger_id": claimed.id,
         "claim_generation": claimed.claim_generation,
     }
-    await TurnDispatcher()._exhaust_failed_trigger(agent=agent, trigger=payload, failure_detail="model down")
+    await TurnDispatcher()._exhaust_failed_trigger(
+        agent=agent, trigger=payload, failure_detail="model down",
+        stall_reason=RETRIES_EXHAUSTED_STALL_REASON,
+    )
     assert db.get_agent_trigger(claimed.id).status == "failed"
     seat = db.get_channel_response_candidate(round_id=round_id, agent_id=order[0])
     assert seat is not None and seat.status == "observed"

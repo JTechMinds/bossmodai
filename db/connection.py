@@ -246,6 +246,10 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "agent_triggers", "claim_lease", "VARCHAR",
     )
+    # Existing rows read FALSE: nothing recorded a no-retry command for them.
+    _add_column_if_missing(
+        con, "agent_triggers", "retry_blocked", "BOOLEAN NOT NULL DEFAULT FALSE",
+    )
     _add_column_if_missing(
         con, "agents", "done_fail_bar", "TEXT",
     )

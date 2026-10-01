@@ -13,7 +13,7 @@ import pytest
 
 import db
 from core import config
-from core.agent_loop.dispatcher import TurnDispatcher
+from core.agent_loop.dispatcher import NOT_RETRIED_NO_REPEAT_REASON, TurnDispatcher
 from core.agent_loop.outcomes import TurnOutcome
 
 
@@ -222,7 +222,7 @@ async def test_stale_supervise_retry_does_not_wreck_reclaimed_claim() -> None:
         agent=agent,
         trigger=stale,
         failure_detail="stale boom",
-        retryable=True,
+        not_retried_reason=None,
     )
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
@@ -246,7 +246,7 @@ async def test_stale_supervise_exhaust_does_not_fail_reclaimed_claim() -> None:
         agent=agent,
         trigger=stale,
         failure_detail="stale exhaust",
-        retryable=False,
+        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
     )
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
@@ -315,3 +315,127 @@ async def test_long_turn_heartbeats_then_completes(monkeypatch: pytest.MonkeyPat
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
     assert refreshed.status == "completed"
+
+
+# ─── retry_blocked: a turn that ran a no-retry command is never replayed ───
+
+
+def _claimed_blocked_trigger(agent_id: str):
+    row = _queued_trigger(agent_id)
+    claimed = db.claim_trigger(row.id)
+    assert claimed is not None
+    db.mark_trigger_retry_blocked(row.id)
+    return claimed
+
+
+def test_mark_trigger_retry_blocked_sets_the_flag_and_raises_on_a_missing_row() -> None:
+    agent = _create_agent()
+    row = _queued_trigger(agent.id)
+    assert db.get_agent_trigger(row.id).retry_blocked is False
+
+    db.mark_trigger_retry_blocked(row.id)
+
+    assert db.get_agent_trigger(row.id).retry_blocked is True
+    with pytest.raises(LookupError):
+        db.mark_trigger_retry_blocked("no-such-trigger")
+
+
+def test_force_requeue_leaves_a_blocked_orphan_claimed_and_lists_it() -> None:
+    agent = _create_agent()
+    blocked = _claimed_blocked_trigger(agent.id)
+    plain = db.claim_trigger(_queued_trigger(agent.id).id)
+    assert plain is not None
+
+    assert db.requeue_stale_triggers(300, force=True) == 1
+
+    assert db.get_agent_trigger(blocked.id).status == "claimed"
+    assert db.get_agent_trigger(plain.id).status == "queued"
+    assert [item.id for item in db.list_claimed_retry_blocked_triggers()] == [blocked.id]
+
+
+def test_stale_requeue_leaves_a_blocked_orphan_claimed() -> None:
+    agent = _create_agent()
+    blocked = _claimed_blocked_trigger(agent.id)
+    db.mark_runtime_worker_stopped(pid=os.getpid())
+    stale = datetime.now(timezone.utc) - timedelta(seconds=900)
+    db.execute("UPDATE agent_triggers SET claimed_at = $1 WHERE id = $2", [stale, blocked.id])
+
+    assert db.requeue_stale_triggers(1, force=False, worker_stale_after_seconds=15) == 0
+    assert db.get_agent_trigger(blocked.id).status == "claimed"
+
+
+def test_list_claimed_retry_blocked_triggers_skips_queued_and_failed_rows() -> None:
+    agent = _create_agent()
+    queued = _queued_trigger(agent.id)
+    db.mark_trigger_retry_blocked(queued.id)
+    failed = _claimed_blocked_trigger(agent.id)
+    db.fail_agent_trigger(failed.id, "done", claim_generation=failed.claim_generation)
+
+    assert db.list_claimed_retry_blocked_triggers() == []
+
+
+async def _start_until_first_drain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> tuple[TurnDispatcher, dict[str, str]]:
+    """Start a dispatcher, stop it at its first drain, and report row states then."""
+    seen: dict[str, str] = {}
+    drained = asyncio.Event()
+
+    async def _first_drain(self: TurnDispatcher) -> None:
+        for row in db.query("SELECT id, status FROM agent_triggers"):
+            seen[str(row["id"])] = str(row["status"])
+        drained.set()
+
+    monkeypatch.setattr(TurnDispatcher, "_drain_queue", _first_drain)
+    dispatcher = TurnDispatcher()
+    dispatcher.start()
+    await asyncio.wait_for(drained.wait(), timeout=5)
+    await dispatcher.stop()
+    return dispatcher, seen
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_start_fails_a_blocked_orphan_and_requeues_an_unblocked_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _create_agent()
+    blocked = _claimed_blocked_trigger(agent.id)
+    plain = db.claim_trigger(_queued_trigger(agent.id).id)
+    assert plain is not None
+    exhausted: list[dict[str, Any]] = []
+    real_exhaust = TurnDispatcher._exhaust_failed_trigger
+
+    async def _spy(self: TurnDispatcher, **kwargs: Any) -> None:
+        exhausted.append(kwargs)
+        await real_exhaust(self, **kwargs)
+
+    monkeypatch.setattr(TurnDispatcher, "_exhaust_failed_trigger", _spy)
+
+    _dispatcher, seen = await _start_until_first_drain(monkeypatch)
+
+    # Failed before the first claim, never requeued.
+    assert seen[blocked.id] == "failed"
+    assert seen[plain.id] == "queued"
+    row = db.get_agent_trigger(blocked.id)
+    assert row.retry_count == 0
+    assert row.failure_reason.startswith("The runtime stopped during a turn that had already run")
+    [call] = exhausted
+    assert call["stall_reason"] == NOT_RETRIED_NO_REPEAT_REASON
+    assert call["trigger"]["trigger_id"] == blocked.id
+    assert call["trigger"]["claim_generation"] == blocked.claim_generation
+    assert call["trigger"]["type"] == "human_chat" and call["trigger"]["content"] == "hello"
+    # The operator is told in chat (a human_chat trigger with no task).
+    assert any(item.from_agent == agent.id for item in db.get_human_chat_thread(agent.id))
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_start_fails_a_blocked_orphan_whose_agent_is_gone(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _create_agent()
+    blocked = _claimed_blocked_trigger(agent.id)
+    monkeypatch.setattr(db, "get_agent", lambda _agent_id: None)
+
+    _dispatcher, seen = await _start_until_first_drain(monkeypatch)
+
+    assert seen[blocked.id] == "failed"

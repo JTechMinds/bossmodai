@@ -42,6 +42,7 @@ from core.agent_loop.turn_helpers import (
     _summarize_action_chain,
     announce_extension_result,
     post_cli_status_lines,
+    record_retry_block,
 )
 from core.agent_loop.turn_rules import (
     should_end_turn_after_action,
@@ -255,8 +256,9 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried unless it ran a command on the no-retry list
-            # (cli_no_retry_commands) and has no frozen transcript to resume from.
+            # A failed turn is retried unless it ran a command marked no-retry (an
+            # extension manifest's command.no_retry or the operator's
+            # cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
@@ -370,8 +372,9 @@ async def _run_execution_turn(
             }
             await manager.broadcast_activity(**result)
             result["parse_steer"] = True
-            # A failed turn is retried unless it ran a command on the no-retry list
-            # (cli_no_retry_commands) and has no frozen transcript to resume from.
+            # A failed turn is retried unless it ran a command marked no-retry (an
+            # extension manifest's command.no_retry or the operator's
+            # cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
@@ -462,8 +465,9 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried unless it ran a command on the no-retry list
-            # (cli_no_retry_commands) and has no frozen transcript to resume from.
+            # A failed turn is retried unless it ran a command marked no-retry (an
+            # extension manifest's command.no_retry or the operator's
+            # cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,
@@ -573,7 +577,7 @@ async def _run_execution_turn(
                 )
             else:
                 result = await execute_action(action, agent, state, trigger, token_model=response.model)
-            retry_blocked = retry_blocked or bool(result.get("blocks_retry"))
+            retry_blocked = retry_blocked or record_retry_block(trigger, result)
         else:
             result = await execute_action(action, agent, state, trigger, token_model=response.model)
         active_task_id = bound_task_id(agent.id)
@@ -683,8 +687,9 @@ async def _run_execution_turn(
                 "agent_name": agent.name,
             }
             await manager.broadcast_activity(**result)
-            # A failed turn is retried unless it ran a command on the no-retry list
-            # (cli_no_retry_commands) and has no frozen transcript to resume from.
+            # A failed turn is retried unless it ran a command marked no-retry (an
+            # extension manifest's command.no_retry or the operator's
+            # cli_no_retry_commands) and has no frozen transcript to resume from.
             frozen = _freeze_if_live(
                 agent=agent,
                 work_activity=work_activity,

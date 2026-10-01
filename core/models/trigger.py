@@ -29,6 +29,9 @@ class AgentTrigger(BaseModel):
     claimed_at: datetime | None = None
     claim_generation: int = 0
     claim_lease: str | None = None
+    # A command marked no-retry ran during a turn on this trigger; crash
+    # recovery fails the row instead of replaying it.
+    retry_blocked: bool = False
     completed_at: datetime | None = None
     failed_at: datetime | None = None
     created_at: datetime

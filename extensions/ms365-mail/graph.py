@@ -493,7 +493,10 @@ def describe_graph_error(exc: GraphAuthError | GraphUnreachable | GraphHttpError
     if exc.status in (401, 403):
         return "MAILBOX_ACCESS_DENIED", exc.message
     if exc.status == 404:
-        return "MESSAGE_NOT_FOUND", 'that message is not in the inbox any more — run "mail inbox"'
+        return "MESSAGE_NOT_FOUND", (
+            'that message is no longer where it was (it may have been moved or deleted) — '
+            'find it again with "mail inbox", "mail search" or "mail sent"'
+        )
     if exc.status in (429, 503):
         wait = f"retry after {exc.retry_after}s" if exc.retry_after is not None else "retry later (no Retry-After given)"
         return "GRAPH_THROTTLED", wait

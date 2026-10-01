@@ -248,7 +248,7 @@ async def test_completion_expands_with_the_raw_model_before_the_provider_prefix(
 async def test_a_missing_attachment_fails_the_turn_without_retry(monkeypatch):
     import json as _json
 
-    from core.agent_loop.dispatcher import TurnDispatcher
+    from core.agent_loop.dispatcher import NOT_RETRIED_ATTACHMENT_REASON, TurnDispatcher
 
     agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
     row = db.create_agent_trigger(
@@ -268,15 +268,15 @@ async def test_a_missing_attachment_fails_the_turn_without_retry(monkeypatch):
         raise AttachmentUnavailableError("Attachment gone no longer exists")
 
     recorded: list[str] = []
-    supervised: list[bool] = []
+    supervised: list[str | None] = []
     real_record = TurnDispatcher._record_dispatcher_exception
 
     async def _record(self, *, agent, trigger, exc):
         recorded.append(str(exc))
         await real_record(self, agent=agent, trigger=trigger, exc=exc)
 
-    async def _supervise(self, *, agent, trigger, failure_detail, retryable):
-        supervised.append(retryable)
+    async def _supervise(self, *, agent, trigger, failure_detail, not_retried_reason):
+        supervised.append(not_retried_reason)
 
     monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _boom)
     monkeypatch.setattr(TurnDispatcher, "_record_dispatcher_exception", _record)
@@ -285,7 +285,7 @@ async def test_a_missing_attachment_fails_the_turn_without_retry(monkeypatch):
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
 
     assert recorded == ["Attachment gone no longer exists"]
-    assert supervised == [False]
+    assert supervised == [NOT_RETRIED_ATTACHMENT_REASON]
 
 
 # ─── attachment_route_line: what the thread router is told ───

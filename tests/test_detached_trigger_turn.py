@@ -18,7 +18,7 @@ import pytest
 import db
 from core import config
 from core.agent_loop import activity_runtime
-from core.agent_loop.dispatcher import TurnDispatcher
+from core.agent_loop.dispatcher import NOT_RETRIED_NO_REPEAT_REASON, TurnDispatcher
 from core.agent_loop.loop import run_turn
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.work_snapshot import freeze_work_turn
@@ -250,6 +250,57 @@ async def test_a_detached_turn_that_ran_a_listed_command_then_failed_is_exhauste
     [notice] = _operator_dms(agent.id)
     assert notice.startswith("I hit repeated runtime failures while handling an extension event")
     assert "your task is paused unchanged" in notice
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_ran_a_listed_command_then_raised_is_failed_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db.set_setting("cli_no_retry_commands", "status", "cli_policy")
+    agent, task, activity = _working_agent_with_snapshot()
+    before = _live_state(task.id, activity.id)
+    calls = 0
+
+    async def _status_then_crash(**_kwargs: Any) -> LLMResponse:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return LLMResponse(content=_STATUS_STEP, model="test/mock", prompt_tokens=8, completion_tokens=4, total_tokens=12)
+        raise RuntimeError("provider crashed mid-turn")
+
+    monkeypatch.setattr("core.llm.client.completion", _status_then_crash)
+    trigger = _claimed_trigger(agent.id, "extension_event", _EVENT_PAYLOAD)
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    assert calls == 2
+    # The turn recorded the listed command on the row before it raised, so
+    # the exception path fails it at once instead of replaying `status`.
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.retry_blocked is True
+    assert row.status == "failed" and row.retry_count == 0
+    assert _live_state(task.id, activity.id) == before
+    [notice] = _operator_dms(agent.id)
+    assert notice.endswith("Last error: provider crashed mid-turn")
+
+
+@pytest.mark.asyncio
+async def test_a_turn_that_raised_without_a_listed_command_is_still_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _task_row, _activity = _working_agent_with_snapshot()
+
+    async def _boom(*_args: Any, **_kwargs: Any):
+        raise RuntimeError("Graph outage")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _boom)
+    trigger = _claimed_trigger(agent.id, "extension_event", _EVENT_PAYLOAD)
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.retry_blocked is False
+    assert row.status == "queued" and row.retry_count == 1
 
 
 @pytest.mark.asyncio
@@ -803,7 +854,8 @@ async def test_r4_detached_retry_exhaustion_leaves_the_live_work_and_tells_the_o
     trigger = _claimed_trigger(agent.id, "extension_event", _EVENT_PAYLOAD)
 
     await TurnDispatcher()._supervise_failed_turn(
-        agent=agent, trigger=trigger, failure_detail="Graph outage", retryable=False,
+        agent=agent, trigger=trigger, failure_detail="Graph outage",
+        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
     )
 
     assert db.get_agent_trigger(trigger["trigger_id"]).status == "failed"
@@ -822,12 +874,66 @@ async def test_r4_attached_retry_exhaustion_still_stalls_the_live_task() -> None
     trigger = _claimed_trigger(agent.id, "activity_resumed", {})
 
     await TurnDispatcher()._supervise_failed_turn(
-        agent=agent, trigger=trigger, failure_detail="model error", retryable=False,
+        agent=agent, trigger=trigger, failure_detail="model error",
+        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
     )
 
     assert db.get_task(task.id).status == "stalled"
     assert db.get_activity(activity.id).status == "cancelled"
     assert db.get_work_snapshot(activity.id) is None
+
+
+@pytest.mark.asyncio
+async def test_a_non_retryable_stall_says_not_retried() -> None:
+    agent, task, _activity = _working_agent_with_snapshot()
+    trigger = _claimed_trigger(agent.id, "activity_resumed", {})
+
+    await TurnDispatcher()._supervise_failed_turn(
+        agent=agent, trigger=trigger, failure_detail="model error",
+        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
+    )
+
+    stalled = db.get_task(task.id)
+    assert stalled.status == "stalled"
+    assert stalled.status_note == "Not retried (a command that must not repeat had already run): model error"
+
+
+@pytest.mark.asyncio
+async def test_retry_exhaustion_keeps_the_exhausted_wording() -> None:
+    agent, task, _activity = _working_agent_with_snapshot()
+    trigger = _claimed_trigger(agent.id, "activity_resumed", {})
+    _no_retries()
+
+    await TurnDispatcher()._supervise_failed_turn(
+        agent=agent, trigger=trigger, failure_detail="model error", not_retried_reason=None,
+    )
+
+    stalled = db.get_task(task.id)
+    assert stalled.status == "stalled"
+    assert stalled.status_note == "Runtime exhausted automatic retries: model error"
+
+
+@pytest.mark.asyncio
+async def test_a_missing_attachment_stall_names_the_attachment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.llm.attachment_parts import AttachmentUnavailableError
+
+    agent, task, _activity = _working_agent_with_snapshot()
+
+    async def _gone(*_args: Any, **_kwargs: Any):
+        raise AttachmentUnavailableError("Attachment gone no longer exists")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _gone)
+    trigger = _claimed_trigger(agent.id, "activity_resumed", {})
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.status == "failed" and row.retry_count == 0
+    stalled = db.get_task(task.id)
+    assert stalled.status == "stalled"
+    assert stalled.status_note == (
+        "Not retried (an attached file is no longer available): Attachment gone no longer exists"
+    )
 
 
 @pytest.mark.asyncio

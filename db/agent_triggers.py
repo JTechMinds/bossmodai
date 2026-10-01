@@ -15,7 +15,7 @@ from db.runtime_control import is_runtime_worker_live
 _TRIGGER_COLUMNS = (
     "id, agent_id, trigger_type, source_channel, payload, task_id, status, "
     "retry_count, failure_reason, claimed_at, claim_generation, claim_lease, "
-    "completed_at, failed_at, created_at"
+    "retry_blocked, completed_at, failed_at, created_at"
 )
 
 # Repair wakes sort after every non-repair row, so a live channel lead
@@ -450,6 +450,21 @@ def requeue_stale_triggers(
     timeout. ``force=True`` is for dispatcher start in a new process: every
     ``claimed`` row is an orphan of the previous worker. Completed rows are
     never touched.
+
+    A ``retry_blocked`` orphan is never requeued: its turn already ran a
+    command that must not repeat, so re-running it would replay that command.
+    It stays ``claimed`` for the dispatcher to fail
+    (:func:`list_claimed_retry_blocked_triggers`).
+
+    Args:
+        claim_timeout_seconds: Age past which a claim counts as stale
+            (non-force path only).
+        force: Treat every unblocked claimed row as an orphan.
+        worker_stale_after_seconds: Heartbeat age after which the worker
+            counts as dead (non-force path only).
+
+    Returns:
+        How many triggers were returned to ``queued``.
     """
     if not force and is_runtime_worker_live(stale_after_seconds=worker_stale_after_seconds):
         return 0
@@ -459,7 +474,7 @@ def requeue_stale_triggers(
             """
             SELECT COUNT(*) AS cnt
             FROM agent_triggers
-            WHERE status = 'claimed'
+            WHERE status = 'claimed' AND retry_blocked = FALSE
             """,
         )
         count = int(row["cnt"]) if row else 0
@@ -468,7 +483,7 @@ def requeue_stale_triggers(
                 """
                 UPDATE agent_triggers
                 SET status = 'queued', claimed_at = NULL, claim_lease = NULL
-                WHERE status = 'claimed'
+                WHERE status = 'claimed' AND retry_blocked = FALSE
                 """,
             )
         return count
@@ -479,6 +494,7 @@ def requeue_stale_triggers(
         SELECT COUNT(*) AS cnt
         FROM agent_triggers
         WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < $1)
+          AND retry_blocked = FALSE
         """,
         [cutoff],
     )
@@ -489,10 +505,53 @@ def requeue_stale_triggers(
             UPDATE agent_triggers
             SET status = 'queued', claimed_at = NULL, claim_lease = NULL
             WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < $1)
+              AND retry_blocked = FALSE
             """,
             [cutoff],
         )
     return count
+
+
+def mark_trigger_retry_blocked(trigger_id: str) -> None:
+    """Record that a command marked no-retry ran during this trigger's turn.
+
+    Durable, so crash recovery (an exception escaping the turn, or a dead
+    worker) can refuse to replay the turn after the turn's own memory is gone.
+    The flag is never cleared: once the command ran, it ran.
+
+    Args:
+        trigger_id: The trigger whose turn ran the command.
+
+    Raises:
+        LookupError: No trigger row has this id.
+    """
+    changed = query(
+        "UPDATE agent_triggers SET retry_blocked = TRUE WHERE id = $1 RETURNING 1",
+        [trigger_id],
+    )
+    if not changed:
+        raise LookupError(f"agent trigger {trigger_id} not found")
+
+
+def list_claimed_retry_blocked_triggers() -> list[AgentTrigger]:
+    """Return claimed triggers whose turn already ran a no-retry command.
+
+    At dispatcher start these are orphans of the previous worker that
+    :func:`requeue_stale_triggers` deliberately left ``claimed``; the
+    dispatcher fails them instead of re-running them.
+
+    Returns:
+        The rows, oldest first.
+    """
+    rows = query(
+        f"""
+        SELECT {_TRIGGER_COLUMNS}
+        FROM agent_triggers
+        WHERE status = 'claimed' AND retry_blocked = TRUE
+        ORDER BY created_at ASC, id ASC
+        """,
+    )
+    return [AgentTrigger.model_validate(row) for row in rows]
 
 
 def complete_agent_trigger(

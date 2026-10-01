@@ -175,7 +175,9 @@ def test_send_posts_html_with_recipients() -> None:
 @pytest.mark.parametrize("status, headers, code, fragment", [
     (401, {}, "MAILBOX_ACCESS_DENIED", "Access is denied"),
     (403, {}, "MAILBOX_ACCESS_DENIED", "Access is denied"),
-    (404, {}, "MESSAGE_NOT_FOUND", "mail inbox"),
+    (404, {}, "MESSAGE_NOT_FOUND",
+     'no longer where it was (it may have been moved or deleted) — '
+     'find it again with "mail inbox", "mail search" or "mail sent"'),
     (429, {"Retry-After": "30"}, "GRAPH_THROTTLED", "retry after 30s"),
     (503, {"Retry-After": "7"}, "GRAPH_THROTTLED", "retry after 7s"),
     (429, {}, "GRAPH_THROTTLED", "no Retry-After"),
