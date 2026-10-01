@@ -115,7 +115,7 @@ documentStub.createElement = (tag) => {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
+    "BossModApi", "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
     "BossModFileListing",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
@@ -166,8 +166,12 @@ const NAMES = [
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
 }
+// api-client.js publishes on `window` (an IIFE, not a top-level const), and
+// the fake `window` is not `global`, so its global is read from there.
+const WINDOW_PUBLISHED = new Set(["BossModApi"]);
 NAMES.forEach((name, index) => {
-    eval(`${fs.readFileSync(paths[index], "utf8")}\n;global.${name} = ${name};\n`);
+    const source = WINDOW_PUBLISHED.has(name) ? `window.${name}` : name;
+    eval(`${fs.readFileSync(paths[index], "utf8")}\n;global.${name} = ${source};\n`);
 });
 
 // WHAT THE FORM RENDERED, as a string. The builders write their markup into
@@ -1066,9 +1070,27 @@ async function main() {
     const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
     const scheduleRows = () => inDesk(".desk-schedules").querySelectorAll(".desk-schedule");
     const topLayer = () => modals()[modals().length - 1];
+    // Every row time goes through the shared 24-hour formatter: spied on for
+    // this first paint, so the row's text must be built from what it returned.
+    const realClockTime = global.BossModFormat.formatClockTime;
+    const clockCalls = [];
+    global.BossModFormat.formatClockTime = (iso) => {
+        const text = realClockTime(iso);
+        clockCalls.push({ iso, text });
+        return text;
+    };
     desk.open("a1");
     await drain();
+    global.BossModFormat.formatClockTime = realClockTime;
     const row0 = scheduleRows()[0];
+    const clockOf = (iso) => (clockCalls.find((call) => call.iso === iso) || {}).text;
+    const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    const timesUseTheSharedClock = Boolean(clockOf(SCHEDULE_ONE.next_run_at))
+        && Boolean(clockOf(SCHEDULE_ONE.last_occurrence_at))
+        && row0.querySelector(".desk-schedule-next").textContent
+            === `Next: ${WEEKDAY_NAMES[new Date(SCHEDULE_ONE.next_run_at).getDay()]} ${clockOf(SCHEDULE_ONE.next_run_at)}`
+        && row0.querySelector(".desk-schedule-tone").textContent
+            === `Missed ${clockOf(SCHEDULE_ONE.last_occurrence_at)}, computer was asleep`;
     const scheduleSectionRendersRows = scheduleRows().length === 1
         && row0.getAttribute("data-schedule-id") === "s1"
         && row0.querySelector(".desk-schedule-title").textContent === "Status check"
@@ -1088,10 +1110,31 @@ async function main() {
     await inDesk("#desk-schedules-retry").dispatchClick();
     await drain();
     const scheduleRetryRecovers = inDesk(".desk-schedules").textContent === "No schedules yet.";
+    // The transport's refusals read as the server's own sentence: a string
+    // detail and a 422's messages through BossModApi.formatError, and Run
+    // now's structured 409 with its reason and task riding on the Error.
+    const refusalOf = async (body, status) => {
+        try {
+            await BossModScheduleApi.update(() => jsonResponse(body, status), "s1", { title: "x" });
+            return null;
+        } catch (err) {
+            return err;
+        }
+    };
+    const stringRefusal = await refusalOf({ detail: "Schedule not found" }, 404);
+    const validationRefusal = await refusalOf(
+        { detail: [{ msg: "Value error, times must not repeat" }, { msg: "Field required" }] }, 422);
+    const structuredRefusal = await refusalOf(
+        { detail: { reason: "open", detail: "The last run is still open", task_id: "t9" } }, 409);
+    const scheduleRefusalsSayWhy = stringRefusal.message === "Schedule not found"
+        && validationRefusal.message === "Value error, times must not repeat; Field required"
+        && structuredRefusal.message === "The last run is still open"
+        && structuredRefusal.reason === "open" && structuredRefusal.taskId === "t9";
     if (!scheduleSectionRendersRows || !scheduleSectionSaysEmpty || !scheduleSectionSaysError
-        || !scheduleRetryRecovers) {
+        || !scheduleRetryRecovers || !timesUseTheSharedClock || !scheduleRefusalsSayWhy) {
         throw new Error(`the Schedules section must render its states: rows ${scheduleSectionRendersRows}, `
-            + `empty ${scheduleSectionSaysEmpty}, error ${scheduleSectionSaysError}, retry ${scheduleRetryRecovers}`);
+            + `empty ${scheduleSectionSaysEmpty}, error ${scheduleSectionSaysError}, retry ${scheduleRetryRecovers}, `
+            + `clock ${timesUseTheSharedClock}, refusals ${scheduleRefusalsSayWhy}`);
     }
 
     // A run of THIS agent's schedule repaints the rows; another agent's, or
@@ -1345,7 +1388,7 @@ async function main() {
     await drain();
     const rowOf = (id) => scheduleRows().find((node) => node.getAttribute("data-schedule-id") === id);
     const theLockAndTheAuthorShow = Boolean(rowOf("s1").querySelector(".desk-schedule-lock"))
-        && rowOf("s1").querySelector(".desk-schedule-lock").getAttribute("aria-label") === "Agent cannot change this"
+        && rowOf("s1").querySelector(".desk-schedule-lock").getAttribute("aria-label") === "Agent cannot manage this task"
         && !rowOf("s9").querySelector(".desk-schedule-lock")
         && rowOf("s9").querySelector(".desk-schedule-meta").textContent.endsWith(" · by Jim");
     await rowOf("s9").dispatchClick();
@@ -1359,7 +1402,7 @@ async function main() {
     await drain();
     const lockLayer = topLayer();
     const lockSwitch = lockLayer.querySelectorAll(".switch-row")
-        .find((node) => node.textContent === "Agent can change this");
+        .find((node) => node.textContent === "Agent can manage this task");
     const writesBeforeLock = scheduleWrites.length;
     await lockSwitch.dispatchClick();
     await drain();
@@ -1376,7 +1419,7 @@ async function main() {
     lockCreate.querySelector(".task-detail-description-input").value = "Yours to manage.";
     lockCreate.querySelector(".schedule-time").value = "08:00";
     await lockCreate.querySelectorAll(".switch-row")
-        .find((node) => node.textContent === "Agent can change this").dispatchClick();
+        .find((node) => node.textContent === "Agent can manage this task").dispatchClick();
     const writesBeforeOpenCreate = scheduleWrites.length;
     await lockCreate.querySelector("#schedule-save").dispatchClick();
     await drain();
@@ -2519,6 +2562,8 @@ async function main() {
         scheduleSectionSaysEmpty,
         scheduleSectionSaysError,
         scheduleRetryRecovers,
+        timesUseTheSharedClock,
+        scheduleRefusalsSayWhy,
         otherActivityIsIgnored,
         aScheduleRunRefreshesTheRows,
         aRowOpensTheScheduleLayer,

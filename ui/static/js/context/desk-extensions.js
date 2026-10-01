@@ -38,19 +38,6 @@ const BossModDeskExtensions = (() => {
     });
 
     /**
-     * `13:42`: an ISO instant as local 24-hour time.
-     *
-     * @param {string} iso
-     * @returns {string}
-     * @throws {Error} When the server sent an unreadable time.
-     */
-    function localTime(iso) {
-        const at = new Date(iso);
-        if (Number.isNaN(at.getTime())) throw new Error(`[desk-extensions] unreadable time ${iso}`);
-        return `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
-    }
-
-    /**
      * The wake health line for a configured wake extension, or null.
      *
      * @param {object} item  An agentExtensions item whose extension wakes
@@ -66,9 +53,9 @@ const BossModDeskExtensions = (() => {
             return h('span', { class: 'desk-ext-wake', 'data-tone': 'alert', role: 'status' },
                 COPY.cantCheck(item.config_label, wake.error));
         }
-        let text = COPY.lastChecked(localTime(wake.checked_at));
+        let text = COPY.lastChecked(BossModFormat.formatClockTime(wake.checked_at));
         if (wake.last_new_count > 0 && wake.last_new_at) {
-            text += COPY.newAt(wake.last_new_count, localTime(wake.last_new_at));
+            text += COPY.newAt(wake.last_new_count, BossModFormat.formatClockTime(wake.last_new_at));
         }
         return h('span', { class: 'desk-ext-wake', role: 'status' }, text);
     }

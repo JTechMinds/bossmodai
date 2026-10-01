@@ -38,22 +38,13 @@ from typing import Callable
 import db
 from core import config
 from core.agent_loop.dispatcher import dispatcher
-from core.agent_loop.task_origin_mirrors import broadcast_origin_line
 from core.runtime.events import runtime_events
 from core.scheduling import runner
+from core.scheduling.announce import announce_run
 from core.scheduling.runner import ScheduleRun, ScheduleSettingError, ScheduleTiming
 from core.scheduling.timetable import Timetable
 
 logger = logging.getLogger(__name__)
-
-_OUTCOME_LINES = {
-    "fired": "ran",
-    "missed": "missed a run (the scheduler was not running then)",
-    "skipped_open": "skipped a run (the last run is still open)",
-    "skipped_vacation": "skipped a run (the agent is on vacation)",
-    "failed": "could not create its task",
-}
-
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
@@ -219,8 +210,9 @@ class ScheduleWatch:
     async def _deliver(self, run: ScheduleRun) -> None:
         """Wake the agent for a fired run and tell the UI what happened.
 
-        A fired run's DM line goes out live, then ``task_created``; the
-        persisted ``schedule_ran`` is broadcast only when ``run.changed``.
+        The announcement is ``announce.announce_run``'s: a fired run's DM
+        line live, then ``task_created``; the persisted ``schedule_ran`` only
+        when ``run.changed``.
         """
         if run.trigger is not None and not dispatcher.enqueue_trigger(**run.trigger):
             logger.info(
@@ -229,22 +221,7 @@ class ScheduleWatch:
                 run.schedule_id, run.task.id if run.task is not None else None,
             )
         agent = db.get_agent(run.agent_id)
-        agent_name = agent.name if agent is not None else None
-        await broadcast_origin_line(runtime_events, run.origin_line)
-        if run.outcome == "fired" and run.task is not None:
-            await runtime_events.broadcast_activity(
-                event="task_created",
-                detail=f'Scheduled task "{run.task.title}" created',
-                agent_name=agent_name,
-            )
-        if not run.changed:
-            return
-        await runtime_events.broadcast_activity(
-            event="schedule_ran",
-            detail=f'Schedule "{run.title}" {_OUTCOME_LINES[run.outcome]}',
-            agent_name=agent_name,
-            extra={"agent_id": run.agent_id, "schedule_id": run.schedule_id, "outcome": run.outcome},
-        )
+        await announce_run(runtime_events, run, agent_name=agent.name if agent is not None else None)
 
 
 schedule_watch = ScheduleWatch()

@@ -23,20 +23,18 @@ const BossModDeskSchedules = (() => {
     const WEEKDAYS = Object.freeze(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
 
     /**
-     * `Tue 06:00`, or `06:00` alone: an ISO instant on the operator's clock.
-     * @throws {Error} When the server sent an unreadable time.
+     * `Tue 06:00`: an ISO instant's local weekday and 24-hour time.
+     * @throws {Error} When the server sent an unreadable time (BossModFormat.formatClockTime).
      */
-    function localTime(iso, withDay) {
-        const at = new Date(iso);
-        if (Number.isNaN(at.getTime())) throw new Error(`[desk-schedules] unreadable time ${iso}`);
-        const clock = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
-        return withDay ? `${WEEKDAYS[at.getDay()]} ${clock}` : clock;
+    function dayAndTime(iso) {
+        const clock = BossModFormat.formatClockTime(iso);
+        return `${WEEKDAYS[new Date(iso).getDay()]} ${clock}`;
     }
 
     /** The tone line for a last run that went wrong, or null. */
     function toneLine(schedule) {
         if (schedule.last_outcome === 'missed' && schedule.last_occurrence_at) {
-            return `Missed ${localTime(schedule.last_occurrence_at, false)}, computer was asleep`;
+            return `Missed ${BossModFormat.formatClockTime(schedule.last_occurrence_at)}, computer was asleep`;
         }
         if (schedule.last_outcome === 'failed') return 'Last run failed';
         // An open run makes every later run skip; a schedule doing nothing must not look healthy.
@@ -94,13 +92,13 @@ const BossModDeskSchedules = (() => {
                     h('span', { class: 'desk-schedule-title' }, String(schedule.title),
                         schedule.agent_can_change ? null : h('i', {
                             class: 'desk-schedule-lock', 'data-lucide': 'lock', role: 'img',
-                            'aria-label': 'Agent cannot change this', 'data-tooltip': 'Agent cannot change this',
+                            'aria-label': 'Agent cannot manage this task', 'data-tooltip': 'Agent cannot manage this task',
                         })),
                     h('span', { class: 'desk-schedule-meta' }, String(schedule.summary),
                         schedule.created_by_name ? ` · by ${schedule.created_by_name}` : ''),
                     tone ? h('span', { class: 'desk-schedule-tone', 'data-tone': 'alert' }, tone) : null),
                 h('span', { class: 'desk-schedule-next' },
-                    schedule.enabled && schedule.next_run_at ? `Next: ${localTime(schedule.next_run_at, true)}` : 'Off'));
+                    schedule.enabled && schedule.next_run_at ? `Next: ${dayAndTime(schedule.next_run_at)}` : 'Off'));
         }
 
         /**

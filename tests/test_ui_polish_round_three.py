@@ -291,6 +291,23 @@ def test_day_labels_and_date_times_read_the_local_calendar() -> None:
     assert payload["dateTimeLastYear"] == "Sep 21, 2025, 9:05 PM"
 
 
+def test_clock_time_is_local_24_hour_and_refuses_an_unreadable_value() -> None:
+    """``formatClockTime``: the desk's schedules and extensions share it.
+
+    Local, not UTC (Kolkata is +05:30, so the minutes move too), zero-padded
+    24-hour, and an unreadable value throws rather than rendering a guess,
+    because a time the server just sent being unreadable is a bug.
+    """
+    payload = _format_payload()
+    assert payload["clockUtc"] == "09:05"
+    assert payload["clockKolkata"] == "14:35"
+    assert payload["clockRefusals"] == [
+        "[format] unreadable time not a timestamp",
+        "[format] unreadable time ",
+        "[format] unreadable time null",
+    ]
+
+
 # ─── Task 1: the thread select mode explains itself ───
 
 # The order tests/js_roster_harness.cjs evaluates its modules in. A third copy
@@ -420,6 +437,8 @@ def test_the_two_rails_share_one_right_hand_column() -> None:
 # carries: every file that drives the column reads it, and a shared constant
 # would hide which of them a breakage belongs to.
 CONTEXT_MODULES = [
+    # The shared REST client: BossModScheduleApi words refusals with its formatError.
+    JS / "api-client.js",
     JS / "core" / "dom.js",
     JS / "core" / "markdown.js",
     JS / "core" / "clamped-markdown.js",

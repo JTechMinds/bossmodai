@@ -75,6 +75,23 @@ const dayNever = withClock(NOW_MS, () => [day(null), day("nope")].join("|"));
 const dateTime = withClock(NOW_MS, () => dateTimeOf(iso(2026, 8, 21, 9, 35, 0)));
 const dateTimeLastYear = withClock(NOW_MS, () => dateTimeOf(iso(2025, 8, 21, 21, 5, 0)));
 
+// ─── The 24-hour clock time, local, and its refusal ───
+//
+// A schedule's next run and an extension's last check state a time the
+// server just sent; an unreadable one is a bug the formatter must not hide.
+const clock = (value) => global.BossModFormat.formatClockTime(value);
+const clockUtc = clock(iso(2026, 11, 15, 9, 5, 0));
+process.env.TZ = "Asia/Kolkata";
+const clockKolkata = clock(iso(2026, 11, 15, 9, 5, 0));
+process.env.TZ = "UTC";
+const clockRefusals = ["not a timestamp", "", null].map((value) => {
+    try {
+        return `returned ${clock(value)}`;
+    } catch (err) {
+        return err.message;
+    }
+});
+
 // ─── Local midnight, across offsets on both sides of UTC ───
 //
 // Kiritimati is +14 and Niue is -11, which is the widest spread there is. In
@@ -137,6 +154,9 @@ process.stdout.write(JSON.stringify({
     dayNever,
     dateTime,
     dateTimeLastYear,
+    clockUtc,
+    clockKolkata,
+    clockRefusals,
     respectsLocalMidnight,
     midnightDetail,
 }));

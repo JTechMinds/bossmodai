@@ -16,6 +16,8 @@ HARNESS = Path(__file__).resolve().parent / "js_context_harness.cjs"
 
 # The order the context harness evaluates its modules in.
 CONTEXT_MODULES = [
+    # The shared REST client: BossModScheduleApi words refusals with its formatError.
+    JS / "api-client.js",
     JS / "core" / "dom.js",
     JS / "core" / "markdown.js",
     JS / "core" / "clamped-markdown.js",
@@ -776,7 +778,10 @@ def test_desk_schedules_section_and_layer() -> None:
     row opens the layer over the desk, and an edit PATCHes only the changed
     field; New opens the layer in edit mode, refuses weekly with no weekday
     before any request, then POSTs the exact rule shape. Leaving the desk
-    closes an open schedule layer.
+    closes an open schedule layer. Row times come from
+    ``BossModFormat.formatClockTime``; the lock reads "Agent can manage this
+    task"; refusals surface the server's sentence for a string, a 422 and
+    Run now's structured 409 ``detail``.
     """
     payload = _harness()
     for key in (
@@ -789,6 +794,7 @@ def test_desk_schedules_section_and_layer() -> None:
         "anOpenRunRefusalSaysWhy", "theDraftIsPreviewed", "anInvalidDraftIsSaidNotSent", "aNewScheduleCanBeSavedOff",
         "anOpenRunShowsThePausedTone", "aSkipOffersTheOpenRun",
         "theLockAndTheAuthorShow", "setUpByShows", "theLockSwitchPatches", "createSendsTheLock",
+        "timesUseTheSharedClock", "scheduleRefusalsSayWhy",
     ):
         assert payload[key] is True, key
     panel = _read(CONTEXT / "desk-panel.js")

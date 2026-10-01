@@ -91,7 +91,7 @@ const BossModScheduleLayer = (() => {
         });
         const switches = {
             enabled: flagSwitch('enabled', 'Enabled'),
-            agent_can_change: flagSwitch('agent_can_change', 'Agent can change this'),
+            agent_can_change: flagSwitch('agent_can_change', 'Agent can manage this task'),
         };
         const switchElements = () => [switches.enabled.element, switches.agent_can_change.element];
 

@@ -6,7 +6,7 @@
  * with no clear owner: a change to a date format and a change to the status
  * palette touched the same file for no reason other than history.
  *
- * These ten answer one question — how does a value read on screen. They have
+ * These eleven answer one question — how does a value read on screen. They have
  * no dependencies, no state, and no DOM beyond `escapeHtml`'s one scratch
  * node, which is why they load first among the three.
  */
@@ -182,6 +182,24 @@ const BossModFormat = (() => {
     }
 
     /**
+     * `13:42`: an instant as LOCAL 24-hour time, by hand for the reason
+     * formatActivityTime gives.
+     *
+     * For a time the server just sent and the screen must state, such as a
+     * schedule's next run or an extension's last check; unlike the rail's
+     * formatters, an unreadable value is a server bug, not an undated item.
+     *
+     * @param {string} isoString
+     * @returns {string}
+     * @throws {Error} When the value is missing or unparseable.
+     */
+    function formatClockTime(isoString) {
+        const then = parse(isoString);
+        if (!then) throw new Error(`[format] unreadable time ${isoString}`);
+        return `${String(then.getHours()).padStart(2, '0')}:${String(then.getMinutes()).padStart(2, '0')}`;
+    }
+
+    /**
      * A count, abbreviated past a thousand.
      *
      * @param {number|null} n
@@ -256,6 +274,7 @@ const BossModFormat = (() => {
         formatActivityTime,
         formatDayLabel,
         formatDateTime,
+        formatClockTime,
         formatNumber,
         formatDuration,
         formatTokenCount,

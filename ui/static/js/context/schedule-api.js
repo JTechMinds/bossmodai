@@ -4,17 +4,18 @@
  *
  * The `api` function is injected on every call, as everywhere on the desk,
  * so the harness can script it. Each call resolves with the JSON body (or
- * null for a 204) and rejects with the server's own sentence: a string
- * `detail`, a 422's messages joined, or a structured refusal's `detail`
- * (Run now's 409), whose `reason` and `task_id` ride on the Error as
- * `.reason` and `.taskId`.
+ * null for a 204) and rejects with the server's own sentence: a structured
+ * refusal's `detail` (Run now's 409), whose `reason` and `task_id` ride on
+ * the Error as `.reason` and `.taskId`; anything else is worded by the shared
+ * `window.BossModApi.formatError` (api-client.js: a string `detail`, a 422's
+ * messages joined, else the status).
  */
 const BossModScheduleApi = (() => {
     /**
      * Send one request; resolve with its JSON body, or null for a 204.
-     * @throws {Error} (rejects) With the server's `detail` (a 422's messages
-     *   joined; a structured refusal's sentence, with `.reason`/`.taskId`),
-     *   else the HTTP status — including a body that is not JSON.
+     * @throws {Error} (rejects) A structured refusal's sentence, with
+     *   `.reason`/`.taskId`; else `window.BossModApi.formatError`'s sentence; or the
+     *   HTTP status for a body that is not JSON.
      */
     async function request(api, url, init) {
         if (typeof api !== 'function') throw new Error('[schedule-api] api is required');
@@ -23,11 +24,11 @@ const BossModScheduleApi = (() => {
         const body = await res.json().catch((err) => { throw new Error(`HTTP ${res.status}: ${err.message}`); });
         if (res.ok) return body;
         const detail = body && body.detail;
-        if (typeof detail === 'string') throw new Error(detail);
-        if (detail && !Array.isArray(detail) && typeof detail.detail === 'string') {
+        // The one shape the shared formatter does not read: {reason, detail, task_id}.
+        if (detail && typeof detail === 'object' && !Array.isArray(detail) && typeof detail.detail === 'string') {
             throw Object.assign(new Error(detail.detail), { reason: detail.reason, taskId: detail.task_id || null });
         }
-        throw new Error(Array.isArray(detail) ? detail.map((item) => item && item.msg).join('; ') : `HTTP ${res.status}`);
+        throw new Error(window.BossModApi.formatError(body, res.status));
     }
 
     const json = (method, payload) => ({

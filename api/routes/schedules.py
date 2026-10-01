@@ -23,7 +23,6 @@ from fastapi import APIRouter, HTTPException, Response
 
 import db
 from api.websocket import manager
-from core.agent_loop.task_origin_mirrors import broadcast_origin_line
 from core.models.schedule import (
     AgentSchedule,
     ScheduleCreate,
@@ -35,6 +34,7 @@ from core.models.schedule import (
 )
 from core.runtime import runtime_services
 from core.scheduling import runner, service
+from core.scheduling.announce import announce_run
 from core.scheduling.recurrence import describe, upcoming
 
 router = APIRouter()
@@ -107,8 +107,9 @@ async def run_schedule_now(schedule_id: str) -> ScheduleRunResult:
     """Run the saved schedule once, now, enabled or not ("Run now").
 
     Creates the task through the scheduled path (core/scheduling/runner.py
-    ``run_now``), wakes the agent, pushes the DM "Created" line live, and
-    announces ``task_created`` and ``schedule_ran``.
+    ``run_now``), wakes the agent, and announces the run as the worker's
+    clock does (``announce.announce_run``, marked manual): the DM "Created"
+    line live, ``task_created`` and ``schedule_ran``.
 
     Raises:
         HTTPException: 404 when the schedule does not exist; 409 with
@@ -128,18 +129,8 @@ async def run_schedule_now(schedule_id: str) -> ScheduleRunResult:
         raise HTTPException(500, "Run now returned no task")
     if run.trigger is not None:
         await runtime_services.enqueue_trigger(**run.trigger)
-    await broadcast_origin_line(manager, run.origin_line)
     agent = db.get_agent(run.agent_id)
-    agent_name = agent.name if agent is not None else None
-    await manager.broadcast_activity(
-        event="task_created", detail=f'Scheduled task "{run.task.title}" created', agent_name=agent_name,
-    )
-    await manager.broadcast_activity(
-        event="schedule_ran",
-        detail=f'Schedule "{run.title}" ran now',
-        agent_name=agent_name,
-        extra={"agent_id": run.agent_id, "schedule_id": run.schedule_id, "outcome": "fired"},
-    )
+    await announce_run(manager, run, agent_name=agent.name if agent is not None else None, manual=True)
     schedule = db.get_schedule(run.schedule_id)
     if schedule is None:
         raise HTTPException(404, "Schedule not found")

@@ -31,7 +31,7 @@ from core.scheduling.recurrence import describe, format_local_run, next_occurren
 NO_SCHEDULES = "You have no scheduled recurring tasks."
 MIN_ID_PREFIX = 8
 _SECTION = "SCHEDULED RECURRING TASKS"
-_HEADER = "id | title | repeats | on/off | you can change | next run | last run | last task"
+_HEADER = "id | title | repeats | on/off | you can manage | next run | last run | last task"
 _ID_SUBCOMMANDS = {"edit", "on", "off", "remove"}
 
 

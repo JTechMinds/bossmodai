@@ -102,6 +102,8 @@ def test_the_scrim_reads_without_the_blur() -> None:
 # drives the column reads it, and a shared constant would hide which of them a
 # breakage belongs to.
 CONTEXT_MODULES = [
+    # The shared REST client: BossModScheduleApi words refusals with its formatError.
+    JS / "api-client.js",
     JS / "core" / "dom.js",
     JS / "core" / "markdown.js",
     JS / "core" / "clamped-markdown.js",
