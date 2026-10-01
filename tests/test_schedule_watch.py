@@ -18,6 +18,7 @@ from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.scheduling import runner as runner_module
 from core.scheduling import watch as watch_module
 from core.scheduling.watch import ScheduleWatch
+from core.tasking.transitions import transition_task
 
 DUE = datetime(2026, 9, 10, 6, 0, tzinfo=timezone.utc)
 
@@ -66,6 +67,10 @@ class RecordingSink(NullRuntimeEventSink):
     def __init__(self) -> None:
         self.activities: list[dict[str, Any]] = []
         self.world_states = 0
+        self.chat_messages: list[dict[str, Any]] = []
+
+    async def broadcast_chat_message(self, **data: Any) -> None:
+        self.chat_messages.append(data)
 
     async def broadcast_activity(self, event, detail, agent_name=None, extra=None) -> None:
         self.activities.append({"event": event, "detail": detail, "agent_name": agent_name, "extra": extra})
@@ -182,7 +187,7 @@ async def test_a_clock_jump_past_the_grace_window_records_missed_and_creates_not
     assert watch._timetable.next_due() == DUE + timedelta(days=1)
 
 
-async def test_a_reload_after_a_due_time_but_before_the_next_pass_still_fires_it(env) -> None:
+async def test_a_reload_after_a_due_time_keeps_it_due_and_the_next_pass_fires_it(env) -> None:
     dispatcher, _sink = env
     _timing(30, 60)
     ada = db.create_agent("Ada", role="Operator")
@@ -191,9 +196,9 @@ async def test_a_reload_after_a_due_time_but_before_the_next_pass_still_fires_it
     watch = ScheduleWatch(clock=clock)
     watch.start()
     try:
-        await _until(lambda: watch._checked_through is not None and watch._timetable.next_due() == DUE)
+        await _until(lambda: watch._timetable.next_due() == DUE)
         # 06:00 passes while the loop sleeps; an operator edit's reload lands
-        # before the next pass. The rebuild must not skip past the due run.
+        # before the next pass. The unchanged schedule keeps its due run.
         clock.now = DUE + timedelta(seconds=1)
         watch.reload()
         await _until(lambda: db.get_schedule(schedule.id).last_outcome == "fired")
@@ -203,7 +208,31 @@ async def test_a_reload_after_a_due_time_but_before_the_next_pass_still_fires_it
     assert watch._timetable.next_due() == DUE + timedelta(days=1)
 
 
-async def test_a_run_due_during_a_failed_occurrence_survives_the_rebuild(
+async def test_an_edit_to_a_time_just_behind_the_clock_does_not_fire_now(env) -> None:
+    dispatcher, _sink = env
+    _timing(30, 60)
+    ada = db.create_agent("Ada", role="Operator")
+    schedule = _schedule(ada.id, at="07:00")
+    clock = Clock(DUE + timedelta(seconds=30))
+    watch = ScheduleWatch(clock=clock)
+    watch.start()
+    try:
+        await _until(lambda: watch._timetable.next_due() == DUE + timedelta(hours=1))
+        # Edited to 06:00, half a minute behind the clock: the new rule runs
+        # from now on, so the first run is tomorrow's.
+        db.update_schedule(schedule.id, recurrence=RecurrenceRule.model_validate(
+            {"frequency": "daily", "interval": 1, "times": ["06:00"], "start_date": "2026-09-01"},
+        ))
+        watch.reload()
+        await _until(lambda: watch._timetable.next_due() == DUE + timedelta(days=1))
+        await asyncio.sleep(0.05)
+    finally:
+        await watch.stop()
+    assert dispatcher.calls == []
+    assert db.get_schedule(schedule.id).last_outcome is None
+
+
+async def test_a_failed_run_is_not_replayed_and_other_due_entries_keep_their_place(
     env, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _timing(30, 60)
@@ -224,7 +253,7 @@ async def test_a_run_due_during_a_failed_occurrence_survives_the_rebuild(
     watch = ScheduleWatch(clock=clock)
     watch.start()
     try:
-        await _until(lambda: watch._checked_through is not None and watch._timetable.next_due() == DUE)
+        await _until(lambda: watch._timetable.next_due() == DUE)
         clock.now = DUE + timedelta(seconds=1)
         _wake(watch)
         await _until(lambda: db.get_schedule(later.id).last_outcome == "fired")
@@ -235,7 +264,7 @@ async def test_a_run_due_during_a_failed_occurrence_survives_the_rebuild(
     assert watch._timetable.next_due() == DUE + timedelta(days=1)
 
 
-async def test_the_first_load_after_start_skips_runs_missed_while_stopped(env) -> None:
+async def test_the_first_sync_after_start_skips_runs_missed_while_stopped(env) -> None:
     dispatcher, sink = env
     _timing(30, 60)
     ada = db.create_agent("Ada", role="Operator")
@@ -245,12 +274,72 @@ async def test_the_first_load_after_start_skips_runs_missed_while_stopped(env) -
     watch = ScheduleWatch(clock=clock)
     watch.start()
     try:
-        await _until(lambda: watch._checked_through is not None)
+        await _until(lambda: len(watch._timetable) == 1)
+        await asyncio.sleep(0.05)
     finally:
         await watch.stop()
     assert watch._timetable.next_due() == DUE + timedelta(days=1)
     assert db.get_schedule(schedule.id).last_outcome is None
     assert dispatcher.calls == [] and sink.activities == []
+
+
+async def test_schedule_ran_is_broadcast_on_change_and_every_fire_but_once_per_skip_streak(env) -> None:
+    _dispatcher, sink = env
+    _timing(30, 60)
+    ada = db.create_agent("Ada", role="Operator")
+    schedule = db.create_schedule(
+        agent_id=ada.id, title="Ping", instructions="Check it.",
+        recurrence=RecurrenceRule.model_validate({
+            "frequency": "daily", "interval": 1, "every_minutes": 1,
+            "window_start": "00:00", "window_end": "23:59", "start_date": "2026-09-01",
+        }),
+        notification_policy="completion_blocked", enabled=True,
+    )
+    clock = Clock(DUE - timedelta(seconds=5))
+    watch = ScheduleWatch(clock=clock)
+    watch.start()
+
+    async def tick(minute: int) -> None:
+        due = DUE + timedelta(minutes=minute)
+        clock.now = due + timedelta(seconds=1)
+        _wake(watch)
+        await _until(lambda: db.get_schedule(schedule.id).last_occurrence_at == due)
+
+    try:
+        await _until(lambda: watch._timetable.next_due() == DUE)
+        await tick(0)  # fired: its task stays open
+        await tick(1)  # skipped_open: news
+        await tick(2)  # skipped_open again: not news
+        first_task = db.get_schedule(schedule.id).last_task_id
+        transition_task(first_task, "cancelled", reason="done", actor="Human Operator", actor_type="human")
+        await tick(3)  # fired again
+        await _until(lambda: sum(item["event"] == "schedule_ran" for item in sink.activities) == 3)
+    finally:
+        await watch.stop()
+    ran = [item["extra"]["outcome"] for item in sink.activities if item["event"] == "schedule_ran"]
+    assert ran == ["fired", "skipped_open", "fired"]
+
+
+async def test_a_fired_runs_origin_line_is_broadcast_through_runtime_events(env) -> None:
+    _dispatcher, sink = env
+    _timing(30, 60)
+    ada = db.create_agent("Ada", role="Operator")
+    schedule = _schedule(ada.id)
+    clock = Clock(DUE - timedelta(seconds=5))
+    watch = ScheduleWatch(clock=clock)
+    watch.start()
+    try:
+        await _until(lambda: watch._timetable.next_due() == DUE)
+        clock.now = DUE + timedelta(seconds=1)
+        _wake(watch)
+        await _until(lambda: bool(sink.chat_messages))
+    finally:
+        await watch.stop()
+    assert db.get_schedule(schedule.id).last_outcome == "fired"
+    assert [message["agent_id"] for message in sink.chat_messages] == [ada.id]
+    # The "Created" line the task's creation persisted in the operator's DM.
+    assert "Status check" in sink.chat_messages[0]["content"]
+    assert sink.chat_messages[0]["message_id"]
 
 
 async def test_the_watch_refuses_to_start_on_unusable_timing(caplog: pytest.LogCaptureFixture) -> None:

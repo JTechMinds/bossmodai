@@ -104,10 +104,7 @@ const BossModDeskSchedules = (() => {
             if (!element.children.length) element.append(h('p', { class: 'context-skeleton' }, 'Loading schedules…'));
             let schedules;
             try {
-                const res = await api(`/api/agents/${encodeURIComponent(agentId)}/schedules`, { cache: 'no-store' });
-                if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                schedules = await res.json();
-                if (!Array.isArray(schedules)) throw new Error('the schedules answer is not a list');
+                schedules = await BossModScheduleApi.list(api, agentId);
             } catch (err) {
                 if (destroyed || !load.isCurrent(loadId)) return;
                 console.error('[desk-schedules] could not load the schedules', err);

@@ -314,6 +314,51 @@ def persist_origin_status_line(
     return {"chat_message": chat_message}
 
 
+async def broadcast_origin_line(sink: Any, posted: dict[str, Any]) -> None:
+    """Push one persisted origin-thread line to the UI live.
+
+    The one broadcaster for what ``persist_origin_status_line`` (and so
+    ``mirror_origin_status``) returns: the API's operator actions and task
+    creates, and the runtime worker's scheduled runs, all send their posted
+    line through here.
+
+    Args:
+        sink: Anything with ``broadcast_channel_message`` and
+            ``broadcast_chat_message``: the app's websocket ``manager`` or
+            the worker's ``runtime_events``.
+        posted: ``{"channel_message": {...}}`` or ``{"chat_message": {...}}``
+            as persisted; an empty dict (nothing was posted) does nothing.
+
+    Raises:
+        KeyError: A posted line lacks its target (``channel_id`` or
+            ``agent_id``) or its ``content``; only this module builds them,
+            so that is a bug, not a missing line.
+    """
+    channel = posted.get("channel_message")
+    if channel:
+        await sink.broadcast_channel_message(
+            channel_id=channel["channel_id"],
+            content=channel["content"],
+            author_type=channel.get("author_type") or "system",
+            author_name=channel.get("author_name") or "BossMod",
+            message_id=channel.get("message_id"),
+            created_at=channel.get("created_at"),
+            notification_kind=channel.get("notification_kind"),
+        )
+    chat = posted.get("chat_message")
+    if chat:
+        await sink.broadcast_chat_message(
+            agent_id=chat["agent_id"],
+            content=chat["content"],
+            from_type=chat.get("from_type") or "system",
+            from_name=chat.get("from_name") or "BossMod",
+            message_type=chat.get("message_type"),
+            message_id=chat.get("message_id"),
+            created_at=chat.get("created_at"),
+            notification_kind=chat.get("notification_kind"),
+        )
+
+
 def attach_operator_status_line(
     result: dict[str, Any],
     *,

@@ -7,7 +7,10 @@
  * ✎ at rest, ✓ ✕ while editing, Esc discards, the title edited in the head.
  * The same nodes flip `readonly`, the rule becomes context/schedule-fields.js,
  * and ✓ PATCHes only what changed; a refusal is a `.callout` and the draft
- * stays. A new schedule opens in edit mode and ✓ POSTs. Delete sits behind
+ * stays. While editing, "Upcoming runs" (context/schedule-preview.js) lists
+ * the draft's next runs. A new schedule opens in edit mode with the Enabled
+ * switch (default on, sent with the POST) and ✓ POSTs. A saved schedule has
+ * Run now beside Enabled (schedule-view.js's control). Delete sits behind
  * the head's `⋯` and a danger confirm (context/desk-actions.js's pattern).
  */
 const BossModScheduleLayer = (() => {
@@ -18,62 +21,17 @@ const BossModScheduleLayer = (() => {
     const LABELS = Object.freeze({
         edit: 'Edit schedule', save: 'Save changes', discard: 'Discard changes', options: 'Schedule options',
     });
-    /** Notify choices; the first is the server's default (ScheduleCreate). */
-    const NOTIFY = Object.freeze([
-        { value: 'completion_blocked', label: 'Done & blocked' },
-        { value: 'all', label: 'Every update' },
-        { value: 'none', label: 'Don’t notify' },
+    /** How many upcoming runs the editor's preview lists (a presentation choice; the server allows 1..20). */
+    const PREVIEW_COUNT = 5;
+    const VIEW = BossModScheduleView;
+    const API = BossModScheduleApi;
+    const RULE_KEYS = Object.freeze([
+        'frequency', 'interval', 'times', 'every_minutes', 'window_start', 'window_end',
+        'weekdays', 'month_day', 'start_date',
     ]);
-    const RULE_KEYS = Object.freeze(['frequency', 'interval', 'times', 'weekdays', 'month_day', 'start_date']);
 
     /** A rule as one comparable string, whatever order its keys arrived in. */
     const ruleKey = (rule) => JSON.stringify(RULE_KEYS.map((key) => rule[key]));
-
-    /** A titled `.callout` in one of the shared tones. */
-    function callout(tone, title, text) {
-        return h('div', { class: 'callout', 'data-tone': tone },
-            h('p', { class: 'callout-title' }, title),
-            text ? h('p', { class: 'callout-body' }, text) : null);
-    }
-
-    /**
-     * Send one request; resolve with its JSON body, or null for a 204.
-     * @throws {Error} (rejects) With the server's `detail` (a 422's messages
-     *   joined), else the HTTP status — including a body that is not JSON.
-     */
-    async function request(api, url, init) {
-        const res = await api(url, init);
-        if (res.status === 204) return null;
-        const body = await res.json().catch((err) => { throw new Error(`HTTP ${res.status}: ${err.message}`); });
-        if (res.ok) return body;
-        const detail = body && body.detail;
-        if (typeof detail === 'string') throw new Error(detail);
-        throw new Error(Array.isArray(detail) ? detail.map((item) => item && item.msg).join('; ') : `HTTP ${res.status}`);
-    }
-
-    const json = (method, payload) => ({
-        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-    });
-
-    /** The Last run fact: what happened, when, and a link to the task a run created. */
-    function lastRun(schedule, onOpenTask) {
-        const when = BossModFormat.formatDateTime(schedule.last_occurrence_at);
-        const lines = {
-            fired: `Ran ${when}`,
-            missed: `Missed ${when}: the computer was asleep or BossMod was not running`,
-            skipped_open: `Skipped ${when}: the last run was still open`,
-            skipped_vacation: `Skipped ${when}: the agent was on vacation`,
-            failed: `Failed ${when}: ${schedule.last_outcome_detail || 'no detail was recorded'}`,
-        };
-        const text = schedule.last_outcome ? lines[schedule.last_outcome] : 'Not run yet';
-        if (text === undefined) throw new Error(`[schedule-layer] unknown outcome "${schedule.last_outcome}"`);
-        const status = schedule.last_task_status;
-        return h('span', { class: 'schedule-last-run' }, text,
-            schedule.last_task_id && status ? h('button', {
-                class: 'btn-link schedule-open-task', type: 'button',
-                onclick: () => onOpenTask(schedule.last_task_id),
-            }, `Open task (${BossModTasksColumns.STATUS_LABELS[status] || status})`) : null);
-    }
 
     /**
      * Open one schedule, or a new one, over the desk.
@@ -104,21 +62,19 @@ const BossModScheduleLayer = (() => {
         let editing = false;
         let saving = false;
         let closed = false;
-        /** The recurrence editor and the Notify dropdown while editing. */
-        let fields = null;
-        let notify = null;
-        let menu = null;
+        /** The recurrence editor, the Notify dropdown and the preview while editing; the open `⋯` menu. */
+        let [fields, notify, preview, menu] = [null, null, null, null];
+        /** Run now, built once the schedule is saved. */
+        let runNow = null;
+        /** The Enabled switch's value for a schedule not yet created (it has no row to PATCH). */
+        let createEnabled = true;
 
         const titleInput = h('input', {
             class: 'task-detail-title-input task-detail-edit-field', type: 'text', maxlength: '200',
             autocomplete: 'off', readonly: true, 'aria-label': 'Schedule title', 'aria-required': 'true',
             placeholder: TITLE_PLACEHOLDER,
             oninput: () => fitTitle(),
-            onkeydown: (event) => {
-                if (event.key !== 'Enter') return;
-                event.preventDefault();
-                void save();
-            },
+            onkeydown: (event) => { if (event.key === 'Enter') { event.preventDefault(); void save(); } },
         });
         const instructions = h('textarea', {
             class: 'task-detail-instructions task-detail-description-input task-detail-edit-field',
@@ -129,7 +85,8 @@ const BossModScheduleLayer = (() => {
         errorSlot.hidden = true;
         const column = h('div', { class: 'task-detail-column' });
         const enabled = BossModSwitch.create({
-            label: 'Enabled', pressed: Boolean(current && current.enabled), onChange: (on) => { void setEnabled(on); },
+            label: 'Enabled', pressed: current ? current.enabled : createEnabled,
+            onChange: (on) => { if (current) void setEnabled(on); else createEnabled = on; },
         });
 
         const tool = (id, icon, cls, label, onclick, extra) => h('button', {
@@ -156,33 +113,28 @@ const BossModScheduleLayer = (() => {
         /** Paint the column for the current state: the view, or edit mode. */
         function render() {
             if (editing) {
-                column.replaceChildren(errorSlot, section('Rule', fields.element),
-                    section('Notify', notify.element), section('Instructions', instructions));
+                column.replaceChildren(errorSlot, ...(current ? [] : [enabled.element]), section('Rule', fields.element),
+                    preview.element, section('Notify', notify.element), section('Instructions', instructions));
             } else {
                 enabled.set(current.enabled);
-                const policy = NOTIFY.find((item) => item.value === current.notification_policy);
-                column.replaceChildren(errorSlot, enabled.element, BossModFactList.create([
-                    { label: 'Repeats', value: String(current.summary) },
-                    { label: 'Next run', value: current.next_run_at ? BossModFormat.formatDateTime(current.next_run_at) : 'Off' },
-                    { label: 'Last run', value: lastRun(current, onOpenTask) },
-                    { label: 'Notify', value: policy ? policy.label : String(current.notification_policy) },
-                ]), section('Instructions', instructions));
+                runNow = runNow || VIEW.runNowControl({
+                    api, scheduleId: () => current.id, onOpenTask,
+                    onRan: (row) => { current = row; if (!editing) render(); onChanged(row); },
+                });
+                column.replaceChildren(errorSlot, h('div', { class: 'schedule-run-row' }, enabled.element, runNow.element),
+                    VIEW.facts(current, { onOpenTask }), section('Instructions', instructions));
             }
             BossModIcons.paint(column, 'schedule-layer');
         }
 
         /** ✓ ✕ while editing; ✎ and ⋯ at rest; a new schedule has neither of those. */
         function syncHead() {
-            saveButton.hidden = !editing;
-            discardButton.hidden = !editing;
-            pencilButton.hidden = editing || !current;
-            optionsButton.hidden = editing || !current;
+            [saveButton, discardButton].forEach((button) => { button.hidden = !editing; });
+            [pencilButton, optionsButton].forEach((button) => { button.hidden = editing || !current; });
         }
 
         /** Size the head's title to its text, or to the placeholder while empty. */
-        function fitTitle() {
-            titleInput.size = Math.max(titleInput.value.length, TITLE_PLACEHOLDER.length);
-        }
+        const fitTitle = () => { titleInput.size = Math.max(titleInput.value.length, TITLE_PLACEHOLDER.length); };
 
         /** Put the title and instructions back to the stored row. */
         function restoreText() {
@@ -202,8 +154,7 @@ const BossModScheduleLayer = (() => {
             onClose: () => {
                 closed = true;
                 if (menu) menu.close();
-                if (fields) fields.destroy();
-                if (notify) notify.destroy();
+                [fields, notify, preview, runNow].forEach((control) => { if (control) control.destroy(); });
                 if (onClose) onClose();
             },
         });
@@ -224,9 +175,13 @@ const BossModScheduleLayer = (() => {
             editing = true;
             restoreText();
             [titleInput, instructions].forEach((field) => { field.readOnly = false; });
-            fields = BossModScheduleFields.create({ rule: current ? current.recurrence : null, onChange: () => show(null) });
+            fields = BossModScheduleFields.create({
+                rule: current ? current.recurrence : null, onChange: () => { show(null); refreshPreview(); },
+            });
+            preview = BossModSchedulePreview.create({ api, count: PREVIEW_COUNT });
+            refreshPreview();
             notify = BossModMenuSelect.create({
-                label: 'Notify', options: NOTIFY, value: current ? current.notification_policy : NOTIFY[0].value,
+                label: 'Notify', options: VIEW.NOTIFY, value: current ? current.notification_policy : VIEW.NOTIFY[0].value,
                 variant: 'field', onChange: () => show(null),
             });
             show(null);
@@ -238,9 +193,8 @@ const BossModScheduleLayer = (() => {
 
         function leaveEdit() {
             editing = false;
-            fields.destroy();
-            notify.destroy();
-            [fields, notify] = [null, null];
+            [fields, notify, preview].forEach((control) => control.destroy());
+            [fields, notify, preview] = [null, null, null];
             [titleInput, instructions].forEach((field) => { field.readOnly = true; });
             restoreText();
             show(null);
@@ -250,6 +204,12 @@ const BossModScheduleLayer = (() => {
             pencilButton.focus();
         }
 
+        /** Feed the preview the draft rule, or the editor's reason there is none. */
+        function refreshPreview() {
+            const read = fields.read();
+            preview.update(read.ok ? read.rule : null, read.ok ? null : read.error);
+        }
+
         /** ✕: a new schedule is abandoned (the layer closes); an edit is put back. */
         function discard() {
             if (!editing || saving) return;
@@ -257,11 +217,7 @@ const BossModScheduleLayer = (() => {
             else panel.close();
         }
 
-        /**
-         * The draft as a request: the whole body for a new schedule, only the
-         * changed fields for an edit.
-         * @returns {{error: string}|{payload: object}}
-         */
+        /** The draft as `{payload}` (all of a new schedule, the changes of an edit) or `{error}`. */
         function draft() {
             const title = titleInput.value.trim();
             if (!title) return { error: 'The title cannot be blank.' };
@@ -271,7 +227,9 @@ const BossModScheduleLayer = (() => {
             if (!read.ok) return { error: read.error };
             const policy = notify.getValue();
             if (!current) {
-                return { payload: { title, instructions: text, recurrence: read.rule, notification_policy: policy } };
+                return { payload: {
+                    title, instructions: text, recurrence: read.rule, notification_policy: policy, enabled: createEnabled,
+                } };
             }
             const payload = {};
             if (title !== current.title) payload.title = title;
@@ -285,20 +243,18 @@ const BossModScheduleLayer = (() => {
         async function save() {
             if (!editing || saving) return;
             const { payload, error } = draft();
-            if (error) return show(callout('alert', error));
+            if (error) return show(VIEW.callout('alert', error));
             if (current && !Object.keys(payload).length) return leaveEdit();
             saving = true;
             saveButton.disabled = true;
             fields.setDisabled(true);
             let row;
             try {
-                row = current
-                    ? await request(api, `/api/schedules/${encodeURIComponent(current.id)}`, json('PATCH', payload))
-                    : await request(api, `/api/agents/${encodeURIComponent(agentId)}/schedules`, json('POST', payload));
+                row = current ? await API.update(api, current.id, payload) : await API.create(api, agentId, payload);
             } catch (err) {
                 console.error('[schedule-layer] save failed', err);
                 if (closed) return;
-                show(callout('alert', 'Could not save the schedule', (err && err.message) || 'The request failed.'));
+                show(VIEW.callout('alert', 'Could not save the schedule', (err && err.message) || 'The request failed.'));
                 return;
             } finally {
                 saving = false;
@@ -317,12 +273,12 @@ const BossModScheduleLayer = (() => {
             show(null);
             let row;
             try {
-                row = await request(api, `/api/schedules/${encodeURIComponent(current.id)}`, json('PATCH', { enabled: on }));
+                row = await API.update(api, current.id, { enabled: on });
             } catch (err) {
                 console.error('[schedule-layer] could not change Enabled', err);
                 if (closed) return;
                 enabled.set(!on);
-                show(callout('alert', on ? 'Could not turn the schedule on' : 'Could not turn the schedule off',
+                show(VIEW.callout('alert', on ? 'Could not turn the schedule on' : 'Could not turn the schedule off',
                     (err && err.message) || 'The request failed.'));
                 return;
             }
@@ -332,49 +288,24 @@ const BossModScheduleLayer = (() => {
             onChanged(row);
         }
 
+        /** ⋯ toggles the options menu; its one row asks before anything is deleted. */
         function toggleOptions() {
-            if (menu) {
-                menu.close();
-                return;
-            }
-            menu = BossModMenu.createMenu({
-                anchor: optionsButton, label: LABELS.options, container: optionsButton.closest('.modal-head'),
-                items: [h('div', { class: 'menu-actions' },
-                    h('button', {
-                        class: 'menu-action', id: 'schedule-delete', type: 'button', 'data-tone': 'danger',
-                        onclick: () => { menu.close(); confirmDelete(); },
-                    }, h('i', { 'data-lucide': 'trash-2', 'aria-hidden': 'true' }), 'Delete schedule…'))],
-                onClose: () => {
-                    menu = null;
-                    optionsButton.setAttribute('aria-expanded', 'false');
-                },
-            });
-            optionsButton.setAttribute('aria-expanded', 'true');
-            BossModIcons.paint(menu.element, 'schedule-layer');
-        }
-
-        /** Nothing reaches the API until the operator confirms; Cancel is the focused default. */
-        function confirmDelete() {
-            const who = agentName();
-            BossModOverlays.createModal({
-                title: 'Delete this schedule?',
-                closeOnBackdrop: true,
-                body: `“${current.title}” stops running${who ? ` for ${who}` : ''}. `
-                    + 'Tasks its past runs created stay on the board.',
-                actions: [
-                    { label: 'Delete schedule', tone: 'danger', onSelect: () => { void remove(); } },
-                    { label: 'Cancel', tone: 'quiet' },
-                ],
+            if (menu) return menu.close();
+            menu = VIEW.optionsMenu({
+                anchor: optionsButton, label: LABELS.options, onClose: () => { menu = null; },
+                onDelete: () => VIEW.confirmDelete({
+                    title: current.title, agentName: agentName(), onConfirm: () => { void remove(); },
+                }),
             });
         }
 
         async function remove() {
             show(null);
             try {
-                await request(api, `/api/schedules/${encodeURIComponent(current.id)}`, { method: 'DELETE' });
+                await API.remove(api, current.id);
             } catch (err) {
                 console.error('[schedule-layer] delete failed', err);
-                if (!closed) show(callout('alert', 'Could not delete the schedule', (err && err.message) || 'The request failed.'));
+                if (!closed) show(VIEW.callout('alert', 'Could not delete the schedule', (err && err.message) || 'The request failed.'));
                 return;
             }
             if (!closed) panel.close();
@@ -382,12 +313,8 @@ const BossModScheduleLayer = (() => {
         }
 
         restoreText();
-        if (current) {
-            render();
-            syncHead();
-        } else {
-            enterEdit();
-        }
+        if (!current) enterEdit();
+        else { render(); syncHead(); }
         BossModIcons.paint(panel.element, 'schedule-layer');
 
         return { close: () => panel.closeFrom() };

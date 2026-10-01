@@ -90,9 +90,12 @@ API_BY_INJECTION = {
     "context/desk-panel.js",
     "context/desk-tasks.js",
     "context/desk-actions.js",
-    # The desk's Schedules section and its layer take the desk's `api`.
+    # The desk's Schedules section and its layer take the desk's `api` and
+    # hand it to the schedules transport, which names the routes.
     "context/desk-schedules.js",
     "context/schedule-layer.js",
+    "context/schedule-api.js",
+    "context/schedule-preview.js",
     "conversation/conversation.js",
     "conversation/message.js",
     "conversation/sources/agent-source.js",
@@ -224,7 +227,9 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "places/tasks/task-actions.js",
                  "places/tasks/task-file-picker.js",
                  "context/desk-schedules.js",
-                 "context/schedule-layer.js"):
+                 "context/schedule-layer.js",
+                 "context/schedule-api.js",
+                 "context/schedule-preview.js"):
         source = _read(name)
         assert "apiFetch" not in source, f"{name} must take api from ctx"
 

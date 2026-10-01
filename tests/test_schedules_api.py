@@ -202,3 +202,155 @@ def test_every_mutation_announces_schedule_changed_for_the_agent(
     client.delete(f"/api/schedules/{schedule_id}")
     assert [event for event, _ in seen] == ["schedule_changed"] * 3
     assert all(extra == {"agent_id": ada.id, "schedule_id": schedule_id} for _, extra in seen)
+
+
+EVERY_RULE = {"frequency": "daily", "interval": 1, "every_minutes": 15, "window_start": "09:00",
+              "window_end": "17:00", "start_date": "2026-09-01"}
+
+
+def test_an_every_rule_round_trips_and_has_a_next_run(client: TestClient) -> None:
+    ada = db.create_agent("Ada", role="Operator")
+    created = client.post(f"/api/agents/{ada.id}/schedules", json=_body(recurrence=EVERY_RULE))
+    assert created.status_code == 201, created.text
+    view = created.json()
+    assert view["recurrence"]["times"] == []
+    assert (view["recurrence"]["every_minutes"], view["recurrence"]["window_start"],
+            view["recurrence"]["window_end"]) == (15, "09:00", "17:00")
+    assert view["summary"] == "Every day, every 15 minutes from 09:00 to 17:00"
+    next_run = datetime.fromisoformat(view["next_run_at"]).astimezone()
+    assert next_run > datetime.now(timezone.utc)
+    # A 15-minute slot inside the 09:00-17:00 window, on the host's clock.
+    assert (9, 0) <= (next_run.hour, next_run.minute) <= (17, 0) and next_run.minute % 15 == 0
+
+    patched = client.patch(f"/api/schedules/{view['id']}", json={"recurrence": {**EVERY_RULE, "every_minutes": 120}})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["recurrence"]["every_minutes"] == 120
+    assert patched.json()["summary"] == "Every day, every 2 hours from 09:00 to 17:00"
+    listed = client.get(f"/api/agents/{ada.id}/schedules").json()
+    assert listed[0]["recurrence"] == patched.json()["recurrence"]
+
+
+def test_a_mixed_mode_rule_is_422(client: TestClient) -> None:
+    ada = db.create_agent("Ada", role="Operator")
+    mixed = {**EVERY_RULE, "times": ["06:00"]}
+    assert client.post(f"/api/agents/{ada.id}/schedules", json=_body(recurrence=mixed)).status_code == 422
+
+
+# ─── Run now and the preview ───
+
+
+def _created(client: TestClient, agent_id: str, **fields) -> dict:
+    response = client.post(f"/api/agents/{agent_id}/schedules", json=_body(**fields))
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
+def test_run_now_creates_the_task_and_wakes_the_agent(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    enqueued: list[dict] = []
+
+    async def _enqueue(**kwargs) -> None:
+        enqueued.append(kwargs)
+
+    monkeypatch.setattr(runtime_services, "enqueue_trigger", _enqueue)
+    ada = db.create_agent("Ada", role="Operator")
+    schedule = _created(client, ada.id, enabled=False)
+
+    response = client.post(f"/api/schedules/{schedule['id']}/run")
+
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["task"]["schedule_id"] == schedule["id"]
+    assert body["task"]["description"].endswith("Manual run (Run now): Every weekday at 06:00, 12:00")
+    assert body["schedule"]["last_outcome"] == "fired"
+    assert body["schedule"]["last_task_id"] == body["task"]["id"]
+    assert body["schedule"]["enabled"] is False
+    assert [(item["trigger_type"], item["task_id"]) for item in enqueued] == [("task_assigned", body["task"]["id"])]
+
+
+def test_run_now_refusals_are_409_with_a_reason(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.floors import send_home
+
+    async def _enqueue(**_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(runtime_services, "enqueue_trigger", _enqueue)
+    ada = db.create_agent("Ada", role="Operator")
+    schedule = _created(client, ada.id)
+    first = client.post(f"/api/schedules/{schedule['id']}/run").json()
+
+    still_open = client.post(f"/api/schedules/{schedule['id']}/run")
+    assert still_open.status_code == 409
+    assert still_open.json()["detail"] == {
+        "reason": "open", "detail": "The last run is still open", "task_id": first["task"]["id"],
+    }
+
+    bob = db.create_agent("Bob", role="Operator")
+    away = _created(client, bob.id)
+    send_home(bob.id)
+    vacation = client.post(f"/api/schedules/{away['id']}/run")
+    assert vacation.status_code == 409
+    assert vacation.json()["detail"] == {"reason": "vacation", "detail": "Bob is on vacation", "task_id": None}
+
+
+def test_run_now_on_an_unknown_schedule_is_404(client: TestClient) -> None:
+    assert client.post("/api/schedules/nope/run").status_code == 404
+
+
+def test_run_now_does_not_queue_a_reload(
+    client: TestClient, worker_running: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _enqueue(**_kwargs) -> None:
+        return None
+
+    monkeypatch.setattr(runtime_services, "enqueue_trigger", _enqueue)
+    ada = db.create_agent("Ada", role="Operator")
+    schedule = _created(client, ada.id)
+    for command in db.list_queued_runtime_commands():
+        db.complete_runtime_command(command.id)
+    assert client.post(f"/api/schedules/{schedule['id']}/run").status_code == 201
+    assert _open_reloads() == 0
+
+
+def test_preview_lists_the_draft_rules_next_runs(client: TestClient) -> None:
+    response = client.post("/api/schedules/preview", json={"recurrence": RULE, "count": 5})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["summary"] == "Every weekday at 06:00, 12:00"
+    runs = [datetime.fromisoformat(item) for item in body["next_runs"]]
+    assert len(runs) == 5
+    assert all(later > earlier for earlier, later in zip(runs, runs[1:]))
+    assert runs[0] > datetime.now(timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"recurrence": {**RULE, "weekdays": []}, "count": 5},
+        {"recurrence": RULE, "count": 0},
+        {"recurrence": RULE, "count": 21},
+        {"recurrence": RULE},
+    ],
+    ids=["bad-rule", "count-0", "count-21", "no-count"],
+)
+def test_preview_refuses_bad_drafts_with_422(client: TestClient, body: dict) -> None:
+    assert client.post("/api/schedules/preview", json=body).status_code == 422
+
+
+def test_preview_is_not_captured_by_a_schedule_id_route() -> None:
+    from starlette.routing import Match
+
+    scope = {"type": "http", "path": "/api/schedules/preview", "method": "POST"}
+    full = [route for route in router.routes if route.matches(scope)[0] == Match.FULL]
+    assert [route.name for route in full] == ["preview_schedule"]
+    # And through the app, with a real schedule stored: the POST answers a
+    # preview, not a lookup of a schedule whose id is "preview".
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    probe = TestClient(app, headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()})
+    ada = db.create_agent("Ada", role="Operator")
+    assert probe.post(f"/api/agents/{ada.id}/schedules", json=_body()).status_code == 201
+    response = probe.post("/api/schedules/preview", json={"recurrence": RULE, "count": 1})
+    assert response.status_code == 200 and "next_runs" in response.json()

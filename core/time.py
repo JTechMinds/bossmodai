@@ -1,35 +1,35 @@
-"""BossMod AI — Time normalization helpers."""
+"""BossMod AI — Time normalization helpers.
+
+Every local-time question here asks the OS for the offset of that very
+instant (a no-argument ``astimezone()``), so a long-running process stays
+right across a DST change. Nothing caches a fixed offset at start-up.
+"""
 
 from __future__ import annotations
 
-from datetime import date, datetime, time, timezone, tzinfo
-
-_LOCAL_TZ = datetime.now().astimezone().tzinfo or timezone.utc
+from datetime import date, datetime, time, timezone
 
 
 def ensure_utc(value: datetime) -> datetime:
-    """Normalize naive DB timestamps to UTC using the local runtime timezone."""
-    if value.tzinfo is None:
-        return value.replace(tzinfo=_LOCAL_TZ).astimezone(timezone.utc)
+    """Return ``value`` as an aware UTC datetime.
+
+    A naive value is read as host-local wall-clock time, resolved with the OS
+    rule for that instant (DST-correct on either side of a change). An aware
+    value is converted to UTC unchanged in meaning.
+    """
     return value.astimezone(timezone.utc)
 
 
-def local_timezone() -> tzinfo:
-    """Return the runtime's local timezone."""
-    return _LOCAL_TZ
-
-
 def now_local() -> datetime:
-    """Return the current local time as a timezone-aware datetime."""
-    return datetime.now(_LOCAL_TZ)
+    """Return the current host-local time, aware, with the offset in force now."""
+    return datetime.now().astimezone()
 
 
 def local_wall_clock_to_utc(day: date, at: time) -> datetime:
     """Return the UTC instant of wall-clock ``at`` on local calendar ``day``.
 
-    DST-aware per date, unlike ``_LOCAL_TZ`` (a fixed offset captured at
-    process start): a naive ``astimezone()`` asks the OS for the offset of
-    that very instant. A time skipped by a spring-forward change (02:30 on
+    DST-aware per date: a naive ``astimezone()`` asks the OS for the offset
+    of that very instant. A time skipped by a spring-forward change (02:30 on
     the change date) resolves to whatever instant the OS normalizes it to;
     an ambiguous fall-back time resolves to its first occurrence (fold 0).
 

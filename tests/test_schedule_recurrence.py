@@ -14,7 +14,7 @@ import pytest
 from pydantic import ValidationError
 
 from core.models.schedule import RecurrenceRule
-from core.scheduling.recurrence import describe, matches_day, next_occurrence
+from core.scheduling.recurrence import describe, matches_day, next_occurrence, upcoming
 
 NY = "America/New_York"
 
@@ -213,3 +213,123 @@ def test_describe_wording() -> None:
     assert describe(_rule(frequency="weekly", interval=2, weekdays=[4])) == "Every 2 weeks on Fri at 06:00"
     assert describe(_rule(frequency="monthly", month_day=15)) == "Every month on day 15 at 06:00"
     assert describe(_rule(frequency="monthly", interval=3, month_day=31)) == "Every 3 months on day 31 at 06:00"
+
+
+# ─── "Every" mode: repeats within a window ───
+
+
+def _every(minutes: int, start: str, end: str, **fields) -> RecurrenceRule:
+    return _rule(times=[], every_minutes=minutes, window_start=start, window_end=end, **fields)
+
+
+def _sequence(rule: RecurrenceRule, after: datetime, count: int) -> list[datetime]:
+    out = []
+    for _ in range(count):
+        after = next_occurrence(rule, after=after)
+        out.append(after)
+    return out
+
+
+def test_every_15_minutes_runs_inside_the_window_including_its_end_then_rolls_over() -> None:
+    rule = _every(15, "09:00", "10:00")
+    got = [_as_local(instant) for instant in _sequence(rule, _local(2026, 9, 10, 8, 0), 6)]
+    assert got == [
+        (date(2026, 9, 10), "09:00"), (date(2026, 9, 10), "09:15"), (date(2026, 9, 10), "09:30"),
+        (date(2026, 9, 10), "09:45"), (date(2026, 9, 10), "10:00"), (date(2026, 9, 11), "09:00"),
+    ]
+
+
+def test_a_step_that_does_not_land_on_the_window_end_stops_before_it() -> None:
+    rule = _every(25, "09:00", "10:00")
+    got = [_as_local(instant)[1] for instant in _sequence(rule, _local(2026, 9, 10, 8, 0), 4)]
+    assert got == ["09:00", "09:25", "09:50", "09:00"]
+
+
+def test_every_hour_at_quarter_past() -> None:
+    rule = _every(60, "00:15", "23:59")
+    assert next_occurrence(rule, after=_local(2026, 9, 10, 13, 20)) == _local(2026, 9, 10, 14, 15)
+    assert next_occurrence(rule, after=_local(2026, 9, 10, 23, 20)) == _local(2026, 9, 11, 0, 15)
+
+
+def test_weekly_with_a_window_skips_the_days_it_does_not_choose() -> None:
+    # 2026-09-11 is a Friday; the next weekday is Monday the 14th.
+    rule = _every(30, "09:00", "17:00", frequency="weekly", weekdays=[0, 1, 2, 3, 4])
+    assert next_occurrence(rule, after=_local(2026, 9, 11, 17, 0)) == _local(2026, 9, 14, 9, 0)
+
+
+@pytest.mark.parametrize(
+    ("day", "start"),
+    [((2026, 3, 8), (2026, 3, 8, 0, 0)), ((2026, 11, 1), (2026, 11, 1, 0, 0))],
+    ids=["spring-forward", "fall-back"],
+)
+def test_every_30_minutes_across_a_dst_change_strictly_increases(day, start) -> None:
+    rule = _every(30, "00:00", "23:59", start_date="2026-01-01")
+    after = datetime(*start).astimezone(timezone.utc)
+    got = _sequence(rule, after, 52)
+    assert all(later > earlier for earlier, later in zip(got, got[1:]))
+    assert len(set(got)) == len(got)
+
+
+def test_the_earliest_later_slot_wins_even_when_dst_puts_slots_out_of_order() -> None:
+    # On the spring-forward day 02:30 normalizes to 03:30 EDT (07:30 UTC),
+    # after the 03:00 slot (07:00 UTC) in list order: 03:00 must come first.
+    rule = _rule(times=["02:30", "03:00"], start_date="2026-03-01")
+    first = next_occurrence(rule, after=_local(2026, 3, 8, 0, 0))
+    assert first == datetime(2026, 3, 8, 7, 0, tzinfo=timezone.utc)
+    assert next_occurrence(rule, after=first) == datetime(2026, 3, 8, 7, 30, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"times": ["06:00"], "every_minutes": 15, "window_start": "09:00", "window_end": "17:00"},
+        {"times": []},
+        {"times": [], "every_minutes": 15, "window_start": "17:00", "window_end": "09:00"},
+        {"times": [], "every_minutes": 0, "window_start": "09:00", "window_end": "17:00"},
+        {"times": [], "every_minutes": 721, "window_start": "09:00", "window_end": "17:00"},
+        {"times": [], "every_minutes": 15, "window_start": "09:00"},
+        {"times": [], "every_minutes": 15, "window_start": "9:00", "window_end": "17:00"},
+    ],
+    ids=["both", "neither", "overnight", "zero", "over-720", "no-end", "bad-time"],
+)
+def test_the_validator_refuses_bad_repeats(fields) -> None:
+    with pytest.raises(ValidationError):
+        _rule(**fields)
+
+
+def test_a_stored_rule_without_repeat_keys_parses_as_at_mode() -> None:
+    stored = '{"frequency": "daily", "interval": 1, "times": ["06:00"], "weekdays": [], ' \
+        '"month_day": null, "start_date": "2026-09-01"}'
+    rule = RecurrenceRule.model_validate_json(stored)
+    assert (rule.times, rule.every_minutes, rule.window_start, rule.window_end) == (["06:00"], None, None, None)
+
+
+def test_describe_every_forms() -> None:
+    assert describe(_every(15, "09:00", "17:00", frequency="weekly", weekdays=[0, 1, 2, 3, 4])) \
+        == "Every weekday, every 15 minutes from 09:00 to 17:00"
+    assert describe(_every(60, "00:00", "23:59")) == "Every day, every hour"
+    assert describe(_every(120, "08:00", "20:00", interval=2)) == "Every 2 days, every 2 hours from 08:00 to 20:00"
+    assert describe(_every(1, "00:00", "23:59", frequency="monthly", month_day=5)) == "Every month on day 5, every minute"
+    assert describe(_every(90, "00:15", "23:59", frequency="weekly", weekdays=[0, 2])) \
+        == "Every week on Mon, Wed, every 90 minutes from 00:15 to 23:59"
+
+
+# ─── upcoming (the editor's preview) ───
+
+
+@pytest.mark.parametrize(
+    "rule",
+    [_rule(times=["06:00", "18:00"]), _every(45, "09:00", "11:00", frequency="weekly", weekdays=[1, 3])],
+    ids=["at", "every"],
+)
+def test_upcoming_returns_count_strictly_increasing_runs(rule) -> None:
+    after = _local(2026, 9, 10, 12, 0)
+    runs = upcoming(rule, after=after, count=7)
+    assert len(runs) == 7
+    assert runs[0] == next_occurrence(rule, after=after)
+    assert all(later > earlier for earlier, later in zip(runs, runs[1:]))
+
+
+def test_upcoming_refuses_a_count_below_one() -> None:
+    with pytest.raises(ValueError):
+        upcoming(_rule(), after=_local(2026, 9, 10), count=0)

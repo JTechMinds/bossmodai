@@ -289,8 +289,33 @@ async def test_a_bad_interval_is_logged_and_other_agents_still_run(env, caplog) 
 
 def test_the_tick_setting_is_seeded_and_read() -> None:
     assert config.get("extension_wake_tick_seconds") == "5"
-    assert wake_service.wake_tick_seconds() == wake_service.WAKE_TICK_SECONDS_FALLBACK == 5.0
+    assert wake_service.wake_tick_seconds() == 5.0
+    db.set_setting("extension_wake_tick_seconds", "2.5", "extensions")
+    config.reload()
+    assert wake_service.wake_tick_seconds() == 2.5
     assert config.get("extension_wake_interval_seconds") is None
+
+
+@pytest.mark.parametrize("value", [None, "0", "-1", "soon"])
+def test_an_unusable_tick_setting_raises_rather_than_falling_back(value) -> None:
+    if value is None:
+        db.execute("DELETE FROM settings WHERE key = $1", ["extension_wake_tick_seconds"])
+    else:
+        db.set_setting("extension_wake_tick_seconds", value, "extensions")
+    config.reload()
+    with pytest.raises(wake_service.ExtensionWakeSettingError):
+        wake_service.wake_tick_seconds()
+
+
+async def test_the_service_refuses_to_start_on_an_unusable_tick(caplog: pytest.LogCaptureFixture) -> None:
+    db.set_setting("extension_wake_tick_seconds", "0", "extensions")
+    config.reload()
+    watch = wake_service.ExtensionWakeWatch()
+    with caplog.at_level(logging.ERROR, logger=wake_service.__name__):
+        watch.start()
+    assert watch._task is None
+    assert any("not started" in record.getMessage() for record in caplog.records)
+    await watch.stop()
 
 
 @pytest.mark.asyncio

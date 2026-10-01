@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -22,11 +22,19 @@ from core.tasking.transitions import (
 
 @dataclass(frozen=True, slots=True)
 class TaskCreateOrBindResult:
-    """Structured result for board-first task creation."""
+    """Structured result for board-first task creation.
+
+    ``origin_line`` is the "Created" line ``mirror_task_created`` persisted on
+    the task's origin thread for a new task (``{"chat_message": …}`` or
+    ``{"channel_message": …}``), for the caller to push live with
+    ``broadcast_origin_line``; empty for a bind, a clarify, or a task with no
+    origin thread.
+    """
 
     task: Task | None
     outcome: str
     resolution: TaskResolution
+    origin_line: dict[str, Any] = field(default_factory=dict)
 
 
 def append_task_event(
@@ -94,6 +102,10 @@ def create_or_bind_task(
     schedule's rule, not board dedupe. Everything else (the floor check,
     the default owner, the creation event and the origin mirror) is the same
     path every task takes.
+
+    A new task's persisted "Created" line comes back as ``origin_line``; it
+    is not broadcast here (this layer has no sink), so a caller that
+    announces the task pushes it with ``broadcast_origin_line``.
 
     Raises:
         ValueError: ``bind_task_id`` is combined with ``schedule_id`` (a run
@@ -206,8 +218,10 @@ def create_or_bind_task(
     )
     from core.agent_loop.task_origin_mirrors import mirror_task_created
 
-    mirror_task_created(task)
-    return TaskCreateOrBindResult(task=task, outcome="create_new_task", resolution=resolution)
+    origin_line = mirror_task_created(task)
+    return TaskCreateOrBindResult(
+        task=task, outcome="create_new_task", resolution=resolution, origin_line=origin_line,
+    )
 
 
 def create_or_bind_subtask(

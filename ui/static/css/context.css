@@ -299,8 +299,8 @@
 .schedule-last-run { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: 0 8px; }
 
 /* The recurrence editor (context/schedule-fields.js): one field per row,
-   Every's number beside its unit, the weekday chips (.menu-segment), and the
-   times as rows with their remove button. */
+   Every's number beside its unit, the weekday and time-mode chips
+   (.menu-segment), and the times as rows with their remove button. */
 .schedule-fields { display: flex; flex-direction: column; gap: 12px; }
 .schedule-every-row,
 .schedule-time-row { display: flex; align-items: center; gap: 8px; }
@@ -310,6 +310,21 @@
 .schedule-at,
 .schedule-times { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .schedule-time-row > .field-input { width: 128px; }
+/* The saved schedule's Enabled switch with Run now beside it, its result
+   callout wrapping under the button. */
+.schedule-run-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px; }
+.schedule-run-now { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.schedule-run-now svg { width: 14px; height: 14px; }
+
+/* "Upcoming runs" under the editor: the summary, then one line per run. */
+.schedule-preview { display: flex; flex-direction: column; gap: 4px; }
+.schedule-preview-list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+
+/* "Repeating": Every [n] [unit] from [time] to [time] on one wrapping row. */
+.schedule-repeat-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.schedule-repeat-row > .schedule-repeat-every { width: 96px; }
+.schedule-repeat-row > .schedule-window-start,
+.schedule-repeat-row > .schedule-window-end { width: 128px; }
 .schedule-time-remove svg { width: 14px; height: 14px; }
 
 /* ─── Desk files ─── */

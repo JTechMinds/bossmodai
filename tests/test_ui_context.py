@@ -102,7 +102,10 @@ CONTEXT_MODULES = [
     CONTEXT / "agent-edit.js",
     CONTEXT / "agents-dialog.js",
     # The desk's Schedules section: the recurrence editor, its layer, the section.
+    CONTEXT / "schedule-api.js",
+    CONTEXT / "schedule-view.js",
     CONTEXT / "schedule-fields.js",
+    CONTEXT / "schedule-preview.js",
     CONTEXT / "schedule-layer.js",
     CONTEXT / "desk-schedules.js",
     CONTEXT / "desk-panel.js",
@@ -781,6 +784,9 @@ def test_desk_schedules_section_and_layer() -> None:
         "scheduleRetryRecovers", "otherActivityIsIgnored", "aScheduleRunRefreshesTheRows",
         "aRowOpensTheScheduleLayer", "anEditPatchesOnlyWhatChanged", "newOpensInEditMode",
         "weeklyNeedsAWeekday", "aCreatePostsTheExactRule", "leavingTheDeskClosesTheScheduleLayer",
+        "repeatModeShowsOnlyItsControls", "anOvernightWindowIsRefusedHere", "aRepeatPostsMinutesAndAWindow",
+        "aStoredRepeatEditsInHours", "runNowIsDisabledWhileRunning", "runNowStartsARealRun",
+        "anOpenRunRefusalSaysWhy", "theDraftIsPreviewed", "anInvalidDraftIsSaidNotSent", "aNewScheduleCanBeSavedOff",
     ):
         assert payload[key] is True, key
     panel = _read(CONTEXT / "desk-panel.js")
@@ -789,7 +795,8 @@ def test_desk_schedules_section_and_layer() -> None:
     fields = _read(CONTEXT / "schedule-fields.js")
     assert "BossModMenuSelect.create({" in fields
     # Dropdowns are BossModMenuSelect; no module builds a native select.
-    for name in ("schedule-fields.js", "schedule-layer.js", "desk-schedules.js"):
+    for name in ("schedule-api.js", "schedule-view.js", "schedule-fields.js", "schedule-preview.js",
+                 "schedule-layer.js", "desk-schedules.js"):
         assert "h('select'" not in _read(CONTEXT / name), name
 
 

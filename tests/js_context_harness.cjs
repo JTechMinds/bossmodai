@@ -144,7 +144,8 @@ const NAMES = [
     "BossModFloorScope",
     "BossModAgentEdit", "BossModAgentsDialog",
     // The desk's Schedules section: the recurrence editor, its layer, the section.
-    "BossModScheduleFields", "BossModScheduleLayer", "BossModDeskSchedules",
+    "BossModScheduleApi", "BossModScheduleView",
+    "BossModScheduleFields", "BossModSchedulePreview", "BossModScheduleLayer", "BossModDeskSchedules",
     "BossModDeskPanel",
     // The desk's task rows wear the Tasks place's status labels and open the
     // task as a layer over the desk through the Tasks place's own loader,
@@ -355,7 +356,8 @@ let heldAgentDetail = null;
 const SCHEDULE_ONE = {
     id: "s1", agent_id: "a1", title: "Status check", instructions: "Read the status page.",
     recurrence: {
-        frequency: "weekly", interval: 1, times: ["06:00", "12:00"], weekdays: [0, 1, 2, 3, 4],
+        frequency: "weekly", interval: 1, times: ["06:00", "12:00"],
+        every_minutes: null, window_start: null, window_end: null, weekdays: [0, 1, 2, 3, 4],
         month_day: null, start_date: "2026-09-01",
     },
     notification_policy: "completion_blocked", enabled: true,
@@ -369,6 +371,11 @@ let schedulesFail = false;
 // How many schedule list reads, and every schedule write, in order.
 let scheduleReads = 0;
 const scheduleWrites = [];
+// Every POST /api/schedules/preview body, and what Run now answers: 'ok',
+// 'open' (a 409 refusal), or a held promise while a test watches the button.
+const previewRequests = [];
+let runMode = "ok";
+let heldRun = null;
 
 // The one browser API the real submit path needs that the shared fake does not
 // carry. Node HAS a FormData and its constructor REFUSES an argument, so
@@ -462,6 +469,25 @@ function api(url, init) {
         scheduleReads += 1;
         if (schedulesFail) return jsonResponse({ detail: "boom" }, 500);
         return jsonResponse(SCHEDULES[agentId] || []);
+    }
+    if (String(url) === "/api/schedules/preview" && init && init.method === "POST") {
+        const body = JSON.parse(init.body);
+        previewRequests.push(body);
+        const runs = Array.from({ length: body.count }, (_, index) => `2026-10-0${index + 2}T10:00:00Z`);
+        return jsonResponse({ summary: "Every weekday at 06:00, 12:00", next_runs: runs });
+    }
+    const runOne = String(url).match(/^\/api\/schedules\/([^/]+)\/run$/);
+    if (runOne && init && init.method === "POST") {
+        scheduleWrites.push({ method: "POST", url: String(url), body: null });
+        if (heldRun) return heldRun.promise;
+        if (runMode === "open") {
+            return jsonResponse({ detail: { reason: "open", detail: "The last run is still open", task_id: "t9" } }, 409);
+        }
+        const stored = Object.values(SCHEDULES).flat().find((row) => row.id === runOne[1]);
+        Object.assign(stored, {
+            last_outcome: "fired", last_occurrence_at: "2026-10-01T09:00:00Z", last_task_id: "t9", last_task_status: "pending",
+        });
+        return jsonResponse({ schedule: { ...stored }, task: { id: "t9", title: stored.title } }, 201);
     }
     const oneSchedule = String(url).match(/^\/api\/schedules\/([^/]+)$/);
     if (oneSchedule && init && (init.method === "PATCH" || init.method === "DELETE")) {
@@ -1141,13 +1167,149 @@ async function main() {
             title: "Weekly report",
             instructions: "Summarise the week.",
             recurrence: {
-                frequency: "weekly", interval: 1, times: ["06:00"], weekdays: [0], month_day: null, start_date: today,
+                frequency: "weekly", interval: 1, times: ["06:00"],
+                every_minutes: null, window_start: null, window_end: null,
+                weekdays: [0], month_day: null, start_date: today,
             },
             notification_policy: "completion_blocked",
+            enabled: true,
         })
         // Saved, it is that schedule's view now, titled by it.
         && newLayer.querySelector(".modal-title").textContent === "Weekly report"
         && newLayer.querySelector("#schedule-edit").hidden === false;
+    // "Repeating": an overnight window is said and nothing is sent; a valid
+    // one POSTs the repeat with `times: []` (the At time typed first is
+    // dropped by the switch), hours stored as minutes x 60. Editing it
+    // again shows hours, because 120 divides by 60.
+    await newLayer.querySelector(".modal-back").dispatchClick();
+    await drain();
+    await deskModal().querySelectorAll(".desk-section-action")
+        .find((node) => node.textContent === "New").dispatchClick();
+    await drain();
+    const repeatLayer = topLayer();
+    repeatLayer.querySelector(".task-detail-title-input").value = "Uptime ping";
+    repeatLayer.querySelector(".task-detail-description-input").value = "Check the status page.";
+    repeatLayer.querySelector(".schedule-time").value = "06:00";
+    await repeatLayer.querySelector("[data-time-mode=\"every\"]").dispatchClick();
+    const repeatRow = repeatLayer.querySelector(".schedule-repeat-row");
+    const repeatModeShowsOnlyItsControls = repeatRow.hidden === false
+        && repeatLayer.querySelector(".schedule-at").hidden === true
+        && repeatLayer.querySelector("[data-time-mode=\"every\"]").getAttribute("aria-pressed") === "true";
+    repeatRow.querySelector(".schedule-repeat-every").value = "2";
+    await repeatRow.querySelector(".menu-select-trigger").dispatchClick();
+    await drain();
+    await repeatLayer.querySelectorAll(".menu-select-option")
+        .find((node) => node.textContent === "hours").dispatchClick();
+    await drain();
+    repeatRow.querySelector(".schedule-window-start").value = "20:00";
+    repeatRow.querySelector(".schedule-window-end").value = "08:00";
+    const writesBeforeRepeat = scheduleWrites.length;
+    await repeatLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const anOvernightWindowIsRefusedHere = scheduleWrites.length === writesBeforeRepeat
+        && repeatLayer.querySelector(".schedule-layer-error").textContent.includes("overnight windows are not supported");
+    repeatRow.querySelector(".schedule-window-start").value = "08:00";
+    repeatRow.querySelector(".schedule-window-end").value = "20:00";
+    await repeatLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const repeatWrite = scheduleWrites[writesBeforeRepeat];
+    const aRepeatPostsMinutesAndAWindow = scheduleWrites.length === writesBeforeRepeat + 1
+        && repeatWrite.method === "POST"
+        && JSON.stringify(repeatWrite.body.recurrence) === JSON.stringify({
+            frequency: "daily", interval: 1, times: [], every_minutes: 120, window_start: "08:00",
+            window_end: "20:00", weekdays: [], month_day: null, start_date: today,
+        });
+    await repeatLayer.querySelector("#schedule-edit").dispatchClick();
+    await drain();
+    const editedRow = repeatLayer.querySelector(".schedule-repeat-row");
+    const aStoredRepeatEditsInHours = editedRow.hidden === false
+        && editedRow.querySelector(".schedule-repeat-every").value === "2"
+        && editedRow.querySelector(".menu-select-value").textContent === "hours";
+    await repeatLayer.querySelector("#schedule-discard").dispatchClick();
+    await drain();
+    if (!repeatModeShowsOnlyItsControls || !anOvernightWindowIsRefusedHere || !aRepeatPostsMinutesAndAWindow
+        || !aStoredRepeatEditsInHours) {
+        throw new Error(`Repeating: mode ${repeatModeShowsOnlyItsControls}, overnight ${anOvernightWindowIsRefusedHere}, `
+            + `post ${aRepeatPostsMinutesAndAWindow} ${JSON.stringify(repeatWrite)}, hours ${aStoredRepeatEditsInHours}`);
+    }
+
+    // Run now: the button is disabled and says so while the request is in
+    // flight; success says "Run started" with Open task and repaints the
+    // facts; a 409 for an open last run says why, with Open task.
+    await repeatLayer.querySelector(".modal-back").dispatchClick();
+    await drain();
+    await scheduleRows().find((node) => node.getAttribute("data-schedule-id") === "s1").dispatchClick();
+    await drain();
+    const runLayer = topLayer();
+    let releaseRun = null;
+    heldRun = { promise: new Promise((resolve) => { releaseRun = resolve; }) };
+    const runButton = runLayer.querySelector("#schedule-run-now");
+    const writesBeforeRun = scheduleWrites.length;
+    void runButton.dispatchClick();
+    await drain();
+    const runNowIsDisabledWhileRunning = runButton.disabled === true && runButton.textContent === "Starting…";
+    heldRun = null;
+    const stored = SCHEDULES.a1.find((row) => row.id === "s1");
+    Object.assign(stored, {
+        last_outcome: "fired", last_occurrence_at: "2026-10-01T09:00:00Z", last_task_id: "t9", last_task_status: "pending",
+    });
+    releaseRun(jsonResponse({ schedule: { ...stored }, task: { id: "t9", title: stored.title } }, 201));
+    await drain();
+    const runResult = () => runLayer.querySelector(".schedule-run-result");
+    const runNowStartsARealRun = scheduleWrites.length === writesBeforeRun + 1
+        && scheduleWrites[writesBeforeRun].url === "/api/schedules/s1/run"
+        && runButton.disabled === false && runButton.textContent === "Run now"
+        && runResult().textContent.includes("Run started")
+        && Boolean(runResult().querySelector(".schedule-run-open-task"))
+        && runLayer.querySelector(".fact-list").textContent.includes("Ran ");
+    runMode = "open";
+    await runButton.dispatchClick();
+    await drain();
+    runMode = "ok";
+    const anOpenRunRefusalSaysWhy = runResult().textContent.includes("The last run is still open")
+        && Boolean(runResult().querySelector(".schedule-run-open-task"));
+
+    // Edit mode previews the draft's next runs after the debounce; an
+    // invalid draft says why and sends nothing.
+    await runLayer.querySelector("#schedule-edit").dispatchClick();
+    const previewsBefore = previewRequests.length;
+    await wait(400);
+    const previewBody = previewRequests[previewRequests.length - 1];
+    const theDraftIsPreviewed = previewRequests.length === previewsBefore + 1
+        && previewBody.count === 5
+        && JSON.stringify(previewBody.recurrence.times) === JSON.stringify(["06:00", "12:00"])
+        && runLayer.querySelector(".schedule-preview-list").children.length === 5;
+    const firstTime = runLayer.querySelector(".schedule-time");
+    firstTime.value = "";
+    firstTime.dispatchEvent({ type: "input" });
+    await wait(400);
+    const anInvalidDraftIsSaidNotSent = previewRequests.length === previewsBefore + 1
+        && runLayer.querySelector(".schedule-preview-error").textContent === "Fill in or remove the empty time.";
+    await runLayer.querySelector("#schedule-discard").dispatchClick();
+    await runLayer.querySelector(".modal-back").dispatchClick();
+    await drain();
+
+    // Create mode shows Enabled (on); switched off, the POST says so.
+    await deskModal().querySelectorAll(".desk-section-action")
+        .find((node) => node.textContent === "New").dispatchClick();
+    await drain();
+    const offLayer = topLayer();
+    offLayer.querySelector(".task-detail-title-input").value = "Dry run";
+    offLayer.querySelector(".task-detail-description-input").value = "Try it once.";
+    offLayer.querySelector(".schedule-time").value = "07:00";
+    await offLayer.querySelector(".switch-row").dispatchClick();
+    const writesBeforeOff = scheduleWrites.length;
+    await offLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const aNewScheduleCanBeSavedOff = scheduleWrites.length === writesBeforeOff + 1
+        && scheduleWrites[writesBeforeOff].body.enabled === false;
+    if (!runNowIsDisabledWhileRunning || !runNowStartsARealRun || !anOpenRunRefusalSaysWhy
+        || !theDraftIsPreviewed || !anInvalidDraftIsSaidNotSent || !aNewScheduleCanBeSavedOff) {
+        throw new Error(`Run now / preview: disabled ${runNowIsDisabledWhileRunning}, run ${runNowStartsARealRun}, `
+            + `open ${anOpenRunRefusalSaysWhy}, preview ${theDraftIsPreviewed}, invalid ${anInvalidDraftIsSaidNotSent}, `
+            + `off ${aNewScheduleCanBeSavedOff}`);
+    }
+
     // Leaving the desk takes an open schedule layer with it.
     desk.open("a2");
     await drain();
@@ -2287,6 +2449,16 @@ async function main() {
         weeklyNeedsAWeekday,
         aCreatePostsTheExactRule,
         leavingTheDeskClosesTheScheduleLayer,
+        repeatModeShowsOnlyItsControls,
+        anOvernightWindowIsRefusedHere,
+        aRepeatPostsMinutesAndAWindow,
+        aStoredRepeatEditsInHours,
+        runNowIsDisabledWhileRunning,
+        runNowStartsARealRun,
+        anOpenRunRefusalSaysWhy,
+        theDraftIsPreviewed,
+        anInvalidDraftIsSaidNotSent,
+        aNewScheduleCanBeSavedOff,
         opensOnThePathItWasGiven,
         createOpensTheConversationOnly,
         drainsOnDestroy,

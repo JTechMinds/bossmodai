@@ -451,9 +451,13 @@
     <script src="{{ static_url('js/context/desk-task-opener.js') }}"></script>
     <script src="{{ static_url('js/context/desk-actions.js') }}"></script>
     <script src="{{ static_url('js/context/desk-extensions.js') }}"></script>
-    <!-- Schedules: the recurrence editor, the layer that uses it, then the
-         desk section that opens the layer. -->
+    <!-- Schedules: the transport, the view, the recurrence editor and its
+         upcoming-runs preview, the layer that uses them, then the desk
+         section that opens the layer. -->
+    <script src="{{ static_url('js/context/schedule-api.js') }}"></script>
+    <script src="{{ static_url('js/context/schedule-view.js') }}"></script>
     <script src="{{ static_url('js/context/schedule-fields.js') }}"></script>
+    <script src="{{ static_url('js/context/schedule-preview.js') }}"></script>
     <script src="{{ static_url('js/context/schedule-layer.js') }}"></script>
     <script src="{{ static_url('js/context/desk-schedules.js') }}"></script>
     <script src="{{ static_url('js/context/desk-panel.js') }}"></script>

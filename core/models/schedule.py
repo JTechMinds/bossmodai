@@ -15,10 +15,10 @@ import re
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.models.notification import TaskNotificationPolicy
-from core.models.task import TaskStatus
+from core.models.task import Task, TaskStatus
 
 ScheduleFrequency = Literal["daily", "weekly", "monthly"]
 ScheduleOutcome = Literal["fired", "missed", "skipped_open", "skipped_vacation", "failed"]
@@ -31,8 +31,12 @@ INTERVAL_BOUNDS: dict[str, tuple[int, int]] = {
     "monthly": (1, 12),
 }
 MAX_TIMES_PER_DAY = 12
+# "Every" mode's longest step: every 12 hours.
+MAX_EVERY_MINUTES = 720
 TITLE_MAX_CHARS = 200
 INSTRUCTIONS_MAX_CHARS = 4000
+# How many upcoming runs one preview may ask for.
+PREVIEW_MAX_COUNT = 20
 
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
@@ -60,13 +64,26 @@ class RecurrenceRule(BaseModel):
     - ``monthly``: on ``month_day`` of every ``interval``-th month from
       ``start_date``'s month; a shorter month uses its last day.
 
-    ``times`` are wall-clock ``HH:MM`` on the host (the operator's desktop).
-    The validator sorts ``times`` and ``weekdays``.
+    On each chosen day the rule runs in exactly one of two modes:
+
+    - **At** set times: ``times``, wall-clock ``HH:MM`` on the host (the
+      operator's desktop); ``every_minutes`` and the window are ``None``.
+    - **Every** ``every_minutes`` (1..``MAX_EVERY_MINUTES``) within the window
+      ``window_start``..``window_end`` (``HH:MM``, inclusive, same day):
+      slots are aligned to the wall clock from ``window_start``; ``times`` is
+      empty. A window that crosses midnight is refused (which day it belongs
+      to would be ambiguous).
+
+    A stored rule from before "Every" mode has none of its keys and parses as
+    "At". The validator sorts ``times`` and ``weekdays``.
 
     Raises:
         pydantic.ValidationError: An unknown field; an interval out of its
-            frequency's bounds; no times, more than ``MAX_TIMES_PER_DAY``,
-            a time that is not ``HH:MM`` (00:00-23:59), or a duplicate time;
+            frequency's bounds; both modes or neither; in "At" mode more than
+            ``MAX_TIMES_PER_DAY`` times, a time that is not ``HH:MM``
+            (00:00-23:59), or a duplicate time; in "Every" mode a missing
+            window end, ``every_minutes`` out of bounds, a window end that is
+            not ``HH:MM``, or a window that ends before it starts;
             weekly without weekdays, weekdays outside 0..6 or repeated, or
             weekdays on another frequency; monthly without ``month_day``,
             a ``month_day`` outside 1..31, or one on another frequency.
@@ -76,7 +93,10 @@ class RecurrenceRule(BaseModel):
 
     frequency: ScheduleFrequency
     interval: int
-    times: list[str]
+    times: list[str] = []
+    every_minutes: int | None = None
+    window_start: str | None = None
+    window_end: str | None = None
     weekdays: list[int] = []
     month_day: int | None = None
     start_date: date
@@ -86,8 +106,13 @@ class RecurrenceRule(BaseModel):
         low, high = INTERVAL_BOUNDS[self.frequency]
         if not low <= self.interval <= high:
             raise ValueError(f"A {self.frequency} interval must be between {low} and {high}")
+        repeat = (self.every_minutes, self.window_start, self.window_end)
+        if self.times and any(value is not None for value in repeat):
+            raise ValueError("Choose set times or a repeat, not both")
+        if not self.times and all(value is None for value in repeat):
+            raise ValueError("A schedule needs at least one time of day, or a repeat")
         if not self.times:
-            raise ValueError("A schedule needs at least one time of day")
+            self._validate_repeat()
         if len(self.times) > MAX_TIMES_PER_DAY:
             raise ValueError(f"A schedule can have at most {MAX_TIMES_PER_DAY} times of day")
         for value in self.times:
@@ -114,6 +139,26 @@ class RecurrenceRule(BaseModel):
         elif self.month_day is not None:
             raise ValueError("Only a monthly schedule takes a day of the month")
         return self
+
+    def _validate_repeat(self) -> None:
+        """Check "Every" mode's three fields.
+
+        Raises:
+            ValueError: A missing field, ``every_minutes`` out of bounds, a
+                window end that is not ``HH:MM``, or an overnight window.
+        """
+        if self.every_minutes is None:
+            raise ValueError("A repeating schedule needs how many minutes apart its runs are")
+        if self.window_start is None or self.window_end is None:
+            raise ValueError("A repeating schedule needs a window start and end")
+        if not 1 <= self.every_minutes <= MAX_EVERY_MINUTES:
+            raise ValueError(f"A repeat must be every 1 to {MAX_EVERY_MINUTES} minutes")
+        for value in (self.window_start, self.window_end):
+            if not _TIME_RE.match(value):
+                raise ValueError(f"Window time {value!r} is not a 24-hour HH:MM time")
+        # Zero-padded HH:MM compares correctly as text.
+        if self.window_end < self.window_start:
+            raise ValueError("The window must end after it starts (overnight windows are not supported)")
 
 
 class AgentSchedule(BaseModel):
@@ -221,3 +266,31 @@ class ScheduleView(AgentSchedule):
     summary: str
     next_run_at: datetime | None = None
     last_task_status: TaskStatus | None = None
+
+
+class ScheduleRunResult(BaseModel):
+    """POST /api/schedules/{id}/run: the schedule after the run, and the task it created."""
+
+    schedule: ScheduleView
+    task: Task
+
+
+class SchedulePreviewRequest(BaseModel):
+    """Payload accepted by POST /api/schedules/preview: a draft rule and how many runs to list.
+
+    Raises:
+        pydantic.ValidationError: An unknown field, an invalid rule, or
+            ``count`` outside 1..``PREVIEW_MAX_COUNT``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    recurrence: RecurrenceRule
+    count: int = Field(ge=1, le=PREVIEW_MAX_COUNT)
+
+
+class SchedulePreview(BaseModel):
+    """The draft rule's summary and its next runs, soonest first (aware UTC)."""
+
+    summary: str
+    next_runs: list[datetime]

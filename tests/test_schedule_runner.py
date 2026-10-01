@@ -14,7 +14,15 @@ from core.floors import send_home
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import RecurrenceRule
 from core.scheduling import runner
-from core.scheduling.runner import ScheduleSettingError, ScheduleTiming, read_timing, run_occurrence
+from core.scheduling.runner import (
+    ScheduleRunFailed,
+    ScheduleRunRefused,
+    ScheduleSettingError,
+    ScheduleTiming,
+    read_timing,
+    run_now,
+    run_occurrence,
+)
 from core.tasking.service import create_or_bind_task
 from core.tasking.transitions import transition_task
 
@@ -195,3 +203,106 @@ def test_read_timing_reads_the_seeds_and_refuses_a_grace_no_longer_than_the_slee
     config.reload()
     with pytest.raises(ScheduleSettingError):
         read_timing()
+
+
+def test_changed_marks_news_and_every_fire() -> None:
+    ada = _agent()
+    schedule = _schedule(ada.id)
+    at = [DUE + timedelta(days=offset) for offset in range(4)]
+
+    first = run_occurrence(schedule.id, due_at=at[0], now=at[0], timing=TIMING)
+    skip = run_occurrence(schedule.id, due_at=at[1], now=at[1], timing=TIMING)
+    again = run_occurrence(schedule.id, due_at=at[2], now=at[2], timing=TIMING)
+    transition_task(first.task.id, "cancelled", reason="done", actor="Human Operator", actor_type="human")
+    refire = run_occurrence(schedule.id, due_at=at[3], now=at[3], timing=TIMING)
+
+    assert [(run.outcome, run.changed) for run in (first, skip, again, refire)] == [
+        ("fired", True), ("skipped_open", True), ("skipped_open", False), ("fired", True),
+    ]
+
+
+def test_a_fired_run_carries_its_persisted_origin_line_and_others_none() -> None:
+    ada = _agent()
+    schedule = _schedule(ada.id)
+
+    fired = run_occurrence(schedule.id, due_at=DUE, now=DUE, timing=TIMING)
+    skipped = run_occurrence(schedule.id, due_at=DUE + timedelta(days=1), now=DUE + timedelta(days=1), timing=TIMING)
+
+    line = fired.origin_line["chat_message"]
+    assert line["agent_id"] == ada.id and "Check the status page" in line["content"]
+    assert skipped.origin_line == {}
+
+
+# ─── Run now ───
+
+
+def test_run_now_creates_a_manual_run_and_records_it_fired_now() -> None:
+    ada = _agent()
+    schedule = _schedule(ada.id)
+    now = datetime(2026, 9, 30, 14, 7, tzinfo=timezone.utc)
+
+    run = run_now(schedule.id, now=now)
+
+    assert run.outcome == "fired" and run.changed is True
+    task = db.get_task(run.task.id)
+    assert task.schedule_id == schedule.id and task.assigned_to == ada.id
+    assert task.description == "Log in and read the status page.\n\nManual run (Run now): Every day at 06:00"
+    assert run.trigger["trigger_type"] == "task_assigned"
+    assert run.origin_line["chat_message"]["agent_id"] == ada.id
+    row = db.get_schedule(schedule.id)
+    assert (row.last_outcome, row.last_occurrence_at, row.last_task_id) == ("fired", now, task.id)
+
+
+def test_run_now_works_on_a_disabled_schedule_and_leaves_it_disabled() -> None:
+    ada = _agent()
+    schedule = _schedule(ada.id, enabled=False)
+    run = run_now(schedule.id, now=DUE)
+    assert run.outcome == "fired"
+    assert db.get_schedule(schedule.id).enabled is False
+
+
+def test_run_now_refuses_a_vacation_and_records_nothing() -> None:
+    ada = _agent()
+    schedule = _schedule(ada.id)
+    send_home(ada.id)
+    with pytest.raises(ScheduleRunRefused) as refused:
+        run_now(schedule.id, now=DUE)
+    assert (refused.value.reason, refused.value.task_id) == ("vacation", None)
+    assert refused.value.message == "Ada is on vacation"
+    row = db.get_schedule(schedule.id)
+    assert (row.last_outcome, row.last_occurrence_at) == (None, None)
+    assert db.list_tasks(assigned_to=ada.id) == []
+
+
+def test_run_now_refuses_while_the_last_run_is_open_and_records_nothing() -> None:
+    ada = _agent()
+    schedule = _schedule(ada.id)
+    first = run_now(schedule.id, now=DUE)
+    with pytest.raises(ScheduleRunRefused) as refused:
+        run_now(schedule.id, now=DUE + timedelta(minutes=1))
+    assert (refused.value.reason, refused.value.task_id) == ("open", first.task.id)
+    assert refused.value.message == "The last run is still open"
+    assert db.get_schedule(schedule.id).last_occurrence_at == DUE
+    assert len(db.list_tasks(assigned_to=ada.id)) == 1
+
+
+def test_run_now_records_a_creation_error_as_failed_and_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    ada = _agent()
+    schedule = _schedule(ada.id)
+
+    def boom(**_kwargs):
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(runner, "create_or_bind_task", boom)
+    with pytest.raises(ScheduleRunFailed) as failed:
+        run_now(schedule.id, now=DUE)
+    assert failed.value.detail == "RuntimeError: database is locked"
+    row = db.get_schedule(schedule.id)
+    assert (row.last_outcome, row.last_outcome_detail, row.last_occurrence_at) == (
+        "failed", "RuntimeError: database is locked", DUE,
+    )
+
+
+def test_run_now_on_a_missing_schedule_is_a_lookup_error() -> None:
+    with pytest.raises(LookupError):
+        run_now("nope", now=DUE)

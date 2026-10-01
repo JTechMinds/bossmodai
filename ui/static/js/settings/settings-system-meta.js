@@ -77,6 +77,16 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Meeting Invite Arrival Timeout (seconds)',
             description: 'How long an accepted agent may take to arrive at the meeting room before they are marked timed out.',
         },
+        schedule_max_sleep_seconds: {
+            order: 77,
+            label: 'Schedule Clock Re-check (seconds)',
+            description: 'Longest the schedule clock waits before re-reading the wall clock; it also catches up after the computer sleeps. Must be less than the on-time window.',
+        },
+        schedule_fire_grace_seconds: {
+            order: 78,
+            label: 'Schedule On-time Window (seconds)',
+            description: 'How late a scheduled run may start and still run; later (for example after the computer slept) it is recorded as missed.',
+        },
         thought_bubble_duration_ms: {
             order: 80,
             label: 'Thought Bubble Duration (ms)',

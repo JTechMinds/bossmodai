@@ -444,3 +444,20 @@ def test_connection_form_sends_the_supports_images_switch() -> None:
     body = source.split("addEventListener('submit'", 1)[1]
     assert "if (imagesToggled) data.supports_images = supportsImages;" in body
     assert body.count("body: JSON.stringify(data)") == 2
+
+
+def test_schedule_settings_have_system_meta_under_simulation() -> None:
+    """Both schedule timing settings are seeded in `simulation` and listed in SETTING_META.
+
+    System Settings groups rows by the seeded category; the catalog supplies
+    their label and description, so a seeded key missing from it would render
+    as a bare key.
+    """
+    from db.settings import _SEED_SETTING_DEFAULTS
+
+    meta = _read("settings/settings-system-meta.js")
+    catalog = meta.split("const SETTING_META = {", 1)[1]
+    for key in ("schedule_max_sleep_seconds", "schedule_fire_grace_seconds"):
+        assert _SEED_SETTING_DEFAULTS[key][1] == "simulation", key
+        entry = catalog.split(f"{key}: {{", 1)[1].split("},", 1)[0]
+        assert "label: '" in entry and "description: '" in entry and "order: " in entry, key

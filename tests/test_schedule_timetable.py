@@ -35,10 +35,10 @@ def _daily(*times: str) -> RecurrenceRule:
     )
 
 
-def test_load_computes_from_now_so_past_due_times_never_replay() -> None:
+def test_a_first_sync_computes_from_now_so_past_due_times_never_replay() -> None:
     table = Timetable()
     # 06:00 already passed today (offline/paused): it is not in the table.
-    table.load([("a", _daily("06:00")), ("b", _daily("12:00"))], now=_at(10, 9))
+    table.sync([("a", _daily("06:00")), ("b", _daily("12:00"))], now=_at(10, 9))
     assert len(table) == 2
     assert table.next_due() == _at(10, 12)
     assert table.pop_due(_at(10, 9)) == []
@@ -48,14 +48,14 @@ def test_load_computes_from_now_so_past_due_times_never_replay() -> None:
 
 def test_pop_due_returns_every_entry_due_at_the_same_instant() -> None:
     table = Timetable()
-    table.load([("a", _daily("06:00")), ("b", _daily("06:00")), ("c", _daily("07:00"))], now=_at(10, 5))
+    table.sync([("a", _daily("06:00")), ("b", _daily("06:00")), ("c", _daily("07:00"))], now=_at(10, 5))
     assert sorted(table.pop_due(_at(10, 6))) == [("a", _at(10, 6)), ("b", _at(10, 6))]
     assert len(table) == 1
 
 
 def test_schedule_replaces_an_existing_entry() -> None:
     table = Timetable()
-    table.load([("a", _daily("06:00"))], now=_at(10, 5))
+    table.sync([("a", _daily("06:00"))], now=_at(10, 5))
     table.schedule("a", _daily("08:00"), after=_at(10, 5))
     assert len(table) == 1
     assert table.next_due() == _at(10, 8)
@@ -65,7 +65,7 @@ def test_schedule_replaces_an_existing_entry() -> None:
 
 def test_drop_removes_an_entry_and_ignores_an_unknown_id() -> None:
     table = Timetable()
-    table.load([("a", _daily("06:00")), ("b", _daily("07:00"))], now=_at(10, 5))
+    table.sync([("a", _daily("06:00")), ("b", _daily("07:00"))], now=_at(10, 5))
     table.drop("a")
     table.drop("zzz")
     assert len(table) == 1
@@ -79,6 +79,35 @@ def test_an_empty_table_has_nothing_due() -> None:
     assert len(table) == 0
 
 
-def test_load_refuses_a_duplicate_id() -> None:
+def test_sync_refuses_a_duplicate_id() -> None:
     with pytest.raises(ValueError):
-        Timetable().load([("a", _daily("06:00")), ("a", _daily("07:00"))], now=_at(10, 5))
+        Timetable().sync([("a", _daily("06:00")), ("a", _daily("07:00"))], now=_at(10, 5))
+
+
+def test_sync_keeps_an_unchanged_entry_even_when_it_is_already_due() -> None:
+    table = Timetable()
+    table.sync([("a", _daily("06:00"))], now=_at(10, 5))
+    # A reload at 06:30: the 06:00 run is still owed, so it stays due.
+    table.sync([("a", _daily("06:00"))], now=_at(10, 6, 30))
+    assert table.next_due() == _at(10, 6)
+    assert table.pop_due(_at(10, 6, 30)) == [("a", _at(10, 6))]
+
+
+def test_sync_recomputes_a_changed_rule_from_now_adds_new_and_drops_removed() -> None:
+    table = Timetable()
+    table.sync([("a", _daily("06:00")), ("gone", _daily("07:00"))], now=_at(10, 5))
+    table.sync([("a", _daily("06:15")), ("new", _daily("06:20"))], now=_at(10, 6, 30))
+    # "a" changed: computed from now, so today's 06:15 (behind the clock) is not owed.
+    assert table.pop_due(_at(11, 6, 15)) == [("a", _at(11, 6, 15))]
+    assert table.pop_due(_at(11, 6, 20)) == [("new", _at(11, 6, 20))]
+    assert len(table) == 0
+
+
+def test_a_popped_entry_is_recomputed_from_now_by_the_next_sync() -> None:
+    table = Timetable()
+    table.sync([("a", _daily("06:00")), ("b", _daily("06:01"))], now=_at(10, 5))
+    assert table.pop_due(_at(10, 6)) == [("a", _at(10, 6))]
+    # The run for "a" failed and was not re-scheduled; "b" is owed and keeps its place.
+    table.sync([("a", _daily("06:00")), ("b", _daily("06:01"))], now=_at(10, 6, 2))
+    assert table.pop_due(_at(10, 6, 2)) == [("b", _at(10, 6, 1))]
+    assert table.next_due() == _at(11, 6)

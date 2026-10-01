@@ -42,15 +42,29 @@ from core.floors import is_on_vacation
 logger = logging.getLogger(__name__)
 
 TRIGGER_TYPE = "extension_event"
-# Keep equal to _SEED_SETTINGS in db/settings.py.
-WAKE_TICK_SECONDS_FALLBACK = 5.0
+TICK_SETTING = "extension_wake_tick_seconds"
+
+
+class ExtensionWakeSettingError(Exception):
+    """``extension_wake_tick_seconds`` is missing, not a number, or not positive."""
 
 
 def wake_tick_seconds() -> float:
-    """Return how often the service looks for due pairs. Missing or non-positive uses the seed (5)."""
-    value = config.get_float("extension_wake_tick_seconds")
-    if value is None or value <= 0:
-        return WAKE_TICK_SECONDS_FALLBACK
+    """Return how often the service looks for due pairs (seeded in db/settings.py).
+
+    Returns:
+        The tick, in seconds.
+
+    Raises:
+        ExtensionWakeSettingError: The setting is missing, not a number, or
+            not greater than 0. There is no fallback value.
+    """
+    try:
+        value = config.require_float(TICK_SETTING)
+    except config.ConfigError as exc:
+        raise ExtensionWakeSettingError(str(exc)) from exc
+    if value <= 0:
+        raise ExtensionWakeSettingError(f"setting {TICK_SETTING!r} must be greater than 0, got {value}")
     return value
 
 
@@ -116,11 +130,24 @@ class ExtensionWakeWatch:
         # when the detail changes. Poll failures compare against the stored
         # status row instead.
         self._host_errors: dict[tuple[str, str], str] = {}
+        # The last usable tick, and the setting problem logged (once per message).
+        self._tick: float | None = None
+        self._tick_error: str | None = None
 
     def start(self) -> None:
-        """Start the tick loop. A second call while running does nothing."""
+        """Start the tick loop. A second call while running does nothing.
+
+        The tick setting is read first; when it is unusable the service does
+        not start and says why at error level (no invented default).
+        """
         if self._running:
             return
+        try:
+            self._tick = wake_tick_seconds()
+        except ExtensionWakeSettingError as exc:
+            logger.error("Extension wake watch not started: %s", exc)
+            return
+        self._tick_error = None
         self._running = True
         self._task = asyncio.create_task(self._loop())
         logger.info("Extension wake watch started")
@@ -140,12 +167,27 @@ class ExtensionWakeWatch:
         while self._running:
             try:
                 config.refresh_if_changed()
+                self._refresh_tick()
                 await self.run_once()
             except asyncio.CancelledError:
                 break
             except Exception:
                 logger.exception("Extension wake watch loop error")
-            await asyncio.sleep(wake_tick_seconds())
+            await asyncio.sleep(self._tick)
+
+    def _refresh_tick(self) -> None:
+        """Re-read the tick; an unusable value keeps the last valid one, logged once."""
+        try:
+            tick = wake_tick_seconds()
+        except ExtensionWakeSettingError as exc:
+            if str(exc) != self._tick_error:
+                logger.error("Extension wake tick setting is unusable, keeping the last valid one: %s", exc)
+                self._tick_error = str(exc)
+            return
+        if self._tick_error is not None:
+            logger.info("Extension wake tick setting is usable again")
+            self._tick_error = None
+        self._tick = tick
 
     async def run_once(self) -> None:
         """Check every due (extension, agent) pair once.

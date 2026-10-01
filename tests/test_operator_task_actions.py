@@ -378,3 +378,26 @@ def test_single_cancel_returns_the_listed_row(monkeypatch: pytest.MonkeyPatch) -
     assert body["assigned_to_name"] == "Cap Writer"
     assert body["operator_can_complete"] is False
     assert body["operator_can_resume"] is False
+
+
+def test_a_dm_origin_create_pushes_its_created_line_live(monkeypatch: pytest.MonkeyPatch) -> None:
+    from api.websocket import manager
+
+    sent: list[dict[str, Any]] = []
+
+    async def _spy(**data: Any) -> None:
+        sent.append(data)
+
+    monkeypatch.setattr(manager, "broadcast_chat_message", _spy)
+    client = _client(monkeypatch)
+    writer = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+
+    task = _create(
+        client, title="Write the note", assigned_to=writer.id,
+        source_channel="chat", notification_policy="completion_blocked",
+    )
+
+    assert [item["agent_id"] for item in sent] == [writer.id]
+    assert "Write the note" in sent[0]["content"]
+    assert sent[0]["message_id"]
+    assert db.get_task(task["id"]).source_channel == "chat"

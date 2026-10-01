@@ -18,7 +18,7 @@ from core.agent_loop.role_contracts import (
     rank_agents_for_work,
     suggested_assignees,
 )
-from core.agent_loop.task_origin_mirrors import OPERATOR_CANCEL_REASON
+from core.agent_loop.task_origin_mirrors import OPERATOR_CANCEL_REASON, broadcast_origin_line
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.floors import FloorDenied
@@ -316,6 +316,7 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
     wake = assignment_wake_trigger(task)
     if wake is not None:
         await runtime_services.enqueue_trigger(**wake)
+    await broadcast_origin_line(manager, creation.origin_line)
     await manager.broadcast_activity(
         event="task_created" if creation.outcome == "create_new_task" else "task_reused",
         detail=(
@@ -534,26 +535,5 @@ async def _deliver_operator_result(result: OperatorTaskResult, *, event: str, de
 async def _broadcast_posted_lines(posted_lines: list[dict]) -> None:
     """Broadcast origin-thread lines an operator action persisted."""
     for posted in posted_lines:
-        extra = posted.get("channel_message") if isinstance(posted, dict) else None
-        if extra:
-            await manager.broadcast_channel_message(
-                channel_id=extra["channel_id"],
-                content=extra["content"],
-                author_type=extra.get("author_type") or "system",
-                author_name=extra.get("author_name") or "BossMod",
-                message_id=extra.get("message_id"),
-                created_at=extra.get("created_at"),
-                notification_kind=extra.get("notification_kind"),
-            )
-        chat = posted.get("chat_message") if isinstance(posted, dict) else None
-        if chat:
-            await manager.broadcast_chat_message(
-                agent_id=chat["agent_id"],
-                content=chat["content"],
-                from_type=chat.get("from_type") or "system",
-                from_name=chat.get("from_name") or "BossMod",
-                message_type=chat.get("message_type"),
-                message_id=chat.get("message_id"),
-                created_at=chat.get("created_at"),
-                notification_kind=chat.get("notification_kind"),
-            )
+        if isinstance(posted, dict):
+            await broadcast_origin_line(manager, posted)

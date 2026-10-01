@@ -185,7 +185,10 @@ CONTEXT_MODULES = [
     JS / "context" / "agent-edit.js",
     JS / "context" / "agents-dialog.js",
     # The desk's Schedules section (tests/js_context_harness.cjs NAMES).
+    JS / "context" / "schedule-api.js",
+    JS / "context" / "schedule-view.js",
     JS / "context" / "schedule-fields.js",
+    JS / "context" / "schedule-preview.js",
     JS / "context" / "schedule-layer.js",
     JS / "context" / "desk-schedules.js",
     JS / "context" / "desk-panel.js",
