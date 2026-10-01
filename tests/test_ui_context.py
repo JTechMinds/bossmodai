@@ -61,6 +61,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "sources" / "thread-archive.js",
     CONVERSATION / "sources" / "thread-seat.js",
     CONVERSATION / "sources" / "thread-requests.js",
+    CONVERSATION / "auto-approve-switch.js",
     CONVERSATION / "sources" / "thread-source.js",
     CONVERSATION / "sources" / "agent-source.js",
     CONVERSATION / "conversation-focus-invalidate.js",

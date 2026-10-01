@@ -4,13 +4,14 @@
  * renders the standing-prefs limits. Threads renders the routing and
  * idle-check settings, with a BossModSwitch for the idle-check flag, and a
  * refused save shows the server's message on its row. System AI lives
- * under AI Connections. Invoked by tests/test_system_ai_compaction_settings.py.
- * Not a browser bundle.
+ * under AI Connections. Advanced renders the Global auto-approve switch,
+ * which asks before it turns on and never before it turns off. Invoked by
+ * tests/test_system_ai_compaction_settings.py. Not a browser bundle.
  */
 const fs = require("fs");
 const { FakeEl, installDom } = require("./js_fake_dom.cjs");
 
-installDom();
+const documentStub = installDom();
 
 const VOID = new Set(["INPUT", "BR", "HR", "IMG"]);
 
@@ -99,6 +100,12 @@ global.apiFetch = async (url) => {
     if (url === "/api/settings") {
         return { ok: true, status: 200, json: async () => world.settings };
     }
+    if (url === "/api/settings?category=advanced") {
+        return { ok: true, status: 200, json: async () => world.advanced };
+    }
+    if (url === "/api/settings/desktop-open-folder-options") {
+        return { ok: true, status: 200, json: async () => ({ current: null, options: [] }) };
+    }
     throw new Error(`unexpected fetch ${url}`);
 };
 
@@ -111,6 +118,12 @@ global.apiFetchOk = async (url, init) => {
 
 global.BossModOperatorInvalidate = { notifyLocal(surfaces) { invalidations.push(surfaces); } };
 
+// settings-advanced.js asks through window.confirm before Global auto-approve
+// turns on. Each answer is scripted; every question is kept.
+const confirms = [];
+let confirmAnswer = false;
+global.confirm = (text) => { confirms.push(text); return confirmAnswer; };
+
 // settings-system.js registers a repaint hook on render; the harness drives
 // renders directly, so the hook is a no-op.
 global.SettingsView = { bindRepaint() {} };
@@ -120,6 +133,7 @@ eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModDom = BossModD
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModSwitch = BossModSwitch;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModSystemSettingsMeta = BossModSystemSettingsMeta;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.SystemSection = SystemSection;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.AdvancedSystemSection = AdvancedSystemSection;\n`);
 
 function snapshot(root) {
     return root.querySelectorAll(".setting-input").map((control) => {
@@ -288,6 +302,50 @@ async function main() {
     delay.value = "60";
     await dispatchChange(delay);
     const delayErrorAfterFix = errorText(root, "channel_idle_check_delay_seconds");
+    const systemFetches = fetches.slice();
+    const systemInvalidations = invalidations.slice();
+
+    // ─── Advanced: Global auto-approve ───
+    // The section wires its buttons through document.getElementById, so it
+    // renders inside the document body.
+    world.advanced = [
+        setting("diagnostics_enabled", "false", "advanced"),
+        setting("diagnostics_retention_limit", "5000", "advanced"),
+        setting("cli_max_read_lines", "200", "advanced"),
+        setting("desktop_open_folder_handler", "", "advanced"),
+        setting("cli_auto_approve_global", "false", "advanced"),
+    ];
+    const advancedRoot = new FakeEl("div");
+    documentStub.body.append(advancedRoot);
+    await AdvancedSystemSection.render(advancedRoot);
+    const globalSwitch = () => {
+        const mount = advancedRoot.querySelectorAll("[data-setting-switch]")
+            .find((node) => node.dataset.settingSwitch === "cli_auto_approve_global");
+        return mount ? mount.querySelector("[role=\"switch\"]") : null;
+    };
+    const globalStep = async (answer) => {
+        confirmAnswer = answer;
+        const asked = confirms.length;
+        const saved = saves.length;
+        const notified = invalidations.length;
+        await globalSwitch().dispatchClick();
+        await settle();
+        return {
+            asked: confirms.slice(asked),
+            saves: saves.slice(saved),
+            invalidations: invalidations.slice(notified),
+            checked: globalSwitch().getAttribute("aria-checked"),
+        };
+    };
+    const globalBefore = globalSwitch()
+        ? { name: globalSwitch().textContent.trim(), checked: globalSwitch().getAttribute("aria-checked") }
+        : null;
+    const declined = await globalStep(false);
+    const accepted = await globalStep(true);
+    const turnedOff = await globalStep(true);
+    world.reject.cli_auto_approve_global = "Global auto-approve must be true or false.";
+    const refused = await globalStep(true);
+    refused.error = errorText(advancedRoot, "cli_auto_approve_global");
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -295,7 +353,7 @@ async function main() {
         savesBeforeOpen,
         heading,
         intro,
-        fetches,
+        fetches: systemFetches,
         saves: outputSaves,
         fresh,
         degraded,
@@ -315,7 +373,8 @@ async function main() {
         delayError,
         otherError,
         delayErrorAfterFix,
-        invalidations,
+        invalidations: systemInvalidations,
+        globalAutoApprove: { before: globalBefore, declined, accepted, turnedOff, refused },
     }));
 }
 

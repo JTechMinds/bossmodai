@@ -341,6 +341,12 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "channels", "cli_auto_approve",
         "INTEGER NOT NULL DEFAULT 0",
     )
+    # The DM counterpart of channels.cli_auto_approve: existing agents read
+    # as off (0), which is what they were.
+    _add_column_if_missing(
+        con, "agents", "cli_auto_approve_dm",
+        "INTEGER NOT NULL DEFAULT 0",
+    )
     _ensure_floors(con)
     _add_column_if_missing(
         con, "cli_approval_requests", "review_note", "TEXT",

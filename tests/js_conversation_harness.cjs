@@ -26,7 +26,7 @@ const NAMES = [
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource",
+    "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
@@ -60,6 +60,16 @@ const THREADS = {
     // Somewhere to switch to mid-rename.
     t3: { id: "t3", name: "Design sync", status: "active", members: [{ id: "m1", name: "Ada" }] },
 };
+// Settings → Advanced "Global auto-approve", as the server reports it on
+// every thread and agent payload, and each agent's own DM flag.
+let autoApproveGlobal = false;
+const agentAutoApprove = {};
+const autoApprovePatches = [];
+const agentRecord = (id) => ({
+    id,
+    cli_auto_approve_dm: agentAutoApprove[id] === true,
+    cli_auto_approve_global: autoApproveGlobal,
+});
 const RENAME_FAILURE = "Thread name cannot be empty";
 const renamePayloads = [];
 let renameFails = false;
@@ -91,6 +101,15 @@ const api = async (url, init) => {
         return { ok: true, async json() { return {}; } };
     }
     if (/^\/api\/channels\/[^/]+\/messages$/.test(text) && linkRefused) return linkRefusal();
+    const dmFlag = text.match(/^\/api\/agents\/([^/]+)\/cli-auto-approve$/);
+    if (dmFlag) {
+        const body = JSON.parse(init.body);
+        autoApprovePatches.push({ id: dmFlag[1], method: init.method, body });
+        agentAutoApprove[dmFlag[1]] = body.enabled === true;
+        return { ok: true, async json() { return agentRecord(dmFlag[1]); } };
+    }
+    const record = text.match(/^\/api\/agents\/([^/?]+)$/);
+    if (record) return { ok: true, async json() { return agentRecord(record[1]); } };
     const agent = text.match(/^\/api\/agents\/([^/]+)\/messages/);
     if (agent) {
         const id = agent[1];
@@ -117,7 +136,10 @@ const api = async (url, init) => {
         return {
             ok: true,
             async json() {
-                return { channel: { ...room, members: room.members }, messages: [] };
+                return {
+                    channel: { ...room, members: room.members, cli_auto_approve_global: autoApproveGlobal },
+                    messages: [],
+                };
             },
         };
     }
@@ -822,6 +844,107 @@ async function main() {
             + `"${titleSlot().textContent}"`);
     }
 
+    // ─── Auto-approve: the DM's own switch, and Global greying both out ───
+    //
+    // The DM switch is the thread switch's twin (auto-approve-switch.js):
+    // same label, same place behind the `⋯`, its own flag on the agent.
+    // While Global auto-approve is on, every conversation's switch shows ON,
+    // is disabled and announced so, and says where the setting that wins
+    // lives — as a visible line that is also its accessible description.
+    const openMenu = async () => {
+        const dotsBtn = conversation.element.querySelector("#conversation-view-options");
+        await dotsBtn.dispatchClick();
+        return { dotsBtn, panel: conversation.element.querySelector(".menu") };
+    };
+    const switchState = (panel, id) => {
+        const row = panel.querySelector(`#${id}`);
+        if (!row) return null;
+        const hint = panel.querySelector(`#${id}-hint`);
+        return {
+            label: row.querySelector(".switch-label").textContent,
+            checked: row.getAttribute("aria-checked"),
+            disabled: row.disabled,
+            ariaDisabled: row.getAttribute("aria-disabled"),
+            describedBy: row.getAttribute("aria-describedby"),
+            hint: hint ? hint.textContent : null,
+            hintOutsideTheRow: Boolean(hint) && !row.contains(hint),
+        };
+    };
+    await conversation.open("a", "agent");
+    let menu = await openMenu();
+    const dmOff = switchState(menu.panel, "agent-cli-auto-approve");
+    const dmSwitchStartsOffAndLive = Boolean(dmOff)
+        && dmOff.label === "Auto-approve safe commands"
+        && dmOff.checked === "false"
+        && dmOff.disabled === false
+        && dmOff.ariaDisabled === null
+        && dmOff.describedBy === null
+        && dmOff.hint === null;
+    if (!dmSwitchStartsOffAndLive) {
+        throw new Error(`the DM switch must start off and live, got ${JSON.stringify(dmOff)}`);
+    }
+    await menu.panel.querySelector("#agent-cli-auto-approve").dispatchClick();
+    await tick();
+    await tick();
+    const dmPatch = autoApprovePatches[autoApprovePatches.length - 1];
+    menu = await openMenu();
+    const dmOn = switchState(menu.panel, "agent-cli-auto-approve");
+    const dmSwitchPatchesTheAgent = autoApprovePatches.length === 1
+        && dmPatch.id === "a" && dmPatch.method === "PATCH" && dmPatch.body.enabled === true
+        && dmOn.checked === "true" && dmOn.disabled === false;
+    if (!dmSwitchPatchesTheAgent) {
+        throw new Error(`the DM switch must PATCH its agent, got `
+            + `${JSON.stringify(autoApprovePatches)} / ${JSON.stringify(dmOn)}`);
+    }
+    await menu.dotsBtn.dispatchClick();
+
+    // A Settings save of Global auto-approve reaches an open conversation as
+    // operator_invalidate(chat), which refetches it.
+    autoApproveGlobal = true;
+    BossModOperatorInvalidate.notifyLocal(["advanced-system", "chat"]);
+    await wait(5);
+    menu = await openMenu();
+    const dmGlobal = switchState(menu.panel, "agent-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    await conversation.open("t1", "thread");
+    menu = await openMenu();
+    const threadGlobal = switchState(menu.panel, "channel-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    const greyedOut = (state, id) => Boolean(state)
+        && state.checked === "true"
+        && state.disabled === true
+        && state.ariaDisabled === "true"
+        && state.hint === BossModAutoApproveSwitch.GLOBAL_HINT
+        && state.describedBy === `${id}-hint`
+        && state.hintOutsideTheRow;
+    const globalGreysOutTheDmSwitch = greyedOut(dmGlobal, "agent-cli-auto-approve");
+    const globalGreysOutTheThreadSwitch = greyedOut(threadGlobal, "channel-cli-auto-approve");
+    if (!globalGreysOutTheDmSwitch || !globalGreysOutTheThreadSwitch) {
+        throw new Error(`Global must grey out both switches, got `
+            + `${JSON.stringify(dmGlobal)} / ${JSON.stringify(threadGlobal)}`);
+    }
+
+    // Off again: each conversation's own flag comes back, live and unhinted.
+    autoApproveGlobal = false;
+    BossModOperatorInvalidate.notifyLocal(["advanced-system", "chat"]);
+    await wait(5);
+    menu = await openMenu();
+    const threadBack = switchState(menu.panel, "channel-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    await conversation.open("a", "agent");
+    menu = await openMenu();
+    const dmBack = switchState(menu.panel, "agent-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    const ownFlagsComeBack = threadBack.checked === "false" && threadBack.disabled === false
+        && threadBack.ariaDisabled === null && threadBack.hint === null
+        && threadBack.describedBy === null
+        && dmBack.checked === "true" && dmBack.disabled === false
+        && dmBack.ariaDisabled === null && dmBack.hint === null;
+    if (!ownFlagsComeBack) {
+        throw new Error(`turning Global off must restore each flag, got `
+            + `${JSON.stringify(threadBack)} / ${JSON.stringify(dmBack)}`);
+    }
+
     // ─── The empty conversation offers the two things you can do ───
     await conversation.open("d", "agent");
     const empty = status();
@@ -1174,6 +1297,11 @@ async function main() {
         cancelActionRestoresLikeEsc,
         agentTitleIsNotEditable,
         archivedThreadIsNotRenameable,
+        dmSwitchStartsOffAndLive,
+        dmSwitchPatchesTheAgent,
+        globalGreysOutTheDmSwitch,
+        globalGreysOutTheThreadSwitch,
+        ownFlagsComeBack,
     }));
 }
 

@@ -70,6 +70,10 @@ class Agent(BaseModel):
     # never woken. core/floors.py keeps the two in step.
     vacation_since: datetime | None = None
 
+    # System AI auto-approve for this agent's DM, and for its work with no
+    # origin thread. Set only through PATCH /api/agents/{id}/cli-auto-approve.
+    cli_auto_approve_dm: bool = False
+
     created_at: datetime
 
     @field_validator("communication", mode="before")

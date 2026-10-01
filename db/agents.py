@@ -41,7 +41,7 @@ _AGENT_COLUMNS = (
     "agents.api_base_url, agents.api_key, agents.extra_body, agents.desk_x, agents.desk_y, "
     "agents.guardian_token_limit, agents.guardian_velocity_limit, "
     "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
-    "agents.floor_id, agents.vacation_since, agents.created_at"
+    "agents.floor_id, agents.vacation_since, agents.cli_auto_approve_dm, agents.created_at"
 )
 
 _AGENT_VALID_COLUMNS = {
@@ -278,6 +278,27 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
     if applied and agent is not None:
         _capture_snapshot(agent, deleted=False)
     return agent
+
+
+def set_agent_cli_auto_approve_dm(agent_id: str, enabled: bool) -> Agent | None:
+    """Turn System AI auto-approve on or off for one agent's DM.
+
+    Writes only that flag. It is a conversation setting, like
+    ``channels.cli_auto_approve``, not part of the agent's setup, so unlike
+    ``update_agent`` it does not re-capture the agent's snapshot.
+
+    Args:
+        agent_id: The agent to change.
+        enabled: The new flag value.
+
+    Returns:
+        The agent after the write, or None when no agent has ``agent_id``.
+    """
+    execute(
+        "UPDATE agents SET cli_auto_approve_dm = $1 WHERE id = $2",
+        [1 if enabled else 0, agent_id],
+    )
+    return get_agent(agent_id)
 
 
 def delete_agent_rows(agent_id: str) -> bool:

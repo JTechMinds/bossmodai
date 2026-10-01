@@ -19,7 +19,7 @@ installIconsStub();
 const [
     agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, gatesPath, consentPath,
     overlayFocusPath, modalTrailPath, overlayActionsPath, overlaysPath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath, threadRequestsPath,
-    threadSourcePath,
+    autoApproveSwitchPath, threadSourcePath,
     rosterHeaderMenuPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
     rosterThreadsPath, agentRoutesPath, rosterPath,
 ] = process.argv.slice(2);
@@ -46,6 +46,8 @@ load(rowMetaPath, "BossModRosterRowMeta");
 load(archivePath, "BossModThreadArchive");
 // The source's rename / reopen / pause requests live in their own module.
 load(threadRequestsPath, "BossModThreadRequests");
+// The source's auto-approve menu switch descriptor.
+load(autoApproveSwitchPath, "BossModAutoApproveSwitch");
 load(threadSourcePath, "BossModThreadSource");
 // Both section headers' `⋯` — the Threads one this harness opens, and the
 // People one — then the People one's owner, before the half that mounts it.

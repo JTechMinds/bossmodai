@@ -2,8 +2,9 @@
  * BossMod AI — the agent direct-message conversation adapter.
  *
  * Adapts `/api/agents/{id}/messages` and `/api/agents/{id}/activate` plus the
- * `chat_*` and `meeting_message` broadcasts to the one Message shape. Like
- * every source it is a data adapter and never touches the DOM.
+ * `chat_*` and `meeting_message` broadcasts to the one Message shape, and
+ * `/api/agents/{id}` (plus its `/cli-auto-approve`) to the DM's auto-approve
+ * switch. Like every source it is a data adapter and never touches the DOM.
  *
  * An agent's meeting turns render inline in their conversation rather than in a
  * separate sub-view: the operator asked one person a question and the answer is
@@ -36,6 +37,15 @@ const BossModAgentSource = (() => {
         if (!bus) throw new Error('[agent-source] ctx.bus is required');
         if (!store) throw new Error('[agent-source] ctx.store is required');
         if (!presence) throw new Error('[agent-source] ctx.presence is required');
+
+        /**
+         * The agent as `GET /api/agents/{id}` last answered: its DM
+         * auto-approve flag and whether Global auto-approve is on. Read on
+         * every load, so a Settings save (which refetches the open
+         * conversation) repaints the switch. Null until the first load.
+         */
+        let record = null;
+        let signals = null;
 
         function colorFor(id) {
             if (!id) return null;
@@ -110,27 +120,58 @@ const BossModAgentSource = (() => {
         }
 
         /**
-         * Fetch the last 50 turns.
+         * Fetch the last 50 turns, and the agent's auto-approve state.
          * @returns {Promise<object[]>} Messages.
-         * @throws {Error} On a non-OK response, so the controller shows its
-         *   error state. Falling back to a cached transcript here is what let
-         *   a failed load look like a quiet agent.
+         * @throws {Error} On a non-OK response from either, so the controller
+         *   shows its error state. Falling back to a cached transcript here is
+         *   what let a failed load look like a quiet agent, and a switch
+         *   painted from no answer would claim a state nobody read.
          */
         async function load() {
-            const res = await api(`/api/agents/${agentId}/messages?limit=50`, { cache: 'no-store' });
+            const [res, agentRes] = await Promise.all([
+                api(`/api/agents/${agentId}/messages?limit=50`, { cache: 'no-store' }),
+                api(`/api/agents/${agentId}`, { cache: 'no-store' }),
+            ]);
             if (!res.ok) throw new Error((await res.text()) || 'Could not load this conversation.');
+            if (!agentRes.ok) throw new Error(await refusal(agentRes, 'Could not load this agent.'));
             const rows = await res.json();
+            record = await agentRes.json();
             return (Array.isArray(rows) ? rows : []).map(toMessage);
+        }
+
+        /**
+         * Opt this DM in or out of System AI auto-approve.
+         *
+         * Off is the default. The request writes only the agent's DM flag,
+         * which also covers its work with no origin thread. The switch then
+         * repaints from the agent the server answered with.
+         *
+         * @param {boolean} enabled
+         * @returns {Promise<void>}
+         * @throws {Error} With the server's reason on any non-2xx, so chrome's
+         *   onError says so and the pill goes back.
+         */
+        async function setCliAutoApprove(enabled) {
+            const res = await api(`/api/agents/${agentId}/cli-auto-approve`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled === true }),
+            });
+            if (!res.ok) {
+                throw new Error(await refusal(res, 'Could not update auto-approve for this DM.'));
+            }
+            record = await res.json();
+            if (signals) signals.chrome();
         }
 
         /**
          * The server's reason, when it sent one. Otherwise the standing line.
          *
          * @param {Response} res
+         * @param {string} [fallback]  Said when the body is empty.
          * @returns {Promise<string>}
          */
-        async function refusal(res) {
-            const fallback = 'Failed to reach agent.';
+        async function refusal(res, fallback = 'Failed to reach agent.') {
             let raw = '';
             try { raw = await res.text(); } catch { raw = ''; }
             const text = String(raw || '').trim();
@@ -189,6 +230,7 @@ const BossModAgentSource = (() => {
          * @returns {{ dispose: () => void, onLiveEvent: (topic: string, data: any) => void }}
          */
         function subscribe(on) {
+            signals = on;
             function onLiveEvent(topic, data) {
                 if (topic === 'chat_message') {
                     if (!data) return;
@@ -244,7 +286,10 @@ const BossModAgentSource = (() => {
             // a change repaints through the same on.chrome path a rename uses.
             const offView = ctx.browserView ? ctx.browserView.subscribe(() => on.chrome()) : null;
             return {
-                dispose() { if (offView) offView(); },
+                dispose() {
+                    signals = null;
+                    if (offView) offView();
+                },
                 onLiveEvent,
             };
         }
@@ -261,6 +306,9 @@ const BossModAgentSource = (() => {
          * the action renders only when it is injected. A control that renders
          * but does nothing is worse than one that is absent, which is the same
          * rule event-cards.js follows for the origin note link.
+         *
+         * The DM's auto-approve switch sits behind the `⋯` once the agent has
+         * loaded, the same switch a thread carries (auto-approve-switch.js).
          *
          * @returns {{title: string, subtitle: string, avatar: object, actions: object[]}}
          */
@@ -291,6 +339,14 @@ const BossModAgentSource = (() => {
                     tone: 'live',
                     onSelect: () => ctx.browserView.open(agentId, who.name),
                 });
+            }
+            if (record) {
+                actions.push(BossModAutoApproveSwitch.describe({
+                    id: 'agent-cli-auto-approve',
+                    enabled: record.cli_auto_approve_dm === true,
+                    globalEnabled: record.cli_auto_approve_global === true,
+                    onSelect: setCliAutoApprove,
+                }));
             }
             return {
                 title: who.name,

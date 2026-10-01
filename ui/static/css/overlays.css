@@ -862,7 +862,15 @@
   font-weight: 500;
 }
 
-.menu-actions .switch-row:hover { background: var(--bg); }
+.menu-actions .switch-row:hover:not(:disabled) { background: var(--bg); }
+
+/* A menu switch and the line under it that says why it is disabled (Global
+   auto-approve over a conversation's own flag). The line is a sibling of the
+   switch, not inside it, so the disabled row's dimming never reaches the
+   text that explains it: --muted on --panel is 6.54:1. Its inset matches the
+   row's padding so the two read as one setting. */
+.menu-switch { display: flex; flex-direction: column; }
+.menu-switch-hint { margin: 0; padding: 0 8px 6px; color: var(--muted); font-size: 12px; }
 
 .menu-action {
   display: flex;

@@ -19,6 +19,7 @@ from api.websocket import manager
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_repository import agent_repository
+from core.bm_cli.approval_gate import global_auto_approve_enabled
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.llm.template_engine import TemplateError
 from core.messaging import route_human_channel_message, route_human_dm
@@ -91,6 +92,10 @@ class ChannelCliAutoApproveBody(BaseModel):
     enabled: bool
 
 
+class AgentCliAutoApproveBody(BaseModel):
+    enabled: bool
+
+
 class ChannelMemberBody(BaseModel):
     agent_id: str
 
@@ -155,11 +160,17 @@ async def list_vacationing_agents() -> list[dict[str, object]]:
 
 
 @router.get("/agents/{agent_id}")
-async def get_agent(agent_id: str) -> Agent:
+async def get_agent(agent_id: str) -> dict[str, object]:
+    """Return one agent, plus whether Global auto-approve is on.
+
+    Raises:
+        HTTPException: 404 when no agent has ``agent_id``.
+        ConfigError: The Global auto-approve setting is missing or not a boolean.
+    """
     agent = db.get_agent(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
-    return agent
+    return _serialize_agent(agent)
 
 
 @router.get("/company/agents")
@@ -702,6 +713,35 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     return agent
 
 
+@router.patch("/agents/{agent_id}/cli-auto-approve")
+async def set_agent_cli_auto_approve(agent_id: str, body: AgentCliAutoApproveBody) -> dict[str, object]:
+    """Turn CLI auto-approve on or off for one agent's DM.
+
+    The DM counterpart of ``set_channel_cli_auto_approve``. It also covers
+    the agent's work with no origin thread (DM-assigned, Focus or scheduled
+    tasks). Writes only that flag. Default policy, Soft-block, and Deny
+    picks stay, and Global auto-approve, when on, still overrides it.
+
+    Args:
+        agent_id: The agent whose DM flag changes.
+        body: ``{enabled: bool}``.
+
+    Returns:
+        The agent payload, with ``cli_auto_approve_dm`` and
+        ``cli_auto_approve_global``.
+
+    Raises:
+        HTTPException: 404 when no agent has ``agent_id``.
+        ConfigError: The Global auto-approve setting is missing or not a boolean.
+    """
+    if db.get_agent(agent_id) is None:
+        raise HTTPException(404, "Agent not found")
+    updated = db.set_agent_cli_auto_approve_dm(agent_id, body.enabled)
+    if updated is None:
+        raise HTTPException(404, "Agent not found")
+    return _serialize_agent(updated)
+
+
 @router.patch("/agents/{agent_id}/prompt-history-policy")
 async def update_agent_prompt_history_policy(
     agent_id: str,
@@ -1063,6 +1103,21 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _serialize_agent(agent: Agent) -> dict[str, object]:
+    """Serialize one agent for the single-agent routes.
+
+    The Agent model's own JSON (``api_key`` stays excluded by the model),
+    plus ``cli_auto_approve_global`` so the DM's auto-approve switch can be
+    greyed out without a second request.
+
+    Raises:
+        ConfigError: The Global auto-approve setting is missing or not a boolean.
+    """
+    payload: dict[str, object] = agent.model_dump(mode="json")
+    payload["cli_auto_approve_global"] = global_auto_approve_enabled()
+    return payload
+
+
 def _iso_or_none(value: object) -> object:
     """A datetime as ISO text; anything else (None, a stored string) unchanged."""
     return value.isoformat() if hasattr(value, "isoformat") else value
@@ -1087,6 +1142,8 @@ def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | No
         "archived_at": channel.archived_at.isoformat() if getattr(channel, "archived_at", None) else None,
         "conversation_paused": is_thread_paused(channel.id),
         "cli_auto_approve": bool(getattr(channel, "cli_auto_approve", False)),
+        # Global on overrides the thread flag; the header greys its switch.
+        "cli_auto_approve_global": global_auto_approve_enabled(),
         "floor_id": getattr(channel, "floor_id", None),
         "member_count": len(members or []),
         "members": members or [],

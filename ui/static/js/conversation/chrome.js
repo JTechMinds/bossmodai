@@ -121,7 +121,7 @@ const BossModConversationChrome = (() => {
         let avatarKey = null;
 
         /**
-         * One reused switch for a menu setting.
+         * One reused switch for a menu setting, with its optional hint.
          *
          * The pill is core/switch.js. The handler is rewritten every paint
          * because the open conversation changes and the node does not: a
@@ -129,12 +129,19 @@ const BossModConversationChrome = (() => {
          * callback. `set` restores the server's value, so a failed save
          * puts the pill back.
          *
+         * `disabled` means the setting is decided somewhere else, which the
+         * source names in `hint`. It is announced as well as styled
+         * (`aria-disabled`), and the hint is the switch's accessible
+         * description. The hint sits BESIDE the
+         * switch rather than inside it: the disabled row is dimmed, and the
+         * one line that explains it must stay readable.
+         *
          * @param {object} action
-         * @returns {HTMLElement}
+         * @returns {HTMLElement} The wrapper; `_row` is the switch itself.
          */
         function ensureMenuSwitch(action) {
-            let row = actionNodes.get(action.id);
-            if (!row) {
+            let node = actionNodes.get(action.id);
+            if (!node) {
                 const control = BossModSwitch.create({
                     label: action.label,
                     pressed: action.pressed === true,
@@ -143,20 +150,34 @@ const BossModConversationChrome = (() => {
                         const select = current && current._onSelect;
                         closeMenu();
                         if (typeof select !== 'function') return;
-                        void run(current, {
+                        void run(current._row, {
                             label: action.label,
                             onSelect: () => select(pressed),
                         });
                     },
                 });
-                row = control.element;
+                const row = control.element;
                 row.id = action.id;
-                row._switch = control;
-                actionNodes.set(action.id, row);
+                node = h('div', { class: 'menu-switch' }, row);
+                node._row = row;
+                node._switch = control;
+                node._hint = h('p', { class: 'menu-switch-hint', id: `${action.id}-hint` });
+                actionNodes.set(action.id, node);
             }
-            row._onSelect = action.onSelect;
-            row._switch.set(action.pressed === true);
-            return row;
+            node._onSelect = action.onSelect;
+            node._switch.set(action.pressed === true);
+            if (action.disabled === true) node._row.setAttribute('aria-disabled', 'true');
+            else node._row.removeAttribute('aria-disabled');
+            const hint = String(action.hint || '').trim();
+            node._hint.textContent = hint;
+            if (hint) {
+                node.append(node._hint);
+                node._row.setAttribute('aria-describedby', node._hint.id);
+            } else {
+                node._hint.remove();
+                node._row.removeAttribute('aria-describedby');
+            }
+            return node;
         }
 
         /**
@@ -207,6 +228,9 @@ const BossModConversationChrome = (() => {
          *   `tone` is `'live'` (the only tone so far) for an action that marks
          *   something running now — the browser view — and sets
          *   `data-tone="live"`, which the stylesheet colours soft green.
+         *   A `kind: 'switch'` menu action also takes `pressed`, and
+         *   optional `disabled` and `hint` (a visible line under the switch
+         *   that is also its accessible description).
          *   `onSelect` may return a promise and may reject. `onRename` is
          *   optional: with it the title is editable in place, without it the
          *   title is plain text.
@@ -244,9 +268,9 @@ const BossModConversationChrome = (() => {
             actions.forEach((action) => {
                 wanted.add(action.id);
                 if (action.kind === 'switch' && action.slot === 'menu') {
-                    const row = ensureMenuSwitch(action);
-                    row.disabled = gate.busy();
-                    menuActionsEl.append(row);
+                    const node = ensureMenuSwitch(action);
+                    node._row.disabled = gate.busy() || action.disabled === true;
+                    menuActionsEl.append(node);
                     inMenu += 1;
                     return;
                 }

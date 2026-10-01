@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS agents (
     guardian_no_progress_threshold INTEGER DEFAULT 100,
     floor_id                      VARCHAR,
     vacation_since                TIMESTAMP,
+    -- System AI auto-approve for this agent's DM and its work with no origin
+    -- thread (core.bm_cli.approval_gate.gate.auto_approve_effective).
+    cli_auto_approve_dm           INTEGER NOT NULL DEFAULT 0,
     created_at                    TIMESTAMP DEFAULT current_timestamp
 );
 

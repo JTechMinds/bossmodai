@@ -30,6 +30,7 @@ from db.agents import (
     list_agents,
     list_vacationing_agents,
     purge_orphan_agent_rows,
+    set_agent_cli_auto_approve_dm,
     update_agent,
     update_agent_state,
 )
@@ -424,6 +425,7 @@ __all__ = [
     "list_agents",
     "list_vacationing_agents",
     "purge_orphan_agent_rows",
+    "set_agent_cli_auto_approve_dm",
     "update_agent",
     "update_agent_state",
     "normalize_agent_personal_storage_roots",

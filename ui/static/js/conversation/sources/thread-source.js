@@ -331,14 +331,12 @@ const BossModThreadSource = (() => {
                     iconOnly: true,
                     onSelect: seatAgent,
                 });
-                actions.push({
+                actions.push(BossModAutoApproveSwitch.describe({
                     id: 'channel-cli-auto-approve',
-                    kind: 'switch',
-                    slot: 'menu',
-                    label: 'Auto-approve safe commands',
-                    pressed: !!(channel && channel.cli_auto_approve),
+                    enabled: !!(channel && channel.cli_auto_approve),
+                    globalEnabled: !!(channel && channel.cli_auto_approve_global),
                     onSelect: setCliAutoApprove,
-                });
+                }));
                 actions.push(channel && channel.conversation_paused
                     ? {
                         id: 'channel-resume-btn',

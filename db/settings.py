@@ -193,6 +193,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # precedents, sent to System AI with each reviewed command.
     ("cli_auto_approve_context_messages", "20", "cli_policy"),
     ("cli_auto_approve_precedent_limit", "15", "cli_policy"),
+    # Global auto-approve (Settings → Advanced): when "true", the approval
+    # gate runs for every thread and DM, whatever each one's own flag says.
+    # Read live by core.bm_cli.approval_gate.gate.global_auto_approve_enabled.
+    ("cli_auto_approve_global", "false", "advanced"),
     # Unmatched commands. Prior factory default was deny;
     # reconcile_factory_cli_default_policy moves an untouched deny once.
     # seed_defaults inserts this row only when it is missing, so an

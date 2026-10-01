@@ -1,7 +1,8 @@
 """CLI approval gate: facts, invariants, review context, verdict parse.
 
-Auto-approve is off by default and, until DM/global enablement lands, is
-enabled only by an active thread's flag. Hard blocks still win.
+Auto-approve is off by default. An active thread's flag, an agent's DM
+flag, or Global auto-approve (Settings → Advanced) turns the gate on, and
+Global wins over both. Hard blocks still win.
 """
 
 from __future__ import annotations
@@ -21,7 +22,9 @@ from api.routes import router
 from core import config
 from core.agent_loop.cli_turn_result import map_cli_result
 from core.agent_loop.work_binding import bind_turn
+from api.routes.settings import _operator_surfaces_for_setting
 from core.bm_cli.approval_gate import AUDIT_PREFIX, auto_approve_effective
+from core.config import ConfigError
 from core.bm_cli.approval_gate.context import build_review_context, command_shape
 from core.bm_cli.approval_gate.effects import classify_effect
 from core.bm_cli.approval_gate.facts import command_facts, paths_within
@@ -603,17 +606,68 @@ def test_bad_verdict_stays_on_the_approval_card(monkeypatch: pytest.MonkeyPatch)
 # ── resolver ───────────────────────────────────────────────────────────
 
 
-def test_resolver_uses_only_an_active_thread_flag() -> None:
+def _set_global(value: str) -> None:
+    db.set_setting("cli_auto_approve_global", value, "advanced")
+    config.reload()
+
+
+def test_resolver_uses_an_active_thread_flag() -> None:
     agent, _state = _agent_and_state()
     on = _thread(agent.id, enabled=True)
     off = _thread(agent.id, enabled=False)
 
     assert auto_approve_effective(agent, on.id) is True
     assert auto_approve_effective(agent, off.id) is False
-    assert auto_approve_effective(agent, None) is False
     assert auto_approve_effective(agent, "missing-channel") is False
     db.archive_channel(on.id)
     assert auto_approve_effective(agent, on.id) is False
+
+
+def test_resolver_uses_the_dm_flag_when_there_is_no_thread() -> None:
+    """``channel_id=None`` (a DM, or work with no origin thread) reads the agent's flag."""
+    agent, _state = _agent_and_state()
+    other, _other_state = _agent_and_state("Other Clerk")
+    off_thread = _thread(agent.id, enabled=False)
+    assert agent.cli_auto_approve_dm is False
+    assert auto_approve_effective(agent, None) is False
+
+    updated = db.set_agent_cli_auto_approve_dm(agent.id, True)
+    assert updated is not None and updated.cli_auto_approve_dm is True
+    # Read live, so the Agent object a turn started with does not go stale.
+    assert auto_approve_effective(agent, None) is True
+    # The DM flag is the DM's only: a thread still follows its own flag,
+    # and another agent's DM keeps its own.
+    assert auto_approve_effective(agent, off_thread.id) is False
+    assert auto_approve_effective(other, None) is False
+
+    db.set_agent_cli_auto_approve_dm(agent.id, False)
+    assert auto_approve_effective(agent, None) is False
+
+
+def test_resolver_global_overrides_both_flags_and_keeps_them() -> None:
+    agent, _state = _agent_and_state()
+    off_thread = _thread(agent.id, enabled=False)
+    # Seeded off.
+    assert config.get_live("cli_auto_approve_global") == "false"
+
+    _set_global("true")
+    assert auto_approve_effective(agent, off_thread.id) is True
+    assert auto_approve_effective(agent, None) is True
+    assert auto_approve_effective(agent, "missing-channel") is True
+    # Neither conversation's own flag was written.
+    assert db.get_channel(off_thread.id).cli_auto_approve is False
+    assert db.get_agent(agent.id).cli_auto_approve_dm is False
+
+    _set_global("false")
+    assert auto_approve_effective(agent, off_thread.id) is False
+    assert auto_approve_effective(agent, None) is False
+
+
+def test_resolver_refuses_to_guess_a_bad_global_value() -> None:
+    agent, _state = _agent_and_state()
+    _set_global("yes")
+    with pytest.raises(ConfigError, match="must be true or false"):
+        auto_approve_effective(agent, None)
 
 
 # ── end to end: audit, route, UI strings ───────────────────────────────
@@ -825,11 +879,120 @@ def test_deny_pick_and_soft_block_stay(client: TestClient) -> None:
     assert db.get_task(task.id).status == "blocked"
 
 
+def test_dm_flag_auto_approves_dm_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no origin thread, the agent's DM flag turns the gate on end to end."""
+    _enable_shell()
+    agent, state = _agent_and_state()
+    notes = _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    monkeypatch.setattr(_COMPLETE, _boom_if_asked("System AI must not run while the DM flag is off"))
+
+    carded = execute_bm_cli(agent, state, "rm notes.txt")
+    assert carded.approval_required is True
+    assert notes.read_text(encoding="utf-8") == "keep"
+
+    db.set_agent_cli_auto_approve_dm(agent.id, True)
+    monkeypatch.setattr(_COMPLETE, _verdict("approve", "task_work", "deletes one project file"))
+    fresh = db.get_agent_state(agent.id)
+    assert fresh is not None
+    result = execute_bm_cli(agent, fresh, "rm notes.txt")
+
+    assert result.ok is True, result.detail
+    assert not notes.exists()
+    assert result.data is not None
+    assert result.data.get("audit") == f"{AUDIT_PREFIX} [task_work] deletes one project file"
+
+
+def test_global_still_runs_the_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Global on means the gate runs everywhere, not that every command is approved."""
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=False)
+    notes = _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    _set_global("true")
+    monkeypatch.setattr(_COMPLETE, _verdict("ask", "out_of_scope", "nothing asked for this delete"))
+
+    result = execute_bm_cli(agent, state, "rm notes.txt", channel_id=channel.id)
+
+    assert result.approval_required is True
+    assert notes.read_text(encoding="utf-8") == "keep"
+    assert _card_note(result).startswith(UNSURE_PREFIX)
+
+
+def test_dm_route_sets_only_the_dm_flag(client: TestClient) -> None:
+    agent, _state = _agent_and_state()
+    channel = _thread(agent.id, enabled=False)
+
+    on = client.patch(
+        f"/api/agents/{agent.id}/cli-auto-approve", headers=_auth(), json={"enabled": True},
+    )
+    assert on.status_code == 200, on.text
+    assert on.json()["id"] == agent.id
+    assert on.json()["cli_auto_approve_dm"] is True
+    assert on.json()["cli_auto_approve_global"] is False
+    assert "api_key" not in on.json()
+    assert db.get_agent(agent.id).cli_auto_approve_dm is True
+    assert db.get_channel(channel.id).cli_auto_approve is False
+
+    got = client.get(f"/api/agents/{agent.id}", headers=_auth())
+    assert got.status_code == 200, got.text
+    assert got.json()["cli_auto_approve_dm"] is True
+    assert got.json()["cli_auto_approve_global"] is False
+
+    off = client.patch(
+        f"/api/agents/{agent.id}/cli-auto-approve", headers=_auth(), json={"enabled": False},
+    )
+    assert off.status_code == 200, off.text
+    assert off.json()["cli_auto_approve_dm"] is False
+
+    missing = client.patch(
+        "/api/agents/no-such-agent/cli-auto-approve", headers=_auth(), json={"enabled": True},
+    )
+    assert missing.status_code == 404
+
+
+def test_payloads_report_global_auto_approve(client: TestClient) -> None:
+    """Thread and agent payloads carry the global flag, so the UI greys out without a second fetch."""
+    agent, _state = _agent_and_state()
+    channel = _thread(agent.id, enabled=False)
+
+    saved = client.put(
+        "/api/settings/cli_auto_approve_global?value=true&category=advanced", headers=_auth(),
+    )
+    assert saved.status_code == 200, saved.text
+
+    thread = client.get(f"/api/channels/{channel.id}", headers=_auth())
+    assert thread.status_code == 200, thread.text
+    assert thread.json()["channel"]["cli_auto_approve_global"] is True
+    assert thread.json()["channel"]["cli_auto_approve"] is False
+    person = client.get(f"/api/agents/{agent.id}", headers=_auth())
+    assert person.json()["cli_auto_approve_global"] is True
+    assert person.json()["cli_auto_approve_dm"] is False
+
+    refused = client.put(
+        "/api/settings/cli_auto_approve_global?value=yes&category=advanced", headers=_auth(),
+    )
+    assert refused.status_code == 400
+    assert refused.json()["detail"] == "Global auto-approve must be true or false."
+    assert config.get_live("cli_auto_approve_global") == "true"
+
+
+def test_global_setting_refetches_open_conversations() -> None:
+    assert _operator_surfaces_for_setting("cli_auto_approve_global", "advanced") == [
+        "advanced-system",
+        "chat",
+    ]
+    assert _operator_surfaces_for_setting("diagnostics_enabled", "advanced") == ["advanced-system"]
+
+
 def test_thread_toggle_is_off_in_the_menu_until_the_flag_is_set() -> None:
     thread = (ROOT / "ui/static/js/conversation/sources/thread-source.js").read_text(encoding="utf-8")
     assert "id: 'channel-cli-auto-approve'" in thread
-    assert "label: 'Auto-approve safe commands'" in thread
-    assert "pressed: !!(channel && channel.cli_auto_approve)" in thread
+    assert "enabled: !!(channel && channel.cli_auto_approve)" in thread
+    assert "globalEnabled: !!(channel && channel.cli_auto_approve_global)" in thread
+    switch = (ROOT / "ui/static/js/conversation/auto-approve-switch.js").read_text(encoding="utf-8")
+    assert "const LABEL = 'Auto-approve safe commands';" in switch
     # The request itself moved to thread-requests.js with the other
     # thread-setting requests; the menu switch above stays in the source.
     requests = (ROOT / "ui/static/js/conversation/sources/thread-requests.js").read_text(encoding="utf-8")

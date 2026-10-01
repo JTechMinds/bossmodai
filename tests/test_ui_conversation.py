@@ -50,6 +50,7 @@ CONVERSATION_MODULES = [
     SOURCES / "thread-archive.js",
     SOURCES / "thread-seat.js",
     SOURCES / "thread-requests.js",
+    CONVERSATION / "auto-approve-switch.js",
     SOURCES / "thread-source.js",
     SOURCES / "agent-source.js",
     CONVERSATION / "conversation-focus-invalidate.js",
@@ -197,6 +198,7 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
             str(SOURCES / "thread-archive.js"),
             str(SOURCES / "thread-seat.js"),
             str(SOURCES / "thread-requests.js"),
+            str(CONVERSATION / "auto-approve-switch.js"),
             str(SOURCES / "thread-source.js"),
         ],
         check=False,
@@ -389,6 +391,15 @@ def test_conversation_harness() -> None:
         "renameDoesNotFollowASwitch": True,
         "agentTitleIsNotEditable": True,
         "archivedThreadIsNotRenameable": True,
+        # CLI auto-approve: a DM has its own switch beside the thread's, and
+        # Global auto-approve (Settings → Advanced) greys both out — shown on,
+        # disabled and announced so, with the hint as a visible line that is
+        # also the accessible description — until it is turned off again.
+        "dmSwitchStartsOffAndLive": True,
+        "dmSwitchPatchesTheAgent": True,
+        "globalGreysOutTheDmSwitch": True,
+        "globalGreysOutTheThreadSwitch": True,
+        "ownFlagsComeBack": True,
         # Round four turned the word `Save` into a green check and gave it the
         # red cross the mode never had — Esc cancelled and nothing said so.
         # Both are icon-only, so each carries its own accessible name and the

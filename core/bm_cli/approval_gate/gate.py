@@ -15,6 +15,8 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 import db
+from core import config
+from core.config import ConfigError
 from core.bm_cli.approval_gate.context import build_review_context
 from core.bm_cli.approval_gate.facts import (
     CommandFacts,
@@ -29,6 +31,7 @@ from core.models import Agent
 
 logger = logging.getLogger(__name__)
 
+GLOBAL_AUTO_APPROVE_SETTING = "cli_auto_approve_global"
 AUDIT_PREFIX = "approved-by=system"
 SYSTEM_DECISION_BY = "system"
 CLI_AUTO_APPROVED_EVENT = "cli_auto_approved"
@@ -67,30 +70,77 @@ class AutoApprovePlan:
     card_why: str = ""
 
 
+def global_auto_approve_enabled() -> bool:
+    """Return whether Settings → Advanced "Global auto-approve" is on.
+
+    A live read, not the process cache: the runtime worker must see a
+    Settings save from the app process on its next command, the same reason
+    ``cli_default_policy`` is read live. The API reads it through here too,
+    so the UI greys out the conversation switches by the same answer.
+
+    Returns:
+        True when the setting is ``"true"``, False when it is ``"false"``.
+
+    Raises:
+        ConfigError: The setting is missing or is neither ``"true"`` nor
+            ``"false"``. It is seeded, so either is a bug to surface, not
+            an "off" to assume.
+    """
+    value = config.get_live(GLOBAL_AUTO_APPROVE_SETTING)
+    if value is None:
+        raise ConfigError(
+            f"Required setting '{GLOBAL_AUTO_APPROVE_SETTING}' is not configured"
+        )
+    if value not in {"true", "false"}:
+        raise ConfigError(
+            f"Setting '{GLOBAL_AUTO_APPROVE_SETTING}' must be true or false, got {value!r}"
+        )
+    return value == "true"
+
+
 def auto_approve_effective(agent: Agent, channel_id: str | None) -> bool:
     """Return whether auto-approve applies to this agent's command here.
 
-    Today only the origin thread's flag enables it: True when ``channel_id``
-    names an active channel with ``cli_auto_approve`` set. A missing,
-    archived or unknown thread is off, and so is ``channel_id=None`` (a DM
-    or work with no origin thread). DM enablement (per agent, through
-    ``agent``) and the global override arrive in Phase 2 of the auto-approve
-    redesign; this is the single resolver they will extend.
+    The single resolver for every place auto-approve can be turned on:
+
+    1. Global auto-approve on: True everywhere. The conversation flags are
+       kept, not overwritten, so turning it off restores each one.
+    2. ``channel_id`` set (the command's origin thread): that thread is
+       active and has ``cli_auto_approve``. A missing, archived or unknown
+       thread is off.
+    3. ``channel_id`` None (the agent's DM, and work with no origin thread:
+       DM-assigned, Focus or scheduled tasks, whose cards also land on the
+       DM/Focus surface): the agent's ``cli_auto_approve_dm``.
+
+    "Effective" means the gate runs (invariants, then the System AI
+    review). It never means a command is approved without review.
+
+    Both flags are read from the database here rather than from ``agent``,
+    so a toggle the operator flips mid-turn applies to the next command.
 
     Args:
-        agent: The agent running the command (unused until DM enablement).
-        channel_id: The origin thread id, or None for a DM.
+        agent: The agent running the command.
+        channel_id: The origin thread id, or None for a DM or no thread.
 
     Returns:
         Whether the gate should try to approve instead of carding.
+
+    Raises:
+        ConfigError: The global setting is missing or not a boolean.
+        LookupError: ``channel_id`` is None and the agent row is gone.
     """
+    if global_auto_approve_enabled():
+        return True
     token = (channel_id or "").strip()
-    if not token:
-        return False
-    channel = db.get_channel(token)
-    if channel is None or channel.status != "active":
-        return False
-    return bool(channel.cli_auto_approve)
+    if token:
+        channel = db.get_channel(token)
+        if channel is None or channel.status != "active":
+            return False
+        return bool(channel.cli_auto_approve)
+    current = db.get_agent(agent.id)
+    if current is None:
+        raise LookupError(f"Agent {agent.id} not found")
+    return current.cli_auto_approve_dm
 
 
 def plan_auto_approve(
@@ -118,8 +168,10 @@ def plan_auto_approve(
         The plan. Every review failure is a card that says why.
 
     Raises:
-        ConfigError: A review-context setting is missing or not an int.
-        LookupError: No agent owns ``agent.storage_key``.
+        ConfigError: The global auto-approve setting is missing or not a
+            boolean, or a review-context setting is missing or not an int.
+        LookupError: No agent owns ``agent.storage_key``, or (for a DM)
+            ``agent.id``.
     """
     if not auto_approve_effective(agent, channel_id):
         return AutoApprovePlan(action="card")

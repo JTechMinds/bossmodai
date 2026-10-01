@@ -24,6 +24,7 @@ SEAT_MODULES = [
     JS / "conversation" / "sources" / "thread-archive.js",
     JS / "conversation" / "sources" / "thread-seat.js",
     JS / "conversation" / "sources" / "thread-requests.js",
+    JS / "conversation" / "auto-approve-switch.js",
     JS / "conversation" / "sources" / "thread-source.js",
 ]
 

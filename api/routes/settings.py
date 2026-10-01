@@ -13,6 +13,7 @@ from api.routes._shared import (
 from api.websocket import manager
 from core import config
 from core.agent_loop.standing_prefs import WARM_PREFIX_MAX_CHARS, WARM_SECTION_HEADER
+from core.bm_cli.approval_gate import GLOBAL_AUTO_APPROVE_SETTING
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
 from core.llm.connection_url import ConnectionUrlError, is_loopback_base, validate_connection_test_url
 from core.llm.template_engine import TemplateError
@@ -36,6 +37,10 @@ def _operator_surfaces_for_setting(key: str, category: str) -> list[str]:
     """Map one persisted setting to the Settings section ids the UI owns."""
     if key == "system_ai_connection":
         return ["connections"]
+    # Global auto-approve also changes every conversation's auto-approve
+    # switch, so an open conversation refetches its header (`chat`).
+    if key == GLOBAL_AUTO_APPROVE_SETTING:
+        return ["advanced-system", "chat"]
     if category == "llm" and key.startswith("compaction_"):
         return ["system"]
     if category in {"simulation", "social", "context", "desk"}:
@@ -180,6 +185,8 @@ _NON_NEGATIVE_INT_SETTING_LABELS = {
 }
 _BOOLEAN_SETTING_LABELS = {
     "channel_idle_check_enabled": "Idle check",
+    # The approval gate refuses to guess at any other value.
+    GLOBAL_AUTO_APPROVE_SETTING: "Global auto-approve",
 }
 
 

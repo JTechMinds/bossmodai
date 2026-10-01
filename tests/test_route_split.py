@@ -46,6 +46,7 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/agents/{agent_id}/desk/open-folder", "open_agent_desk_folder"),
     (("POST",), "/api/agents", "create_agent"),
     (("PATCH",), "/api/agents/{agent_id}", "update_agent"),
+    (("PATCH",), "/api/agents/{agent_id}/cli-auto-approve", "set_agent_cli_auto_approve"),
     (("PATCH",), "/api/agents/{agent_id}/prompt-history-policy", "update_agent_prompt_history_policy"),
     (("DELETE",), "/api/agents", "delete_all_agents"),
     (("DELETE",), "/api/agents/{agent_id}", "delete_agent"),
@@ -179,7 +180,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 155
+    assert len(got) == 156
 
 
 def test_from_api_routes_import_router_still_works() -> None:

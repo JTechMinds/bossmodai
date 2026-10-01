@@ -22,7 +22,7 @@ const NAMES = [
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadRequests", "BossModThreadSource", "BossModAgentSource",
+    "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
@@ -80,6 +80,16 @@ const api = async (url) => {
             await new Promise((resolve) => { blockers.slow = resolve; });
         }
         return { ok: true, async json() { return REST_MESSAGES[id] || []; } };
+    }
+    // The DM source reads the agent's auto-approve state on every load.
+    const record = String(url).match(/^\/api\/agents\/([^/?]+)$/);
+    if (record) {
+        return {
+            ok: true,
+            async json() {
+                return { id: record[1], cli_auto_approve_dm: false, cli_auto_approve_global: false };
+            },
+        };
     }
     throw new Error(`unhandled ${url}`);
 };

@@ -5,6 +5,59 @@
 const AdvancedSystemSection = (() => {
     let container = null;
 
+    const GLOBAL_AUTO_APPROVE_KEY = 'cli_auto_approve_global';
+
+    /** Asked before Global auto-approve turns ON. Turning it off never asks. */
+    const GLOBAL_AUTO_APPROVE_WARNING = 'Every thread and DM will let System AI approve commands that need approval, '
+        + "including installs, deletes inside projects, and remote actions your agents' tasks ask for. "
+        + 'Never-allowed rules, the path jail and whole-project deletes still stop or ask. Turn on?';
+
+    /**
+     * Mount the Global auto-approve switch into its card.
+     *
+     * Same shape as Settings → System's switches: a BossModSwitch in a
+     * `[data-setting-switch]` mount, and the card's `role="alert"` line for a
+     * refused save. Turning it on asks first, because it lets System AI
+     * approve in every conversation at once; a cancelled confirm puts the
+     * pill back without saving. A refused save puts it back too, so the
+     * switch never shows a state the server does not hold.
+     *
+     * @param {HTMLElement} el  The rendered section.
+     * @param {{value: string}|undefined} setting  The seeded row. Missing is
+     *   reported on the card rather than painted as "off".
+     * @returns {void}
+     */
+    function mountGlobalAutoApprove(el, setting) {
+        const mount = Array.from(el.querySelectorAll('[data-setting-switch]'))
+            .find(node => node.dataset.settingSwitch === GLOBAL_AUTO_APPROVE_KEY);
+        const error = Array.from(el.querySelectorAll('[data-setting-error]'))
+            .find(node => node.dataset.settingError === GLOBAL_AUTO_APPROVE_KEY);
+        if (!setting) {
+            error.textContent = 'Global auto-approve is not configured. Reset Seed Settings restores it.';
+            return;
+        }
+        const toggle = BossModSwitch.create({
+            label: 'Global auto-approve',
+            pressed: setting.value === 'true',
+            onChange: async (pressed) => {
+                if (pressed && !confirm(GLOBAL_AUTO_APPROVE_WARNING)) {
+                    toggle.set(false);
+                    return;
+                }
+                try {
+                    await apiFetchOk(`/api/settings/${GLOBAL_AUTO_APPROVE_KEY}?value=${pressed ? 'true' : 'false'}&category=advanced`, { method: 'PUT' });
+                    error.textContent = '';
+                    // `chat` too: every open conversation's switch greys out or comes back.
+                    BossModOperatorInvalidate.notifyLocal(['advanced-system', 'chat']);
+                } catch (err) {
+                    error.textContent = String((err && err.message) || err);
+                    toggle.set(!pressed);
+                }
+            },
+        });
+        mount.append(toggle.element);
+    }
+
     async function render(el) {
         container = el;
         SettingsView.bindRepaint('advanced-system', () => render(container));
@@ -28,6 +81,7 @@ const AdvancedSystemSection = (() => {
         const diagEnabled = settings.find(s => s.key === 'diagnostics_enabled');
         const diagLimit = settings.find(s => s.key === 'diagnostics_retention_limit');
         const cliReadLimit = settings.find(s => s.key === 'cli_max_read_lines');
+        const globalAutoApprove = settings.find(s => s.key === GLOBAL_AUTO_APPROVE_KEY);
         const folderOpenerSetting = settings.find(s => s.key === 'desktop_open_folder_handler');
         const isEnabled = diagEnabled?.value === 'true';
         const folderOpenerOptions = folderOpenerMeta.options || [];
@@ -96,6 +150,11 @@ const AdvancedSystemSection = (() => {
                     </div>
                 </div>
                 <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
+                    <p class="text-xs text-bm-muted mb-1.5">Let System AI review commands that need approval in every thread and DM, whatever each conversation's own switch says. Each conversation's choice is kept and comes back when this is turned off.</p>
+                    <div data-setting-switch="${BossModFormat.escapeAttribute(GLOBAL_AUTO_APPROVE_KEY)}"></div>
+                    <p role="alert" class="text-xs text-red-600 mt-1" data-setting-error="${BossModFormat.escapeAttribute(GLOBAL_AUTO_APPROVE_KEY)}"></p>
+                </div>
+                <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
                     <label class="block text-sm font-medium mb-1">Diagnostics Retention Limit</label>
                     <p class="text-xs text-bm-muted mb-1.5">Maximum diagnostic entries before auto-purge. Oldest entries are deleted first.</p>
                     <input type="number" id="diag-retention-limit"
@@ -159,6 +218,8 @@ const AdvancedSystemSection = (() => {
                     </div>
                 </div>
             </div>`;
+
+        mountGlobalAutoApprove(el, globalAutoApprove);
 
         // Reseed handler
         document.getElementById('btn-reseed-settings').addEventListener('click', async () => {

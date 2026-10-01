@@ -102,6 +102,7 @@ def _render_system_settings() -> dict:
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "switch.js"),
             str(JS / "settings" / "settings-system-meta.js"),
+            str(JS / "settings" / "settings-advanced.js"),
         ],
         check=False,
         capture_output=True,
@@ -446,6 +447,52 @@ def test_failed_save_shows_the_server_message() -> None:
     assert idle["error"] == {"text": "Idle check must be true or false.", "role": "alert"}
     # The next accepted save clears the line.
     assert payload["delayErrorAfterFix"] == {"text": "", "role": "alert"}
+
+
+_GLOBAL_AUTO_APPROVE_WARNING = (
+    "Every thread and DM will let System AI approve commands that need approval, "
+    "including installs, deletes inside projects, and remote actions your agents' "
+    "tasks ask for. Never-allowed rules, the path jail and whole-project deletes "
+    "still stop or ask. Turn on?"
+)
+
+
+def test_global_auto_approve_asks_before_turning_on_only() -> None:
+    """Settings → Advanced: Global auto-approve confirms on enable, never on disable.
+
+    A declined confirm saves nothing and puts the pill back. A save tells
+    open conversations (`chat`) so their switches grey out or come back. A
+    refused save puts the pill back and says why on the card.
+    """
+    flow = _render_system_settings()["globalAutoApprove"]
+    on = "/api/settings/cli_auto_approve_global?value=true&category=advanced"
+    off = "/api/settings/cli_auto_approve_global?value=false&category=advanced"
+    assert flow["before"] == {"name": "Global auto-approve", "checked": "false"}
+    assert flow["declined"] == {
+        "asked": [_GLOBAL_AUTO_APPROVE_WARNING],
+        "saves": [],
+        "invalidations": [],
+        "checked": "false",
+    }
+    assert flow["accepted"] == {
+        "asked": [_GLOBAL_AUTO_APPROVE_WARNING],
+        "saves": [{"url": on, "method": "PUT"}],
+        "invalidations": [["advanced-system", "chat"]],
+        "checked": "true",
+    }
+    assert flow["turnedOff"] == {
+        "asked": [],
+        "saves": [{"url": off, "method": "PUT"}],
+        "invalidations": [["advanced-system", "chat"]],
+        "checked": "false",
+    }
+    assert flow["refused"] == {
+        "asked": [_GLOBAL_AUTO_APPROVE_WARNING],
+        "saves": [{"url": on, "method": "PUT"}],
+        "invalidations": [],
+        "checked": "false",
+        "error": {"text": "Global auto-approve must be true or false.", "role": "alert"},
+    }
 
 
 # (key, label named by the 400, a valid value)
