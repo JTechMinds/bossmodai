@@ -1,7 +1,8 @@
 /**
  * BossMod AI — the presentation of one schedule, for its layer
  * (context/schedule-layer.js): the facts block (Repeats, Next run, Last run
- * with a link to the task a run created, Notify), the callout the layer's
+ * with a link to the task a run created, Notify — in Edit mode with the
+ * editable facts' controls in their cells), the callout the layer's
  * refusals use, the Notify choices its edit dropdown offers, the head's
  * `⋯` menu and delete confirmation the layer opens, and the Run now control.
  *
@@ -59,21 +60,43 @@ const BossModScheduleView = (() => {
      * The facts block: Set up by (only when an agent set it up), Repeats
      * (the server's summary), Next run (or Off), Last run, and Notify.
      *
-     * @param {object} schedule  A ScheduleView.
-     * @param {{onOpenTask: (taskId: string) => void}} options
+     * One builder for both modes, so view and edit cannot drift apart: in
+     * Edit mode the layer hands in the controls for the three facts the
+     * operator can change, and they sit in the same cells the view's text
+     * does. The facts that only a stored row has (Set up by, Last run) stay
+     * read-only text, and are absent for a schedule not yet created.
+     *
+     * @param {object|null} schedule  A ScheduleView; null only while editing
+     *   a new schedule.
+     * @param {{onOpenTask: (taskId: string) => void,
+     *   edit?: {repeats: Node, nextRun: Node, notify: Node}}} options
+     *   `edit` puts the recurrence editor, the upcoming-runs preview and the
+     *   Notify dropdown in those facts' cells.
      * @returns {HTMLElement} `dl.fact-list`.
-     * @throws {Error} When onOpenTask is missing.
+     * @throws {Error} When onOpenTask is missing, an `edit` slot is missing,
+     *   or `schedule` is null without `edit`.
      */
     function facts(schedule, options) {
-        const { onOpenTask } = options || {};
+        const { onOpenTask, edit } = options || {};
         if (typeof onOpenTask !== 'function') throw new Error('[schedule-view] onOpenTask is required');
-        const policy = NOTIFY.find((item) => item.value === schedule.notification_policy);
+        if (edit && !(edit.repeats && edit.nextRun && edit.notify)) {
+            throw new Error('[schedule-view] edit needs repeats, nextRun and notify');
+        }
+        if (!schedule && !edit) throw new Error('[schedule-view] facts needs a schedule unless it is editing a new one');
+        const policy = schedule && NOTIFY.find((item) => item.value === schedule.notification_policy);
         return BossModFactList.create([
-            ...(schedule.created_by_name ? [{ label: 'Set up by', value: String(schedule.created_by_name) }] : []),
-            { label: 'Repeats', value: String(schedule.summary) },
-            { label: 'Next run', value: schedule.next_run_at ? BossModFormat.formatDateTime(schedule.next_run_at) : 'Off' },
-            { label: 'Last run', value: lastRun(schedule, onOpenTask) },
-            { label: 'Notify', value: policy ? policy.label : String(schedule.notification_policy) },
+            ...(schedule && schedule.created_by_name ? [{ label: 'Set up by', value: String(schedule.created_by_name) }] : []),
+            { label: 'Repeats', value: edit ? edit.repeats : String(schedule.summary) },
+            {
+                label: 'Next run',
+                value: edit ? edit.nextRun
+                    : (schedule.next_run_at ? BossModFormat.formatDateTime(schedule.next_run_at) : 'Off'),
+            },
+            ...(schedule ? [{ label: 'Last run', value: lastRun(schedule, onOpenTask) }] : []),
+            {
+                label: 'Notify',
+                value: edit ? edit.notify : (policy ? policy.label : String(schedule.notification_policy)),
+            },
         ]);
     }
 

@@ -153,7 +153,7 @@ const BossModFileViewer = (() => {
         // tables at browser defaults, which is a different document from the
         // one the transcript shows for the same file.
         const rendered = h('div', { class: 'file-view-rendered md' });
-        const editor = h('textarea', { class: 'file-view-editor', hidden: true });
+        const editor = h('textarea', { class: 'text-editor', hidden: true });
         const status = h('p', { class: 'file-view-status', role: 'status' });
         const size = BossModFormat.formatFileSize(payload.size_bytes);
         const updated = payload.updated_at ? new Date(payload.updated_at).toLocaleString() : '';

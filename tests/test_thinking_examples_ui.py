@@ -39,6 +39,7 @@ def _run() -> dict:
             str(JS / "core" / "format.js"),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "switch.js"),
+            str(JS / "core" / "autogrow.js"),
             str(JS / "settings" / "settings-thinking-examples.js"),
             str(JS / "settings" / "settings-connections-form.js"),
         ],

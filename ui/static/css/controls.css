@@ -346,18 +346,47 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* A textarea is prose, not a line: it needs room to open on and the operator's
    own control over how much. `vertical` only — horizontal resize would drag it
-   out of whatever grid cell it was placed in. */
+   out of whatever grid cell it was placed in.
+
+   Its resting height comes from the kind of text it holds, never from a call
+   site's `rows`: short (3 lines) by default, long (10 lines) with
+   `data-size="long"` for prompts, instructions and descriptions. The tokens
+   (tokens.css) are lines times this rule's line-height plus its padding and
+   border, so the two must change together. */
 .field-textarea {
-  min-height: 68px;
+  min-height: var(--field-min-short);
   padding: 8px 10px;
   line-height: 1.45;
   resize: vertical;
 }
+.field-textarea[data-size="long"] { min-height: var(--field-min-long); }
 
-/* The hire form's prompt fields size to their content (agent-form-bindings.js)
-   up to this ceiling, then scroll. The cap lives here, not in script, so the
-   binding reads it back from clientHeight instead of repeating a number. */
+/* Code, JSON, keys and templates: what is typed must line up as typed. */
+.field-textarea-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+/* An auto-growing field (core/autogrow.js) sizes to its content up to this
+   ceiling, then scrolls. The cap lives here, not in script, so the binding
+   reads it back from clientHeight instead of repeating a number. */
 .field-textarea[data-autogrow] { max-height: var(--field-grow-max); }
+
+/* A FULL-PANE editor: the file viewer's edit mode, the system prompt template
+   and the runtime contracts. One rule for one job — it was the viewer's own
+   class and a Tailwind string copied between two settings sections. It fills
+   the pane it is given; the 40vh floor only matters where the pane sets no
+   height (the file viewer). */
+.text-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 40vh;
+  padding: 10px 12px;
+  border: 1px solid var(--line-field);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--ink);
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  resize: none;
+}
+.text-editor[hidden] { display: none !important; }
 
 /* Connection and personality labels are arbitrary operator input and the
    columns they sit in are narrow, so the visible text can clip. Truncation is
@@ -494,6 +523,60 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   color: var(--ink);
 }
 
+/* ─── Edit field ───
+ *
+ * core/inline-rename.js's "one control, two states", for every record edited
+ * in place (the task detail, the schedule layer): a read-only field reads as
+ * text; editing draws the rename's hairline under it (--line-control, 3.10:1
+ * on --panel, SC 1.4.11) and nothing moves — the bottom border is always there
+ * and only changes colour. Several fields are editable at once, so that
+ * hairline cannot also say which one has focus: a focused field's turns
+ * --accent (4.51:1), outranking base.css's input:focus-visible (0,1,1). No
+ * font here: base.css's `font: inherit` and the class a field wears set it,
+ * so a path stays monospace and a title stays .modal-title.
+ *
+ * Promoted from the task detail's private classes when the schedule layer
+ * became the second surface to need them: it had borrowed the look without
+ * the behaviour, and a task-detail restyle would have changed schedules.
+ */
+.edit-field {
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  border-radius: 0;
+  background: none;
+}
+.edit-field:not([readonly]) { border-bottom-color: var(--line-control); }
+.edit-field::placeholder { color: var(--hint); }
+.edit-field:focus-visible { outline: none; border-bottom-color: var(--accent); }
+
+/* A modal head's title, sized to its text by its owner, in the head's colour. */
+.edit-field-title { max-width: 100%; color: inherit; }
+
+/* A field of prose (a task's description, a schedule's instructions). A
+   hairline under the fourth row says nothing about where a paragraph starts
+   and ends, so a multi-line field is outlined all round while editable. The
+   1px border is there at rest too, transparent, so entering edit mode moves
+   nothing. While editable it opens at the long resting height, so an empty
+   field is a real writing area; at rest it is sized to its text
+   (core/autogrow.js), so view mode leaves no empty block — the room added on
+   entering edit mode appears only below the text. Past --field-grow-max it
+   scrolls. */
+.edit-field-multiline {
+  display: block;
+  width: 100%;
+  max-height: var(--field-grow-max);
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  color: inherit;
+  resize: none;
+}
+.edit-field-multiline:not([readonly]) { border-color: var(--line-control); min-height: var(--field-min-long); }
+.edit-field-multiline:focus-visible { border-color: var(--accent); }
+
 /* ─── Menu select ───
  *
  * A dropdown's trigger (core/menu-select.js): a .btn.btn-sm that names the
@@ -506,14 +589,17 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 .menu-select-trigger svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
 
 /* The 'field' look (menu-select.js `variant: 'field'`): the task detail's
-   Edit mode puts it in a fact cell among .task-detail-edit-field inputs, so it
+   Edit mode puts it in a fact cell among .edit-field inputs, so it
    reads as one of them — no box and no fill, the fact's own type, the edit
    hairline under it turning --accent on focus or while open. One line: the
    chip, the short name, the chevron; a long name ellipsizes, never wraps. No
    .btn, so no button hover or active fill reaches it. The host class lets it
    shrink inside its cell (the codebase does not use :has()). */
 .menu-select--field { max-width: 100%; min-width: 0; }
-.menu-select-field {
+/* The date field's trigger (core/date-field.js) is the same field-look
+   button: a glyph, the day, the hairline. */
+.menu-select-field,
+.date-field-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -534,7 +620,58 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 .menu-select-field .menu-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-select-field:focus-visible,
-.menu-select-field[aria-expanded="true"] { outline: none; border-bottom-color: var(--accent); }
+.menu-select-field[aria-expanded="true"],
+.date-field-trigger:focus-visible,
+.date-field-trigger[aria-expanded="true"] { outline: none; border-bottom-color: var(--accent); }
+
+/* ─── Time field and date field ───
+ *
+ * core/time-field.js and core/date-field.js: the Edit-mode replacements for
+ * the native time and date inputs, which the desktop webview paints as grey
+ * segmented boxes with no picker. Each is a positioned host — its panel hangs
+ * off it the way a dropdown's does — holding a field that reads as text over
+ * the edit hairline. Every colour is an existing token.
+ */
+.time-field,
+.date-field { position: relative; display: inline-flex; align-items: center; gap: 4px; }
+/* The typed time: sized for its longest spelling, so a column of times lines up. */
+.time-field-input { width: var(--time-field-width); min-height: 24px; }
+.time-field-input[aria-invalid="true"] { border-bottom-color: var(--alert); }
+.time-field-toggle svg,
+.date-field-trigger svg,
+.date-field-page svg { width: 14px; height: 14px; flex: none; color: var(--muted); }
+
+/* The panels hang off their field with the left edges aligned, as a
+   dropdown's does (.menu[data-menu="select"]). Each is as wide as its
+   content — a row's time and its check, the grid's seven columns — rather
+   than the narrow field it hangs off, which is all the room an absolutely
+   placed panel is offered. The suggestions scroll, and their scrollbar's
+   gutter is reserved so it is not taken out of the rows' width. */
+.menu[data-menu="time"],
+.menu[data-menu="date"] { top: calc(100% + 4px); left: 0; right: auto; min-width: max-content; }
+.menu[data-menu="time"] { max-height: min(320px, 60vh); overflow-y: auto; scrollbar-gutter: stable; }
+
+.date-field-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.date-field-month { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+.date-field-grid { border-collapse: collapse; }
+.date-field-grid th { padding: 0 0 4px; font-size: 11px; font-weight: 500; color: var(--muted); text-align: center; }
+.date-field-grid td { padding: 0; }
+.date-field-day {
+  width: var(--date-cell);
+  height: var(--date-cell);
+  border: 1px solid transparent;
+  border-radius: var(--r);
+  color: var(--ink);
+  font-size: 12px;
+}
+.date-field-day:hover { background: var(--bg); }
+/* The neighbouring months' days, quieter. --hint measures 4.83:1 on --panel. */
+.date-field-day[data-outside="true"] { color: var(--hint); }
+/* Today is underlined; the chosen day wears the segment chip's pressed
+   treatment (.menu-segment-option): an ink outline, not a filled accent. */
+.date-field-day[aria-current="date"] { text-decoration: underline; text-underline-offset: 3px; }
+.date-field-grid [aria-selected="true"] > .date-field-day { border-color: var(--ink); font-weight: 600; }
+.date-field-today { align-self: flex-start; }
 
 /* ─── Fact list ───
  *

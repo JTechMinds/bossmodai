@@ -27,6 +27,8 @@ HARNESS_MODULES = [
     JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
+    # Edit mode, the assign form and the completer grow their textareas.
+    JS / "core" / "autogrow.js",
     # The Edit mode file picker draws the desk's crumbs and rows.
     JS / "core" / "file-listing.js",
     JS / "shell" / "places.js", JS / "shell" / "agent-routes.js",
@@ -51,6 +53,8 @@ DETAIL_MODULES = [
     JS / "core" / "specialty.js", JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
+    # Edit mode grows the task's description with its text.
+    JS / "core" / "autogrow.js",
     # The Edit mode file picker draws the desk's crumbs and rows.
     JS / "core" / "file-listing.js",
     JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",

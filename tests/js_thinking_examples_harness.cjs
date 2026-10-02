@@ -6,7 +6,7 @@
  * sends thinking_levels from the five inputs alone.
  * Invoked by tests/test_thinking_examples_ui.py. Not a browser bundle.
  *
- * argv: format.js, dom.js, switch.js, settings-thinking-examples.js,
+ * argv: format.js, dom.js, switch.js, autogrow.js, settings-thinking-examples.js,
  * settings-connections-form.js.
  */
 const fs = require("fs");
@@ -139,8 +139,10 @@ global.BossModBanners = { refreshModelAvailability: async () => {} };
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModSwitch = BossModSwitch;\n`);
-eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModThinkingExamples = BossModThinkingExamples;\n`);
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModConnectionForm = BossModConnectionForm;\n`);
+// The form grows its Extra Body textarea with its text.
+eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModAutoGrow = BossModAutoGrow;\n`);
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModThinkingExamples = BossModThinkingExamples;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModConnectionForm = BossModConnectionForm;\n`);
 
 const LEVEL_KEYS = ["off", "low", "medium", "high", "xhigh"];
 

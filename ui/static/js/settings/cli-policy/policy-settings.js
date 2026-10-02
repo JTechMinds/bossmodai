@@ -136,8 +136,8 @@ const BossModCliPolicySettings = (() => {
                 html += `
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
-                    <textarea data-cli-setting-input="${escAttr(s.key)}" rows="4"
-                              class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono"
+                    <textarea data-cli-setting-input="${escAttr(s.key)}" data-autogrow
+                              class="field-textarea field-textarea-mono"
                               ${meta.placeholder ? `placeholder="${escAttr(meta.placeholder)}"` : ''}>${esc(s.value || '')}</textarea>`;
             } else {
                 html += `
@@ -162,6 +162,7 @@ const BossModCliPolicySettings = (() => {
         html += '</div>';
         el.innerHTML = html;
         icons(el);
+        el.querySelectorAll('textarea[data-autogrow]').forEach(BossModAutoGrow.bind);
 
         // Toggle switches
         el.querySelectorAll('[data-cli-setting-toggle]').forEach(btn => {

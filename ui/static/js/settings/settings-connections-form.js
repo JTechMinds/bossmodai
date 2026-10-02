@@ -181,10 +181,9 @@ const BossModConnectionForm = (() => {
                     <div>
                         <label class="block text-sm font-medium mb-1">Extra Body Params</label>
                         <p class="text-xs text-bm-muted mb-1.5">Optional JSON merged into every request body. For provider-specific fields.</p>
-                        <textarea name="extra_body" rows="3"
+                        <textarea name="extra_body" data-autogrow
                                   placeholder='e.g. {"stream": false, "thinking": {"type": "disabled"}}'
-                                  class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                         bg-bm-bg font-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
+                                  class="field-textarea field-textarea-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
                     </div>
                     <fieldset>
                         <legend class="block text-sm font-medium mb-1">Thinking levels</legend>
@@ -223,6 +222,7 @@ const BossModConnectionForm = (() => {
                 </form>
             </div>`;
 
+        container.querySelectorAll('textarea[data-autogrow]').forEach(BossModAutoGrow.bind);
         document.getElementById('btn-cancel-conn').addEventListener('click', onDone);
         bindApiKeyFieldControls(container);
         BossModThinkingExamples.bindPanel(container, copyText);

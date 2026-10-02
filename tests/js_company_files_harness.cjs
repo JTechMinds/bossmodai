@@ -185,7 +185,7 @@ async function viewerEndpoints(endpoints) {
     const button = (label) => documentStub.body.querySelectorAll("button")
         .find((el) => el.textContent === label);
     await button("Edit").dispatchClick();
-    documentStub.body.querySelector(".file-view-editor").value = "edited";
+    documentStub.body.querySelector(".text-editor").value = "edited";
     await button("Save").dispatchClick();
     await drain();
     RealFileViewer.close();

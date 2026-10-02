@@ -125,6 +125,10 @@ CONTEXT_MODULES = [
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
+    # Edit-mode widgets: the growing textarea, and the schedule editor's time and date fields.
+    JS / "core" / "autogrow.js",
+    JS / "core" / "time-field.js",
+    JS / "core" / "date-field.js",
     # The desk Files section and the task file picker share its crumbs and rows.
     JS / "core" / "file-listing.js",
     JS / "conversation" / "empty-state.js",

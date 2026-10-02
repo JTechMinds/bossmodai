@@ -92,8 +92,8 @@ const NestGitSection = (() => {
                                 class="hpc-action text-sm" aria-pressed="false">Show</button>
                     </div>
                     <label class="block text-sm font-medium mb-1">SSH key (optional)</label>
-                    <textarea id="nest-git-ssh" data-credential-field="ssh" rows="4"
-                              class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono"
+                    <textarea id="nest-git-ssh" data-credential-field="ssh" data-autogrow
+                              class="setting-input field-textarea field-textarea-mono"
                               placeholder="SSH key (optional)"></textarea>
                     <div class="flex gap-2 mt-4">
                         <button type="button" id="nest-git-save"
@@ -105,6 +105,7 @@ const NestGitSection = (() => {
                 <div id="nest-git-status" class="hidden p-3 rounded-lg text-sm"></div>
             </div>`;
         BossModIcons.paint(el, 'settings-nest-git');
+        el.querySelectorAll('textarea[data-autogrow]').forEach(BossModAutoGrow.bind);
         bind(el, status);
         const focus = options && options.focus;
         if (focus) el.querySelector(`[data-focus="${focus}"]`)?.focus();
@@ -149,8 +150,8 @@ const NestGitSection = (() => {
                                placeholder="${item.has_pat ? '••••' + BossModFormat.escapeAttribute(item.pat_last4 || '') : 'GitHub access token'}">
                         <button type="button" data-secret-toggle=".nest-edit-pat" class="hpc-action text-xs" aria-pressed="false">Show</button>
                     </div>
-                    <textarea rows="3" data-credential-field="ssh"
-                              class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-ssh"
+                    <textarea data-credential-field="ssh" data-autogrow
+                              class="setting-input field-textarea field-textarea-mono nest-edit-ssh"
                               placeholder="SSH key (optional)"></textarea>
                     <label class="flex items-center gap-2 text-xs text-bm-muted">
                         <input type="checkbox" class="nest-edit-default" data-nest-default ${item.is_default ? 'checked' : ''}>

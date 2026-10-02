@@ -94,10 +94,11 @@ const BossModAssignForm = (() => {
         });
         const mismatch = h('div', { class: 'assign-mismatch', id: 'ct-assign-mismatch', hidden: true });
         const description = h('textarea', {
-            class: 'assign-textarea', id: 'ct-assign-description', rows: '3', maxlength: '4000',
-            placeholder: 'Context, constraints, or the expected deliverable',
+            class: 'field-textarea', id: 'ct-assign-description', 'data-size': 'long', 'data-autogrow': true,
+            maxlength: '4000', placeholder: 'Context, constraints, or the expected deliverable',
             oninput: () => refreshSpecialtyHints(),
         });
+        const grow = BossModAutoGrow.bind(description);
         const result = h('div', { class: 'assign-result' });
 
         function field(label, control, extra) {
@@ -125,6 +126,7 @@ const BossModAssignForm = (() => {
                 // the dialog, and only a settled one should let it go.
                 { label: 'Assign', tone: 'primary', id: 'ct-assign-submit', form: 'ct-assign-form' },
             ],
+            onClose: () => grow.destroy(),
         });
 
         /** The pinned submit. In the footer, outside the form, found by id. */

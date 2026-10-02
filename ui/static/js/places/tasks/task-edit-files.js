@@ -16,7 +16,7 @@ const BossModTaskEditFiles = (() => {
     const { h } = BossModDom;
 
     /** The edit-mode field look: text at rest, the edit hairline while editing. */
-    const FIELD = 'task-detail-edit-field';
+    const FIELD = 'edit-field';
     /** Shared outputs are the common case, so a first browse opens there. */
     const START_FOLDER = '/projects';
     const NO_AGENT_HINT = 'Pick an assignee to browse their files.';

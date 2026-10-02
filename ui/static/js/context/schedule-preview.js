@@ -1,8 +1,9 @@
 /**
  * BossMod AI — "Upcoming runs": the next few runs of the rule being edited.
  *
- * Mounted under the recurrence editor by context/schedule-layer.js while a
- * schedule is created or edited, and fed the draft on every change. The
+ * Mounted as the Next run fact's value by context/schedule-layer.js while a
+ * schedule is created or edited (the fact's label names it, so it carries no
+ * heading of its own), and fed the draft on every change. The
  * times come from the server (POST /api/schedules/preview), which computes
  * them with the same `next_occurrence` the runtime worker fires from, so the
  * preview cannot disagree with the real runs. Nothing is saved.
@@ -17,7 +18,6 @@ const BossModSchedulePreview = (() => {
 
     /** Typing in a field fires a change per key; ask once it settles. */
     const DEBOUNCE_MS = 300;
-    const LABEL = 'Upcoming runs';
 
     /**
      * Build the preview.
@@ -39,7 +39,7 @@ const BossModSchedulePreview = (() => {
 
         const load = BossModGates.createLoadGeneration();
         const body = h('div', { class: 'schedule-preview-body', role: 'status', 'aria-live': 'polite' });
-        const element = h('section', { class: 'schedule-preview' }, h('p', { class: 'field-label' }, LABEL), body);
+        const element = h('section', { class: 'schedule-preview' }, body);
         let timer = null;
         let destroyed = false;
 

@@ -6,7 +6,7 @@
  * with no clear owner: a change to a date format and a change to the status
  * palette touched the same file for no reason other than history.
  *
- * These eleven answer one question — how does a value read on screen. They have
+ * These twelve answer one question — how does a value read on screen. They have
  * no dependencies, no state, and no DOM beyond `escapeHtml`'s one scratch
  * node, which is why they load first among the three.
  */
@@ -95,12 +95,15 @@ const BossModFormat = (() => {
             && a.getDate() === b.getDate();
     }
 
+    /** `9:05 AM` from a 24-hour hour and a minute: the one 12-hour spelling. */
+    function twelveHour(hour24, minute) {
+        const hour = hour24 % 12 === 0 ? 12 : hour24 % 12;
+        return `${hour}:${String(minute).padStart(2, '0')} ${hour24 < 12 ? 'AM' : 'PM'}`;
+    }
+
     /** `9:05 AM`, by hand, for the reason formatActivityTime gives. */
     function clockTime(date) {
-        const hour24 = date.getHours();
-        const hour = hour24 % 12 === 0 ? 12 : hour24 % 12;
-        const minute = String(date.getMinutes()).padStart(2, '0');
-        return `${hour}:${minute} ${hour24 < 12 ? 'AM' : 'PM'}`;
+        return twelveHour(date.getHours(), date.getMinutes());
     }
 
     /** `Sep 2` this year, `Sep 2, 2025` in any other. */
@@ -200,6 +203,26 @@ const BossModFormat = (() => {
     }
 
     /**
+     * A stored time of day as the operator reads it — `07:30` is `7:30 AM`,
+     * `19:05` is `7:05 PM` — spelled as every other time on screen is
+     * (clockTime, by hand for the reason formatActivityTime gives).
+     *
+     * For a wall-clock time with no date, such as a schedule's run times:
+     * the editor's time field, its suggestions and any later caller show one
+     * spelling rather than a 24-hour one beside a 12-hour preview.
+     *
+     * @param {string} hhmm  `HH:MM`, 24-hour, zero-padded.
+     * @returns {string}
+     * @throws {Error} When the value is not `HH:MM` — a stored time the UI
+     *   cannot read is a bug to surface, not a blank to show.
+     */
+    function formatTimeOfDay(hhmm) {
+        const match = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(String(hhmm));
+        if (!match) throw new Error(`[format] not a time of day: "${hhmm}"`);
+        return twelveHour(Number(match[1]), Number(match[2]));
+    }
+
+    /**
      * A count, abbreviated past a thousand.
      *
      * @param {number|null} n
@@ -275,6 +298,7 @@ const BossModFormat = (() => {
         formatDayLabel,
         formatDateTime,
         formatClockTime,
+        formatTimeOfDay,
         formatNumber,
         formatDuration,
         formatTokenCount,

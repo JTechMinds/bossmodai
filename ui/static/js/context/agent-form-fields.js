@@ -117,7 +117,7 @@ const BossModAgentFormFields = (() => {
             </div>
             <div class="field">
                 <label class="field-label" for="agent-description">Description</label>
-                <textarea name="description" id="agent-description" rows="3" data-autogrow
+                <textarea name="description" id="agent-description" data-autogrow data-size="long"
                           placeholder="e.g. Writes first drafts and short status notes."
                           class="field-textarea">${BossModFormat.escapeHtml(agent?.description || '')}</textarea>
                 <p class="field-hint">

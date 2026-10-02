@@ -4,8 +4,6 @@
 
 const PromptTemplateSection = (() => {
     let container = null;
-    const TEXTAREA_CLS = 'w-full h-full px-4 py-3 text-sm border border-bm-border rounded-lg '
-        + 'bg-bm-bg resize-none font-mono leading-relaxed';
 
     function insertAtCursor(textarea, text) {
         if (!textarea) return;
@@ -81,7 +79,7 @@ const PromptTemplateSection = (() => {
                         <p class="text-xs text-bm-muted">Full wrapper prompt sent before every turn. Controls role framing, context layout, and the rules the model sees.</p>
                     </div>
                     <div class="flex-1 min-h-0 p-4">
-                        <textarea id="system-prompt-textarea" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(templateValue)}</textarea>
+                        <textarea id="system-prompt-textarea" class="text-editor">${BossModFormat.escapeHtml(templateValue)}</textarea>
                     </div>
                     <div class="flex items-center gap-3 px-4 pb-4 shrink-0">
                         <button id="btn-save-template"

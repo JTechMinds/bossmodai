@@ -40,6 +40,10 @@ CONTEXT_MODULES = [
     JS / "core" / "menu.js",
     # A desk task's Edit mode picks its assignee from a dropdown.
     JS / "core" / "menu-select.js",
+    # Edit-mode widgets: the growing textarea, and the schedule editor's time and date fields.
+    JS / "core" / "autogrow.js",
+    JS / "core" / "time-field.js",
+    JS / "core" / "date-field.js",
     # The desk Files section and the task file picker share its crumbs and rows.
     JS / "core" / "file-listing.js",
     CONVERSATION / "empty-state.js",
@@ -699,7 +703,11 @@ def test_desk_schedules_section_and_layer() -> None:
     ``schedule_ran``/``schedule_changed`` activity for its own agent only. A
     row opens the layer over the desk, and an edit PATCHes only the changed
     field; New opens the layer in edit mode, refuses weekly with no weekday
-    before any request, then POSTs the exact rule shape. Leaving the desk
+    before any request, then POSTs the exact rule shape. Edit mode keeps the
+    view's facts list, with the recurrence editor, the preview and the Notify
+    dropdown in the Repeats, Next run and Notify cells; times are typed into
+    text fields, shown formatted, and an unreadable one is said, not sent.
+    Leaving the desk
     closes an open schedule layer. Row times come from
     ``BossModFormat.formatClockTime``; the lock reads "Agent can manage this
     task"; refusals surface the server's sentence for a string, a 422 and
@@ -717,6 +725,8 @@ def test_desk_schedules_section_and_layer() -> None:
         "anOpenRunShowsThePausedTone", "aSkipOffersTheOpenRun",
         "theLockAndTheAuthorShow", "setUpByShows", "theLockSwitchPatches", "createSendsTheLock",
         "timesUseTheSharedClock", "scheduleRefusalsSayWhy",
+        "aNewScheduleEditsInPlace", "anEditKeepsTheFactsInPlace", "anInvalidTypedTimeIsSaidNotSent",
+        "aTypedTimeIsShownFormatted",
     ):
         assert payload[key] is True, key
     panel = _read(CONTEXT / "desk-panel.js")
@@ -728,6 +738,11 @@ def test_desk_schedules_section_and_layer() -> None:
     for name in ("schedule-api.js", "schedule-view.js", "schedule-fields.js", "schedule-preview.js",
                  "schedule-layer.js", "desk-schedules.js"):
         assert "h('select'" not in _read(CONTEXT / name), name
+        # The webview's native date, time and number inputs have no picker and
+        # read as disabled grey boxes; the editor uses core/date-field.js,
+        # core/time-field.js and numeric text fields instead.
+        for native in ("type: 'date'", "type: 'time'", "type: 'number'"):
+            assert native not in _read(CONTEXT / name), f"{name} builds a native {native}"
 
 
 def test_context_modules_stay_focused() -> None:

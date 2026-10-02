@@ -17,12 +17,15 @@ const [domPath, nestPath, consentPath, settingsPath] = process.argv.slice(2);
 const secretPath = path.join(path.dirname(nestPath), "secret-field.js");
 const credentialFormPath = path.join(path.dirname(nestPath), "nest-git-credential-form.js");
 const settingsChromePath = path.join(path.dirname(settingsPath), "settings-chrome.js");
+// The settings section grows its SSH key textareas with their text.
+const autogrowPath = path.join(path.dirname(nestPath), "autogrow.js");
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(secretPath, "utf8")}\n;global.BossModSecretField = BossModSecretField;\n`);
 eval(`${fs.readFileSync(credentialFormPath, "utf8")}\n;global.BossModNestGitCredentialForm = BossModNestGitCredentialForm;\n`);
 eval(`${fs.readFileSync(nestPath, "utf8")}\n;global.BossModNestGitCard = BossModNestGitCard;\n`);
 eval(`${fs.readFileSync(consentPath, "utf8")}\n;global.BossModConsentCard = BossModConsentCard;\n`);
 eval(`${fs.readFileSync(settingsChromePath, "utf8")}\n;global.BossModSettingsChrome = BossModSettingsChrome;\n`);
+eval(`${fs.readFileSync(autogrowPath, "utf8")}\n;global.BossModAutoGrow = BossModAutoGrow;\n`);
 eval(`${fs.readFileSync(settingsPath, "utf8")}\n;global.NestGitSection = NestGitSection;\n`);
 
 const { h } = global.BossModDom;

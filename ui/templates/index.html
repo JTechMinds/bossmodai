@@ -181,6 +181,11 @@
     <script src="{{ static_url('js/core/menu.js') }}"></script>
     <!-- A dropdown is the shared menu panel, so it loads after menu.js. -->
     <script src="{{ static_url('js/core/menu-select.js') }}"></script>
+    <!-- Edit-mode field widgets: a textarea that grows with its text, and the
+         time and date fields, whose panels are the shared menu. -->
+    <script src="{{ static_url('js/core/autogrow.js') }}"></script>
+    <script src="{{ static_url('js/core/time-field.js') }}"></script>
+    <script src="{{ static_url('js/core/date-field.js') }}"></script>
     <script src="{{ static_url('js/core/gates.js') }}"></script>
     <!-- One folder listing's crumbs and rows: the desk's Files section and the
          task detail's file picker both draw it. -->

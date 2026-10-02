@@ -41,6 +41,7 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
+    "BossModAutoGrow",
     "BossModFileListing",
     "BossModFactList",
     // The instructions' clamp is the shared component the desk's description
@@ -444,7 +445,7 @@ async function editMode() {
     const discard = panel.querySelector("#ct-edit-discard");
     const pencil = panel.querySelector("#ct-edit-mode-btn");
     const titleText = () => panel.querySelector(".modal-title").textContent;
-    const titleInput = () => panel.querySelector(".task-detail-title-input");
+    const titleInput = () => panel.querySelector(".edit-field-title");
     const fileRows = () => panel.querySelectorAll("[data-file-row]");
     const errorCallout = () => {
         const slot = panel.querySelector(".task-detail-edit-error");
@@ -468,7 +469,7 @@ async function editMode() {
         && input.value === BLOCKED.title && input.getAttribute("aria-label") === "Task title"
         && document.activeElement === input && input.readOnly === false
         && panel.getAttribute("aria-label") === BLOCKED.title
-        && Boolean(panel.querySelector(".task-detail-description-input"))
+        && Boolean(panel.querySelector(".edit-field-multiline"))
         && fileRows().length === 1 && document.body.querySelectorAll(".modal-panel").length === 1;
     if (!editModeEntersInPlace) fail("entering Edit mode did not make the same panel editable");
 
@@ -517,16 +518,16 @@ async function editMode() {
 
     // ── discardRestores ─────────────────────────────────────────────────
     input.value = "Scratch title";
-    panel.querySelector(".task-detail-description-input").value = "Scratch";
+    panel.querySelector(".edit-field-multiline").value = "Scratch";
     await click(panel.querySelector("#ct-edit-add-file"), "Add a required file");
     await pickInPicker({ name: "draft.md" });
     const grewARow = fileRows().length === 2 && top() === panel;
     await click(discard, "✕");
     const leftClean = atRest() && titleText() === BLOCKED.title && document.activeElement === pencil
-        && !panel.querySelector(".task-detail-description-input") && requests.length === 0;
+        && !panel.querySelector(".edit-field-multiline") && requests.length === 0;
     await enter();
     const discardRestores = grewARow && leftClean && titleInput().value === BLOCKED.title
-        && panel.querySelector(".task-detail-description-input").value === BLOCKED.description
+        && panel.querySelector(".edit-field-multiline").value === BLOCKED.description
         && fileRows().length === 1
         && fileRows()[0].querySelector("[data-field=\"path\"]").textContent === "/me/out/report.md";
     if (!discardRestores) fail(`✕ left grew ${grewARow}, clean ${leftClean}`);
@@ -726,7 +727,7 @@ async function statusActions() {
         .getAttribute("data-status");
     const statusIds = (panel) => panel.querySelector(".task-detail-status").querySelectorAll("button")
         .map((item) => item.getAttribute("id")).join(",");
-    const editingIn = (panel) => Boolean(panel.querySelector(".task-detail-title-input"));
+    const editingIn = (panel) => Boolean(panel.querySelector(".edit-field-title"));
     const noTools = (panel) => ["#ct-edit-mode-btn", "#ct-edit-save", "#ct-edit-discard"]
         .every((id) => panel.querySelector(id).hidden);
     const footerButton = (panel, label) => panel.querySelectorAll(".modal-actions")[0]
@@ -770,7 +771,7 @@ async function statusActions() {
         && alertCallout.getAttribute("data-tone") === "alert"
         && alertCallout.textContent.includes("Only a blocked or stalled task with an assignee can be resumed")
         && editingIn(refused.panel) && pill(refused.panel) === "blocked"
-        && refused.panel.querySelector(".task-detail-title-input").value === BLOCKED.title
+        && refused.panel.querySelector(".edit-field-title").value === BLOCKED.title
         && !refused.panel.querySelector("#ct-resume-task-btn").disabled && changed.length === 1;
     if (!rejectedActionKeepsEditMode) fail("a refused status action left Edit mode or said nothing");
     refused.handle.close();

@@ -300,38 +300,30 @@ const BossModAgentFormBindings = (() => {
      * scrollbar overlapping the hint underneath, which read as a broken control
      * rather than as a long value.
      *
-     * The ceiling is CSS (`--field-grow-max` on `.field-textarea[data-autogrow]`),
-     * so past it the box scrolls instead of pushing the panel away.
+     * The measuring is core/autogrow.js's (BossModAutoGrow.fit), shared with
+     * every other growing field; the ceiling is CSS (`--field-grow-max` on
+     * `.field-textarea[data-autogrow]`), so past it the box scrolls instead of
+     * pushing the panel away.
      *
      * @param {HTMLElement} container
-     * @returns {void} Skips a node that cannot be measured — the suite's fake
-     *   DOM has no layout, and a binding that threw there would take the whole
-     *   form down with it.
+     * @returns {void} A node with no layout is skipped (BossModAutoGrow.fit):
+     *   the suite's fake DOM has none, and a field inside the closed Advanced
+     *   panel measures 0 until it is revealed and re-fitted here.
      */
     function growHireText(container) {
-        container.querySelectorAll('textarea[data-autogrow]').forEach((field) => {
-            if (!field.style || typeof field.scrollHeight !== 'number') return;
-            // Reset first: scrollHeight reports the CONTENT height only while the
-            // box is not already tall enough to hold it, so a field that has been
-            // grown once would otherwise never shrink back.
-            field.style.height = 'auto';
-            field.style.height = `${field.scrollHeight}px`;
-            // After the CSS max-height clamps it, the box is shorter than its
-            // content exactly when the scrollbar is needed.
-            field.style.overflowY = field.scrollHeight > field.clientHeight ? 'auto' : 'hidden';
-        });
+        container.querySelectorAll('textarea[data-autogrow]').forEach(BossModAutoGrow.fit);
     }
 
     /**
      * Keep the auto-growing hire textareas sized to their content as the
-     * operator types.
+     * operator types (BossModAutoGrow.fit, core/autogrow.js).
      *
      * @param {HTMLElement} container
      * @returns {void}
      */
     function bindHireTextAutoGrow(container) {
         container.querySelectorAll('textarea[data-autogrow]').forEach((field) => {
-            field.addEventListener('input', () => growHireText(container));
+            field.addEventListener('input', () => BossModAutoGrow.fit(field));
         });
         growHireText(container);
     }

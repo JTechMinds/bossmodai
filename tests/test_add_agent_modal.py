@@ -35,6 +35,8 @@ HARNESS_MODULES = [
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
+    # The form's bindings grow its prompt textareas through it.
+    JS / "core" / "autogrow.js",
     JS / "core" / "gates.js",
     CONTEXT / "agent-api.js",
     CONTEXT / "agent-templates-api.js",

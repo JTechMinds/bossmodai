@@ -12,8 +12,6 @@
 
 const RuntimeContractsSection = (() => {
     let container = null;
-    const TEXTAREA_CLS = 'w-full h-full px-4 py-3 text-sm border border-bm-border rounded-lg '
-        + 'bg-bm-bg resize-none font-mono leading-relaxed';
     const SELECT_CLS = 'px-3 py-2 text-sm border border-bm-border rounded-lg '
         + 'bg-bm-bg';
 
@@ -105,22 +103,22 @@ const RuntimeContractsSection = (() => {
                     <!-- Tab content -->
                     <div class="flex-1 flex flex-col min-h-0 p-4">
                         <div id="rc-tab-decision" class="rc-tab-pane flex-1 flex flex-col min-h-0">
-                            <textarea id="runtime-decision-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(decisionContract)}</textarea>
+                            <textarea id="runtime-decision-contract" class="text-editor">${BossModFormat.escapeHtml(decisionContract)}</textarea>
                         </div>
                         <div id="rc-tab-execution" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-execution-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(executionContract)}</textarea>
+                            <textarea id="runtime-execution-contract" class="text-editor">${BossModFormat.escapeHtml(executionContract)}</textarea>
                         </div>
                         <div id="rc-tab-trigger-event" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-trigger-event-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(triggerEvent)}</textarea>
+                            <textarea id="runtime-trigger-event-contract" class="text-editor">${BossModFormat.escapeHtml(triggerEvent)}</textarea>
                         </div>
                         <div id="rc-tab-conversation-envelope" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-conversation-envelope-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(conversationEnvelope)}</textarea>
+                            <textarea id="runtime-conversation-envelope-contract" class="text-editor">${BossModFormat.escapeHtml(conversationEnvelope)}</textarea>
                         </div>
                         <div id="rc-tab-file-guidance" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-file-guidance-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(fileGuidance)}</textarea>
+                            <textarea id="runtime-file-guidance-contract" class="text-editor">${BossModFormat.escapeHtml(fileGuidance)}</textarea>
                         </div>
                         <div id="rc-tab-communication-snapshot" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
-                            <textarea id="runtime-communication-snapshot-contract" class="${TEXTAREA_CLS}">${BossModFormat.escapeHtml(communicationSnapshot)}</textarea>
+                            <textarea id="runtime-communication-snapshot-contract" class="text-editor">${BossModFormat.escapeHtml(communicationSnapshot)}</textarea>
                         </div>
                         <div id="rc-tab-preview" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
                             <div class="flex items-center gap-2 mb-3 flex-wrap">

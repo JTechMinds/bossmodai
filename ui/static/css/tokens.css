@@ -109,6 +109,24 @@
    * before it scrolls. Window-relative, like the modals it sits in: those
    * fields are the agent's prompt, so a long one gets most of the dialog. */
   --field-grow-max: 60vh;
+  /* A textarea's resting height, by the kind of text it holds — set by a
+   * size class (controls.css .field-textarea / [data-size="long"],
+   * .edit-field-multiline), never by a call site's `rows`. Lines times
+   * .field-textarea's line-height (1.45), plus its vertical padding (8px top
+   * and bottom) and 1px border on each side: 18px. Short is a summary, help
+   * text, a JSON snippet or a key; long is a prompt, instructions, or a task
+   * or role description. Both grow with their text up to --field-grow-max. */
+  --field-min-short: calc(3 * 1.45em + 18px);
+  --field-min-long: calc(10 * 1.45em + 18px);
+  /* The Edit-mode time field (core/time-field.js): wide enough for its
+   * longest spelling, `12:30 PM`, in the field's own type. */
+  --time-field-width: 9ch;
+  /* A short whole-number field in a sentence row — "every [30] minutes";
+   * the largest it takes is three digits (720). */
+  --number-field-width: 5ch;
+  /* One day in the date field's month grid (core/date-field.js): a square
+   * target comfortably over the 24px floor (SC 2.5.8). */
+  --date-cell: 32px;
 
   /* The two horizontal rules that cross the whole window.
    *

@@ -95,6 +95,7 @@ const paths = process.argv.slice(2);
 const NAMES = [
     "BossModApi", "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
+    "BossModAutoGrow", "BossModTimeField", "BossModDateField",
     "BossModFileListing",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
     "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
@@ -1151,6 +1152,30 @@ async function main() {
             + `${otherActivityIsIgnored}, refreshed ${aScheduleRunRefreshesTheRows} (${scheduleReads - readsBefore})`);
     }
 
+    // The schedule editor's times are typed text fields (core/time-field.js):
+    // type, then blur, as an operator does. The layer's facts list keeps its
+    // place in Edit mode, with the editable facts' controls in their cells.
+    const typeTime = (input, text) => {
+        input.value = text;
+        input.dispatchEvent({ type: "input" });
+        input.dispatchEvent({ type: "blur" });
+    };
+    const factCells = (layer) => {
+        const list = layer.querySelector(".fact-list");
+        const labels = list.querySelectorAll(".fact-label").map((node) => node.textContent);
+        const values = list.querySelectorAll(".fact-value");
+        return { labels, cell: (label) => values[labels.indexOf(label)] };
+    };
+    const editsInPlace = (layer, labels) => {
+        const facts = factCells(layer);
+        return JSON.stringify(facts.labels) === JSON.stringify(labels)
+            && Boolean(facts.cell("Repeats").querySelector(".schedule-fields"))
+            && Boolean(facts.cell("Next run").querySelector(".schedule-preview"))
+            && Boolean(facts.cell("Notify").querySelector(".menu-select-trigger"));
+    };
+    const noNativeDateTimeOrNumber = (layer) => ["date", "time", "number"]
+        .every((type) => layer.querySelectorAll(`input[type="${type}"]`).length === 0);
+
     // A row opens the schedule as a layer; Edit mode PATCHes only what changed.
     await scheduleRows()[0].dispatchClick();
     await drain();
@@ -1161,7 +1186,7 @@ async function main() {
         && viewLayer.querySelector(".switch-row").getAttribute("aria-checked") === "true";
     await viewLayer.querySelector("#schedule-edit").dispatchClick();
     await drain();
-    viewLayer.querySelector(".task-detail-title-input").value = "Status check (prod)";
+    viewLayer.querySelector(".edit-field-title").value = "Status check (prod)";
     const writesBeforeEdit = scheduleWrites.length;
     await viewLayer.querySelector("#schedule-save").dispatchClick();
     await drain();
@@ -1182,14 +1207,16 @@ async function main() {
     const newOpensInEditMode = newLayer.getAttribute("aria-label") === "New schedule"
         && newLayer.querySelector("#schedule-edit").hidden === true
         && newLayer.querySelector("#schedule-save").hidden === false;
-    newLayer.querySelector(".task-detail-title-input").value = "Weekly report";
-    newLayer.querySelector(".task-detail-description-input").value = "Summarise the week.";
+    const aNewScheduleEditsInPlace = editsInPlace(newLayer, ["Repeats", "Next run", "Notify"])
+        && noNativeDateTimeOrNumber(newLayer);
+    newLayer.querySelector(".edit-field-title").value = "Weekly report";
+    newLayer.querySelector(".schedule-instructions").value = "Summarise the week.";
     await newLayer.querySelector(".schedule-fields").querySelector(".menu-select-trigger").dispatchClick();
     await drain();
     await newLayer.querySelectorAll(".menu-select-option")
         .find((node) => node.textContent === "Weekly").dispatchClick();
     await drain();
-    newLayer.querySelector(".schedule-time").value = "06:00";
+    typeTime(newLayer.querySelector(".time-field-input"), "6am");
     const writesBeforeCreate = scheduleWrites.length;
     await newLayer.querySelector("#schedule-save").dispatchClick();
     await drain();
@@ -1228,9 +1255,9 @@ async function main() {
         .find((node) => node.textContent === "New").dispatchClick();
     await drain();
     const repeatLayer = topLayer();
-    repeatLayer.querySelector(".task-detail-title-input").value = "Uptime ping";
-    repeatLayer.querySelector(".task-detail-description-input").value = "Check the status page.";
-    repeatLayer.querySelector(".schedule-time").value = "06:00";
+    repeatLayer.querySelector(".edit-field-title").value = "Uptime ping";
+    repeatLayer.querySelector(".schedule-instructions").value = "Check the status page.";
+    typeTime(repeatLayer.querySelector(".time-field-input"), "06:00");
     await repeatLayer.querySelector("[data-time-mode=\"every\"]").dispatchClick();
     const repeatRow = repeatLayer.querySelector(".schedule-repeat-row");
     const repeatModeShowsOnlyItsControls = repeatRow.hidden === false
@@ -1242,15 +1269,16 @@ async function main() {
     await repeatLayer.querySelectorAll(".menu-select-option")
         .find((node) => node.textContent === "hours").dispatchClick();
     await drain();
-    repeatRow.querySelector(".schedule-window-start").value = "20:00";
-    repeatRow.querySelector(".schedule-window-end").value = "08:00";
+    const [windowFrom, windowTo] = repeatRow.querySelectorAll(".time-field-input");
+    typeTime(windowFrom, "8pm");
+    typeTime(windowTo, "8:00 am");
     const writesBeforeRepeat = scheduleWrites.length;
     await repeatLayer.querySelector("#schedule-save").dispatchClick();
     await drain();
     const anOvernightWindowIsRefusedHere = scheduleWrites.length === writesBeforeRepeat
         && repeatLayer.querySelector(".schedule-layer-error").textContent.includes("overnight windows are not supported");
-    repeatRow.querySelector(".schedule-window-start").value = "08:00";
-    repeatRow.querySelector(".schedule-window-end").value = "20:00";
+    typeTime(windowFrom, "0800");
+    typeTime(windowTo, "20:00");
     await repeatLayer.querySelector("#schedule-save").dispatchClick();
     await drain();
     const repeatWrite = scheduleWrites[writesBeforeRepeat];
@@ -1324,7 +1352,10 @@ async function main() {
         && previewBody.count === 5
         && JSON.stringify(previewBody.recurrence.times) === JSON.stringify(["06:00", "12:00"])
         && runLayer.querySelector(".schedule-preview-list").children.length === 5;
-    const firstTime = runLayer.querySelector(".schedule-time");
+    const anEditKeepsTheFactsInPlace = editsInPlace(runLayer, ["Repeats", "Next run", "Last run", "Notify"])
+        && noNativeDateTimeOrNumber(runLayer)
+        && factCells(runLayer).cell("Last run").textContent.startsWith("Ran ");
+    const firstTime = runLayer.querySelector(".time-field-input");
     firstTime.value = "";
     firstTime.dispatchEvent({ type: "input" });
     await advance(400);
@@ -1339,20 +1370,34 @@ async function main() {
         .find((node) => node.textContent === "New").dispatchClick();
     await drain();
     const offLayer = topLayer();
-    offLayer.querySelector(".task-detail-title-input").value = "Dry run";
-    offLayer.querySelector(".task-detail-description-input").value = "Try it once.";
-    offLayer.querySelector(".schedule-time").value = "07:00";
+    offLayer.querySelector(".edit-field-title").value = "Dry run";
+    offLayer.querySelector(".schedule-instructions").value = "Try it once.";
+    // A time the field cannot read is marked, said on ✓, and nothing is sent.
+    const offTime = offLayer.querySelector(".time-field-input");
+    typeTime(offTime, "25:00");
+    const writesBeforeBadTime = scheduleWrites.length;
+    await offLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const anInvalidTypedTimeIsSaidNotSent = scheduleWrites.length === writesBeforeBadTime
+        && offTime.getAttribute("aria-invalid") === "true" && offTime.value === "25:00"
+        && offLayer.querySelector(".schedule-layer-error").textContent
+            .includes("“25:00” is not a time (try 7:30 PM).");
+    typeTime(offTime, "7");
+    const aTypedTimeIsShownFormatted = offTime.value === "7:00 AM" && offTime.getAttribute("aria-invalid") === null;
     await offLayer.querySelector(".switch-row").dispatchClick();
     const writesBeforeOff = scheduleWrites.length;
     await offLayer.querySelector("#schedule-save").dispatchClick();
     await drain();
     const aNewScheduleCanBeSavedOff = scheduleWrites.length === writesBeforeOff + 1
-        && scheduleWrites[writesBeforeOff].body.enabled === false;
+        && scheduleWrites[writesBeforeOff].body.enabled === false
+        && JSON.stringify(scheduleWrites[writesBeforeOff].body.recurrence.times) === JSON.stringify(["07:00"]);
     if (!runNowIsDisabledWhileRunning || !runNowStartsARealRun || !anOpenRunRefusalSaysWhy
-        || !theDraftIsPreviewed || !anInvalidDraftIsSaidNotSent || !aNewScheduleCanBeSavedOff) {
+        || !theDraftIsPreviewed || !anInvalidDraftIsSaidNotSent || !aNewScheduleCanBeSavedOff
+        || !anEditKeepsTheFactsInPlace || !anInvalidTypedTimeIsSaidNotSent || !aTypedTimeIsShownFormatted) {
         throw new Error(`Run now / preview: disabled ${runNowIsDisabledWhileRunning}, run ${runNowStartsARealRun}, `
             + `open ${anOpenRunRefusalSaysWhy}, preview ${theDraftIsPreviewed}, invalid ${anInvalidDraftIsSaidNotSent}, `
-            + `off ${aNewScheduleCanBeSavedOff}`);
+            + `off ${aNewScheduleCanBeSavedOff}, in place ${anEditKeepsTheFactsInPlace}, `
+            + `bad time ${anInvalidTypedTimeIsSaidNotSent}, formatted ${aTypedTimeIsShownFormatted}`);
     }
 
     // A run left open makes every later run skip: the row says the schedule
@@ -1415,9 +1460,9 @@ async function main() {
         .find((node) => node.textContent === "New").dispatchClick();
     await drain();
     const lockCreate = topLayer();
-    lockCreate.querySelector(".task-detail-title-input").value = "Opened";
-    lockCreate.querySelector(".task-detail-description-input").value = "Yours to manage.";
-    lockCreate.querySelector(".schedule-time").value = "08:00";
+    lockCreate.querySelector(".edit-field-title").value = "Opened";
+    lockCreate.querySelector(".schedule-instructions").value = "Yours to manage.";
+    typeTime(lockCreate.querySelector(".time-field-input"), "8:00");
     await lockCreate.querySelectorAll(".switch-row")
         .find((node) => node.textContent === "Agent can manage this task").dispatchClick();
     const writesBeforeOpenCreate = scheduleWrites.length;
@@ -1439,8 +1484,9 @@ async function main() {
     desk.close();
     await drain();
     if (!aRowOpensTheScheduleLayer || !anEditPatchesOnlyWhatChanged || !newOpensInEditMode
-        || !weeklyNeedsAWeekday || !aCreatePostsTheExactRule || !leavingTheDeskClosesTheScheduleLayer) {
-        throw new Error(`the schedule layer: opens ${aRowOpensTheScheduleLayer}, patch `
+        || !weeklyNeedsAWeekday || !aCreatePostsTheExactRule || !leavingTheDeskClosesTheScheduleLayer
+        || !aNewScheduleEditsInPlace) {
+        throw new Error(`the schedule layer: opens ${aRowOpensTheScheduleLayer}, in place ${aNewScheduleEditsInPlace}, patch `
             + `${anEditPatchesOnlyWhatChanged} ${JSON.stringify(editWrite)}, new ${newOpensInEditMode}, `
             + `weekday ${weeklyNeedsAWeekday}, create ${aCreatePostsTheExactRule} ${JSON.stringify(createWrite)}, `
             + `leaving ${leavingTheDeskClosesTheScheduleLayer}`);
@@ -2519,6 +2565,10 @@ async function main() {
         theDraftIsPreviewed,
         anInvalidDraftIsSaidNotSent,
         aNewScheduleCanBeSavedOff,
+        aNewScheduleEditsInPlace,
+        anEditKeepsTheFactsInPlace,
+        anInvalidTypedTimeIsSaidNotSent,
+        aTypedTimeIsShownFormatted,
         anOpenRunShowsThePausedTone,
         aSkipOffersTheOpenRun,
         theLockAndTheAuthorShow,

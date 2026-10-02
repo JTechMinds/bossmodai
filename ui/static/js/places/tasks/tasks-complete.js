@@ -99,9 +99,10 @@ const BossModTasksComplete = (() => {
         function ask(task, resolve, reject) {
             let submitted = false;
             const summary = h('textarea', {
-                class: 'assign-textarea', id: 'ct-complete-summary', rows: '3', maxlength: '2000',
+                class: 'field-textarea', id: 'ct-complete-summary', 'data-autogrow': true, maxlength: '2000',
                 'aria-required': 'true', placeholder: 'What was delivered, or why it counts as done',
             });
+            const grow = BossModAutoGrow.bind(summary);
             const note = h('div', { class: 'assign-result', role: 'alert' });
             let modal = null;
             const form = h('form', {
@@ -134,7 +135,10 @@ const BossModTasksComplete = (() => {
                     { label: 'Keep open', tone: 'quiet' },
                 ],
                 // However it closed without a summary sent: kept open.
-                onClose: () => { if (!submitted) resolve(null); },
+                onClose: () => {
+                    grow.destroy();
+                    if (!submitted) resolve(null);
+                },
             });
         }
 

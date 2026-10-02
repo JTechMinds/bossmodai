@@ -116,9 +116,9 @@ const BossModCliPolicyRuleForm = (() => {
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">Help Text</label>
-                        <textarea name="help_text" rows="4"
+                        <textarea name="help_text" data-autogrow
                                   placeholder="Detailed help shown when agents type: learn commandname"
-                                  class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">${esc(rule?.help_text || '')}</textarea>
+                                  class="field-textarea field-textarea-mono">${esc(rule?.help_text || '')}</textarea>
                     </div>
                     <div class="md:col-span-2 flex items-center gap-4">
                         <label class="flex items-center gap-2 text-sm">
@@ -141,6 +141,7 @@ const BossModCliPolicyRuleForm = (() => {
             </div>`;
 
         icons(slot);
+        slot.querySelectorAll('textarea[data-autogrow]').forEach(BossModAutoGrow.bind);
 
         document.getElementById('btn-cancel-rule-form').addEventListener('click', () => {
             slot.innerHTML = '';

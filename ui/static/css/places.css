@@ -473,32 +473,11 @@
 .task-detail-event-text { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 4px; margin: 0; word-break: break-word; }
 
 /* ─── Task detail: Edit mode (task-edit-mode.js) ───
-   core/inline-rename.js's "one control, two states": a read-only field reads
-   as text; editing draws the rename's hairline under it (--line-control,
-   3.10:1 on --panel, SC 1.4.11) and nothing moves — the bottom border is
-   always there and only changes colour. Several fields are editable at once,
-   so that hairline cannot also say which one has focus: a focused field's
-   turns --accent (4.51:1), outranking base.css's input:focus-visible
-   (0,1,1). No font here: base.css's `font: inherit` and the class a field
-   wears set it, so a path stays monospace and the title stays .modal-title. */
-.task-detail-edit-field {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-  border-bottom: 1px solid transparent;
-  border-radius: 0;
-  background: none;
-}
-.task-detail-edit-field:not([readonly]) { border-bottom-color: var(--line-control); }
-.task-detail-edit-field::placeholder { color: var(--hint); }
-.task-detail-edit-field:focus-visible { outline: none; border-bottom-color: var(--accent); }
-/* The head's title (sized to its text by task-edit-mode.js) and the task's
-   text take the colour of the heading and section they sit in. */
-.task-detail-title-input { max-width: 100%; color: inherit; }
-.task-detail-description-input { display: block; width: 100%; color: inherit; resize: none; overflow: hidden; }
+   The fields are the shared Edit-mode look (controls.css `.edit-field`,
+   `.edit-field-title`, `.edit-field-multiline`); only the file rows' own
+   layout lives here. */
 /* A file row keeps the view row's order; its two fields share the room. */
-.task-detail-file > .task-detail-edit-field { flex: 1 1 0; }
+.task-detail-file > .edit-field { flex: 1 1 0; }
 .task-detail-file-remove { flex: none; }
 /* A row's path is a button that reopens the file picker (task-edit-files.js),
    in the field look: the path's monospace, one line, ellipsized, over the
@@ -527,8 +506,7 @@ button.task-detail-file-path:disabled { border-bottom-color: transparent; cursor
 .assign-field-label { display: block; margin-bottom: 3px; font-size: 11px; font-weight: 500; color: var(--muted); }
 
 .assign-input,
-.assign-select,
-.assign-textarea {
+.assign-select {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--line-field);
@@ -538,7 +516,6 @@ button.task-detail-file-path:disabled { border-bottom-color: transparent; cursor
   font-size: 13px;
 }
 
-.assign-textarea { resize: vertical; }
 .assign-hint { margin: 0 0 8px; font-size: 11px; color: var(--hint); }
 
 /* The outcome panels are the shared .callout (controls.css); the form only
@@ -779,8 +756,6 @@ svg.file-entry-kind { flex: none; width: 14px; height: 14px; }
   font-size: 13px;
 }
 
-.file-form-textarea { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; resize: vertical; }
-
 .file-form-error {
   margin: 0 0 10px;
   padding: 6px 8px;
@@ -851,21 +826,7 @@ svg.file-entry-kind { flex: none; width: 14px; height: 14px; }
   line-height: 1.5;
 }
 
-.file-view-rendered[hidden],
-.file-view-editor[hidden] { display: none !important; }
-
-.file-view-editor {
-  width: 100%;
-  min-height: 40vh;
-  padding: 10px;
-  border: 1px solid var(--line-field);
-  border-radius: var(--r);
-  background: var(--panel);
-  color: var(--ink);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
-  resize: vertical;
-}
+.file-view-rendered[hidden] { display: none !important; }
 
 .file-view-figure { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .file-view-image { max-width: 100%; max-height: 60vh; border: 1px solid var(--line); border-radius: var(--r); }

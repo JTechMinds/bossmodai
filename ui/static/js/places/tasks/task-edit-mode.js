@@ -8,8 +8,10 @@
  * the subtasks' files read-only beneath them in the one Deliverables section
  * (task-edit-files.js, which picks each path from the assignee's files).
  * It follows core/inline-rename.js's "one control, two states": a field
- * that reads as text until it is editable, with the edit hairline under it,
- * and no boxes, dialogs or layout jumps.
+ * that reads as text until it is editable, with the edit hairline under it
+ * (the shared `.edit-field` look, controls.css; the description is outlined
+ * and grows with its text through core/autogrow.js), and no dialogs or
+ * layout jumps.
  *
  * This module owns the edit STATE and the nodes that carry it; it never
  * fetches. Saving is `deps.onSave`'s (the detail's call to
@@ -28,7 +30,7 @@ const BossModTaskEditMode = (() => {
 
     const UNASSIGNED = '';
     /** Every edit-mode field: text at rest, the edit hairline while editing. */
-    const FIELD = 'task-detail-edit-field';
+    const FIELD = 'edit-field';
 
     /** A titled `.callout` in one of the shared tones. */
     function callout(tone, title, ...children) {
@@ -85,7 +87,7 @@ const BossModTaskEditMode = (() => {
         let destroyed = false;
 
         const titleInput = h('input', {
-            class: `task-detail-title-input ${FIELD}`, type: 'text', maxlength: '200', autocomplete: 'off',
+            class: `${FIELD} edit-field-title`, type: 'text', maxlength: '200', autocomplete: 'off',
             readonly: true, 'aria-label': 'Task title', 'aria-required': 'true',
             oninput: () => { fitTitle(); refreshAssignees(); changed(); },
             onkeydown: (event) => {
@@ -95,11 +97,13 @@ const BossModTaskEditMode = (() => {
             },
         });
         const description = h('textarea', {
-            class: `task-detail-instructions task-detail-description-input ${FIELD}`, rows: '3',
+            class: `task-detail-instructions ${FIELD} edit-field-multiline`,
             maxlength: '4000', readonly: true, 'aria-label': 'Task description',
             placeholder: 'What the task asks for',
-            oninput: () => { grow(); refreshAssignees(); changed(); },
+            oninput: () => { refreshAssignees(); changed(); },
         });
+        /** Grows the description to its text, as the composer grows. */
+        const grow = BossModAutoGrow.bind(description);
 
         /** The backlog choice; `short` is what the field trigger shows. */
         const BACKLOG = { value: UNASSIGNED, label: 'Unassigned backlog', short: 'Unassigned' };
@@ -187,12 +191,6 @@ const BossModTaskEditMode = (() => {
         /** Size the head's title to its text, as the heading it replaces is. */
         function fitTitle() {
             titleInput.size = Math.max(titleInput.value.length, 1);
-        }
-
-        /** Grow the description to its text, as the composer grows. */
-        function grow() {
-            description.style.height = 'auto';
-            description.style.height = `${description.scrollHeight}px`;
         }
 
         function setEditing(on) {
@@ -306,7 +304,7 @@ const BossModTaskEditMode = (() => {
             begin() {
                 if (editing) return;
                 setEditing(true);
-                grow();
+                grow.fit();
                 titleInput.focus();
                 if (titleInput.select) titleInput.select();
             },
@@ -321,10 +319,11 @@ const BossModTaskEditMode = (() => {
             isDirty,
             /** A status action's refusal, in the slot a save's refusal uses. */
             showError: (message) => show(callout('alert', message)),
-            /** Put the assignee panel away; this edit state is finished with. */
+            /** Put the assignee panel away and unbind the description; this edit state is finished with. */
             destroy() {
                 destroyed = true;
                 assignee.destroy();
+                grow.destroy();
             },
         };
     }

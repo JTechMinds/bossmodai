@@ -5,11 +5,15 @@
  * Last run with its task, Notify) and the instructions each run hands the
  * agent. Edit follows the task detail's contract (places/tasks/task-detail.js):
  * ✎ at rest, ✓ ✕ while editing, Esc discards, the title edited in the head.
- * The same nodes flip `readonly`, the rule becomes context/schedule-fields.js,
- * and ✓ PATCHes only what changed; a refusal is a `.callout` and the draft
- * stays. While editing, "Upcoming runs" (context/schedule-preview.js) lists
- * the draft's next runs. A new schedule opens in edit mode with the Enabled
- * switch (default on, sent with the POST) and ✓ POSTs. A saved schedule has
+ * Edit happens in place: the view keeps its layout and the facts become
+ * editable where they sit — Repeats holds the recurrence editor
+ * (context/schedule-fields.js), Next run the draft's upcoming runs
+ * (context/schedule-preview.js), Notify its dropdown — and the title and
+ * instructions flip `readonly` (the shared `.edit-field` look; the
+ * instructions grow with their text through core/autogrow.js). ✓ PATCHes
+ * only what changed; a refusal is a `.callout` and the draft stays. A new
+ * schedule opens in edit mode with the Enabled switch (default on, sent
+ * with the POST) and ✓ POSTs. A saved schedule has
  * Run now beside Enabled (schedule-view.js's control). Delete sits behind
  * the head's `⋯` and a danger confirm (context/desk-actions.js's pattern).
  */
@@ -70,17 +74,19 @@ const BossModScheduleLayer = (() => {
         const draftFlags = { enabled: true, agent_can_change: false };
 
         const titleInput = h('input', {
-            class: 'task-detail-title-input task-detail-edit-field', type: 'text', maxlength: '200',
+            class: 'edit-field edit-field-title', type: 'text', maxlength: '200',
             autocomplete: 'off', readonly: true, 'aria-label': 'Schedule title', 'aria-required': 'true',
             placeholder: TITLE_PLACEHOLDER,
             oninput: () => fitTitle(),
             onkeydown: (event) => { if (event.key === 'Enter') { event.preventDefault(); void save(); } },
         });
         const instructions = h('textarea', {
-            class: 'task-detail-instructions task-detail-description-input task-detail-edit-field',
-            rows: '4', maxlength: '4000', readonly: true, 'aria-label': 'Instructions',
+            class: 'edit-field edit-field-multiline schedule-instructions',
+            maxlength: '4000', readonly: true, 'aria-label': 'Instructions',
             placeholder: 'What each run asks the agent to do',
         });
+        /** Sizes the instructions to their text, in view mode too, so a long one is never clipped. */
+        const grow = BossModAutoGrow.bind(instructions);
         const errorSlot = h('div', { class: 'schedule-layer-error', role: 'alert' });
         errorSlot.hidden = true;
         const column = h('div', { class: 'task-detail-column' });
@@ -116,11 +122,15 @@ const BossModScheduleLayer = (() => {
         const section = (title, node) => h('section', { class: 'task-detail-section' },
             h('p', { class: 'task-detail-heading' }, title), node);
 
-        /** Paint the column for the current state: the view, or edit mode. */
+        /** Paint the column for the current state: the view, or edit mode in the view's layout. */
         function render() {
             if (editing) {
-                column.replaceChildren(errorSlot, ...(current ? [] : switchElements()), section('Rule', fields.element),
-                    preview.element, section('Notify', notify.element), section('Instructions', instructions));
+                column.replaceChildren(errorSlot, ...(current ? [] : switchElements()),
+                    VIEW.facts(current, {
+                        onOpenTask,
+                        edit: { repeats: fields.element, nextRun: preview.element, notify: notify.element },
+                    }),
+                    section('Instructions', instructions));
             } else {
                 Object.keys(switches).forEach((field) => switches[field].set(current[field]));
                 runNow = runNow || VIEW.runNowControl({
@@ -131,6 +141,8 @@ const BossModScheduleLayer = (() => {
                     VIEW.facts(current, { onOpenTask }), section('Instructions', instructions));
             }
             BossModIcons.paint(column, 'schedule-layer');
+            // Measured once it is in the column; a detached node has no height.
+            grow.fit();
         }
 
         /** ✓ ✕ while editing; ✎ and ⋯ at rest; a new schedule has neither of those. */
@@ -147,6 +159,7 @@ const BossModScheduleLayer = (() => {
             titleInput.value = current ? current.title : '';
             fitTitle();
             instructions.value = current ? current.instructions : '';
+            grow.fit();
         }
 
         const panel = BossModOverlays.createModal({
@@ -161,6 +174,7 @@ const BossModScheduleLayer = (() => {
                 closed = true;
                 if (menu) menu.close();
                 [fields, notify, preview, runNow].forEach((control) => { if (control) control.destroy(); });
+                grow.destroy();
                 if (onClose) onClose();
             },
         });

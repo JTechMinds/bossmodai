@@ -720,10 +720,10 @@ def test_text_fields_step_grey_instead_of_ringing() -> None:
         ("controls.css", ".field-input,\n.field-select,\n.field-textarea {"),
         ("controls.css", ".search-field {"),
         ("context.css", ".desk-opener-custom {"),
-        ("places.css", ".assign-input,\n.assign-select,\n.assign-textarea {"),
+        ("places.css", ".assign-input,\n.assign-select {"),
         ("places.css", ".files-path,\n.files-search {"),
         ("places.css", ".file-form-input {"),
-        ("places.css", ".file-view-editor {"),
+        ("controls.css", ".text-editor {"),
     )
     for sheet, rule in fields:
         body = _read(CSS / sheet).split(rule, 1)[1].split("}", 1)[0]

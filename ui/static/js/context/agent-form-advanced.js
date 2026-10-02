@@ -82,7 +82,7 @@ const BossModAgentFormAdvanced = (() => {
                             Suggest
                         </button>
                     </div>
-                    <textarea name="done_fail_bar" id="agent-done-fail-bar" rows="2" data-autogrow
+                    <textarea name="done_fail_bar" id="agent-done-fail-bar" data-autogrow
                               placeholder="Suggested from specialty. Editable."
                               class="field-textarea">${BossModFormat.escapeHtml(values?.done_fail_bar || '')}</textarea>
                     <p class="field-hint">

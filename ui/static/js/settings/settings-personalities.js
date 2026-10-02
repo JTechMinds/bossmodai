@@ -115,10 +115,9 @@ const PersonalitiesSection = (() => {
                     <div>
                         <label class="block text-sm font-medium mb-1">Prompt Template</label>
                         <p class="text-xs text-bm-muted mb-1.5">The system prompt that defines this personality's behavior. Supports the same conditional template syntax used by authored prompt templates.</p>
-                        <textarea name="prompt_template" required rows="12"
+                        <textarea name="prompt_template" required data-autogrow data-size="long"
                                   placeholder="You are a senior product manager focused on clarity, prioritization, and stakeholder communication..."
-                                  class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                         bg-bm-bg resize-y font-mono">${BossModFormat.escapeHtml(p?.prompt_template || '')}</textarea>
+                                  class="field-textarea field-textarea-mono">${BossModFormat.escapeHtml(p?.prompt_template || '')}</textarea>
                     </div>
                     <div id="personality-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div class="flex gap-2 pt-2">
@@ -136,6 +135,7 @@ const PersonalitiesSection = (() => {
                 </form>
             </div>`;
 
+        container.querySelectorAll('textarea[data-autogrow]').forEach(BossModAutoGrow.bind);
         document.getElementById('btn-cancel-pers').addEventListener('click', renderList);
         document.getElementById('personality-form').addEventListener('submit', async (e) => {
             e.preventDefault();
