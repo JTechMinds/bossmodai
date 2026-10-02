@@ -1,5 +1,5 @@
 /**
- * Node harness: nest Always allow, twin coalesce, and stale Dismiss.
+ * Node harness: scoped Always allow, twin coalesce, and stale Dismiss.
  * Invoked by tests/test_ui_cli_approval_card.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -20,6 +20,10 @@ function labels(root) {
         .map((node) => node.textContent);
 }
 
+function offersAlways(root) {
+    return labels(root).some((label) => label.startsWith("Always allow"));
+}
+
 function nestCard(id, extras) {
     return Object.assign({
         id,
@@ -30,6 +34,7 @@ function nestCard(id, extras) {
         cwd: "/me/host-work/llm_helper",
         status: "pending",
         always_allow: true,
+        always_scope_label: "locked clones",
     }, extras || {});
 }
 
@@ -61,7 +66,7 @@ function deskCard(id) {
                         command: "sed -i s/True/False/ tests/test_ok.py",
                         cwd: "/me/host-work/llm_helper",
                         status: "approved",
-                        decision_note: "Always allowed",
+                        decision_note: "Always allowed in locked clones",
                     });
                 },
                 async json() {
@@ -89,7 +94,7 @@ function deskCard(id) {
     BossModConsentCard.renderCliApprovalCard(nest, nestCard("appr-nest"), api);
     const nestLabels = labels(nest);
     if (!nestLabels.includes("Approve") || !nestLabels.includes("Reject")
-        || !nestLabels.includes("Always allow")) {
+        || !nestLabels.includes("Always allow in locked clones")) {
         throw new Error(`nest card must offer Always allow, got ${nestLabels.join(",")}`);
     }
     const nestOffersAlways = true;
@@ -102,13 +107,34 @@ function deskCard(id) {
     if (!deskLabels.includes("Approve") || !deskLabels.includes("Reject")) {
         throw new Error(`desk card must keep Approve/Reject, got ${deskLabels.join(",")}`);
     }
-    if (deskLabels.includes("Always allow")) {
+    if (offersAlways(desk)) {
         throw new Error("desk card must not offer Always allow");
     }
     if (desk.textContent.includes("System AI")) {
         throw new Error("a card with no review note must stay quiet");
     }
     const deskHidesAlways = true;
+
+    const project = documentStub.createElement("div");
+    project.className = "host-path-consent-card";
+    documentStub.body.append(project);
+    BossModConsentCard.renderCliApprovalCard(project, nestCard("appr-project", {
+        cwd: "/projects/diablo-poc",
+        always_scope_label: "diablo-poc",
+    }), api);
+    if (!labels(project).includes("Always allow in diablo-poc")) {
+        throw new Error(`project card must name its scope, got ${labels(project).join(",")}`);
+    }
+    const unlabelled = documentStub.createElement("div");
+    unlabelled.className = "host-path-consent-card";
+    documentStub.body.append(unlabelled);
+    BossModConsentCard.renderCliApprovalCard(unlabelled, nestCard("appr-nolabel", {
+        always_scope_label: undefined,
+    }), api);
+    if (offersAlways(unlabelled)) {
+        throw new Error("Always allow without a scope label must stay hidden");
+    }
+    const namesScope = true;
     const quietWithoutNote = true;
 
     const explained = documentStub.createElement("div");
@@ -130,9 +156,9 @@ function deskCard(id) {
     const showsReviewWhy = true;
 
     const alwaysBtn = nest.querySelectorAll(".hpc-action")
-        .find((node) => node.textContent === "Always allow");
+        .find((node) => node.textContent === "Always allow in locked clones");
     await alwaysBtn.dispatchClick();
-    if (!nest.textContent.includes("Always allowed")) {
+    if (!nest.textContent.includes("Always allowed in locked clones")) {
         throw new Error(`Always allow must resolve the card, got ${nest.textContent}`);
     }
     if (labels(nest).includes("Approve")) {
@@ -155,7 +181,7 @@ function deskCard(id) {
         .find((node) => node.textContent === "Approve");
     await approve.dispatchClick();
     if (labels(live).includes("Approve") || labels(live).includes("Reject")
-        || labels(live).includes("Always allow")) {
+        || offersAlways(live)) {
         throw new Error("stale 404 must not leave Approve/Reject/Always allow live");
     }
     if (!live.textContent.includes("gone or already resolved")) {
@@ -185,6 +211,7 @@ function deskCard(id) {
         ok: true,
         nestOffersAlways,
         deskHidesAlways,
+        namesScope,
         quietWithoutNote,
         showsReviewWhy,
         alwaysAllowResolves,

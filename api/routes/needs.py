@@ -155,7 +155,7 @@ def _nest_git_need_actions(request: Any) -> list[dict[str, Any]]:
 
 
 def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
-    from core.bm_cli.cli_always import offers_always_allow_cli
+    from core.bm_cli.cli_always import always_scope_for_request
 
     groups: dict[tuple[str, str, str, bool], list[Any]] = {}
     order: list[tuple[str, str, str, bool]] = []
@@ -176,9 +176,10 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             {"label": "Approve", "method": "POST", "tone": "primary",
              "href": f"/api/cli-policy/approvals/{request.id}/approve"},
         ]
-        if offers_always_allow_cli(request.cwd):
+        scope = always_scope_for_request(request)
+        if scope is not None:
             actions.append(
-                {"label": "Always allow", "method": "POST", "tone": "default",
+                {"label": f"Always allow in {scope.label}", "method": "POST", "tone": "default",
                  "href": f"/api/cli-policy/approvals/{request.id}/always-allow"},
             )
         actions.append(
@@ -194,6 +195,7 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
             "title": f"{name} wants to run a command",
             "sub": request.command,
             "review_note": (request.review_note or "").strip(),
+            "always_scope_label": scope.label if scope is not None else None,
             "cwd": request.cwd,
             "created_at": request.created_at.isoformat(),
             "conversation_id": request.channel_id or request.agent_id,

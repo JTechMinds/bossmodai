@@ -439,6 +439,8 @@ CREATE TABLE IF NOT EXISTS cli_policy_rules (
     enabled     BOOLEAN NOT NULL DEFAULT TRUE,
     priority    INTEGER NOT NULL DEFAULT 0,
     cwd_prefix  VARCHAR,
+    -- Set on a /projects/<slug> Always rule: project names are per floor.
+    floor_id    VARCHAR,
     created_at  TIMESTAMP DEFAULT current_timestamp,
     updated_at  TIMESTAMP DEFAULT current_timestamp
 );

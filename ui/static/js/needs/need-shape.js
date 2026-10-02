@@ -153,7 +153,8 @@ const BossModNeedShape = (() => {
                 title: need.title || 'Approve this command?', command: need.sub || '',
                 cwd: need.cwd || '',
                 review_note: need.reviewNote || '',
-                always_allow: (need.actions || []).some((item) => item.label === 'Always allow'),
+                always_allow: Boolean(need.alwaysScopeLabel),
+                always_scope_label: need.alwaysScopeLabel,
             }
             : {
                 id: need.id, kind: flavor, status: 'pending',
@@ -270,6 +271,8 @@ const BossModNeedShape = (() => {
             groupedIds: (Array.isArray(raw.grouped_ids) ? raw.grouped_ids : [raw.id]).map((id) => String(id)),
             cwd: raw.cwd == null ? '' : String(raw.cwd),
             reviewNote: raw.review_note == null ? '' : String(raw.review_note),
+            // Set only on a CLI approval that offers "Always allow in <scope>".
+            alwaysScopeLabel: raw.always_scope_label == null ? '' : String(raw.always_scope_label),
             actions: (Array.isArray(raw.actions) ? raw.actions : []).map(normaliseAction),
         };
         need.target = targetFor(need);

@@ -291,6 +291,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "cli_policy_rules", "cwd_prefix", "VARCHAR",
     )
     _add_column_if_missing(
+        con, "cli_policy_rules", "floor_id", "VARCHAR",
+    )
+    _add_column_if_missing(
         con, "tasks", "closed_at", "TIMESTAMP",
     )
     _add_column_if_missing(

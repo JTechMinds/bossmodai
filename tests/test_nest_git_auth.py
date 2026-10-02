@@ -15,7 +15,7 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
-from core.bm_cli.cli_always import write_nest_always_rule
+from tests.test_cli_nest_always import create_nest_always_rule
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_runtime import activate_work_activity
@@ -209,7 +209,7 @@ def test_nest_push_without_creds_posts_card() -> None:
 def test_always_allow_still_requires_nest_git_auth() -> None:
     agent, state = _agent_and_state()
     cwd = _nest_cwd(agent.id)
-    write_nest_always_rule("git push origin main", cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     paused = execute_bm_cli(agent, state, "git push origin main")
     assert paused.consent_required is True
@@ -474,7 +474,7 @@ def test_saved_pat_reaches_shell_push_env(monkeypatch: pytest.MonkeyPatch) -> No
     _enable_shell()
     agent, state = _agent_and_state()
     cwd = _real_nest_cwd(agent)
-    write_nest_always_rule("git push origin main", cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     result = execute_bm_cli(agent, state, "git push origin main")
     extra = captured.get("extra_env") or {}
@@ -497,7 +497,7 @@ def test_saved_pat_reaches_flagged_push_and_approved_path(monkeypatch: pytest.Mo
     agent, state = _agent_and_state()
     cwd = _real_nest_cwd(agent)
     flagged = "git -C /me/host-work/sample_repo --no-pager push origin main"
-    write_nest_always_rule(flagged, cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     execute_bm_cli(agent, state, flagged)
     extra = captured.get("extra_env") or {}
@@ -551,7 +551,7 @@ def test_interactive_username_prompt_fail_closed_not_hang(
     _enable_shell()
     agent, state = _agent_and_state()
     cwd = _real_nest_cwd(agent)
-    write_nest_always_rule("git push origin main", cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     result = execute_bm_cli(agent, state, "git push origin main")
     assert result.ok is False
@@ -582,7 +582,7 @@ def test_bad_pat_bounces_nest_git_card(monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_shell()
     agent, state = _agent_and_state()
     cwd = _real_nest_cwd(agent)
-    write_nest_always_rule("git push origin main", cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     result = execute_bm_cli(agent, state, "git push origin main")
     assert result.ok is False
@@ -660,7 +660,7 @@ def _ready_push_agent(monkeypatch: pytest.MonkeyPatch, stderr: str):
     state = db.get_agent_state(agent.id)
     assert state is not None
     cwd = _real_nest_cwd(agent)
-    write_nest_always_rule("git push origin main", cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     return agent, state, token
 

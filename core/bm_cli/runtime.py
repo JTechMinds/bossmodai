@@ -12,6 +12,7 @@ import db
 from core import config
 from core.bm_cli.artifacts import register_cli_artifacts
 from core.bm_cli.audit import record_bm_cli_event
+from core.bm_cli.cli_always import contain_scoped_always
 from core.bm_cli.fs_commands import (
     handle_append,
     handle_batch_write,
@@ -161,7 +162,11 @@ def preview_bm_cli(
     if isinstance(gated, BossModCliResult):
         return gated
     parsed = gated
-    policy = evaluate_parsed_command_policy(parsed, VIRTUAL_COMMANDS, agent_id=agent.id)
+    # Same evaluation as _execute_bm_cli_inner, so a dry run matches a real run.
+    policy = evaluate_parsed_command_policy(
+        parsed, VIRTUAL_COMMANDS, agent_id=agent.id, cwd=cwd_before,
+    )
+    policy = contain_scoped_always(agent, parsed, cwd_before, policy)
 
     if policy.approval_required:
         return approval_required_result(
@@ -346,8 +351,13 @@ def _execute_bm_cli_inner(
         return gated
     parsed = gated
 
-    # Evaluate policy (DB-driven, with agent-specific rules)
-    policy = evaluate_parsed_command_policy(parsed, VIRTUAL_COMMANDS, agent_id=agent.id)
+    # Evaluate policy (DB-driven, with agent-specific rules). The cwd lets
+    # project- and /me-scoped Always rules match; their paths are then
+    # checked against the scope.
+    policy = evaluate_parsed_command_policy(
+        parsed, VIRTUAL_COMMANDS, agent_id=agent.id, cwd=cwd_before,
+    )
+    policy = contain_scoped_always(agent, parsed, cwd_before, policy)
 
     # --- Approval required: create request, pause turn ---
     if policy.approval_required:
@@ -941,6 +951,17 @@ def _apply_locked_clone_shell_outcome(
     policy = outcome.policy
     if policy is None:
         return None
+    policy = contain_scoped_always(agent, outcome.parsed, cwd_before, policy)
+    if policy.approval_required:
+        return _handle_approval_required(
+            agent=agent,
+            parsed=outcome.parsed,
+            content=content,
+            cwd_before=cwd_before,
+            policy=policy,
+            trigger_type=trigger_type,
+            channel_id=channel_id,
+        )
     return _execute_shell(
         agent=agent,
         parsed=outcome.parsed,
@@ -1160,7 +1181,9 @@ def _execute_shell_policy(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Evaluate shell policy for a command that left the virtual handler."""
-    shell_policy = _shell_policy_for_command(agent, parsed, cwd_before)
+    shell_policy = contain_scoped_always(
+        agent, parsed, cwd_before, _shell_policy_for_command(agent, parsed, cwd_before),
+    )
     if shell_policy.approval_required:
         return _handle_approval_required(
             agent=agent,

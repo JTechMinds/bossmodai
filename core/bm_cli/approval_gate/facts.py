@@ -11,6 +11,7 @@ are decided from them in code.
 
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Literal
@@ -23,9 +24,11 @@ from core.bm_cli.approval_gate.effects import (
     classify_effect,
 )
 from core.bm_cli.cli_always import NEST_CWD_PREFIX
+from core.bm_cli.effective_commands import unwrap_argv
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.floor_roots import agent_floor_id, floor_root
 from core.bm_cli.host_roots import is_within_roots
+from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policy_engine import argv0_basename_after_resolve
 from core.bm_cli.project_repo import project_directory_for
 from core.bm_cli.shell_executor import (
@@ -58,6 +61,13 @@ _SYSTEM_ROOTS = (
 
 _HOST_WORK_DIR = PurePosixPath(NEST_CWD_PREFIX).relative_to("/me").as_posix()
 
+# Strictest first: the command's effect is the first class any of its
+# effective commands has.
+_EFFECT_STRICTNESS: tuple[EffectClass, ...] = (
+    "host_process", "delete", "network_write", "install",
+    "local_write", "network_read", "unknown", "read_only",
+)
+
 
 @dataclass(frozen=True)
 class PathFact:
@@ -72,7 +82,9 @@ class PathFact:
             ``"/projects/diablo-poc (floor project diablo-poc)"``.
         is_root: The path is a whole workspace: the floor projects mount, a
             project directory, the agent's ``/me``, a clone root under
-            ``/me/host-work``, or a ``.git`` directory.
+            ``/me/host-work``, or a ``.git`` directory. A delete target that
+            is the start path of a ``find`` with test predicates is not a
+            root: only matches under it are deleted.
     """
 
     virtual: str
@@ -90,10 +102,13 @@ class CommandFacts:
         command: The raw command string.
         cwd_virtual: The virtual working directory.
         cwd_real: The resolved real working directory.
-        paths: Every path-like operand, flag payload and redirect target.
-        write_targets: The subset of ``paths`` the command writes, moves or
-            deletes, in argv order.
-        effect: The class from the effect table.
+        paths: Every path-like operand, flag payload and redirect target,
+            over every effective command (wrappers unwrapped, ``find``
+            actions added).
+        write_targets: The subset of ``paths`` the commands write, move or
+            delete, in argv order.
+        effect: The strictest class from the effect table across the
+            effective commands.
     """
 
     command: str
@@ -114,7 +129,9 @@ def command_facts(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> CommandFa
     """Resolve and classify one shell command for the approval gate.
 
     ``/me`` and ``/projects`` argv tokens are rewritten to real paths first,
-    so every path is judged where it really lands.
+    so every path is judged where it really lands. Each command it really
+    runs (:func:`effective_parsed_commands`) contributes its paths, its
+    write targets (operands of its own write command) and its effect.
 
     Args:
         agent: The agent running the command.
@@ -139,22 +156,58 @@ def command_facts(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> CommandFa
     real_cwd = Path(resolved.real_path).resolve()
     rewritten = rewrite_virtual_shell_paths(agent, parsed, cwd)
     mounts = _mounts(agent)
-    force = argv0_basename_after_resolve(rewritten.name) in WRITE_NAMES
     paths: list[PathFact] = []
     writes: list[PathFact] = []
-    for token, is_write in _path_tokens(rewritten.args, force_operands=force):
-        fact = _path_fact(agent, _resolve_token(token, real_cwd), mounts)
-        paths.append(fact)
-        if is_write:
-            writes.append(fact)
+    effects: set[EffectClass] = set()
+    for command, filtered in _effective_with_filters(rewritten):
+        force = argv0_basename_after_resolve(command.name) in WRITE_NAMES
+        effect = classify_effect(command)
+        for token, is_write in _path_tokens(command.args, force_operands=force):
+            fact = _path_fact(agent, _resolve_token(token, real_cwd), mounts)
+            if is_write and effect == "delete" and token in filtered:
+                # A filtered find deletes matches under the start path,
+                # not the path itself; the reviewer judges it.
+                fact = replace(fact, is_root=False)
+            paths.append(fact)
+            if is_write:
+                writes.append(fact)
+        effects.add(effect)
     return CommandFacts(
         command=parsed.raw,
         cwd_virtual=cwd,
         cwd_real=real_cwd,
         paths=tuple(paths),
         write_targets=tuple(writes),
-        effect=classify_effect(rewritten),
+        effect=next(effect for effect in _EFFECT_STRICTNESS if effect in effects),
     )
+
+
+def effective_parsed_commands(parsed: ParsedCliCommand) -> tuple[ParsedCliCommand, ...]:
+    """Return the commands *parsed* really runs, for facts and gate invariants.
+
+    The same unwrapping policy uses (:mod:`core.bm_cli.effective_commands`),
+    except that ``{}`` in a ``find -exec`` command becomes the find's start
+    paths, so ``find /projects/x -exec rm -rf {} +`` targets ``/projects/x``.
+
+    Args:
+        parsed: The parsed command.
+
+    Returns:
+        *parsed* itself first when no wrapper was unwrapped, else the
+        wrapped command; then any ``find`` or ``time -o`` side commands.
+    """
+    return tuple(command for command, _filtered in _effective_with_filters(parsed))
+
+
+def _effective_with_filters(
+    parsed: ParsedCliCommand,
+) -> list[tuple[ParsedCliCommand, frozenset[str]]]:
+    """Effective commands, each with its filtered-find start-path operands."""
+    unwrapped = unwrap_argv((parsed.name, *parsed.args), braces_to_paths=True)
+    commands = [parse_cli_command(shlex.join(argv)) for argv in unwrapped.argvs]
+    if not unwrapped.replaced:
+        commands[0] = parsed
+    return list(zip(commands, unwrapped.filtered_starts, strict=True))
 
 
 def host_refusal(agent: Agent, facts: CommandFacts) -> str | None:

@@ -58,11 +58,13 @@ _READ_ONLY: tuple[tuple[str, ...], ...] = (
     ("readlink",), ("realpath",), ("file",), ("stat",), ("du",), ("df",), ("ps",),
     ("pgrep",), ("sleep",), ("printf",), ("tree",), ("cut",), ("nl",), ("md5sum",),
     ("sha1sum",), ("sha256sum",), ("jq",), ("ffprobe",), ("unzip", "-l"),
-    ("tar", "-tf"), ("tar", "-tzf"), ("id",), ("hostname",), ("nproc",), ("uptime",),
+    # Not ``tar -t…``: ``-I``/``--use-compress-program`` run a program.
+    ("id",), ("hostname",), ("nproc",), ("uptime",),
     ("ls",), ("cat",), ("head",), ("tail",), ("grep",), ("find",), ("wc",),
 )
-# ``find`` actions that execute a command or write/delete files.
-_FIND_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete"})
+# ``find`` actions that execute a command or write/delete files
+# (``-fls FILE`` writes an ``ls -dils`` listing to FILE).
+_FIND_ACTIONS = frozenset({"-exec", "-execdir", "-ok", "-okdir", "-delete", "-fls"})
 _FIND_WRITE_PREFIX = "-fprint"
 _INSTALL = {
     "pip": frozenset({"install"}),
@@ -76,8 +78,8 @@ def classify_effect(parsed: ParsedCliCommand) -> EffectClass:
 
     The order is: delete, host process, install, network write, network
     read, local write, then ``read_only`` when the ``_READ_ONLY`` table
-    matches and ``unknown`` otherwise. ``find`` with an exec, delete or
-    ``-fprint*`` action is not read-only. A redirect makes an
+    matches and ``unknown`` otherwise. ``find`` with an exec, delete,
+    ``-fprint*`` or ``-fls`` action is not read-only. A redirect makes an
     otherwise read-only or unknown command a ``local_write``.
 
     Args:

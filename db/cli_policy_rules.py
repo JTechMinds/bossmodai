@@ -23,7 +23,7 @@ from db.crud import (
 _ALL_COLUMNS = (
     "id, tier, pattern, match_mode, agent_id, description, "
     "category, usage_syntax, help_text, "
-    "enabled, priority, cwd_prefix, created_at, updated_at"
+    "enabled, priority, cwd_prefix, floor_id, created_at, updated_at"
 )
 
 _UPDATE_VALID_COLUMNS = {
@@ -50,23 +50,42 @@ def create_rule(
     enabled: bool = True,
     priority: int = 0,
     cwd_prefix: str | None = None,
+    floor_id: str | None = None,
 ) -> CliPolicyRule:
-    """Insert a new CLI policy rule."""
+    """Insert a new CLI policy rule.
+
+    Args:
+        tier: ``never_allowed``, ``always_allowed`` or ``approval_required``.
+        pattern: The command pattern.
+        match_mode: ``exact``, ``prefix`` or ``glob``.
+        agent_id: Limit the rule to one agent; None for every agent.
+        description: Operator-facing description.
+        category: Settings grouping.
+        usage_syntax: Help usage line.
+        help_text: Help body.
+        enabled: Whether the policy engine sees the rule.
+        priority: Higher first within a tier.
+        cwd_prefix: Virtual cwd the rule is limited to; blank means any.
+        floor_id: Limit the rule to agents on one floor; None for every floor.
+
+    Returns:
+        The stored rule.
+    """
     scope = (cwd_prefix or "").strip() or None
     return insert_returning(
         f"""
         INSERT INTO cli_policy_rules (
             tier, pattern, match_mode, agent_id,
             description, category, usage_syntax, help_text,
-            enabled, priority, cwd_prefix
+            enabled, priority, cwd_prefix, floor_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
         RETURNING {_ALL_COLUMNS}
         """,
         [
             tier, pattern, match_mode, agent_id,
             description, category, usage_syntax, help_text,
-            enabled, priority, scope,
+            enabled, priority, scope, floor_id,
         ],
         CliPolicyRule,
     )
@@ -121,12 +140,22 @@ def get_rules_by_tier(
     tier: str,
     *,
     agent_id: str | None = None,
+    floor_id: str | None = None,
 ) -> list[CliPolicyRule]:
     """Return enabled rules for a tier, agent-specific first then global.
 
     This is the primary query used by the policy engine. Agent-specific rules
     (matching *agent_id*) are returned before global rules (``agent_id IS NULL``),
     with each group ordered by priority descending.
+
+    Args:
+        tier: The tier to read.
+        agent_id: The evaluating agent; None returns only global rows.
+        floor_id: The evaluating agent's floor. Floor-scoped rows are
+            returned only for this floor; None returns no floor-scoped rows.
+
+    Returns:
+        The enabled rules that may apply to this agent on this floor.
     """
     conditions = ["tier = $1", "enabled = TRUE"]
     params: list[object] = [tier]
@@ -137,6 +166,11 @@ def get_rules_by_tier(
         conditions.append(f"(agent_id = ${idx} OR agent_id IS NULL)")
     else:
         conditions.append("agent_id IS NULL")
+    if floor_id is not None:
+        params.append(floor_id)
+        conditions.append(f"(floor_id = ${len(params)} OR floor_id IS NULL)")
+    else:
+        conditions.append("floor_id IS NULL")
 
     return fetch_all(
         f"""
@@ -305,6 +339,130 @@ _VALIDATE_ON_CLONE_ALWAYS_ALLOWED = (
      "Restore files in the current repository working tree.\nExample: git restore README.md"),
 )
 
+# Read-only diagnostics agents use while working. They fell to the default
+# tier and cost a card or a review each time. Inserted only when missing, so
+# an operator's edited row (another tier, a disabled row) is kept.
+# Deliberately not seeded: ``awk`` (``system()``), ``sed`` (GNU ``e``/``w``
+# commands) and ``tar`` (``-I``/``--use-compress-program``/
+# ``--checkpoint-action=exec`` run a program, even when only listing)
+# execute or write; they stay at the default tier for review.
+_READ_ONLY_DIAGNOSTIC_SEEDS: tuple[tuple[str, str, str, str | None, str, str | None, str | None], ...] = (
+    ("always_allowed", "git ls-files", "prefix", "List files tracked by git.", "git",
+     "git ls-files [options] [path]",
+     "List files in the git index and working tree. Read-only.\nExample: git ls-files src/"),
+    ("always_allowed", "git ls-tree", "prefix", "List the contents of a git tree.", "git",
+     "git ls-tree [options] <tree-ish> [path]",
+     "List the files and trees in a commit or tree. Read-only.\nExample: git ls-tree -r HEAD --name-only"),
+    ("always_allowed", "git rev-parse", "prefix", "Resolve git revisions and repo paths.", "git",
+     "git rev-parse [options] <args>",
+     "Print commit ids, the repository root and other repo facts. Read-only.\nExample: git rev-parse --show-toplevel"),
+    ("always_allowed", "git rev-list", "prefix", "List commits reachable from a revision.", "git",
+     "git rev-list [options] <commit>",
+     "List or count commits in a range. Read-only.\nExample: git rev-list --count HEAD"),
+    ("always_allowed", "git remote -v", "prefix", "Show configured git remotes.", "git",
+     "git remote -v",
+     "Show each remote's name and fetch/push URL. Read-only.\nExample: git remote -v"),
+    ("always_allowed", "git remote get-url", "prefix", "Show a git remote's URL.", "git",
+     "git remote get-url <name>",
+     "Print the URL of one remote. Read-only.\nExample: git remote get-url origin"),
+    ("always_allowed", "git branch --show-current", "prefix", "Show the current git branch.", "git",
+     "git branch --show-current",
+     "Print the name of the checked-out branch. Read-only.\nExample: git branch --show-current"),
+    ("always_allowed", "git branch --list", "prefix", "List git branches.", "git",
+     "git branch --list [pattern]",
+     "List local branches, optionally matching a pattern. Read-only.\nExample: git branch --list 'feature/*'"),
+    ("always_allowed", "git blame", "prefix", "Show who last changed each line.", "git",
+     "git blame [options] <file>",
+     "Show the commit and author of each line of a file. Read-only.\nExample: git blame -L 10,40 app.py"),
+    ("always_allowed", "git describe", "prefix", "Describe a commit by its nearest tag.", "git",
+     "git describe [options] [commit]",
+     "Name a commit from the most recent reachable tag. Read-only.\nExample: git describe --tags"),
+    ("always_allowed", "git shortlog", "prefix", "Summarize git log by author.", "git",
+     "git shortlog [options] [revision range]",
+     "Group commits by author. Read-only.\nExample: git shortlog -sn"),
+    ("always_allowed", "git cat-file", "prefix", "Show a git object's type, size or content.", "git",
+     "git cat-file [options] <object>",
+     "Print the type, size or content of a git object. Read-only.\nExample: git cat-file -p HEAD"),
+    ("always_allowed", "git config --get", "prefix", "Read one git config value.", "git",
+     "git config --get <key>",
+     "Print the value of one git config key. Read-only.\nExample: git config --get user.email"),
+    ("always_allowed", "git stash list", "prefix", "List git stash entries.", "git",
+     "git stash list",
+     "List the stash entries of the repository. Read-only.\nExample: git stash list"),
+    ("always_allowed", "git tag --list", "prefix", "List git tags.", "git",
+     "git tag --list [pattern]",
+     "List tags, optionally matching a pattern. Read-only.\nExample: git tag --list 'v1.*'"),
+    ("always_allowed", "readlink", "prefix", "Print a symlink's target.", "filesystem",
+     "readlink [options] <path>",
+     "Print where a symbolic link points, or the canonical path with -f.\nExample: readlink -f ./current"),
+    ("always_allowed", "realpath", "prefix", "Print a resolved absolute path.", "filesystem",
+     "realpath [options] <path>",
+     "Print the absolute path with symlinks resolved.\nExample: realpath ../notes.md"),
+    ("always_allowed", "file", "prefix", "Identify a file's type.", "filesystem",
+     "file [options] <file...>",
+     "Guess the type of each file from its content.\nExample: file build/output.bin"),
+    ("always_allowed", "stat", "prefix", "Show file metadata.", "filesystem",
+     "stat [options] <file...>",
+     "Show size, permissions and timestamps of files.\nExample: stat README.md"),
+    ("always_allowed", "du", "prefix", "Show disk usage of files and folders.", "filesystem",
+     "du [options] [path]",
+     "Estimate the space used by files and directories.\nExample: du -sh node_modules"),
+    ("always_allowed", "df", "prefix", "Show free disk space.", "system",
+     "df [options] [path]",
+     "Show used and free space on mounted filesystems.\nExample: df -h ."),
+    ("always_allowed", "ps", "prefix", "List running processes.", "system",
+     "ps [options]",
+     "Show a snapshot of running processes. Read-only.\nExample: ps aux"),
+    ("always_allowed", "pgrep", "prefix", "Find process ids by name.", "system",
+     "pgrep [options] <pattern>",
+     "Print the ids of processes matching a pattern. Read-only; pkill stays approval-gated.\nExample: pgrep -fl node"),
+    ("always_allowed", "sleep", "prefix", "Wait for a number of seconds.", "general",
+     "sleep <seconds>",
+     "Pause for the given time. The executor timeout still applies.\nExample: sleep 2"),
+    ("always_allowed", "printf", "prefix", "Print formatted text to stdout.", "general",
+     "printf <format> [args...]",
+     "Print text using a printf format string.\nExample: printf '%s\\n' done"),
+    ("always_allowed", "tree", "prefix", "Show a directory tree.", "filesystem",
+     "tree [options] [path]",
+     "List a directory's contents as a tree.\nExample: tree -L 2 src"),
+    ("always_allowed", "cut", "prefix", "Select columns or fields from lines.", "general",
+     "cut [options] [file...]",
+     "Print selected bytes, characters or fields of each line.\nExample: cut -d, -f1 data.csv"),
+    ("always_allowed", "nl", "prefix", "Number the lines of a file.", "general",
+     "nl [options] [file]",
+     "Print a file with line numbers.\nExample: nl -ba app.py"),
+    ("always_allowed", "md5sum", "prefix", "Compute MD5 checksums.", "general",
+     "md5sum [options] <file...>",
+     "Print or check MD5 checksums.\nExample: md5sum release.zip"),
+    ("always_allowed", "sha1sum", "prefix", "Compute SHA-1 checksums.", "general",
+     "sha1sum [options] <file...>",
+     "Print or check SHA-1 checksums.\nExample: sha1sum release.zip"),
+    ("always_allowed", "sha256sum", "prefix", "Compute SHA-256 checksums.", "general",
+     "sha256sum [options] <file...>",
+     "Print or check SHA-256 checksums.\nExample: sha256sum release.zip"),
+    ("always_allowed", "jq", "prefix", "Query and format JSON.", "general",
+     "jq [options] <filter> [file...]",
+     "Filter and pretty-print JSON.\nExample: jq '.dependencies' package.json"),
+    ("always_allowed", "ffprobe", "prefix", "Inspect media file streams.", "general",
+     "ffprobe [options] <file>",
+     "Show the format and streams of an audio or video file.\nExample: ffprobe -hide_banner clip.mp4"),
+    ("always_allowed", "unzip -l", "prefix", "List the contents of a zip archive.", "filesystem",
+     "unzip -l <archive.zip>",
+     "List the files in a zip archive without extracting.\nExample: unzip -l bundle.zip"),
+    ("always_allowed", "id", "prefix", "Print user and group ids.", "system",
+     "id [user]",
+     "Print the current user's uid, gid and groups.\nExample: id"),
+    ("always_allowed", "hostname", "prefix", "Print the host name.", "system",
+     "hostname [options]",
+     "Print the system's host name.\nExample: hostname"),
+    ("always_allowed", "nproc", "prefix", "Print the number of CPUs.", "system",
+     "nproc",
+     "Print the number of processing units available.\nExample: nproc"),
+    ("always_allowed", "uptime", "prefix", "Show how long the system has run.", "system",
+     "uptime",
+     "Show the uptime, users and load averages.\nExample: uptime"),
+)
+
 _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]] = [
     # (tier, pattern, match_mode, description, category, usage_syntax, help_text)
 
@@ -443,6 +601,7 @@ _SEED_RULES: list[tuple[str, str, str, str | None, str, str | None, str | None]]
      "uname [options]",
      "Print the kernel name and related system identity. Pathless diagnostic.\nExample: uname -a"),
     *_VALIDATE_ON_CLONE_ALWAYS_ALLOWED,
+    *_READ_ONLY_DIAGNOSTIC_SEEDS,
 
     # ── approval_required — prefix ──
     ("approval_required", "rm", "prefix", "Remove files or directories.", "filesystem",
@@ -524,6 +683,8 @@ def reconcile_hardened_seed_rules() -> int:
     A global row that already exists keeps the tier the operator saved,
     including ``approval_required``. Only a missing global pattern is
     inserted as ``never_allowed``. Agent-specific rows are left alone.
+    The diagnostic, read-only and validate-on-clone ``always_allowed``
+    seeds are inserted the same way: only when the pattern is missing.
 
     Called from :func:`db.connection.init_db` after :func:`seed_default_rules`.
     Settings → CLI Policy → Seed defaults remains the full wipe/reseed path.
@@ -532,6 +693,7 @@ def reconcile_hardened_seed_rules() -> int:
     """
     changes = _insert_missing_global_seed_rules(tuple(_HARDENED_NEVER_ALLOWED))
     changes += _ensure_safe_diagnostic_seed_rules()
+    changes += _insert_missing_global_seed_rules(_READ_ONLY_DIAGNOSTIC_SEEDS)
     changes += _ensure_validate_on_clone_seed_rules()
     return changes
 

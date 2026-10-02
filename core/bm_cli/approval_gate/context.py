@@ -201,11 +201,11 @@ def _precedents(agent: Agent, floor_id: str | None, command: str) -> list[dict[s
     argv0 = _argv0(command)
     agent_ids = list(names)
     recent = db.list_human_cli_decisions(
-        agent_ids, limit=limit, excluded_note=ALWAYS_ALLOWED_NOTE,
+        agent_ids, limit=limit, excluded_note_prefix=ALWAYS_ALLOWED_NOTE,
     )
     same_program = (
         db.list_human_cli_decisions(
-            agent_ids, limit=limit, excluded_note=ALWAYS_ALLOWED_NOTE, argv0=argv0,
+            agent_ids, limit=limit, excluded_note_prefix=ALWAYS_ALLOWED_NOTE, argv0=argv0,
         )
         if argv0 is not None
         else []

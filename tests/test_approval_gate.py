@@ -235,7 +235,8 @@ def test_facts_detect_whole_roots() -> None:
         ("git -C /projects/demo ls-files", "read_only"),
         ("git remote -v", "read_only"),
         ("git remote add origin x", "unknown"),
-        ("tar -tf a.tar", "read_only"),
+        ("tar -tf a.tar", "unknown"),
+        ("tar -tzf a.tar.gz", "unknown"),
         ("tar -xf a.tar", "unknown"),
         ("sleep 1", "read_only"),
         ("find . -name '*.md'", "read_only"),
@@ -243,6 +244,7 @@ def test_facts_detect_whole_roots() -> None:
         ("find . -exec rm {} ;", "unknown"),
         ("find . -execdir ls ;", "unknown"),
         ("find . -fprint out.txt", "unknown"),
+        ("find . -fls out.txt", "unknown"),
         ("awk '{print $1}' notes.txt", "unknown"),
     ],
 )
@@ -250,12 +252,64 @@ def test_effect_table(command: str, effect: str) -> None:
     assert classify_effect(parse_cli_command(command)) == effect
 
 
+@pytest.mark.parametrize(
+    ("command", "effect", "writes"),
+    [
+        ("timeout 5 rm notes.txt", "delete", ["/projects/demo/notes.txt"]),
+        ("env FOO=1 cp notes.txt /me/copy.txt", "local_write", ["/projects/demo/notes.txt", "/me/copy.txt"]),
+        ("nohup kill 1", "host_process", []),
+        ("find . -name '*.txt' -delete", "delete", ["/projects/demo"]),
+        ("find /projects/demo/notes.txt -exec mv {} /me \\;", "local_write", ["/projects/demo/notes.txt", "/me"]),
+        ("find . -fls /me/list.txt", "local_write", ["/me/list.txt"]),
+        ("time -o /me/t.txt ls", "local_write", ["/me/t.txt"]),
+        ("timeout 5 git status", "read_only", []),
+    ],
+)
+def test_facts_see_through_wrappers_and_find_actions(
+    command: str, effect: str, writes: list[str],
+) -> None:
+    agent, _state = _agent_and_state()
+    _project_file()
+
+    facts = command_facts(agent, parse_cli_command(command), "/projects/demo")
+
+    assert facts.effect == effect
+    assert [fact.virtual for fact in facts.write_targets] == writes
+
+
+def test_find_start_path_is_a_root_only_without_test_predicates() -> None:
+    agent, _state = _agent_and_state()
+    _project_file()
+
+    def _roots(command: str) -> list[bool]:
+        facts = command_facts(agent, parse_cli_command(command), "/projects/demo")
+        assert facts.effect == "delete"
+        return [fact.is_root for fact in facts.write_targets]
+
+    assert _roots("find . -delete") == [True]
+    assert _roots("find . -maxdepth 1 -xdev ( -print -o -ls ) -delete") == [True]
+    assert _roots("find . -exec rm {} ;") == [True]
+    assert _roots("find . -name '*.pyc' -delete") == [False]
+    assert _roots("find . -type f -exec rm {} +") == [False]
+    # A literal root operand, not a find start path, stays a root.
+    assert _roots("find . -name x -exec rm -rf /projects/demo ;") == [True]
+
+
 # ── invariants ─────────────────────────────────────────────────────────
 
 
 @pytest.mark.parametrize(
     "command",
-    ["rm -rf /projects/demo", "rm -rf .", "mv /projects/demo /me/demo-old"],
+    [
+        "rm -rf /projects/demo",
+        "rm -rf .",
+        "mv /projects/demo /me/demo-old",
+        "timeout 5 rm -rf /projects/demo",
+        "nohup mv /projects/demo /me/demo-old",
+        "find /projects/demo -exec rm -rf {} +",
+        "find /projects/demo -delete",
+        "find /projects/demo -depth -print -delete",
+    ],
 )
 def test_root_delete_or_move_is_a_card(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     _enable_shell()
@@ -270,6 +324,36 @@ def test_root_delete_or_move_is_a_card(monkeypatch: pytest.MonkeyPatch, command:
     assert result.approval_required is True
     assert notes.exists()
     assert _card_note(result) == NOT_ASKED_ROOT
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "find . -name '*.pyc' -delete",
+        "find /projects/demo -type f -mtime +7 -exec rm {} +",
+        "find . ! -path './keep/*' -delete",
+    ],
+)
+def test_filtered_find_delete_from_a_project_root_is_reviewed(
+    monkeypatch: pytest.MonkeyPatch, command: str,
+) -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=True)
+    _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    seen: list = []
+
+    def _ask(messages):
+        seen.append(_user_payload(messages))
+        return json.dumps({"decision": "ask", "basis": "unsure", "why": "check"})
+
+    monkeypatch.setattr(_COMPLETE, _ask)
+    result = execute_bm_cli(agent, state, command, channel_id=channel.id)
+
+    assert seen, "a filtered find deletes matches, not the project root"
+    assert result.approval_required is True
+    assert _card_note(result) == f"{UNSURE_PREFIX}check"
 
 
 def test_moving_a_file_into_a_project_root_is_reviewed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -293,7 +377,7 @@ def test_moving_a_file_into_a_project_root_is_reviewed(monkeypatch: pytest.Monke
     assert _card_note(result) == f"{UNSURE_PREFIX}check"
 
 
-@pytest.mark.parametrize("command", ["docker ps", "kill 1234"])
+@pytest.mark.parametrize("command", ["docker ps", "kill 1234", "env kill 1234", "nohup docker ps"])
 def test_host_process_commands_are_a_card(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     _enable_shell()
     agent, state = _agent_and_state()
@@ -475,6 +559,7 @@ def test_precedents_are_floor_wide_and_include_rejections() -> None:
     _decide(stranger.id, "rm theirs.txt", approve=True, by="human")
     _decide(agent.id, "rm system.txt", approve=True, by="system", note=f"{AUDIT_PREFIX} x")
     _decide(agent.id, "rm always.txt", approve=True, by="human", note="Always allowed")
+    _decide(agent.id, "rm scoped.txt", approve=True, by="human", note="Always allowed in demo")
 
     precedents = build_review_context(agent, _facts(agent), channel_id=None).precedents
 
@@ -864,7 +949,7 @@ def test_deny_pick_and_soft_block_stay(client: TestClient) -> None:
 
     fresh = db.get_agent_state(agent.id)
     assert fresh is not None
-    denied = execute_bm_cli(agent, fresh, "hostname", channel_id=channel.id)
+    denied = execute_bm_cli(agent, fresh, "zz-unmatched-cmd --flag", channel_id=channel.id)
     assert denied.approval_required is False
     assert denied.ok is False
     assert "denied by default policy" in denied.detail

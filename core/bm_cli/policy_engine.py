@@ -14,6 +14,10 @@ Evaluation order (first match wins):
     4. approval_required -> denied, approval_required=True
     5. Default policy    -> ``cli_default_policy`` setting
        (factory approval_required; deny remains selectable)
+
+Steps 2–5 run on each command the string really runs (see
+:mod:`core.bm_cli.effective_commands`: wrappers unwrapped, ``find``
+actions added), and :func:`strictest` combines the results.
 """
 
 from __future__ import annotations
@@ -28,12 +32,16 @@ from pathlib import Path
 
 import db
 from core import config
+from core.bm_cli.effective_commands import program_selecting_env_message, unwrap_command
+from core.bm_cli.policy_strictness import strictest
 from core.models.cli_policy import CliPolicyRule
 
 logger = logging.getLogger(__name__)
 
 # Tier evaluation order — first matching tier wins.
 _TIER_ORDER: tuple[str, ...] = ("never_allowed", "always_allowed", "approval_required")
+# A wrapper's own rule still counts when it is at least this strict.
+_WRAPPER_RULE_TIERS: tuple[str, ...] = ("never_allowed", "approval_required")
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +58,9 @@ class CommandPolicyDecision:
     approval_required: bool = False
     message: str | None = None
     matched_rule_id: str | None = None
+    # The matched rule's ``cwd_prefix``: :func:`strictest` prefers a scoped
+    # Always so its containment check still runs.
+    matched_cwd_prefix: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +195,18 @@ def policy_command_subjects(command_str: str) -> tuple[str, ...]:
     return tuple(subjects)
 
 
+def _agent_floor(agent_id: str | None) -> str | None:
+    """Return the floor of *agent_id*, or None when there is no agent or floor.
+
+    An unknown agent id (the simulator accepts any) is on no floor, so
+    floor-scoped rules do not match it.
+    """
+    if agent_id is None:
+        return None
+    agent = db.get_agent(agent_id)
+    return agent.floor_id if agent is not None else None
+
+
 # ---------------------------------------------------------------------------
 # Policy Engine
 # ---------------------------------------------------------------------------
@@ -224,13 +247,17 @@ class PolicyEngine:
             When True, skip the global ``cli_shell_enabled`` gate so callers
             can peek at the rule that would apply after Shell Executor is on.
         cwd:
-            Optional working directory. Nest-scoped Always rules only match
-            when this sits under their ``cwd_prefix``.
+            Optional working directory. Scoped rules only match when this
+            sits under their ``cwd_prefix``.
 
         Returns
         -------
         CommandPolicyDecision
-            The first-match policy decision.
+            The strictest first-match decision across the commands
+            *command_str* really runs (:func:`strictest`). Assigning a
+            :data:`~core.bm_cli.effective_commands.PROGRAM_SELECTING_ENV`
+            name is never_allowed. A wrapper option that hides what runs
+            needs approval at least.
         """
         # Extract the bare command name (first whitespace-delimited token).
         command_name = command_str.split()[0] if command_str.strip() else command_str
@@ -257,20 +284,52 @@ class PolicyEngine:
                 message=f'"{command_name}" is not a built-in command and shell execution is not enabled. Type "help" to discover available commands.',
             )
 
+        # Once per evaluation: floor-scoped rules need the agent's floor.
+        floor_id = _agent_floor(agent_id)
+
         # 3. Token env dumps — never_allowed before always_allowed ``env``.
-        dump_deny = self._secret_token_env_dump_decision(command_str, agent_id, cwd=cwd)
+        dump_deny = self._secret_token_env_dump_decision(
+            command_str, agent_id, cwd=cwd, floor_id=floor_id,
+        )
         if dump_deny is not None:
             return dump_deny
 
-        # 4. Walk tiers in strict order; first matching rule wins.
-        for tier in _TIER_ORDER:
-            rules = self._rules_for_tier(tier, agent_id)
-            for rule in rules:
-                if self._match_rule(command_str, rule, cwd=cwd):
-                    return self._decision_for_tier(tier, rule)
+        # 4. A variable that picks the binary makes an allowed name run
+        #    another program. That is an invariant, not a rule.
+        unwrapped = unwrap_command(command_str)
+        if unwrapped.program_env is not None:
+            return CommandPolicyDecision(
+                allowed=False,
+                tier="never_allowed",
+                executor="shell",
+                message=(
+                    "Command blocked by policy rule: "
+                    f"{program_selecting_env_message(unwrapped.program_env)}"
+                ),
+            )
 
-        # 5. No rule matched — fall through to the default policy.
-        return self._default_decision(command_str)
+        # 5. Each command it really runs walks the tiers; the strictest wins.
+        decisions = [
+            self._evaluate_effective(subject, agent_id, cwd=cwd, floor_id=floor_id)
+            for subject in unwrapped.commands
+        ]
+        if unwrapped.replaced:
+            # The wrapper's own Always must not decide, but an operator's
+            # never/approval rule on it (``nohup``) still applies.
+            wrapper = self._first_match(
+                command_str, _WRAPPER_RULE_TIERS, agent_id, cwd=cwd, floor_id=floor_id,
+            )
+            if wrapper is not None:
+                decisions.append(wrapper)
+        if unwrapped.approval_reason is not None:
+            decisions.append(CommandPolicyDecision(
+                allowed=False,
+                tier="approval_required",
+                executor="shell",
+                approval_required=True,
+                message=f"Command requires approval: {unwrapped.approval_reason}",
+            ))
+        return strictest(decisions)
 
     def evaluate_dry_run(
         self,
@@ -318,6 +377,7 @@ class PolicyEngine:
         agent_id: str | None,
         *,
         cwd: str | None,
+        floor_id: str | None,
     ) -> CommandPolicyDecision | None:
         """Fail-closed never_allowed for printenv / env dumps of GitHub tokens."""
         from core.bm_cli.secret_env import (
@@ -327,8 +387,8 @@ class PolicyEngine:
 
         if not command_dumps_secret_token_env(command_str):
             return None
-        for rule in self._rules_for_tier("never_allowed", agent_id):
-            if self._match_rule(command_str, rule, cwd=cwd):
+        for rule in self._rules_for_tier("never_allowed", agent_id, floor_id):
+            if self._match_rule(command_str, rule, cwd=cwd, floor_id=floor_id):
                 return self._decision_for_tier("never_allowed", rule)
         return CommandPolicyDecision(
             allowed=False,
@@ -337,29 +397,71 @@ class PolicyEngine:
             message=f"Command blocked by policy rule: {SECRET_TOKEN_ENV_DUMP_MESSAGE}",
         )
 
+    def _evaluate_effective(
+        self,
+        subject: str,
+        agent_id: str | None,
+        *,
+        cwd: str | None,
+        floor_id: str | None,
+    ) -> CommandPolicyDecision:
+        """Decide one effective command: token dump, then tiers, then default."""
+        dump_deny = self._secret_token_env_dump_decision(
+            subject, agent_id, cwd=cwd, floor_id=floor_id,
+        )
+        if dump_deny is not None:
+            return dump_deny
+        matched = self._first_match(subject, _TIER_ORDER, agent_id, cwd=cwd, floor_id=floor_id)
+        return matched if matched is not None else self._default_decision(subject)
+
+    def _first_match(
+        self,
+        subject: str,
+        tiers: tuple[str, ...],
+        agent_id: str | None,
+        *,
+        cwd: str | None,
+        floor_id: str | None,
+    ) -> CommandPolicyDecision | None:
+        """Walk *tiers* in order; return the first matching rule's decision."""
+        for tier in tiers:
+            for rule in self._rules_for_tier(tier, agent_id, floor_id):
+                if self._match_rule(subject, rule, cwd=cwd, floor_id=floor_id):
+                    return self._decision_for_tier(tier, rule)
+        return None
+
     def _rules_for_tier(
         self,
         tier: str,
         agent_id: str | None,
+        floor_id: str | None,
     ) -> list[CliPolicyRule]:
-        """Return rules for *tier*, optionally refined by *agent_id*.
+        """Return rules for *tier*, refined by *agent_id* and its *floor_id*.
 
         Always read the database. The API process calls :meth:`reload` after
         a rule save, but that object is not the runtime worker's. A cached
         tier list would keep the worker on the rules it loaded at boot.
         """
-        return db.get_cli_policy_rules_by_tier(tier, agent_id=agent_id)
+        return db.get_cli_policy_rules_by_tier(tier, agent_id=agent_id, floor_id=floor_id)
 
     def _match_rule(
         self,
         command_str: str,
         rule: CliPolicyRule,
         *,
-        cwd: str | None = None,
+        cwd: str | None,
+        floor_id: str | None,
     ) -> bool:
-        """Check if a single rule's pattern matches *command_str* or argv[0] basename."""
+        """Check if a single rule's pattern matches *command_str* or argv[0] basename.
+
+        A floor-scoped rule matches only an agent on that floor, so a
+        ``/projects/<slug>`` rule never reaches a same-named project on
+        another floor. With no agent there is no floor and it never matches.
+        """
         from core.bm_cli.cli_always import cwd_matches_rule_scope
 
+        if rule.floor_id is not None and rule.floor_id != floor_id:
+            return False
         if not cwd_matches_rule_scope(cwd, getattr(rule, "cwd_prefix", None)):
             return False
         matcher = _MATCHERS.get(rule.match_mode)
@@ -382,6 +484,7 @@ class PolicyEngine:
                 executor="shell",
                 message=f"Command blocked by policy rule: {rule.description or rule.pattern}",
                 matched_rule_id=rule.id,
+                matched_cwd_prefix=rule.cwd_prefix,
             )
         if tier == "always_allowed":
             return CommandPolicyDecision(
@@ -389,6 +492,7 @@ class PolicyEngine:
                 tier="always_allowed",
                 executor="shell",
                 matched_rule_id=rule.id,
+                matched_cwd_prefix=rule.cwd_prefix,
             )
         if tier == "approval_required":
             return CommandPolicyDecision(
@@ -398,6 +502,7 @@ class PolicyEngine:
                 approval_required=True,
                 message=f"Command requires approval: {rule.description or rule.pattern}",
                 matched_rule_id=rule.id,
+                matched_cwd_prefix=rule.cwd_prefix,
             )
         # Unreachable for known tiers, but defensive.
         return CommandPolicyDecision(

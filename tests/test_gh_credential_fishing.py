@@ -11,7 +11,7 @@ import pytest
 import db
 from core import config
 from core.agent_loop.notifications import never_allowed_operator_note
-from core.bm_cli.cli_always import write_nest_always_rule
+from tests.test_cli_nest_always import create_nest_always_rule
 from core.bm_cli.nest_git import (
     command_needs_gh_auth,
     github_compare_url,
@@ -286,8 +286,7 @@ def test_nest_git_pat_injects_into_gh_subprocess_only(
     monkeypatch.setattr("core.bm_cli.runtime.execute_shell_command", _fake_ok_shell(captured))
     agent, state, dest, real = _lock_and_cd_clone(tmp_path, monkeypatch)
     _set_origin_and_branch(real, "https://github.com/acme/app.git")
-    write_nest_always_rule("gh pr create", dest)
-    write_nest_always_rule("gh auth status", dest)
+    create_nest_always_rule("gh")
     policy_engine.reload()
     parsed = parse_cli_command("gh pr create")
     assert nest_git_can_inject_gh(agent, parsed, dest) is True
@@ -333,7 +332,7 @@ def test_printenv_still_denied_when_nest_git_pat_is_set(
     token = "ghp_printenv-still-denied-IIII"
     write_nest_git_secret(NEST_GIT_PAT_KEY, token)
     agent, state, dest, _real = _lock_and_cd_clone(tmp_path, monkeypatch)
-    write_nest_always_rule("printenv", dest)
+    create_nest_always_rule("printenv")
     policy_engine.reload()
     blocked = execute_bm_cli(agent, state, "printenv GH_TOKEN")
     assert blocked.ok is False
@@ -352,7 +351,7 @@ def test_gh_auth_token_never_allowed_even_with_pat(
     write_nest_git_secret(NEST_GIT_PAT_KEY, token)
     agent, state, dest, real = _lock_and_cd_clone(tmp_path, monkeypatch)
     _set_origin_and_branch(real, "https://github.com/acme/app.git")
-    write_nest_always_rule("gh auth token", dest)
+    create_nest_always_rule("gh")
     policy_engine.reload()
     blocked = execute_bm_cli(agent, state, "gh auth token")
     assert blocked.ok is False
@@ -406,7 +405,7 @@ def test_always_allow_unmatched_remote_still_hits_nest_git_for_gh() -> None:
     set_cli_cwd(agent.id, dest)
     db.set_setting("cli_shell_enabled", "true", "cli_policy")
     config.reload()
-    write_nest_always_rule("gh pr create", dest)
+    create_nest_always_rule("gh")
     policy_engine.reload()
     paused = execute_bm_cli(agent, state, "gh pr create")
     assert paused.ok is False
@@ -447,7 +446,7 @@ def test_named_credential_match_injects_gh_token(monkeypatch: pytest.MonkeyPatch
     real.mkdir(parents=True, exist_ok=True)
     _set_origin_and_branch(real, "https://github.com/Acme/tools.git")
     set_cli_cwd(agent.id, dest)
-    write_nest_always_rule("gh pr create", dest)
+    create_nest_always_rule("gh")
     policy_engine.reload()
     execute_bm_cli(agent, state, "gh pr create")
     extra = captured.get("extra_env") or {}

@@ -178,20 +178,21 @@ def list_human_cli_decisions(
     agent_ids: list[str],
     *,
     limit: int,
-    excluded_note: str,
+    excluded_note_prefix: str,
     argv0: str | None = None,
 ) -> list[CliApprovalRequest]:
     """Return recent operator Approve and Reject decisions, newest first.
 
     Rows decided by ``system`` (System AI or housekeeping) are not operator
-    decisions and are left out. ``excluded_note`` drops Always-allow rows,
-    which are policy rules rather than precedent.
+    decisions and are left out. ``excluded_note_prefix`` drops Always-allow
+    rows, which are policy rules rather than precedent.
 
     Args:
         agent_ids: Agents whose requests count (the gate passes every agent
             on one floor). An empty list returns no rows.
         limit: Maximum number of rows.
-        excluded_note: The decision note that marks an Always-allow resolve.
+        excluded_note_prefix: The start of every Always-allow decision note
+            (``"Always allowed"`` matches ``"Always allowed in demo"``).
         argv0: When set, only commands that are exactly ``argv0`` or start
             with ``argv0`` followed by a space.
 
@@ -202,13 +203,11 @@ def list_human_cli_decisions(
     ids = [token for token in (item.strip() for item in agent_ids) if token]
     if not ids:
         return []
-    params: list[object] = [*ids, excluded_note]
+    params: list[object] = [*ids, f"{_escape_like(excluded_note_prefix)}%"]
     placeholders = ", ".join(f"${index}" for index in range(1, len(ids) + 1))
     argv0_clause = ""
     if argv0 is not None:
-        # Escape LIKE wildcards so a name such as ``a_b`` matches only itself.
-        escaped = argv0.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-        params.extend([argv0, f"{escaped} %"])
+        params.extend([argv0, f"{_escape_like(argv0)} %"])
         argv0_clause = (
             f"AND (command = ${len(params) - 1} OR command LIKE ${len(params)} ESCAPE '\\')"
         )
@@ -221,7 +220,7 @@ def list_human_cli_decisions(
           AND status IN ('approved', 'rejected')
           AND decision_by IS NOT NULL
           AND decision_by != 'system'
-          AND (decision_note IS NULL OR decision_note != ${len(ids) + 1})
+          AND (decision_note IS NULL OR decision_note NOT LIKE ${len(ids) + 1} ESCAPE '\\')
           {argv0_clause}
         ORDER BY decided_at DESC, id DESC
         LIMIT ${len(params)}
@@ -229,6 +228,11 @@ def list_human_cli_decisions(
         params,
         CliApprovalRequest,
     )
+
+
+def _escape_like(text: str) -> str:
+    """Escape LIKE wildcards so ``a_b`` or ``50%`` match only themselves."""
+    return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def count_pending_requests(agent_id: str | None = None) -> int:

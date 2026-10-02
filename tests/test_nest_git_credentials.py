@@ -15,7 +15,7 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
-from core.bm_cli.cli_always import write_nest_always_rule
+from tests.test_cli_nest_always import create_nest_always_rule
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.nest_git import (
     nest_git_auth_ready,
@@ -229,7 +229,7 @@ def test_inject_uses_matching_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     _enable_shell()
     agent, state = _agent_and_state()
     cwd = _nest_repo(agent, "https://github.com/Acme/tools.git")
-    write_nest_always_rule("git push origin main", cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     result = execute_bm_cli(agent, state, "git push origin main")
     extra = captured.get("extra_env") or {}
@@ -419,7 +419,7 @@ def test_always_allow_unmatched_still_hits_nest_git_card() -> None:
     )
     agent, state = _agent_and_state()
     cwd = _nest_repo(agent, "https://github.com/Widgets/app.git")
-    write_nest_always_rule("git push origin main", cwd)
+    create_nest_always_rule("git")
     policy_engine.reload()
     paused = execute_bm_cli(agent, state, "git push origin main")
     assert paused.consent_required is True

@@ -158,7 +158,10 @@ def test_quoted_editable_pip_install_posts_chrome() -> None:
     assert len(approvals) == 1
     assert approvals[0]["id"] == stored.id
     assert approvals[0]["conversation_id"] == channel.id
-    assert {action["label"] for action in approvals[0]["actions"]} == {"Approve", "Reject"}
+    # cwd is /me and the command names no path outside it: scoped Always.
+    assert {action["label"] for action in approvals[0]["actions"]} == {
+        "Approve", "Always allow in your workspace", "Reject",
+    }
 
 
 def test_git_push_approval_stamps_channel_id() -> None:

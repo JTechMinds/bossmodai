@@ -21,6 +21,7 @@ from core.bm_cli.approval_gate.context import build_review_context
 from core.bm_cli.approval_gate.facts import (
     CommandFacts,
     command_facts,
+    effective_parsed_commands,
     host_refusal,
 )
 from core.bm_cli.approval_gate.review import review_command
@@ -185,7 +186,7 @@ def plan_auto_approve(
     refusal = host_refusal(agent, facts)
     if refusal is not None:
         return AutoApprovePlan(action="block", jail_message=refusal)
-    if _removes_or_moves_a_root(parsed, facts):
+    if _removes_or_moves_a_root(agent, parsed, cwd, facts):
         return AutoApprovePlan(action="card", card_why=NOT_ASKED_ROOT)
     if facts.effect == "host_process":
         return AutoApprovePlan(action="card", card_why=NOT_ASKED_HOST_PROCESS)
@@ -264,19 +265,26 @@ def review_error_card_why(detail: str) -> str:
     return f"{REVIEW_ERROR_PREFIX}{detail.strip()}"
 
 
-def _removes_or_moves_a_root(parsed: ParsedCliCommand, facts: CommandFacts) -> bool:
+def _removes_or_moves_a_root(
+    agent: Agent, parsed: ParsedCliCommand, cwd: str, facts: CommandFacts,
+) -> bool:
     """True when a delete, or a move's source, is a whole workspace root.
 
     A move's last operand is its destination, which may be a root (moving
     a file into a project). With ``-t``/``--target-directory`` the operand
     order no longer says which is the destination, so every operand is
-    checked and the gate fails toward a card.
+    checked and the gate fails toward a card. Moves are found among the
+    effective commands, so a wrapped ``timeout 5 mv`` or a ``find -exec
+    mv`` is checked too; each move's own operands decide.
     """
     if facts.effect == "delete":
         return any(fact.is_root for fact in facts.write_targets)
-    if argv0_basename_after_resolve(parsed.name) not in _MOVE_NAMES:
-        return False
-    sources = facts.write_targets
-    if not any(token.startswith(_MV_TARGET_FLAGS) for token in parsed.args):
-        sources = sources[:-1]
-    return any(fact.is_root for fact in sources)
+    for command in effective_parsed_commands(parsed):
+        if argv0_basename_after_resolve(command.name) not in _MOVE_NAMES:
+            continue
+        sources = command_facts(agent, command, cwd).write_targets
+        if not any(token.startswith(_MV_TARGET_FLAGS) for token in command.args):
+            sources = sources[:-1]
+        if any(fact.is_root for fact in sources):
+            return True
+    return False

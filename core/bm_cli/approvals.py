@@ -12,6 +12,8 @@ from core.models.cli_policy import CliApprovalRequest
 
 ApprovalPrefixStatus = Literal["unique", "none", "ambiguous"]
 _MIN_APPROVAL_DISPLAY_PREFIX = 8
+# Prefix of every Always-allow decision note ("Always allowed in <scope>").
+# The precedent query excludes notes that start with it.
 ALWAYS_ALLOWED_NOTE = "Always allowed"
 
 
@@ -84,25 +86,31 @@ async def resume_cli_approval(
     implements ``enqueue_trigger`` (the real ``runtime_services`` or a test
     double) so the dispatcher is woken the same way as other inbound work.
 
-    Always allow writes a real Settings CLI Always rule scoped to
-    ``/me/host-work`` before approving. Missing/already-resolved ids return
-    ``None`` and do not enqueue a wake.
+    Always allow writes a real Settings CLI Always rule scoped to the one
+    locked clone, floor project or ``/me`` the command stays inside, then
+    approves with the note ``"Always allowed in <scope>"``. Missing or
+    already-resolved ids return ``None`` and do not enqueue a wake.
+
+    Raises:
+        ValueError: Always allow was asked for a command no scope covers.
+        LookupError: The request's agent no longer exists.
     """
     if always_allow:
         existing = db.get_cli_approval_request(request_id)
         if existing is None or existing.status != "pending":
             return None
-        from core.bm_cli.cli_always import write_nest_always_rule
+        from core.bm_cli.cli_always import scope_label, write_scoped_always_rule
         from core.bm_cli.policy_engine import policy_engine
 
-        write_nest_always_rule(
-            existing.command,
-            existing.cwd,
-            matched_rule_id=existing.matched_rule_id,
-        )
+        agent = db.get_agent(existing.agent_id)
+        if agent is None:
+            raise LookupError(f"No agent {existing.agent_id!r} for approval {request_id!r}")
+        rule = write_scoped_always_rule(agent, existing)
+        if rule.cwd_prefix is None:
+            raise RuntimeError(f"Scoped Always rule {rule.id} has no cwd_prefix")
         policy_engine.reload()
         approved = True
-        note = note or ALWAYS_ALLOWED_NOTE
+        note = note or f"{ALWAYS_ALLOWED_NOTE} in {scope_label(rule.cwd_prefix)}"
 
     if approved:
         approval = db.approve_cli_approval_request(
@@ -130,7 +138,7 @@ async def resume_cli_approval(
         payload["content"] = approval.content
         payload["cwd"] = approval.cwd
         if always_allow:
-            payload["decision_note"] = ALWAYS_ALLOWED_NOTE
+            payload["decision_note"] = note
     else:
         payload["decision_note"] = note
 

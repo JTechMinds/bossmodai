@@ -1,4 +1,4 @@
-"""Nest Always allow, twin collapse, and stale Dismiss on CLI cards."""
+"""Scoped Always allow, twin collapse, and stale Dismiss on CLI cards."""
 
 from __future__ import annotations
 
@@ -28,6 +28,7 @@ def test_cli_approval_card_always_coalesce_and_stale_dismiss() -> None:
         "ok": True,
         "nestOffersAlways": True,
         "deskHidesAlways": True,
+        "namesScope": True,
         "quietWithoutNote": True,
         "showsReviewWhy": True,
         "alwaysAllowResolves": True,

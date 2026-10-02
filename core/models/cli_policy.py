@@ -24,6 +24,9 @@ class CliPolicyRule(BaseModel):
     enabled: bool = True
     priority: int = 0
     cwd_prefix: str | None = None
+    # Floor of a ``/projects/<slug>`` rule. Project paths are virtual per
+    # floor, so the rule matches only agents on this floor.
+    floor_id: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -72,7 +75,16 @@ class CliApprovalRequest(BaseModel):
     detached_origin: bool = False
 
     def as_card(self) -> dict[str, object]:
-        """Operator-facing card payload for chat / channel / WebSocket."""
+        """Operator-facing card payload for chat / channel / WebSocket.
+
+        A pending card offers Always allow when the command stays inside one
+        scope (``core.bm_cli.cli_always.always_scope_for``) and names it in
+        ``always_scope_label``. A decided card offers nothing, so its scope is
+        not recomputed against today's disk.
+
+        Raises:
+            LookupError: A pending request's agent no longer exists.
+        """
         card: dict[str, object] = {
             "id": self.id,
             "agent_id": self.agent_id,
@@ -90,7 +102,10 @@ class CliApprovalRequest(BaseModel):
         note = (self.review_note or "").strip()
         if note:
             card["review_note"] = note
-        from core.bm_cli.cli_always import offers_always_allow_cli
+        from core.bm_cli.cli_always import always_scope_for_request
 
-        card["always_allow"] = offers_always_allow_cli(self.cwd)
+        scope = always_scope_for_request(self) if self.status == "pending" else None
+        card["always_allow"] = scope is not None
+        if scope is not None:
+            card["always_scope_label"] = scope.label
         return card

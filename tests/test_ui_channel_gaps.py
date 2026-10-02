@@ -132,7 +132,7 @@ def test_gates_and_consent_card_export_presence_and_consent_card() -> None:
     assert "hidden: card.always_allow === false" in consent
     assert "Deny" in consent
     assert "decision_note" in consent
-    assert "{ label: 'Always allow'," in consent
+    assert "`Always allow in ${card.always_scope_label}`" in consent
     assert "This approval is gone or already resolved." in consent
     assert "Dismiss" in consent
     assert "function collapseRelatedConsentCards(" in consent

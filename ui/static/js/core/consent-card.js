@@ -199,9 +199,15 @@ const BossModConsentCard = (() => {
         }
         const actions = document.createElement('div');
         actions.className = 'host-path-consent-actions';
+        // The server offers Always only together with the scope it would cover.
+        const offersAlways = card.always_allow === true && Boolean(card.always_scope_label);
         [
             { label: 'Approve', path: 'approve', primary: true },
-            { label: 'Always allow', path: 'always-allow', hidden: card.always_allow === false || card.always_allow == null },
+            {
+                label: offersAlways ? `Always allow in ${card.always_scope_label}` : 'Always allow',
+                path: 'always-allow',
+                hidden: !offersAlways,
+            },
             { label: 'Reject', path: 'reject' },
         ].forEach((item) => {
             const btn = document.createElement('button');

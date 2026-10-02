@@ -79,8 +79,7 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "Prints the absolute path of your current working directory.\n"
             "\n"
             "Examples:\n"
-            "  pwd              — show where you are\n"
-            "  pwd && ls        — show location then list contents"
+            "  pwd              — show where you are"
         ),
     ),
     "cd": VirtualCommandMeta(

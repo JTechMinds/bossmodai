@@ -15,10 +15,10 @@ from api.routes import router
 from core import config
 from core.bm_cli.approvals import resume_cli_approval
 from core.bm_cli.cli_always import (
+    NEST_ALWAYS_CATEGORY,
     NEST_CWD_PREFIX,
     always_allow_pattern,
-    offers_always_allow_cli,
-    write_nest_always_rule,
+    is_nest_cwd,
 )
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_bm_cli
@@ -54,14 +54,30 @@ def _api_client() -> TestClient:
     return TestClient(app)
 
 
-def test_offers_always_allow_cli_nest_yes_desktop_no() -> None:
-    assert offers_always_allow_cli("/me/host-work/llm_helper") is True
-    assert offers_always_allow_cli("/me/host-work") is True
-    assert offers_always_allow_cli("/home/operator/Desktop") is False
-    assert offers_always_allow_cli("/home/operator/Desktop/secret.txt") is False
-    assert offers_always_allow_cli("/me") is False
-    assert offers_always_allow_cli("") is False
-    assert offers_always_allow_cli(None) is False
+def create_nest_always_rule(pattern: str):
+    """Create a nest Always rule shaped like the live rows (``/me/host-work``, no floor).
+
+    Shared by the nest git tests, which need an Always rule in place
+    without going through an approval card.
+    """
+    return db.create_cli_policy_rule(
+        tier="always_allowed",
+        pattern=pattern,
+        match_mode="prefix",
+        cwd_prefix=NEST_CWD_PREFIX,
+        description=f"Always allow {pattern} in locked nest clones.",
+        category=NEST_ALWAYS_CATEGORY,
+    )
+
+
+def test_is_nest_cwd_nest_yes_desktop_no() -> None:
+    assert is_nest_cwd("/me/host-work/llm_helper") is True
+    assert is_nest_cwd("/me/host-work") is True
+    assert is_nest_cwd("/home/operator/Desktop") is False
+    assert is_nest_cwd("/home/operator/Desktop/secret.txt") is False
+    assert is_nest_cwd("/me") is False
+    assert is_nest_cwd("") is False
+    assert is_nest_cwd(None) is False
 
 
 def test_always_allow_pattern_uses_argv0_or_matched_rule() -> None:
@@ -85,6 +101,7 @@ def test_nest_sed_card_offers_always_allow(
     assert paused.approval_required is True
     card = (paused.data or {}).get("cli_approval") or {}
     assert card.get("always_allow") is True
+    assert card.get("always_scope_label") == "locked clones"
     assert card.get("cwd", "").startswith("/me/host-work/")
     stored = db.get_cli_approval_request(paused.approval_request_id)
     assert stored is not None
@@ -96,12 +113,12 @@ def test_nest_sed_card_offers_always_allow(
     approvals = [item for item in res.json() if item["kind"] == "approval"]
     assert len(approvals) == 1
     assert {action["label"] for action in approvals[0]["actions"]} == {
-        "Approve", "Always allow", "Reject",
+        "Approve", "Always allow in locked clones", "Reject",
     }
     assert dest.startswith("/me/host-work/")
 
 
-def test_desk_pip_card_does_not_offer_always_allow() -> None:
+def test_desk_pip_card_offers_always_in_own_workspace_only() -> None:
     from tests.test_consent_origin import _agent_and_state
 
     db.set_setting("cli_shell_enabled", "true", "cli_policy")
@@ -111,12 +128,14 @@ def test_desk_pip_card_does_not_offer_always_allow() -> None:
     paused = execute_bm_cli(agent, state, "pip install pytest")
     assert paused.approval_required is True
     card = (paused.data or {}).get("cli_approval") or {}
-    assert card.get("always_allow") is False
+    assert card.get("cwd") == "/me"
+    assert card.get("always_allow") is True
+    assert card.get("always_scope_label") == "your workspace"
     client = _api_client()
     res = client.get("/api/needs", headers=_auth())
     labels = {action["label"] for item in res.json() if item["kind"] == "approval"
               for action in item["actions"]}
-    assert labels == {"Approve", "Reject"}
+    assert labels == {"Approve", "Always allow in your workspace", "Reject"}
 
 
 def test_always_allow_writes_real_nest_rule_and_skips_next_sed(
@@ -138,7 +157,7 @@ def test_always_allow_writes_real_nest_rule_and_skips_next_sed(
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["status"] == "approved"
-    assert body["decision_note"] == "Always allowed"
+    assert body["decision_note"] == "Always allowed in locked clones"
 
     rules = [
         rule for rule in db.list_cli_policy_rules(tier="always_allowed")
@@ -163,7 +182,7 @@ def test_nest_always_does_not_allow_desktop_sed(
 ) -> None:
     db.set_setting("cli_shell_enabled", "true", "cli_policy")
     config.reload()
-    write_nest_always_rule("sed -i s/a/b/ x", "/me/host-work/sample")
+    create_nest_always_rule("sed")
     policy_engine.reload()
     desktop = tmp_path / "Desktop"
     desktop.mkdir()
