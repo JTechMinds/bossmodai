@@ -695,6 +695,10 @@
 /* Rotated to 90deg by context/agent-form.js when the panel opens. */
 .advanced-chevron { flex: 0 0 auto; width: 16px; height: 16px; color: var(--muted); }
 .advanced-chevron svg { width: 16px; height: 16px; }
+/* The connection form's examples disclosure (settings-thinking-examples.js)
+   states its open state in aria-expanded, so the chevron follows that rather
+   than an inline style. */
+.advanced-toggle[aria-expanded="true"] .advanced-chevron { transform: rotate(90deg); }
 
 .advanced-content { display: flex; flex-direction: column; gap: 12px; }
 .advanced-content.hidden { display: none; }

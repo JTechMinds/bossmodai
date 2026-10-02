@@ -71,6 +71,7 @@ SETTINGS_SCRIPTS = [
     "js/settings/cli-policy/approvals.js",
     "js/settings/cli-policy/section.js",
     "js/settings/settings-shared.js",
+    "js/settings/settings-thinking-examples.js",
     "js/settings/settings-connections-form.js",
     "js/settings/settings-connections.js",
     "js/settings/settings-personalities.js",

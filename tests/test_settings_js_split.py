@@ -31,6 +31,7 @@ SHELL_GLOBALS = {
 # out of SECTION_FILES, whose contract is "renders a settings section"; their
 # load order and their IIFE names are asserted below instead.
 SPLIT_HALVES = {
+    "settings/settings-thinking-examples.js": "BossModThinkingExamples",
     "settings/settings-connections-form.js": "BossModConnectionForm",
     "settings/settings-runtime-contracts-actions.js": "BossModRuntimeContractActions",
     "settings/settings-system-meta.js": "BossModSystemSettingsMeta",
@@ -52,6 +53,7 @@ REQUIRED_SCRIPTS = [
     "js/settings/cli-policy/approvals.js",
     "js/settings/cli-policy/section.js",
     "js/settings/settings-shared.js",
+    "js/settings/settings-thinking-examples.js",
     "js/settings/settings-connections-form.js",
     "js/settings/settings-connections.js",
     "js/settings/settings-personalities.js",
@@ -260,6 +262,8 @@ def test_index_loads_split_scripts_in_dependency_order() -> None:
     assert index["js/settings/cli-policy/section.js"] < index["js/settings/settings-view.js"]
     assert index["js/settings/settings-view.js"] < index["js/shell/shell.js"]
     # A split half must load before the section that calls into it.
+    assert (index["js/settings/settings-thinking-examples.js"]
+            < index["js/settings/settings-connections-form.js"])
     assert (index["js/settings/settings-connections-form.js"]
             < index["js/settings/settings-connections.js"])
     assert (index["js/settings/settings-runtime-contracts-actions.js"]

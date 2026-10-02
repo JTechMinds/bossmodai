@@ -53,7 +53,18 @@ const BossModConnectionForm = (() => {
         return levels;
     }
 
-    async function copyApiKey(value, statusEl = null) {
+    /**
+     * Copy a string to the clipboard and report the outcome.
+     *
+     * Shared by the API-key Copy button and the thinking-level examples, so
+     * both say "Copied" / "Copy failed" the same way.
+     *
+     * @param {string} value  The text to copy; an empty value copies nothing.
+     * @param {Element|null} [statusEl]  Where to report; "Copied" clears
+     *   itself after 1.5s, "Copy failed" stays.
+     * @returns {Promise<void>}
+     */
+    async function copyText(value, statusEl = null) {
         if (!value) return;
         try {
             await navigator.clipboard.writeText(value);
@@ -86,7 +97,7 @@ const BossModConnectionForm = (() => {
                 const source = document.getElementById(targetId);
                 const statusEl = btn.dataset.copyStatus ? document.getElementById(btn.dataset.copyStatus) : null;
                 if (!source) return;
-                await copyApiKey(source.value, statusEl);
+                await copyText(source.value, statusEl);
             });
         });
     }
@@ -188,6 +199,7 @@ const BossModConnectionForm = (() => {
                                               bg-bm-bg font-mono">
                             </div>`).join('')}
                         </div>
+                        ${BossModThinkingExamples.renderPanel(THINKING_LEVELS)}
                     </fieldset>
                     <div id="connection-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div id="test-conn-result" class="hidden p-3 rounded-lg text-sm"></div>
@@ -213,6 +225,7 @@ const BossModConnectionForm = (() => {
 
         document.getElementById('btn-cancel-conn').addEventListener('click', onDone);
         bindApiKeyFieldControls(container);
+        BossModThinkingExamples.bindPanel(container, copyText);
 
         // Image support is keyed by model name, so it means nothing until a
         // model is named. The switch is the project's one toggle component.
