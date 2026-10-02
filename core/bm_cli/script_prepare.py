@@ -3,8 +3,8 @@
 The parse (:mod:`core.bm_cli.shell_script`) is pure. This module adds what
 needs the agent's workspace, before any command is decided:
 
-* a leading ``cd <dir> &&`` is resolved (not yet persisted) and the rest
-  of the script runs in that directory;
+* a leading ``cd <dir> &&`` or ``cd <dir> ;`` is resolved (not yet
+  persisted) and the rest of the script runs in that directory;
 * BossMod-only commands (virtual commands with no native binary, such as
   ``write`` or ``task``) are refused with a steer: scripts run native
   programs only;
@@ -43,7 +43,8 @@ from core.models import Agent
 # Virtual commands that are also ordinary programs; in a script they run
 # natively under shell policy. Every other virtual command is BossMod-only.
 NATIVE_VIRTUAL_NAMES = frozenset({"ls", "cat", "git", "mkdir", "pwd"})
-CD_STEER = "cd works in a script only as the first command, followed by &&: cd <dir> && <commands>"
+CD_STEER = "cd works in a script only as the first step, followed by && or ;: cd <dir> && <commands>"
+CD_ALONE_STEER = "nothing follows cd: run cd <dir> as its own command"
 
 
 def bossmod_only_steer(name: str) -> str:
@@ -149,13 +150,30 @@ def prepare_script(
 def _leading_cd(
     agent: Agent, script: ShellScript, cwd_before: str,
 ) -> tuple[ParsedCliCommand | None, ShellScript, str]:
-    """Split off a leading ``cd <dir> &&``; return ``(cd, rest, cwd for the rest)``."""
+    """Split off a leading ``cd <dir>`` and its ``&&`` or ``;``; return ``(cd, rest, cwd for the rest)``.
+
+    ``;`` is accepted because the ``cd`` is resolved here, before anything
+    runs: a bad target refuses the whole line, so unlike bash a failed
+    ``cd X ; cmd`` never runs ``cmd``, and the line has exactly the outcome
+    of ``cd X && cmd``. ``||`` and ``|`` mean something else, so they stay
+    refused.
+
+    Raises:
+        ScriptRefused: ``cd`` piped, redirected, prefixed by assignments or
+            followed by ``||`` (:data:`CD_STEER`); nothing after ``cd``
+            (:data:`CD_ALONE_STEER`); a wrong argument count; a bad or
+            missing directory.
+    """
     pipeline, connector = script.items[0]
     first = pipeline.commands[0]
     if _canonical(first.argv[0].text) != "cd":
         return None, script, cwd_before
-    if len(pipeline.commands) != 1 or connector != "&&" or first.redirects or first.assignments:
+    if len(pipeline.commands) != 1 or connector == "||" or first.redirects or first.assignments:
         raise ScriptRefused(CD_STEER, jail=False)
+    # The grammar folds a trailing ``;`` or newline into ``None``: the
+    # script is ``cd`` alone, and an empty rest has no segments to decide.
+    if connector is None:
+        raise ScriptRefused(CD_ALONE_STEER, jail=False)
     if len(first.argv) != 2:
         raise ScriptRefused('"cd" requires exactly one path argument.', jail=False)
     target_text = first.argv[1].text

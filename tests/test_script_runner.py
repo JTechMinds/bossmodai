@@ -23,8 +23,15 @@ from core.bm_cli.cli_always import always_allow_pattern
 from core.bm_cli.floor_roots import project_dir
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policy_engine import policy_engine
-from core.bm_cli.runtime import execute_approved_command, execute_bm_cli, preview_bm_cli
-from core.bm_cli.script_prepare import CD_STEER, bossmod_glob_steer, bossmod_only_steer
+from core.bm_cli.runtime import VIRTUAL_COMMANDS, execute_approved_command, execute_bm_cli, preview_bm_cli
+from core.bm_cli.script_prepare import (
+    CD_ALONE_STEER,
+    CD_STEER,
+    ScriptRefused,
+    bossmod_glob_steer,
+    bossmod_only_steer,
+    prepare_script,
+)
 from core.bm_cli.session import get_cli_cwd, set_cli_cwd
 from core.bm_cli.shell_executor import execute_shell_script
 from core.bm_cli.shell_lexer import STEER_VARIABLE
@@ -337,12 +344,13 @@ def test_glob_expansion_is_sorted_keeps_unmatched_words_and_stays_jailed(tmp_pat
     assert "secret" not in escaped.prompt_content.replace("secret.txt", "")
 
 
-def test_a_leading_cd_persists_and_the_rest_runs_there() -> None:
+@pytest.mark.parametrize("connector", ["&&", ";"])
+def test_a_leading_cd_persists_and_the_rest_runs_there(connector: str) -> None:
     _enable_shell()
     agent, state, root = _agent_in_project()
     set_cli_cwd(agent.id, "/me")
 
-    result = execute_bm_cli(agent, state, "cd /projects/demo && printf hi > made.txt")
+    result = execute_bm_cli(agent, state, f"cd /projects/demo {connector} printf hi > made.txt")
 
     assert result.ok is True
     assert (root / "made.txt").read_text() == "hi"
@@ -361,13 +369,40 @@ def test_a_leading_cd_does_not_persist_when_the_script_is_blocked() -> None:
     assert get_cli_cwd(agent.id) == "/me"
 
 
+@pytest.mark.parametrize("connector", ["&&", ";"])
+def test_a_leading_cd_to_a_missing_directory_refuses_the_whole_line(connector: str) -> None:
+    _enable_shell()
+    agent, state, root = _agent_in_project()
+    set_cli_cwd(agent.id, "/me")
+
+    result = execute_bm_cli(agent, state, f"cd /projects/missing {connector} printf hi > /projects/demo/made.txt")
+
+    assert result.ok is False
+    assert _error(result) == "Directory not found: /projects/missing"
+    assert not (root / "made.txt").exists(), "the rest of the line must never run"
+    assert get_cli_cwd(agent.id) == "/me"
+
+
+@pytest.mark.parametrize("script", ["cd /me ;", "cd /me\n", "cd /me ;\n"])
+def test_nothing_after_a_leading_cd_never_reaches_segment_preparation(script: str) -> None:
+    agent, _state, _root = _agent_in_project()
+
+    with pytest.raises(ScriptRefused) as refused:
+        prepare_script(agent, script, "/projects/demo", virtual_commands=VIRTUAL_COMMANDS)
+
+    assert refused.value.message == CD_ALONE_STEER
+    assert refused.value.jail is False
+
+
 @pytest.mark.parametrize(
     ("script", "steer"),
     [
         ("printf a && write notes.md", bossmod_only_steer("write")),
         ("task 12 | wc -l", bossmod_only_steer("task")),
         ("ls; cd /me", CD_STEER),
-        ("cd /me; ls", CD_STEER),
+        ("cd /me || ls", CD_STEER),
+        ("cd /me | ls", CD_STEER),
+        ("cd /me ;", CD_ALONE_STEER),
         ("ol *.md", bossmod_glob_steer("ol")),
         ("echo $HOME", STEER_VARIABLE),
     ],
@@ -427,6 +462,7 @@ def _snapshot() -> dict[str, list]:
         ("printf a > count.txt; python3 -c 1", "block"),
         ("printf a > count.txt && write notes.md", "steer"),
         ("cd /projects/demo && printf a > count.txt", "run"),
+        ("cd /projects/demo ; printf a > count.txt", "run"),
     ],
 )
 def test_a_dry_run_agrees_with_a_real_run_and_writes_nothing(script: str, outcome: str) -> None:
