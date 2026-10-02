@@ -36,18 +36,14 @@ const BossModAgentFormSave = (() => {
         + 'cannot save: the agent would be created with none. Close this dialog '
         + 'and open it again to retry.';
 
-    // Said when a CREATE would write five null connections, worded per SHAPE:
+    // Said when a CREATE would be sent with no connection, worded per SHAPE:
     // one sentence is not true of both, because a form built with nothing
-    // configured has no matrix to point at — it renders a link to Settings
-    // where the selects would be. The form is asked which shape it is in, and
+    // configured has no picker to point at — it renders a link to Settings
+    // where the picker would be. The form is asked which shape it is in, and
     // the module that RENDERED that shape is the one that answers.
-    //
-    // Two entries, down from three. The third was for a layout that lifted one
-    // select out of the matrix and swept the rest behind a disclosure; nothing
-    // is lifted or swept now, so there is no third place the question can be.
     const NO_CONNECTION_NEXT = Object.freeze({
-        matrix: 'Choose one under AI Connections, or add a connection in Settings if you have none.',
-        unavailable: 'Add a connection in Settings; the AI Connections section links there.',
+        picker: 'Choose an AI connection in the AI Connection section, or add one in Settings if you have none.',
+        unavailable: 'Add a connection in Settings; the AI Connection section links there.',
     });
     const noConnection = (form) => 'This agent has no AI connection, so it would fail on its first turn. '
         + NO_CONNECTION_NEXT[BossModAgentFormConnections.aiQuestion(form)]
@@ -60,7 +56,7 @@ const BossModAgentFormSave = (() => {
     // the fix rather than a retry.
     const NO_CONNECTIONS_CONFIGURED = 'No AI connection is configured, so this '
         + 'form cannot create an agent: it would fail on its first turn. Add one '
-        + 'in Settings — the AI Connections section links there — then reopen '
+        + 'in Settings — the AI Connection section links there — then reopen '
         + 'this dialog.';
 
     /**
@@ -70,10 +66,10 @@ const BossModAgentFormSave = (() => {
      * a failure with empty lists so the form still RENDERS, with its "no
      * connections configured" link to Settings saying what is missing. This
      * one decides what the agent is SAVED with, and there an empty list is
-     * indistinguishable from "the operator has none": buildSubmitData would
-     * write null for all five model types and the save would report success —
-     * exactly the connectionless agent the whole dialog is shaped to refuse,
-     * reached through a second door. So a failure is `null`, and null blocks
+     * indistinguishable from "the operator has none": the form would offer no
+     * connection to pick and the save would send none — exactly the
+     * connectionless agent the whole dialog is shaped to refuse, reached
+     * through a second door. So a failure is `null`, and null blocks
      * the save. An EMPTY list is a third answer and not this one: it means the
      * read landed and the operator has none configured, which `renderInline`
      * withholds the primary for.
@@ -186,20 +182,19 @@ const BossModAgentFormSave = (() => {
 
                 let savedAgent = null;
                 try {
-                    const { agentData, promptHistoryPolicy } = await BossModAgentSubmit.buildSubmitData(form, connections);
+                    const { agentData, promptHistoryPolicy } = await BossModAgentSubmit.buildSubmitData(form);
                     // THE INVARIANT, enforced once, on what would actually be
-                    // SENT. Five UI routes each produced an agent with no
-                    // connection on any activation type; each was fixed at the
-                    // control that exposed it and the next appeared. This is the
-                    // last point that still knows the save is a create — and
+                    // SENT: a create with no AI connection. This is the last
+                    // point that still knows the save is a create — and
                     // buildSubmitData is not, because telling a form-level
                     // mapper about create-from-edit would push a dialog-level
-                    // rule into it. CREATE ONLY, deliberately: an existing
-                    // agent may already have none, and refusing that save would
-                    // trap the operator in a dialog they cannot leave with
-                    // their other edits.
-                    if (isCreating && BossModAgentFields.MODEL_TYPES
-                        .every(({ key }) => agentData[key] == null)) {
+                    // rule into it. The server refuses it too (connection_id
+                    // is required); this says why in the operator's words.
+                    // CREATE ONLY, deliberately: an existing agent may already
+                    // have none, and refusing that save would trap the
+                    // operator in a dialog they cannot leave with their other
+                    // edits.
+                    if (isCreating && !agentData.connection_id) {
                         say('bad', noConnection(form));
                         return; // `finally` gives the primary back for the retry.
                     }

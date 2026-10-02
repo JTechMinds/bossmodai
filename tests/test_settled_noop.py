@@ -13,6 +13,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.channel_rounds import advance_channel_round, start_channel_peer_round
 from core.agent_loop.runtime_core import AUDIENCE_SOFT_JUDGMENT
@@ -44,9 +45,9 @@ def teardown_function() -> None:
 
 
 def _trio():
-    jim = db.create_agent("Jim", role="PM", desk_x=1, desk_y=1, model_work="identity-big")
-    laura = db.create_agent("Laura", role="Eng", desk_x=2, desk_y=1, model_work="identity-big")
-    ada = db.create_agent("Ada", role="QA", desk_x=3, desk_y=1, model_work="identity-big")
+    jim = db.create_agent("Jim", role="PM", desk_x=1, desk_y=1, connection_id=model_connection("identity-big"))
+    laura = db.create_agent("Laura", role="Eng", desk_x=2, desk_y=1, connection_id=model_connection("identity-big"))
+    ada = db.create_agent("Ada", role="QA", desk_x=3, desk_y=1, connection_id=model_connection("identity-big"))
     channel = db.create_channel(
         name="Ops",
         member_agent_ids=[jim.id, laura.id, ada.id],

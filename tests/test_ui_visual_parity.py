@@ -549,22 +549,21 @@ def test_a_too_light_custom_colour_is_refused_not_silently_accepted() -> None:
     assert "tintFor" not in submit
 
 
-def test_the_connections_matrix_actually_renders() -> None:
-    """A live arity bug, caught by executing the builder rather than reading it.
+def test_the_ai_connection_section_actually_renders() -> None:
+    """Caught by executing the builder rather than reading it.
 
-    `connectionSelect(t.key, agent?.[t.key])` called a three-parameter function
-    with two, so `connections` received the string 'model_social' and
-    `connections.map` was not a function. It sits in the else branch of the
-    no-connections guard, so it threw for every operator who had configured at
-    least one connection — and the suite stayed green because it only ever read
-    this file's source.
+    An arity bug once sat in this section's else branch — the one taken by
+    every operator with at least one connection configured — and the suite
+    stayed green because it only ever read this file's source. So the section
+    is built: one connection input, one thinking input per routed activation,
+    the stored choice carried, and a link to Settings when there is nothing to
+    choose.
     """
     payload = _agent_form_payload()
-    assert payload["matrixError"] is None, payload["matrixError"]
-    assert payload["matrixCoversEveryModelType"] is True, payload["matrixSelectNames"]
-    assert payload["matrixRendersConnectionOptions"] is True
-    assert payload["matrixPreselectsTheStoredModel"] is True
-    assert payload["emptyMatrixLinksToSettings"] is True
+    assert payload["sectionError"] is None, payload["sectionError"]
+    assert payload["sectionCoversEveryRoutedMode"] is True
+    assert payload["sectionCarriesTheStoredChoice"] is True
+    assert payload["emptySectionLinksToSettings"] is True
 
 
 # ─── Header: nav placement, size, and the rail collapse ───

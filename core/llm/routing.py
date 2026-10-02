@@ -1,95 +1,98 @@
-"""BossMod AI — Model matrix routing.
+"""BossMod AI — Model routing.
 
-Selects the appropriate LLM model for an agent based on activation
-mode. Resolution order:
-  1. Agent's per-mode override (e.g. ``agent.model_work``)
-  2. Global setting from settings table (e.g. ``default_model_work``)
-  3. None — agent cannot be activated without a configured model
+An agent has one AI connection (``agent.connection_id``), read live on every
+turn so the request uses exactly what the Connections screen shows. The only
+thing that varies by activation mode is the thinking level, which picks a
+fragment from the connection's level map and merges it over its extra body.
 
-No hardcoded model names. Users must configure their models.
+No hardcoded model names and no global fallback: an agent without a usable
+connection does not run, and the reason says why.
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import Literal
 
-from core import config
+from core.llm.thinking import ThinkingConfigError, effective_extra_body
 from core.models import Agent
+import db
 
 logger = logging.getLogger(__name__)
 
-ActivationMode = Literal["social", "work", "reasoning", "extraction", "self_queue"]
-
-# Maps activation mode → Agent model field name
-_AGENT_FIELD: dict[ActivationMode, str] = {
-    "social": "model_social",
-    "work": "model_work",
-    "reasoning": "model_reasoning",
-    "extraction": "model_extraction",
-    "self_queue": "model_self_queue",
-}
-
-# Maps activation mode → settings table key
-_SETTINGS_KEY: dict[ActivationMode, str] = {
-    "social": "default_model_social",
-    "work": "default_model_work",
-    "reasoning": "default_model_reasoning",
-    "extraction": "default_model_extraction",
-    "self_queue": "default_model_self_queue",
-}
+# Only the activations the runtime routes (turn_context._determine_mode).
+ActivationMode = Literal["social", "work"]
 
 
-def select_model(agent: Agent, mode: ActivationMode) -> str | None:
-    """Return the model identifier for the given agent and activation mode.
+@dataclass(frozen=True)
+class ModelRoute:
+    """Everything one model call needs from the agent's connection."""
 
-    Returns ``None`` if no model is configured at any level — the caller
-    should skip the turn rather than guess a provider.
+    connection_id: str
+    model: str
+    api_base: str | None
+    api_key: str | None
+    extra_body: str | None
+
+
+class RouteUnavailable(Exception):
+    """The agent cannot be routed this turn; ``reason`` names the cause."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def resolve_route(agent: Agent, mode: ActivationMode) -> ModelRoute:
+    """Resolve the agent's connection into a route for one activation.
+
+    Args:
+        agent: The agent taking the turn.
+        mode: The activation, which selects ``thinking_social`` or
+            ``thinking_work``.
+
+    Returns:
+        The connection's model, endpoint and key, with the extra body for the
+        agent's thinking choice in this mode.
+
+    Raises:
+        RouteUnavailable: The agent has no connection, the connection no
+            longer exists, its model is blank, or the thinking choice cannot
+            be applied (unoffered level, extra body not a JSON object).
     """
-    # 1. Agent-level override
-    field = _AGENT_FIELD[mode]
-    agent_model = getattr(agent, field, None)
-    if agent_model:
-        return agent_model
-
-    # 2. Global setting
-    settings_key = _SETTINGS_KEY[mode]
-    global_model = config.get(settings_key)
-    if global_model:
-        return global_model
-
-    # 3. No model configured
-    logger.debug(
-        "No model configured for %s/%s — agent cannot activate in this mode",
-        agent.name, mode,
+    if not agent.connection_id:
+        raise RouteUnavailable("no AI connection")
+    conn = db.get_connection_by_id(agent.connection_id)
+    if conn is None:
+        raise RouteUnavailable(f"AI connection {agent.connection_id} no longer exists")
+    model = (conn.model or "").strip()
+    if not model:
+        raise RouteUnavailable(f"AI connection '{conn.name}' has no model")
+    choice = getattr(agent, f"thinking_{mode}")
+    try:
+        extra_body = effective_extra_body(conn.extra_body, conn.thinking_levels, choice)
+    except ThinkingConfigError as exc:
+        raise RouteUnavailable(f"AI connection '{conn.name}', {mode} thinking: {exc}") from exc
+    return ModelRoute(
+        connection_id=conn.id,
+        model=model,
+        api_base=conn.api_base_url,
+        api_key=conn.api_key,
+        extra_body=extra_body,
     )
-    return None
 
 
-def select_model_with_source(
-    agent: Agent, mode: ActivationMode
-) -> tuple[str | None, str]:
-    """Return (model, source) where source is 'agent', 'global', or 'none'."""
-    field = _AGENT_FIELD[mode]
-    agent_model = getattr(agent, field, None)
-    if agent_model:
-        return agent_model, "agent"
+def agent_model(agent: Agent) -> str | None:
+    """Return the model of the agent's linked connection, for name-only callers.
 
-    settings_key = _SETTINGS_KEY[mode]
-    global_model = config.get(settings_key)
-    if global_model:
-        return global_model, "global"
-
-    return None, "none"
-
-
-def get_api_config(agent: Agent) -> dict[str, str | None]:
-    """Return per-agent API configuration overrides.
-
-    Passed to litellm to support per-agent providers.
+    Returns:
+        The connection's model, or None when the agent is unlinked, the
+        connection is gone, or its model is blank.
     """
-    return {
-        "api_base": agent.api_base_url,
-        "api_key": agent.api_key,
-        "extra_body": agent.extra_body,
-    }
+    if not agent.connection_id:
+        return None
+    conn = db.get_connection_by_id(agent.connection_id)
+    if conn is None:
+        return None
+    return (conn.model or "").strip() or None

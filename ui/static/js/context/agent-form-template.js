@@ -21,10 +21,10 @@
  *   the way out   `Remove template`, which clears exactly what was written
  *
  * The connection guard is not this module's business any more, in either
- * direction. It sits on the visible matrix
- * (context/agent-form-bindings.js#bindConnectionGuard) and tracks the ANSWER,
- * so removing a template does not release it — an agent with no connection
- * fails on its first turn whether or not a template was involved.
+ * direction. It is the save's refusal (context/agent-form-save.js) and reads
+ * the ANSWER in the AI Connection section, so removing a template does not
+ * release it — an agent with no connection fails on its first turn whether or
+ * not a template was involved.
  *
  * A RECENT AGENT gets the same chip and none of the rest. Its values are the
  * form's already — context/agent-form.js builds every field from the snapshot

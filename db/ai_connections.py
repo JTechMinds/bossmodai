@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection, Sequence
 from typing import Any
 
 from core.models import AIConnection
+from core.models.thinking import ThinkingLevels
 from db.crud import build_update, execute, fetch_all, fetch_one, insert_returning
 from db.secret_store import decrypt_secret, encrypt_secret
 
-_COLUMNS = "id, name, api_base_url, api_key, model, extra_body, created_at"
+_COLUMNS = "id, name, api_base_url, api_key, model, extra_body, thinking_levels, created_at"
 
 # The same names as a sequence. `restore_connections` writes a full row, so it
 # needs the column list and its values to stay in step; reading both off this
@@ -17,7 +19,12 @@ _COLUMNS = "id, name, api_base_url, api_key, model, extra_body, created_at"
 # each value with its neighbour's column.
 _COLUMN_NAMES = tuple(column.strip() for column in _COLUMNS.split(","))
 
-_VALID_COLUMNS = {"name", "api_base_url", "api_key", "model", "extra_body"}
+_VALID_COLUMNS = {"name", "api_base_url", "api_key", "model", "extra_body", "thinking_levels"}
+
+
+def _dump_levels(levels: ThinkingLevels | None) -> str | None:
+    """Serialise a level map for the TEXT column; an empty map is stored as NULL."""
+    return json.dumps(levels) if levels else None
 
 
 def _decrypt_connection(connection: AIConnection | None) -> AIConnection | None:
@@ -35,15 +42,16 @@ def create_connection(
     api_key: str | None = None,
     model: str | None = None,
     extra_body: str | None = None,
+    thinking_levels: ThinkingLevels | None = None,
 ) -> AIConnection:
     """Insert a new AI connection."""
     created = insert_returning(
         f"""
-        INSERT INTO ai_connections (name, api_base_url, api_key, model, extra_body)
-        VALUES ($1, $2, $3, $4, $5)
+        INSERT INTO ai_connections (name, api_base_url, api_key, model, extra_body, thinking_levels)
+        VALUES ($1, $2, $3, $4, $5, $6)
         RETURNING {_COLUMNS}
         """,
-        [name, api_base_url, encrypt_secret(api_key), model, extra_body],
+        [name, api_base_url, encrypt_secret(api_key), model, extra_body, _dump_levels(thinking_levels)],
         AIConnection,
     )
     decrypted = _decrypt_connection(created)
@@ -82,9 +90,9 @@ def restore_connections(connections: Sequence[AIConnection]) -> int:
     schema; a provider's base URL and API key are the one thing an operator
     cannot get back from inside the app afterwards, so the reseed carries them
     across. ``id`` and ``created_at`` are written as given rather than
-    regenerated: nothing references connection ids (agents name models, not
-    connections), so this buys honesty — the same connections, not copies of
-    them — not referential integrity.
+    regenerated: agents reference their connection by id
+    (``agents.connection_id``), so restoring each connection under the same
+    ``id`` is what keeps those links working across a reseed.
 
     Args:
         connections: Rows as ``list_connections`` returned them, so each
@@ -116,6 +124,7 @@ def restore_connections(connections: Sequence[AIConnection]) -> int:
             "api_key": encrypt_secret(connection.api_key),
             "model": connection.model,
             "extra_body": connection.extra_body,
+            "thinking_levels": _dump_levels(connection.thinking_levels),
             "created_at": connection.created_at,
         }
         execute(
@@ -127,9 +136,14 @@ def restore_connections(connections: Sequence[AIConnection]) -> int:
 
 
 def update_connection(connection_id: str, **fields: Any) -> AIConnection | None:
-    """Update an AI connection's fields."""
+    """Update an AI connection's fields.
+
+    ``thinking_levels`` is a map; an empty map clears the column.
+    """
     if "api_key" in fields:
         fields = {**fields, "api_key": encrypt_secret(fields["api_key"])}
+    if "thinking_levels" in fields:
+        fields = {**fields, "thinking_levels": _dump_levels(fields["thinking_levels"])}
     build_update("ai_connections", "id", connection_id, fields, _VALID_COLUMNS)
     return get_connection_by_id(connection_id)
 
@@ -174,7 +188,7 @@ def _copy_name(source_name: str, taken: Collection[str]) -> str:
 
 
 def duplicate_connection(connection_id: str) -> AIConnection | None:
-    """Copy a connection — base URL, API key, model and extra_body — under a new name.
+    """Copy a connection — base URL, API key, model, extra_body and thinking levels — under a new name.
 
     The operator duplicates to change one field (usually ``extra_body``: the
     same provider and key, a different thinking mode), so every field is
@@ -211,4 +225,5 @@ def duplicate_connection(connection_id: str) -> AIConnection | None:
         api_key=source.api_key,
         model=source.model,
         extra_body=source.extra_body,
+        thinking_levels=source.thinking_levels,
     )

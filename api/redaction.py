@@ -70,18 +70,11 @@ def serialize_connection(connection: AIConnection) -> dict[str, Any]:
         "api_base_url": connection.api_base_url,
         "model": connection.model,
         "extra_body": connection.extra_body,
+        "thinking_levels": connection.thinking_levels,
         "created_at": created_at_out,
         "has_api_key": bool(connection.api_key),
         "api_key_last4": secret_last4(connection.api_key) if connection.api_key else None,
         # Keyed by model name, not by connection: a connection with no model
         # has nothing to flag.
         "supports_images": supports_images(connection.model) if connection.model else False,
-    }
-
-
-def serialize_secret_field(field: str, value: str | None) -> dict[str, Any]:
-    """Redact a single named secret field (e.g. agent api_key)."""
-    return {
-        f"has_{field}": bool(value),
-        f"{field}_last4": secret_last4(value) if value else None,
     }

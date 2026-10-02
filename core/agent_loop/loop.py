@@ -91,12 +91,15 @@ async def _run_bound_turn(
     # 1. Determine activation mode
     mode = _determine_mode(trigger)
 
-    # 2. Select model
-    model, model_source = routing.select_model_with_source(agent, mode)
-    if model is None:
-        return await _skip_turn(agent, trigger, trigger_type, mode, model_source, start)
+    # 2. Resolve the agent's connection, live, for this activation
+    try:
+        route = routing.resolve_route(agent, mode)
+    except routing.RouteUnavailable as exc:
+        return await _skip_turn(agent, trigger, trigger_type, mode, exc.reason, start)
 
-    api_config = routing.get_api_config(agent)
+    model = route.model
+    model_source = "connection"
+    api_config = {"api_base": route.api_base, "api_key": route.api_key, "extra_body": route.extra_body}
 
     # 3. Build initial context
     is_decision_turn = _is_decision_turn(trigger)

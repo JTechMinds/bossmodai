@@ -5,8 +5,8 @@
  * DOM. Three modules need it and would otherwise each keep a copy: the field
  * groups render it, the Advanced disclosure renders the desk half of it and
  * the kept-personality option, and context/agent-submit.js reads the same
- * MODEL_TYPES, history defaults and kept option back off the submitted form.
- * A second list of activation types is a connection that saves into a field
+ * THINKING_MODES, history defaults and kept option back off the submitted
+ * form. A second list of activation types is a choice that saves into a field
  * nothing reads.
  */
 const BossModAgentFields = (() => {
@@ -49,13 +49,28 @@ const BossModAgentFields = (() => {
         { id: 'desk_8', x: 11, y: 15, label: 'Desk 8 — South NE' },
     ];
 
-    /** The five activation types an agent assigns a connection to. */
-    const MODEL_TYPES = [
-        { key: 'model_social',     label: 'Social (cheap)' },
-        { key: 'model_work',       label: 'Work (routine)' },
-        { key: 'model_reasoning',  label: 'Reasoning (deep)' },
-        { key: 'model_extraction', label: 'Extraction' },
-        { key: 'model_self_queue', label: 'Self-queue' },
+    /**
+     * The two activations the runtime routes (core/agent_loop/turn_context.py
+     * `_determine_mode`), each with its own thinking level on the agent's one
+     * connection. A third row belongs here only when the runtime routes it.
+     */
+    const THINKING_MODES = [
+        { key: 'thinking_social', label: 'Social', hint: 'Idle chats with nearby teammates' },
+        { key: 'thinking_work', label: 'Work', hint: 'Everything else: your DMs, threads and tasks' },
+    ];
+
+    /**
+     * The thinking choices, in order. `default` sends nothing, so the
+     * provider's own default applies; the rest are offered only when the
+     * agent's connection defines them (core/models/thinking.py).
+     */
+    const THINKING_CHOICES = [
+        { value: 'default', label: 'Server default' },
+        { value: 'off', label: 'Off' },
+        { value: 'low', label: 'Low' },
+        { value: 'medium', label: 'Medium' },
+        { value: 'high', label: 'High' },
+        { value: 'xhigh', label: 'Extra high' },
     ];
 
     const DEFAULT_PROMPT_HISTORY_POLICY = {
@@ -107,7 +122,8 @@ const BossModAgentFields = (() => {
     return {
         AGENT_COLORS,
         DESK_OPTIONS,
-        MODEL_TYPES,
+        THINKING_MODES,
+        THINKING_CHOICES,
         DEFAULT_PROMPT_HISTORY_POLICY,
         KEPT_PERSONALITY,
         deskChoice,

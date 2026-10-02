@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import persist_result_triggers
@@ -118,7 +119,7 @@ async def test_parse_fail_notes_thread_and_requeues_without_approve_or_wipe(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(1)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -176,7 +177,7 @@ async def test_soft_blocked_commitment_is_not_left_stalled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(0)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock", desk_x=1, desk_y=1)
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"), desk_x=1, desk_y=1)
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Write notes", assigned_to=agent.id)
@@ -214,7 +215,7 @@ async def test_repair_can_recover_before_fail_close(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(6)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -251,7 +252,7 @@ async def test_truncated_json_repairs_then_stops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(2)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     seen, prompts = _script_completions(monkeypatch, ['{"say":', '{"act":', "still prose"])

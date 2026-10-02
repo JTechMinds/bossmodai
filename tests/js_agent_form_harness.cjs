@@ -4,12 +4,11 @@
  * Invoked by tests/test_ui_visual_parity.py. Not a browser bundle.
  *
  * The suite already reads context/agent-form-fields.js as source
- * (test_hire_ui_poke.py, test_role_contracts.py). That is why an arity bug sat
- * in the connections matrix undetected: `connectionSelect(t.key, value)` called
- * a three-parameter function with two, so `connections.map` was not a function
- * and the whole fieldset threw — but only for an operator who had at least one
- * connection configured, i.e. every real user. A source grep cannot see that.
- * So this harness CALLS the builders and reads what comes back.
+ * (test_hire_ui_poke.py, test_role_contracts.py). That is why an arity bug once
+ * sat in the connections section undetected: a builder called with too few
+ * arguments threw for every operator who had at least one connection
+ * configured, i.e. every real user. A source grep cannot see that. So this
+ * harness CALLS the builders and reads what comes back.
  *
  * It also drives context/agent-submit.js, which is where the seed-legibility
  * clamp has to bite: the check is worth nothing unless the save path actually
@@ -105,102 +104,76 @@ global.FormData = class {
     }
 };
 
+// Only Cloud defines thinking levels, so what a control offers visibly
+// follows the connection.
 const CONNECTIONS = [
-    { id: "c1", name: "Local llama", model: "llama3.1:8b", api_base_url: "http://x/v1" },
-    { id: "c2", name: "Cloud", model: "gpt-4o-mini", api_base_url: "http://y/v1" },
+    { id: "c1", name: "Local llama", model: "llama3.1:8b", api_base_url: "http://x/v1", thinking_levels: null },
+    {
+        id: "c2", name: "Cloud", model: "gpt-4o-mini", api_base_url: "http://y/v1",
+        thinking_levels: { off: { thinking: { type: "disabled" } }, high: { thinking: { type: "high" } } },
+    },
 ];
 
 async function submitting(values) {
     try {
-        const out = await BossModAgentSubmit.buildSubmitData(makeForm(values), CONNECTIONS);
+        const out = await BossModAgentSubmit.buildSubmitData(makeForm(values));
         return { threw: false, data: out.agentData };
     } catch (err) {
         return { threw: true, message: String((err && err.message) || err) };
     }
 }
 
-// ─── 3. The connections matrix, built rather than read ───
+// ─── 3. The AI Connection section, built rather than read ───
 
-const MODEL_TYPES = BossModAgentFields.MODEL_TYPES;
-const AGENT = { id: "a1", name: "Nadia", model_social: "gpt-4o-mini" };
+const THINKING_MODES = BossModAgentFields.THINKING_MODES;
+const CONN = BossModAgentFormConnections;
+// Linked to Cloud, Work at a level Cloud offers.
+const AGENT = {
+    id: "a1", name: "Nadia", connection_id: "c2", thinking_social: "default", thinking_work: "high",
+};
+// Linked to Local, which offers no levels, with a level stored from before.
+const STALE = {
+    id: "a2", name: "Bo", connection_id: "c1", thinking_social: "low", thinking_work: "default",
+};
+// What the upgrade leaves when it cannot tell which connection an agent used.
+const UNLINKED = {
+    id: "a3", name: "Cy", connection_id: null, thinking_social: "default", thinking_work: "default",
+};
 
-/** Every `<select …>` open tag in a chunk of markup. */
-function selectTags(markup) {
-    return markup.match(/<select\b[^>]*>/g) || [];
+/** The value of the hidden input named `name`, or null when there is none. */
+function hiddenValue(markup, name) {
+    const match = new RegExp(`name="${name}"\\s+value="([^"]*)"`).exec(markup);
+    return match ? match[1] : null;
 }
 
-/**
- * The `name` of every select, in document order.
- *
- * Read off the whole open tag rather than off `<select name=` directly: round
- * five gives each select an `id` so a `<label for>` can point at it, and an
- * assertion that breaks when an attribute moves is pinning the spelling rather
- * than the property.
- */
-function selectNames(markup) {
-    return selectTags(markup)
-        .map((tag) => /\bname="([^"]+)"/.exec(tag))
-        .filter((match) => match !== null)
-        .map((match) => match[1]);
-}
-
-/**
- * Is every select pointed at by a `<label for>` carrying visible text?
- *
- * A form control whose label is a bare `<span>` beside it is a screen-reader
- * dead end: nothing connects the two. Round five moved the labels above their
- * selects to buy the width back, and above is exactly where an unassociated
- * label is easiest to ship by accident.
- */
-function everySelectIsLabelled(markup) {
-    const tags = selectTags(markup);
-    if (tags.length === 0) return false;
-    return tags.every((tag) => {
-        const id = /\bid="([^"]+)"/.exec(tag);
-        if (!id) return false;
-        const label = new RegExp(`<label[^>]*\\bfor="${id[1]}"[^>]*>([\\s\\S]*?)</label>`)
-            .exec(markup);
-        return Boolean(label) && label[1].trim().length > 0;
-    });
-}
-
-/**
- * Every option that names a connection but does not carry its full label.
- *
- * A three-column grid narrows each select to roughly thirty characters, and a
- * connection label is `${name} (${model})` — arbitrary operator input that can
- * be far longer. Truncation is only acceptable while it stays recoverable, so
- * the title must be present AND equal to the visible text, not merely present.
- * The two placeholders (`None` and `— Set all connections —`) carry no value
- * and are already complete, so they are not asked for one.
- */
-function optionsMissingTheirFullLabel(markup) {
-    return (markup.match(/<option\b[^>]*>[\s\S]*?<\/option>/g) || []).filter((tag) => {
-        const value = /\bvalue="([^"]*)"/.exec(tag);
-        if (!value || value[1] === "") return false;
-        const title = /\btitle="([^"]*)"/.exec(tag);
-        const text = tag.replace(/<[^>]*>/g, "").trim();
-        // The title is attribute-escaped and the text is not, so `&quot;` is
-        // decoded before the two are compared: an operator's `Bob "fast"` must
-        // read as the same label in both places, not fail for being escaped
-        // correctly in one of them.
-        return !title || title[1].replace(/&quot;/g, '"') !== text;
-    });
-}
+const labels = (options) => options.map((option) => option.label).join("|");
 
 async function main() {
     const pale = await submitting({ name: "Pale", "agent-color": "#ffe066" });
     const seeded = await submitting({ name: "Fine", "agent-color": PALETTE[0] });
 
-    let matrixError = null;
+    let sectionError = null;
     let markup = "";
+    let stale = "";
+    let unlinked = "";
+    let blank = "";
     try {
-        markup = BossModAgentFormConnections.connectionsSection(AGENT, CONNECTIONS);
+        markup = CONN.connectionsSection(AGENT, CONNECTIONS);
+        stale = CONN.connectionsSection(STALE, CONNECTIONS);
+        unlinked = CONN.connectionsSection(UNLINKED, CONNECTIONS);
+        blank = CONN.connectionsSection(null, CONNECTIONS);
     } catch (err) {
-        matrixError = String((err && err.message) || err);
+        sectionError = String((err && err.message) || err);
     }
-    const names = selectNames(markup);
-    const empty = BossModAgentFormConnections.connectionsSection(AGENT, []);
+    const empty = CONN.connectionsSection(AGENT, []);
+    const picked = await submitting({
+        name: "Picked", "agent-color": PALETTE[0],
+        connection_id: "c2", thinking_social: "off", thinking_work: "default",
+    });
+    const unpicked = await submitting({
+        name: "Unpicked", "agent-color": PALETTE[0],
+        connection_id: "", thinking_social: "default", thinking_work: "default",
+    });
 
     // ── An agent hired before the palette changed ──
     // The round trip that must not lose a colour: render the form for an agent
@@ -229,7 +202,8 @@ async function main() {
     const editAgent = {
         id: "a1", name: "Nadia", role: "Writer", description: "Drafts things.",
         color: PALETTE[1], status: "idle", currentActivityKind: null,
-        desk_x: null, desk_y: null, model_social: "gpt-4o-mini",
+        desk_x: null, desk_y: null, connection_id: "c2",
+        thinking_social: "default", thinking_work: "default",
     };
     const advanced = BossModAgentFormAdvanced.advancedSection(editAgent, {
         personalities: [{ id: "p1", name: "Terse", prompt_template: "be terse" }],
@@ -257,9 +231,10 @@ async function main() {
         color: /name="agent-color"/.test(editMarkup),
         desk: /<select name="desk"/.test(editMarkup)
             && editMarkup.includes("Desk Assignment"),
-        // Every activation type, not merely the word "connection".
-        connections: MODEL_TYPES.every((t) => editMarkup.includes(`name="${t.key}"`))
-            && editMarkup.includes('name="model_all"'),
+        // The connection and every routed activation's thinking level, not
+        // merely the word "connection".
+        connections: editMarkup.includes('name="connection_id"')
+            && THINKING_MODES.every((mode) => editMarkup.includes(`name="${mode.key}"`)),
         prompt_history: ["prompt_history_last_n", "prompt_history_max_tokens",
             "prompt_history_earliest_ts", "prompt_history_include_notifications"]
             .every((name) => editMarkup.includes(`name="${name}"`)),
@@ -316,53 +291,66 @@ async function main() {
         submitAcceptsAPaletteColour: seeded.threw === false
             && seeded.data.color === PALETTE[0],
 
-        // ── The connections matrix ──
-        matrixError,
-        matrixSelectNames: names,
-        // "Set All" plus one dropdown per activation type, in that order.
-        matrixCoversEveryModelType:
-            names.join(",") === ["model_all"].concat(MODEL_TYPES.map((t) => t.key)).join(","),
-        // Proof the connection LIST reached the builder rather than the model
-        // key string: every select carries both connections as options.
-        matrixRendersConnectionOptions: names.length > 0
-            && (markup.match(/value="c1"/g) || []).length === MODEL_TYPES.length + 1
-            && (markup.match(/value="c2"/g) || []).length === MODEL_TYPES.length + 1,
-        // ...and the value already stored on the agent comes back selected.
-        // Attribute-order independent since round five put a `title` on every
-        // connection option; the property is that c2 is the one marked, not
-        // where `selected` sits in the tag.
-        matrixPreselectsTheStoredModel:
-            /<option[^>]*\bvalue="c2"[^>]*\bselected\b[^>]*>/.test(markup),
-
-        // ── The three-column layout ──
-        //
-        // Five activation types rendered as five full-width rows, each select
-        // spanning ~600px to display the word `None`, and the block cost ~264px
-        // of a dialog that already scrolls. The column COUNT lives in
-        // overlays.css, which is the only thing that lays the grid out;
-        // tests/test_ui_polish_round_five.py reads it there. What the markup
-        // owes is the structure the stylesheet needs.
-        //
-        // `Set All` writes to the other five rather than being a sixth value,
-        // so it sits above the grid at full width — which is what stops it
-        // reading as one of them.
-        setAllIsOutsideTheGrid: (() => {
-            const grid = markup.indexOf('connection-grid');
-            const setAll = markup.indexOf('name="model_all"');
-            return grid !== -1 && setAll !== -1 && setAll < grid
-                && MODEL_TYPES.every((t) => markup.indexOf(`name="${t.key}"`) > grid);
+        // ── The AI Connection section ──
+        sectionError,
+        // Never a native <select>: the controls are BossModMenuSelect,
+        // mounted by context/agent-form-bindings.js.
+        sectionHasNoNativeSelect: markup.length > 0 && !/<select\b/.test(markup),
+        // One connection and one thinking level per ROUTED activation — and
+        // nothing per-mode about the model.
+        sectionCoversEveryRoutedMode: (markup.match(/name="connection_id"/g) || []).length === 1
+            && THINKING_MODES.length === 2
+            && THINKING_MODES.every((mode) => (
+                markup.match(new RegExp(`name="${mode.key}"`, "g")) || []).length === 1)
+            && !markup.includes('name="model_'),
+        // The stored choice comes back in the inputs the save reads.
+        sectionCarriesTheStoredChoice: hiddenValue(markup, "connection_id") === "c2"
+            && hiddenValue(markup, "thinking_work") === "high"
+            && hiddenValue(markup, "thinking_social") === "default"
+            && !markup.includes('id="agent-connection-missing"'),
+        // A level the connection no longer offers cannot be shown, so it falls
+        // back to Server default, and the note names what was stored.
+        anUnofferedLevelIsResetAndNamed: hiddenValue(stale, "thinking_social") === "default"
+            && stale.includes("Social: thinking “low” — this connection doesn't offer it; pick one."),
+        anUnlinkedAgentIsToldToChoose: hiddenValue(unlinked, "connection_id") === ""
+            && unlinked.includes("This agent has no AI connection — choose one."),
+        // A blank form has nothing stored, so nothing to report.
+        aBlankFormSaysNothing: hiddenValue(blank, "connection_id") === ""
+            && !blank.includes('id="agent-connection-missing"'),
+        // What each control offers.
+        thinkingOptionsFollowTheConnection:
+            labels(CONN.thinkingOptions(CONNECTIONS[1])) === "Server default|Off|High"
+            && labels(CONN.thinkingOptions(CONNECTIONS[0])) === "Server default"
+            && labels(CONN.thinkingOptions(null)) === "Server default",
+        connectionOptionsNameTheModel:
+            labels(CONN.connectionOptions(CONNECTIONS, ""))
+                === "Choose a connection|Local llama (llama3.1:8b)|Cloud (gpt-4o-mini)"
+            && labels(CONN.connectionOptions(CONNECTIONS, "c1"))
+                === "Local llama (llama3.1:8b)|Cloud (gpt-4o-mini)",
+        // Every control is named by visible text, and each thinking control
+        // says which turns it is for.
+        everyControlIsNamedOnScreen: markup.includes(">Connection<")
+            && THINKING_MODES.every((mode) => markup.includes(`>${mode.label} thinking<`)
+                && markup.includes(mode.hint)),
+        // The connection spans the column; the two thinking controls share
+        // the grid under it.
+        thinkingIsAGridOfTwo: (() => {
+            const grid = markup.indexOf("connection-grid");
+            const connection = markup.indexOf("agent-ai-mount-connection_id");
+            return grid !== -1 && connection !== -1 && connection < grid
+                && THINKING_MODES.every((mode) => markup.indexOf(`agent-ai-mount-${mode.key}`) > grid);
         })(),
-        // Labels moved above their selects to buy back the width. Above or
-        // beside, each must still be a `<label for>` pointing at its control.
-        everySelectHasAnAssociatedLabel: everySelectIsLabelled(markup),
-        // A narrow select truncates; a `title` keeps the full label readable
-        // without opening the control.
-        optionsCarryTitleAttribute: (markup.match(/<option\b/g) || []).length > 0
-            && optionsMissingTheirFullLabel(markup).length === 0,
-        optionsMissingTheirFullLabel: optionsMissingTheirFullLabel(markup),
-        // The empty case still offers the way out rather than a blank matrix.
-        emptyMatrixLinksToSettings: empty.includes("btn-goto-connections")
-            && selectNames(empty).length === 0,
+        // The empty case still offers the way out rather than a blank section.
+        emptySectionLinksToSettings: empty.includes("btn-goto-connections")
+            && !empty.includes('name="connection_id"'),
+        // What the save sends: the id and the levels, nothing a connection owns.
+        submitSendsTheConnectionAndLevels: picked.threw === false
+            && picked.data.connection_id === "c2"
+            && picked.data.thinking_social === "off"
+            && picked.data.thinking_work === "default"
+            && !Object.keys(picked.data).some((key) => key.startsWith("model_")
+                || key === "api_base_url" || key === "extra_body" || key === "api_key"),
+        submitSendsNullWhileUnchosen: unpicked.threw === false && unpicked.data.connection_id === null,
 
         // ── The legacy-colour round trip ──
         legacyColourIsOffered: legacyRadio.test(legacyCard),

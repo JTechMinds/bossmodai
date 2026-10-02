@@ -29,6 +29,13 @@ _OBSOLETE_SETTING_KEYS = {
     # Hidden second cap. Agent turns, System AI routes, and repairs share
     # max_concurrent_agent_turns. This seed used to allow 5 calls above that knob.
     "max_concurrent_llm_calls",
+    # Global per-mode model fallbacks. An agent now routes through its one AI
+    # connection (core.llm.routing), so nothing reads these.
+    "default_model_social",
+    "default_model_work",
+    "default_model_reasoning",
+    "default_model_extraction",
+    "default_model_self_queue",
 }
 
 
@@ -46,12 +53,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("social_cooldown_minutes", "15", "social"),
     ("social_proximity_tiles", "8", "social"),
 
-    # ── LLM defaults (empty = user must configure) ──
-    ("default_model_social", "", "llm"),
-    ("default_model_work", "", "llm"),
-    ("default_model_reasoning", "", "llm"),
-    ("default_model_extraction", "", "llm"),
-    ("default_model_self_queue", "", "llm"),
+    # ── LLM defaults ──
     ("default_temperature", "0.7", "llm"),
     # Output-token budget for one model completion. Prior factory default
     # was 8192; reconcile_factory_max_tokens raises an untouched 8192 only.

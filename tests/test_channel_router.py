@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.channel_round_plan import (
     DISPATCH_FANOUT,
@@ -61,9 +62,9 @@ def teardown_function() -> None:
 
 
 def _trio():
-    jim = db.create_agent("Jim", role="PM", desk_x=1, desk_y=1, model_work="identity-big")
-    laura = db.create_agent("Laura", role="Eng", desk_x=2, desk_y=1, model_work="identity-big")
-    ada = db.create_agent("Ada", role="QA", desk_x=3, desk_y=1, model_work="identity-big")
+    jim = db.create_agent("Jim", role="PM", desk_x=1, desk_y=1, connection_id=model_connection("identity-big"))
+    laura = db.create_agent("Laura", role="Eng", desk_x=2, desk_y=1, connection_id=model_connection("identity-big"))
+    ada = db.create_agent("Ada", role="QA", desk_x=3, desk_y=1, connection_id=model_connection("identity-big"))
     channel = db.create_channel(
         name="Ops",
         member_agent_ids=[jim.id, laura.id, ada.id],
@@ -172,7 +173,7 @@ def test_router_naming_all_six_members_wakes_six_forced_first(
 ) -> None:
     names = ["Brad", "Brian", "Charles", "Sarah", "Harley", "Jimothy"]
     agents = [
-        db.create_agent(name, role="Eng", desk_x=index + 1, desk_y=1, model_work="identity-big")
+        db.create_agent(name, role="Eng", desk_x=index + 1, desk_y=1, connection_id=model_connection("identity-big"))
         for index, name in enumerate(names)
     ]
     channel = db.create_channel(
@@ -350,7 +351,7 @@ def test_route_sees_the_hire_blurb_and_not_the_prompt(
 
 def _harley_thread(channel_id: str) -> Any:
     """Seed 12 prior lines with a round marker and a status card, then Harley's latest."""
-    harley = db.create_agent("Harley", role="Feature Planner", desk_x=4, desk_y=1, model_work="identity-big")
+    harley = db.create_agent("Harley", role="Feature Planner", desk_x=4, desk_y=1, connection_id=model_connection("identity-big"))
     db.add_channel_members(channel_id, [harley.id])
     for index in range(1, 13):
         if index == 5:

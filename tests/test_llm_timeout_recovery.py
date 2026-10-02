@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from db.settings import get_seed_setting_default
 from core import config
 from core.agent_loop.activity_runtime import activate_work_activity
@@ -189,7 +190,7 @@ async def test_llm_request_timeout_seconds_still_bounds_the_call(
 async def test_timeout_repairs_up_to_the_decision_budget_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -214,7 +215,7 @@ async def test_timeout_fail_close_notes_thread_and_requeues_without_approve_or_w
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(1)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -262,7 +263,7 @@ async def test_timeout_shares_the_decision_repair_budget_with_parse_failures(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(2)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -288,7 +289,7 @@ async def test_soft_blocked_commitment_is_requeued_after_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(0)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock", desk_x=1, desk_y=1)
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"), desk_x=1, desk_y=1)
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Write notes", assigned_to=agent.id)
@@ -312,7 +313,7 @@ async def test_soft_blocked_commitment_is_requeued_after_timeout(
 
 def test_timeout_with_nothing_open_says_no_work_was_requeued() -> None:
     """The note follows the outcome: no open commitment means no re-queue claim."""
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock", desk_x=1, desk_y=1)
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"), desk_x=1, desk_y=1)
     surfaced = surface_llm_timeout_failure(agent=agent, trigger=_chat_trigger())
     assert surfaced["trigger_requests"] == []
     content = str((surfaced.get("chat_message") or {}).get("content") or "")
@@ -323,7 +324,7 @@ def test_timeout_with_nothing_open_says_no_work_was_requeued() -> None:
 @pytest.mark.asyncio
 async def test_other_llm_errors_still_fail_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     _limit_decision_repairs(6)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -344,7 +345,7 @@ async def test_dispatcher_timeout_completes_and_requeues_instead_of_stalling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(0)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -373,7 +374,7 @@ async def test_dispatcher_timeout_completes_and_requeues_instead_of_stalling(
 async def test_escaped_decision_timeout_does_not_enter_supervise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -400,7 +401,7 @@ async def test_escaped_decision_timeout_does_not_enter_supervise(
 
 @pytest.mark.asyncio
 async def test_execution_timeout_still_uses_trigger_retry(monkeypatch: pytest.MonkeyPatch) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)

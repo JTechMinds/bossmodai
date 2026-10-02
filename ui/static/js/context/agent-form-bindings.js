@@ -183,76 +183,75 @@ const BossModAgentFormBindings = (() => {
         specialtyInput.addEventListener('input', applyDefaults);
     }
     /**
-     * Refuse a CREATE that would leave every activation type at `None`.
+     * Mount the AI Connection section's three dropdowns and keep them in step.
      *
-     * THE RULE, and the one place it is enforced before the submit: the "Set
-     * All" select stays `required` until at least one of the five `model_*`
-     * selects holds a value, and it comes back the moment they are all cleared
-     * to None. Live, on every change, in both directions — not a one-way flip.
-     *
-     * An agent created with no connection on any activation type fails on its
-     * first turn, and five different UI routes have produced one; each was
-     * fixed at the control that exposed it and the next appeared. This is the
-     * cheap gate — native constraint validation, which the pinned primary
-     * reaches because it carries `form="agent-form"`. It is NOT the only one:
-     * context/agent-form-save.js refuses the same thing on what would actually
-     * be SENT, and that is the check that cannot be bypassed by a layout.
-     *
-     * It reads THE FIVE and never the "Set All" select's own value, because
-     * those five are the keys context/agent-submit.js sends: the guard asks
-     * exactly the question the save will ask. A "Set All" that stopped reaching
-     * them — the defect that shipped once already — therefore leaves the guard
-     * armed and the submit refused, instead of letting a control the operator
-     * answered stand in for an agent that has no connection at all.
-     *
-     * The guard used to live on a select LIFTED out of the matrix by the
-     * template layout, and it was armed and disarmed by that layout's
-     * disclosure — so opening the panel to read what the template had filled
-     * in disarmed it, and a create then wrote five nulls over "Saved
-     * successfully". Nothing is lifted or hidden now, and nothing but an ANSWER
-     * in the matrix moves it.
+     * One BossModMenuSelect for the connection, one per routed activation for
+     * its thinking level, each writing the hidden input
+     * context/agent-form-connections.js rendered beside its mount point — the
+     * inputs are what context/agent-submit.js reads. Picking another
+     * connection re-lists each thinking control with what THAT connection
+     * offers; a level it does not offer is reset to Server default in the
+     * control itself, so the operator sees the change before saving it.
      *
      * @param {HTMLElement} form  The `<form>` itself, never the host it was
-     *   published into: publication MOVES the form out of that host and leaves
-     *   it empty, so a binding rooted on the host searches nothing for the rest
-     *   of its life (see the header of context/agent-form.js).
-     * @param {{creating: boolean}} options  CREATE ONLY, deliberately. An
-     *   existing agent may already have no connection, and refusing that save
-     *   would trap the operator in a dialog they cannot leave with their other
-     *   edits — the same scope context/agent-form-save.js's refusal carries.
-     * @returns {void} Returns early, and arms nothing, when Settings holds no
-     *   connection at all: that form has no "Set All" and no five to answer, so
-     *   there is no control a `required` could sit on. The operator is told why
-     *   inline by the section's own link to Settings, the dialog withholds its
-     *   primary (context/agent-form-save.js), and the save refuses. A stand-in
-     *   `required` select that submitted to nothing used to stand here; it was
-     *   a control the operator could not answer and that wrote no value.
-     * @throws {Error} When the form has a "Set All" but is missing one of the
-     *   five. They are built by the same branch, so an absent one means the
-     *   guard cannot see what the save would read — and a guard that cannot see
-     *   that is the hole it exists to close.
+     *   published into (see the header of context/agent-form.js).
+     * @param {object[]} connections  The list the section was rendered from.
+     * @param {object|null} values  What the form was built from — the agent
+     *   being edited or the snapshot being recreated; null for a blank form.
+     *   Read through `startingValues`, the same reading the markup used.
+     * @returns {void} Returns early when the form has no connection input:
+     *   with no connection configured the section is a link to Settings.
+     * @throws {Error} When the input exists but a mount point or a thinking
+     *   input is missing. They are rendered by the same branch, so an absent
+     *   one means the save would read a value no control can change.
      */
-    function bindConnectionGuard(form, options) {
-        if (!options || !options.creating) return;
-        const setAll = form.querySelector('select[name="model_all"]');
-        if (!setAll) return;
-        const matrix = BossModAgentFields.MODEL_TYPES.map((type) => {
-            const select = form.querySelector(`select[name="${type.key}"]`);
-            if (!select) {
-                throw new Error(`[agent-form-bindings] the matrix has no ${type.key} select`);
-            }
-            return select;
-        });
-        const sync = () => {
-            if (matrix.some((select) => select.value)) setAll.removeAttribute('required');
-            else setAll.setAttribute('required', '');
+    function bindAiConnection(form, connections, values) {
+        const CONNECTIONS = BossModAgentFormConnections;
+        const connectionInput = form.querySelector('input[name="connection_id"]');
+        if (!connectionInput) return;
+        const start = CONNECTIONS.startingValues(values, connections);
+        connectionInput.value = start.connectionId;
+        const byId = new Map(connections.map((c) => [c.id, c]));
+        const mount = (key, select) => {
+            const point = form.querySelector(`#${CONNECTIONS.mountId(key)}`);
+            if (!point) throw new Error(`[agent-form-bindings] the AI section has no ${key} mount`);
+            point.append(select.element);
+            BossModIcons.paint(select.element, 'agent-form.ai');
         };
-        // "Set All" is watched as well as the five, because the fan-out
-        // agent-form.js bound to it writes their values from script — see the
-        // note at that call site for why this must be registered after it.
-        setAll.addEventListener('change', sync);
-        matrix.forEach((select) => select.addEventListener('change', sync));
-        sync();
+
+        const thinking = BossModAgentFields.THINKING_MODES.map((mode) => {
+            const input = form.querySelector(`input[name="${mode.key}"]`);
+            if (!input) throw new Error(`[agent-form-bindings] the AI section has no ${mode.key} input`);
+            input.value = start.thinking[mode.key];
+            const select = BossModMenuSelect.create({
+                label: `${mode.label} thinking`,
+                options: CONNECTIONS.thinkingOptions(byId.get(connectionInput.value) || null),
+                value: input.value,
+                variant: 'field',
+                onChange: (value) => { input.value = value; },
+            });
+            mount(mode.key, select);
+            return { input, select };
+        });
+
+        const connection = BossModMenuSelect.create({
+            label: 'AI connection',
+            options: CONNECTIONS.connectionOptions(connections, connectionInput.value),
+            value: connectionInput.value,
+            variant: 'field',
+            onChange: (id) => {
+                connectionInput.value = id;
+                // Once a connection is chosen, "Choose a connection" goes.
+                connection.setOptions(CONNECTIONS.connectionOptions(connections, id), id);
+                const options = CONNECTIONS.thinkingOptions(byId.get(id) || null);
+                thinking.forEach(({ input, select }) => {
+                    const keep = options.some((option) => option.value === input.value) ? input.value : 'default';
+                    select.setOptions(options, keep);
+                    input.value = keep;
+                });
+            },
+        });
+        mount('connection_id', connection);
     }
 
     /**
@@ -345,6 +344,6 @@ const BossModAgentFormBindings = (() => {
         bindRuntimeCorePreview,
         bindFinishLineSuggestion,
         bindCommunicationDefaults,
-        bindConnectionGuard,
+        bindAiConnection,
     };
 })();

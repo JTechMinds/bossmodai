@@ -121,7 +121,7 @@ async def test_run_turn_human_chat_without_model_skips_without_crash() -> None:
     assert outcome.trigger_status == "skipped"
     assert outcome.diagnostic_status == "skipped"
     assert outcome.diagnostic_error is not None
-    assert "no model configured" in outcome.diagnostic_error.lower()
+    assert "no ai connection" in outcome.diagnostic_error.lower()
     assert "turn skipped" in outcome.result.get("detail", "").lower()
 
 
@@ -289,7 +289,7 @@ async def test_dispatcher_skipped_outcome_does_not_exhaust_trigger() -> None:
 
     diagnostics = db.get_diagnostics(agent.id)
     assert any(
-        row["status"] == "skipped" and row["error"] and "no model configured" in row["error"].lower()
+        row["status"] == "skipped" and row["error"] and "no ai connection" in row["error"].lower()
         for row in diagnostics
     )
 

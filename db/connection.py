@@ -369,6 +369,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _ensure_attachment_context_columns(con)
     _create_model_capabilities_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
+    _link_agents_to_connections(con)
     # Last, and before init_db backfills missing identities: a backfill
     # allocates from this ledger, so the ledger must already know every key
     # that was issued or it would hand one out again.
@@ -571,6 +572,160 @@ def _raise_default_no_progress_threshold(con: SQLiteCompatConnection) -> None:
         "WHERE guardian_no_progress_threshold = $2",
         [_DEFAULT_NO_PROGRESS_THRESHOLD, _FACTORY_NO_PROGRESS_THRESHOLD],
     )
+
+
+_THINKING_COLUMN = (
+    "VARCHAR NOT NULL DEFAULT 'default' CHECK ({col} IN "
+    "('default','off','low','medium','high','xhigh'))"
+)
+# Columns retired when an agent moved to one live AI connection.
+_RETIRED_AGENT_MODEL_COLUMNS = (
+    "model_social", "model_work", "model_reasoning", "model_extraction", "model_self_queue",
+)
+_RETIRED_AGENT_CONNECTION_COPY_COLUMNS = ("api_base_url", "api_key", "extra_body")
+
+
+def _normalize_base_url(value: str | None) -> str | None:
+    text = (value or "").strip().rstrip("/")
+    return text or None
+
+
+def _routed_model(model_work: str | None, model_social: str | None) -> str | None:
+    """The model the old runtime actually sent: work, else social."""
+    for value in (model_work, model_social):
+        if value and value.strip():
+            return value.strip()
+    return None
+
+
+def _pick_connection_for_agent(
+    connections: list[tuple[str, str, str | None, str | None, str | None]],
+    base_url: str | None,
+    model: str | None,
+    extra_body: str | None,
+) -> tuple[str | None, str]:
+    """Apply the upgrade linking rule to one agent's copied settings.
+
+    Args:
+        connections: ``(id, name, normalised base URL, model, extra_body)``.
+        base_url: The agent's normalised ``api_base_url``.
+        model: The model the agent was sending.
+        extra_body: The agent's copied extra body.
+
+    Returns:
+        ``(connection id, "exact")``, ``(connection id, "endpoint")`` or
+        ``(None, "unlinked")``.
+    """
+    on_endpoint = [conn for conn in connections if base_url is not None and conn[2] == base_url]
+    exact = [conn for conn in on_endpoint if model is not None and (conn[3] or "").strip() == model]
+    if len(exact) > 1:
+        exact = [conn for conn in exact if (conn[4] or None) == (extra_body or None)]
+    if len(exact) == 1:
+        return exact[0][0], "exact"
+    if len(on_endpoint) == 1:
+        return on_endpoint[0][0], "endpoint"
+    return None, "unlinked"
+
+
+def _link_agents_to_connections(con: SQLiteCompatConnection) -> None:
+    """Move agents from copied per-mode settings to one live AI connection.
+
+    1. Adds ``connection_id`` and the two thinking columns to ``agents`` and
+       ``agent_snapshots``, and ``thinking_levels`` to ``ai_connections``.
+    2. Links each unlinked agent that still has the old columns:
+       exactly one connection on the agent's endpoint (trailing ``/``
+       ignored) with its model, ties broken by an exact ``extra_body``
+       match; otherwise the single connection on that endpoint, logged at
+       INFO with the old and new model because the agent will now send the
+       connection's model; otherwise left unlinked and logged at WARNING.
+       "Its model" is ``model_work``, else ``model_social``: what the old
+       runtime sent.
+    3. Links each snapshot whose model exactly one connection has.
+    4. Drops the retired columns.
+
+    Steps 2–4 run in one transaction, so a failure leaves the old columns
+    for the next boot to try again. Idempotent: once the columns are gone
+    there is nothing to link or drop.
+
+    Raises ``sqlite3.Error`` from whichever statement failed, after rolling
+    the transaction back.
+    """
+    for table in ("agents", "agent_snapshots"):
+        _add_column_if_missing(con, table, "connection_id", "VARCHAR")
+        for column in ("thinking_social", "thinking_work"):
+            _add_column_if_missing(con, table, column, _THINKING_COLUMN.format(col=column))
+    _add_column_if_missing(con, "ai_connections", "thinking_levels", "TEXT")
+
+    agent_columns = {row[1] for row in con.execute("PRAGMA table_info(agents)").fetchall()}
+    snapshot_columns = {row[1] for row in con.execute("PRAGMA table_info(agent_snapshots)").fetchall()}
+    retired_agent = (*_RETIRED_AGENT_MODEL_COLUMNS, *_RETIRED_AGENT_CONNECTION_COPY_COLUMNS)
+    if not agent_columns.intersection(retired_agent) and not snapshot_columns.intersection(
+        _RETIRED_AGENT_MODEL_COLUMNS
+    ):
+        return
+
+    connections = [
+        (row[0], row[1], _normalize_base_url(row[2]), row[3], row[4])
+        for row in con.execute(
+            "SELECT id, name, api_base_url, model, extra_body FROM ai_connections ORDER BY name"
+        ).fetchall()
+    ]
+    names = {conn[0]: conn[1] for conn in connections}
+    models = {conn[0]: conn[3] for conn in connections}
+
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        if {"model_work", "model_social", "api_base_url", "extra_body"} <= agent_columns:
+            rows = con.execute(
+                "SELECT id, name, model_work, model_social, api_base_url, extra_body "
+                "FROM agents WHERE connection_id IS NULL"
+            ).fetchall()
+            for agent_id, name, model_work, model_social, base_url, extra_body in rows:
+                model = _routed_model(model_work, model_social)
+                normalized = _normalize_base_url(base_url)
+                connection_id, how = _pick_connection_for_agent(
+                    connections, normalized, model, extra_body,
+                )
+                if connection_id is None:
+                    logger.warning(
+                        "Migration: agent %s left without an AI connection "
+                        "(model %s, base URL %s) — choose one in its settings",
+                        name, model, base_url,
+                    )
+                    continue
+                con.execute(
+                    "UPDATE agents SET connection_id = $1 WHERE id = $2", [connection_id, agent_id],
+                )
+                if how == "endpoint":
+                    logger.info(
+                        "Migration: agent %s (was model %s) linked to AI connection %s "
+                        "on the same endpoint; it now sends model %s",
+                        name, model, names[connection_id], models[connection_id],
+                    )
+        if {"model_work", "model_social"} <= snapshot_columns:
+            by_model: dict[str, list[str]] = {}
+            for conn in connections:
+                if conn[3] and conn[3].strip():
+                    by_model.setdefault(conn[3].strip(), []).append(conn[0])
+            rows = con.execute(
+                "SELECT id, model_work, model_social FROM agent_snapshots WHERE connection_id IS NULL"
+            ).fetchall()
+            for snapshot_id, model_work, model_social in rows:
+                model = _routed_model(model_work, model_social)
+                matches = by_model.get(model, []) if model else []
+                if len(matches) == 1:
+                    con.execute(
+                        "UPDATE agent_snapshots SET connection_id = $1 WHERE id = $2",
+                        [matches[0], snapshot_id],
+                    )
+        for column in retired_agent:
+            _drop_column_if_present(con, "agents", column)
+        for column in _RETIRED_AGENT_MODEL_COLUMNS:
+            _drop_column_if_present(con, "agent_snapshots", column)
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
 
 
 def _ensure_source_keyed_sticky_slots(con: SQLiteCompatConnection) -> None:

@@ -6,8 +6,11 @@ AI Connections, AI Personalities, and API input models.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
+
+from core.models.thinking import ThinkingLevels, parse_thinking_levels
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +28,15 @@ class AIConnection(BaseModel):
     api_key: str | None = None
     model: str | None = None
     extra_body: str | None = None
+    # Level → JSON fragment deep-merged over extra_body for agents that pick
+    # that level (core.llm.thinking). None = the connection offers no levels.
+    thinking_levels: ThinkingLevels | None = None
     created_at: datetime
+
+    @field_validator("thinking_levels", mode="before")
+    @classmethod
+    def _parse_thinking_levels(cls, value: Any) -> ThinkingLevels | None:
+        return parse_thinking_levels(value)
 
 
 class AIConnectionCreate(BaseModel):
@@ -41,7 +52,13 @@ class AIConnectionCreate(BaseModel):
     api_key: str | None = None
     model: str | None = None
     extra_body: str | None = None
+    thinking_levels: ThinkingLevels | None = None
     supports_images: bool | None = None
+
+    @field_validator("thinking_levels", mode="before")
+    @classmethod
+    def _parse_thinking_levels(cls, value: Any) -> ThinkingLevels | None:
+        return parse_thinking_levels(value)
 
 
 class AIConnectionUpdate(BaseModel):
@@ -49,6 +66,9 @@ class AIConnectionUpdate(BaseModel):
 
     ``supports_images`` is written to ``model_capabilities`` for the
     effective model (the patched one, else the stored one).
+
+    ``thinking_levels``: None (not sent) leaves the map alone; ``{}`` clears
+    it, so it is kept as ``{}`` rather than read as "not sent".
     """
 
     name: str | None = None
@@ -56,7 +76,16 @@ class AIConnectionUpdate(BaseModel):
     api_key: str | None = None
     model: str | None = None
     extra_body: str | None = None
+    thinking_levels: ThinkingLevels | None = None
     supports_images: bool | None = None
+
+    @field_validator("thinking_levels", mode="before")
+    @classmethod
+    def _parse_thinking_levels(cls, value: Any) -> ThinkingLevels | None:
+        levels = parse_thinking_levels(value)
+        if levels is None and value is not None:
+            return {}
+        return levels
 
 
 # ---------------------------------------------------------------------------

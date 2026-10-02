@@ -5,10 +5,10 @@ so that an agent can be recreated after it was deleted, or started again from
 one that still exists. There is one row per agent and no version history:
 every capture overwrites the last. Add agent's Recent scope lists these.
 
-Never a secret. The model mirrors the table's explicit column list, which
-leaves out ``api_key``, ``api_base_url`` and ``extra_body``: those come from an
-AI connection and may carry credentials. A recreate re-links a connection by
-the model NAMES kept here, the way the Edit form already matches them.
+Never a secret. The model mirrors the table's explicit column list: an agent
+keeps no credentials of its own, only the id of its AI connection, which a
+recreate links again (when that connection still exists) with the two
+thinking levels.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ from pydantic import BaseModel, ConfigDict, field_validator
 # of a stored communication block, so a snapshot cannot accept a block an agent
 # would refuse, or the reverse.
 from core.models.agent import _coerce_communication
+from core.models.thinking import ThinkingChoice
 
 
 class AgentSnapshot(BaseModel):
@@ -48,11 +49,9 @@ class AgentSnapshot(BaseModel):
     communication: dict[str, str] | None = None
     prompt_template: str | None = None
     color: str | None = None
-    model_social: str | None = None
-    model_work: str | None = None
-    model_reasoning: str | None = None
-    model_extraction: str | None = None
-    model_self_queue: str | None = None
+    connection_id: str | None = None
+    thinking_social: ThinkingChoice = "default"
+    thinking_work: ThinkingChoice = "default"
     desk_x: int | None = None
     desk_y: int | None = None
     prompt_history_policy: dict[str, Any] | None = None

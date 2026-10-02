@@ -63,14 +63,14 @@ def teardown_function() -> None:
     reset_channel_list_snapshots()
 
 
-def _agent(name: str, x: int, *, floor_id: str | None = None, api_base_url: str | None = None):
+def _agent(name: str, x: int, *, floor_id: str | None = None, connection_id: str | None = None):
     return db.create_agent(
         name,
         role="Eng",
         desk_x=x,
         desk_y=1,
         floor_id=floor_id,
-        api_base_url=api_base_url,
+        connection_id=connection_id,
     )
 
 
@@ -155,15 +155,17 @@ def test_same_floor_channel_create_stamps_floor_and_mixed_roster_denies() -> Non
 
 
 def test_api_and_self_hosted_share_a_floor() -> None:
-    hosted = _agent("Hosted", 1, api_base_url="https://example.test/v1")
-    local = _agent("Local", 2, api_base_url=None)
+    hosted_conn = db.create_connection(name="Hosted", api_base_url="https://example.test/v1", model="m")
+    local_conn = db.create_connection(name="Local", api_base_url="http://127.0.0.1:9/v1", model="m")
+    hosted = _agent("Hosted", 1, connection_id=hosted_conn.id)
+    local = _agent("Local", 2, connection_id=local_conn.id)
     channel = db.create_channel(
         name="Same floor",
         member_agent_ids=[hosted.id, local.id],
         created_by=hosted.id,
     )
     assert hosted.floor_id == local.floor_id == channel.floor_id == LOBBY_ID
-    assert hosted.api_base_url != local.api_base_url
+    assert hosted.connection_id != local.connection_id
 
 
 def test_talk_fanout_skips_a_member_moved_off_the_thread_floor() -> None:

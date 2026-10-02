@@ -3,17 +3,17 @@
  *
  * The inverse of context/agent-form-fields.js: that decides what fields exist,
  * this decides what the server is told they contain. They share
- * context/agent-fields.js so the two halves cannot drift — a model type only
- * one of them knows about is a connection the operator sets and the agent
+ * context/agent-fields.js so the two halves cannot drift — an activation only
+ * one of them knows about is a thinking level the operator sets and the agent
  * never gets.
  *
- * Two resolutions happen here rather than server-side, both because the form
- * offers a friendlier thing than the agent stores: a personality is a prompt
- * template to copy, and a connection is a model name plus the base URL. A
- * connection with no explicit model identifier THROWS rather than saving an
- * agent that would fail on its first turn with no visible cause. The one
- * personality that is not a personality — a recreated agent's prompt kept
- * because nothing configured matches it — sends the kept text itself.
+ * The AI connection is sent as its id, with the two thinking levels: the
+ * server checks that the connection exists, has a model and offers the
+ * levels, and the runtime reads the connection live. One resolution still
+ * happens here, because the form offers a friendlier thing than the agent
+ * stores: a personality is a prompt template to copy. The one personality that
+ * is not a personality — a recreated agent's prompt kept because nothing
+ * configured matches it — sends the kept text itself.
  *
  * The colour is validated the same way, and for the same reason: an agent whose
  * seed is too light is drawn on the office floor as a sprite nobody can pick
@@ -29,15 +29,15 @@ const BossModAgentSubmit = (() => {
 
     /**
      * @param {HTMLFormElement} form
-     * @param {object[]} connections
      * @returns {Promise<{agentData: object, promptHistoryPolicy: object}>}
-     * @throws {Error} When a selected connection carries no model identifier,
-     *   when the chosen colour is too light to render as a visible agent, or
-     *   when the kept personality is chosen and its text is not on the form.
-     *   Refused rather than darkened: silently saving a different colour than
-     *   the operator picked is the behaviour this codebase forbids.
+     *   `agentData.connection_id` is null while no connection is chosen.
+     * @throws {Error} When the chosen colour is too light to render as a
+     *   visible agent, or when the kept personality is chosen and its text is
+     *   not on the form. Refused rather than darkened: silently saving a
+     *   different colour than the operator picked is the behaviour this
+     *   codebase forbids.
      */
-    async function buildSubmitData(form, connections) {
+    async function buildSubmitData(form) {
         const formData = new FormData(form);
 
         const deskValue = formData.get('desk');
@@ -87,27 +87,14 @@ const BossModAgentSubmit = (() => {
             } catch { /* use null */ }
         }
 
-        // Resolve connection IDs → copy model names; backend copies stored secrets.
-        const connMap = {};
-        for (const c of connections) connMap[c.id] = c;
-
-        for (const t of BossModAgentFields.MODEL_TYPES) {
-            const connId = formData.get(t.key);
-            if (connId && connMap[connId]) {
-                const conn = connMap[connId];
-                const runtimeModel = (conn.model || '').trim();
-                if (!runtimeModel) {
-                    throw new Error(`Connection "${conn.name}" is missing an explicit model identifier`);
-                }
-                agentData[t.key] = runtimeModel;
-                if (!agentData.connection_id) {
-                    agentData.connection_id = conn.id;
-                    agentData.api_base_url = conn.api_base_url;
-                    agentData.extra_body = conn.extra_body || null;
-                }
-            } else {
-                agentData[t.key] = null;
-            }
+        // The connection's id and the thinking levels, as the section's hidden
+        // inputs hold them (context/agent-form-connections.js). The server
+        // refuses a connection that is gone or has no model, and a level the
+        // connection does not offer.
+        agentData.connection_id = formData.get('connection_id') || null;
+        for (const mode of BossModAgentFields.THINKING_MODES) {
+            const choice = formData.get(mode.key);
+            if (choice) agentData[mode.key] = choice;
         }
 
         const earliestTsRaw = String(formData.get('prompt_history_earliest_ts') || '').trim();

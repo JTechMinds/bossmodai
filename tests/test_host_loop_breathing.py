@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.decision_parse_fail import PARSE_FAIL_NOTE
@@ -232,7 +233,7 @@ async def test_decision_repair_yields_then_fail_closes_and_requeues(
 ) -> None:
     db.set_setting("decision_repair_attempts", "1", "llm")
     config.reload()
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)

@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
@@ -62,8 +63,8 @@ def _item(client: TestClient, ext_id: str = _BV) -> dict:
 
 def test_list_shows_browser_vision_with_setup_state_and_excluded_agents(client) -> None:
     db.set_supports_images("vision-model", True)
-    db.create_agent("Seer", role="Researcher", model_work="vision-model")
-    blind = db.create_agent("Scribe", role="Writer", model_work="text-model")
+    db.create_agent("Seer", role="Researcher", connection_id=model_connection("vision-model"))
+    blind = db.create_agent("Scribe", role="Writer", connection_id=model_connection("text-model"))
 
     item = _item(client)
 

@@ -24,7 +24,7 @@
  * The FORM is stubbed and the dialog is real. context/agent-form.js builds its
  * markup as a string and the shared fake parses no HTML, so this hands
  * buildFormHTML a hand-built form with the same SHAPE the real one has — the
- * name field, then #role-contract-card, then the connection matrix, then the
+ * name field, then #role-contract-card, then the AI Connection section, then the
  * Advanced disclosure, nested the way the quick layout has to move them. What
  * the real markup contains is tests/js_agent_form_harness.cjs's subject; what
  * this one is about is what the two steps do to it.
@@ -43,7 +43,7 @@ const NAMES = [
     "BossModAgentApi", "BossModAgentTemplatesApi", "BossModAgentFields",
     "BossModCommunication",
     // The two the fake form leans on rather than reimplementing: the shape
-    // vocabulary the refusal reads back, and the connection guard itself.
+    // vocabulary the refusal reads back, and the per-field bindings.
     "BossModAgentFormConnections", "BossModAgentFormBindings",
     "BossModAgentFormHydrate", "BossModAgentRecovery", "BossModAgentFormSave",
     // The picker draws the local library with the marketplace's own card and
@@ -124,8 +124,7 @@ function snapshot(overrides) {
             tone: "direct", density: "compact", jargon: "light", audience: "operator",
         },
         prompt_template: "You are terse.", color: "#1d4ed8",
-        model_social: null, model_work: "llama3.1:8b", model_reasoning: null,
-        model_extraction: null, model_self_queue: null,
+        connection_id: "c1", thinking_social: "default", thinking_work: "default",
         desk_x: 3, desk_y: 4,
         prompt_history_policy: {
             last_n_histories: 7, max_allowed_history_tokens: 900,
@@ -142,7 +141,7 @@ const SNAPSHOTS = [
     snapshot({
         id: "s2", agent_id: "a2", name: "Bo", role: "Writer",
         description: "Drafts release notes.", deleted_at: null,
-        model_work: "gpt-4o-mini", prompt_template: null,
+        thinking_work: "off", prompt_template: null,
     }),
 ];
 
@@ -158,45 +157,36 @@ const TEMPLATES = [
 
 // ─── The form the dialog builds ───
 
-function select(name, id, options) {
-    const el = h("select", { name, id });
-    options.forEach(([value, label]) => el.append(h("option", { value }, label)));
-    el.value = "";
-    return el;
-}
-
 /**
- * The matrix, in whichever of its two shapes agent-form-connections.js would
- * have built: the "Set All" select over the grid, or — with nothing configured
- * — a link to Settings and no select at all. The second one is the shape that
- * used to produce an agent with five null connections.
+ * The AI Connection section, in whichever of its two shapes
+ * agent-form-connections.js would have built: the picker — its mount points
+ * and the hidden inputs the submit reads — or, with nothing configured, a link
+ * to Settings and no control at all. The dropdowns themselves are
+ * tests/js_agent_form_harness.cjs's and tests/js_context_harness.cjs's
+ * subject; here the inputs are answered directly, the way a pick writes them.
  */
 function buildConnections() {
     if (connectionMode === "none") {
         return h("section", { class: "form-section" },
-            h("h3", { class: "form-section-title" }, "AI Connections"),
+            h("h3", { class: "form-section-title" }, "AI Connection"),
             h("p", { class: "field-hint" }, "No connections configured. ",
                 h("button", { type: "button", id: "btn-goto-connections" },
                     "Add one in Settings")));
     }
-    const allSelect = select("model_all", "agent-connection-model_all",
-        [["", "— Set all connections —"], ["c1", "Local (llama)"]]);
-    // ALL FIVE, as agent-form-connections.js builds them. One stood in for the
-    // grid while nothing here read more than one of them; the connection guard
-    // reads every one — "is any of them answered" is not a question a single
-    // select can be asked — and a stub that offered fewer would be a form the
-    // guard is entitled to refuse.
-    const matrix = h("div", { class: "connection-grid" },
-        ...global.BossModAgentFields.MODEL_TYPES.map((type) => select(
-            type.key, `agent-connection-${type.key}`,
-            [["", "None"], ["c1", "Local (llama)"]])));
+    const hidden = (name, value) => {
+        const input = h("input", { type: "hidden", name });
+        input.value = value;
+        return input;
+    };
     return h("section", { class: "form-section" },
-        h("h3", { class: "form-section-title" }, "AI Connections"),
+        h("h3", { class: "form-section-title" }, "AI Connection"),
         h("div", { class: "field" },
-            h("label", { for: "agent-connection-model_all" }, "Set All"),
-            allSelect),
-        h("hr", { class: "form-rule" }),
-        matrix);
+            h("div", { id: "agent-ai-mount-connection_id" }),
+            hidden("connection_id", "")),
+        h("div", { class: "connection-grid" },
+            ...global.BossModAgentFields.THINKING_MODES.map((mode) => h("div", { class: "field" },
+                h("div", { id: `agent-ai-mount-${mode.key}` }),
+                hidden(mode.key, "default")))));
 }
 
 function buildForm() {
@@ -231,34 +221,11 @@ function buildForm() {
             card),
         connections, advanced);
 
-    // WHAT agent-form.js BINDS, reproduced in the same order, because the two
-    // things it binds to this markup are the subject of section 6 and neither
-    // lives in a module this stub could skip:
-    //
-    //   1. the "Set All" fan-out, which writes the five FROM SCRIPT;
-    //   2. bindConnectionGuard, AFTER it, so the guard reads the five once the
-    //      fan-out has written them — a script-assigned value fires no change
-    //      event, so the order is load-bearing and is asserted in
-    //      tests/test_add_agent_modal.py.
-    //
-    // The guard is the REAL module (context/agent-form-bindings.js). A stub of
-    // it would be a stub of the rule under test.
-    const setAll = form.querySelector('select[name="model_all"]');
-    if (setAll) {
-        setAll.addEventListener("change", () => {
-            if (!setAll.value) return;
-            global.BossModAgentFields.MODEL_TYPES.forEach((type) => {
-                const control = form.querySelector(`select[name="${type.key}"]`);
-                if (control) control.value = setAll.value;
-            });
-        });
-    }
     form.setAttribute(
         global.BossModAgentFormConnections.AI_QUESTION,
         global.BossModAgentFormConnections.shapeFor(
             connectionMode === "none" ? [] : CONNECTIONS),
     );
-    global.BossModAgentFormBindings.bindConnectionGuard(form, { creating: true });
     return form;
 }
 
@@ -298,9 +265,8 @@ const creates = [];
 // Every PATCH /api/agents/{id}. A recreate must never be one: the form it
 // fills creates a NEW agent, and the snapshot is values, not identity.
 const updates = [];
-// What GET /api/connections answers with when it answers at all. It is what
-// the five stub selects offer, so the submit stub resolves a real value rather
-// than a placeholder.
+// What GET /api/connections answers with when it answers at all: the one
+// connection `answerAi` picks.
 const CONNECTIONS = [
     { id: "c1", name: "Local (llama)", model: "llama3.1:8b", api_base_url: "http://local/v1" },
 ];
@@ -394,24 +360,18 @@ global.BossModAgentForm = {
         container.replaceChildren(buildForm());
     },
 };
-// Reads the form it is handed AND the connections it is handed, so a test can
-// tell WHICH draft reached the server and WHAT that draft would have written.
-// Answering `{}` for every form is exactly the hole a create from the previous
-// pick slipped through unnoticed; ignoring `connections` was the same hole one
-// layer down, and it is why no harness could watch a save write five nulls.
+// Reads the form it is handed, so a test can tell WHICH draft reached the
+// server and WHAT that draft would have written. Answering `{}` for every form
+// is exactly the hole a create from the previous pick slipped through
+// unnoticed. The same reading the real mapper does: the connection's id from
+// its hidden input, null while nothing is chosen.
 global.BossModAgentSubmit = {
-    buildSubmitData: async (form, connections) => {
-        const byId = new Map((connections || []).map((conn) => [conn.id, conn]));
-        const agentData = { name: form.querySelector('input[name="name"]').value };
-        for (const type of global.BossModAgentFields.MODEL_TYPES) {
-            const control = form.querySelector(`select[name="${type.key}"]`);
-            const conn = control ? byId.get(control.value) : null;
-            agentData[type.key] = conn ? conn.model : null;
-            if (conn && !agentData.connection_id) {
-                agentData.connection_id = conn.id;
-                agentData.api_base_url = conn.api_base_url;
-            }
-        }
+    buildSubmitData: async (form) => {
+        const connection = form.querySelector('input[name="connection_id"]');
+        const agentData = {
+            name: form.querySelector('input[name="name"]').value,
+            connection_id: (connection && connection.value) || null,
+        };
         return { agentData, promptHistoryPolicy: {} };
     },
 };
@@ -462,23 +422,17 @@ async function type(input, value) {
     for (const fn of [...(input.listeners.input || [])]) await fn({ target: input });
 }
 
-/** Answer one connection select the way an operator does. */
-async function choose(control, value) {
-    control.value = value;
-    for (const fn of [...(control.listeners.change || [])]) await fn({ target: control });
-}
-
 /**
  * Answer the AI question on the form currently in the dialog.
  *
- * Every CREATE has to get past it now: agent-form-save.js refuses one whose
- * five `model_*` keys are all null (spec 8.3), so a section whose subject is
- * the footer, the claim or the keyboard has to answer it before it can watch
- * a save happen at all. One of the FIVE, directly — this harness stubs
- * `BossModAgentForm`, so nothing here fans `model_all` out to them.
+ * Every CREATE has to get past it: agent-form-save.js refuses one with no
+ * `connection_id` (spec 8.3), so a section whose subject is the footer, the
+ * claim or the keyboard has to answer it before it can watch a save happen at
+ * all. Written into the hidden input directly, as a pick writes it — this
+ * harness stubs `BossModAgentForm`, so no dropdown is mounted.
  */
 async function answerAi() {
-    await choose(find('select[name="model_work"]'), "c1");
+    find('input[name="connection_id"]').value = "c1";
 }
 
 async function open(tab = "add") {
@@ -787,26 +741,20 @@ async function main() {
     // overwrite a draft, and a name it filled would be accepted by accident.
     verdict.operatorFieldsUntouched = field('input[name="name"]').value === ""
         && field('input[name="agent-color"]').checked === true
-        && field('select[name="model_work"]').value === ""
+        && field('input[name="connection_id"]').value === ""
         && field('input[name="name"]').getAttribute("placeholder") === "e.g. Code Auditor";
 
-    // THE CONNECTION QUESTION IS ON SCREEN, in the matrix, and it is required
-    // until it is answered. It used to be a single select LIFTED out beside
-    // Name with the matrix swept behind a disclosure — so the five selects the
-    // save actually reads, and the colour swatches, were the two things a
-    // template hid.
-    const setAll = field('select[name="model_all"]');
-    verdict.connectionOnScreen = Boolean(setAll)
-        && setAll.hasAttribute("required")
+    // THE CONNECTION QUESTION IS ON SCREEN, unanswered. It used to be a
+    // single select LIFTED out beside Name with the rest swept behind a
+    // disclosure — so what the save actually reads, and the colour swatches,
+    // were the two things a template hid.
+    const aiKeys = ["connection_id", ...global.BossModAgentFields.THINKING_MODES.map((mode) => mode.key)];
+    verdict.connectionOnScreen = field('input[name="connection_id"]').value === ""
         && Boolean(form.querySelector(".connection-grid"))
-        // Every one of the five the submit path reads, and none of them behind
-        // the one disclosure that is left.
-        && global.BossModAgentFields.MODEL_TYPES.every((type) => {
-            const select = form.querySelector(`select[name="${type.key}"]`);
-            return Boolean(select)
-                && form.querySelector("#advanced-content").querySelector(
-                    `select[name="${type.key}"]`) === null;
-        });
+        // Every input the submit path reads, and none of them behind the one
+        // disclosure that is left.
+        && aiKeys.every((key) => Boolean(form.querySelector(`input[name="${key}"]`))
+            && form.querySelector("#advanced-content").querySelector(`input[name="${key}"]`) === null);
     // ONE LAYOUT: nothing a template answered is hidden, and the disclosure
     // that used to hold it does not exist.
     verdict.templateHidesNothing = form.querySelector(".quick-disclosure") === null
@@ -824,31 +772,17 @@ async function main() {
     const templateSections = form.querySelectorAll(".form-section-title")
         .map((node) => node.textContent).join("|");
 
-    // ─── 6. The connection guard tracks the ANSWER, not a disclosure ───
+    // ─── 6. A panel toggle is not an answer ───
     //
-    // Opening a panel used to drop `required` from the lifted select, one way
-    // and for good — and that panel was where the template's specialty,
-    // description and what-done lived, so opening it to READ them disarmed the
-    // guard and Create wrote five null connections over "Saved successfully".
-    // What relaxes it is an answer in the matrix, and only that.
-    //
-    // Re-pointed at Advanced, the one disclosure that remains. The property is
-    // not about any particular panel: a panel toggle is not an answer.
+    // Opening a panel once dropped the guard on the lifted select, and that
+    // panel was where the template's specialty, description and what-done
+    // lived — so opening it to READ them was taken as the operator's answer
+    // and Create wrote no connection. Only a pick answers the AI question now,
+    // and the refusal reads what would be sent (agent-form-save.js).
     const advancedToggle = form.querySelector("#advanced-toggle");
     await advancedToggle.dispatchClick();
     await advancedToggle.dispatchClick();
-    verdict.expandingAloneKeepsTheGuard = setAll.hasAttribute("required");
-    // Any ONE of the five is an answer: the operator setting the matrix by
-    // hand must not be blocked by the convenience select above it.
-    const perType = global.BossModAgentFields.MODEL_TYPES
-        .map((type) => form.querySelector(`select[name="${type.key}"]`));
-    await choose(perType[1], "c1");
-    verdict.answeringOneTypeReleasesTheGuard = !setAll.hasAttribute("required");
-    // ...and clearing them all back to None re-arms it. A live check in both
-    // directions, which is what a one-way flip could never be.
-    await choose(perType[1], "");
-    verdict.clearingThemAllRearmsTheGuard = setAll.hasAttribute("required")
-        && perType.every((sel) => sel.value === "");
+    verdict.aPanelToggleIsNotAnAnswer = field('input[name="connection_id"]').value === "";
 
     // ─── 7. Back keeps the draft, and returns focus to the Find box ───
     await type(field('input[name="name"]'), "Mine");
@@ -874,12 +808,9 @@ async function main() {
         && after.querySelector('input[name="name"]').getAttribute("placeholder") === "e.g. PM Agent"
         && after.querySelector(".template-chip") === null
         && after.querySelector(".template-tools") === null
-        // The GUARD is untouched by Remove template, and that is the change
-        // this pins: it tracks whether the matrix has been answered, and
-        // dropping a template answers nothing. It used to be released here,
-        // which meant "Remove template" quietly re-opened the route to a
-        // connectionless agent. The five are still at None, so it stays armed.
-        && after.querySelector('select[name="model_all"]').hasAttribute("required");
+        // Remove template answers nothing about the AI connection: the
+        // question is still open, and the save-time refusal still stands.
+        && after.querySelector('input[name="connection_id"]').value === "";
     // Every field the template wrote, including the one applyHireFields only
     // ever set: a personality left selected under a cleared form is a template
     // that Remove template did not remove.
@@ -907,13 +838,13 @@ async function main() {
         && Boolean(back()) && back().hidden === false
         // Blank has no card title: its crumb says what the form makes.
         && trail() === "Agents › New agent";
-    // Same sections, same order, whichever cell was picked — and the guard is
-    // armed on BOTH, because an agent with no connection fails on its first
-    // turn however it was created. Blank used to carry no guard at all.
+    // Same sections, same order, whichever cell was picked — and the AI
+    // question open on BOTH, because an agent with no connection fails on its
+    // first turn however it was created.
     verdict.blankAndTemplateRenderTheSameSections =
-        sectionsOf(blank) === "Identity|AI Connections"
+        sectionsOf(blank) === "Identity|AI Connection"
         && sectionsOf(blank) === templateSections
-        && blank.querySelector('select[name="model_all"]').hasAttribute("required") === true;
+        && blank.querySelector('input[name="connection_id"]').value === "";
     await close();
     verdict.closes = dialogs().length === 0;
 
@@ -925,13 +856,12 @@ async function main() {
     const bare = find("#agent-form");
     const barePrimary = documentStub.querySelector("#agent-form-submit");
     const bareLine = dialog().querySelector("#agent-save-feedback");
-    // The section renders its link to Settings and NO select — there is
-    // nothing to choose, so there is no control to make required. A stand-in
-    // `required` select that wrote to nothing used to stand here: it was a
-    // control the operator could not answer, and it let them fill the whole
-    // form before native validation stopped them.
+    // The section renders its link to Settings and NO control — there is
+    // nothing to choose. A stand-in `required` select that wrote to nothing
+    // used to stand here: it was a control the operator could not answer, and
+    // it let them fill the whole form before native validation stopped them.
     verdict.noConnectionsIsToldInFront =
-        bare.querySelector('select[name="model_all"]') === null
+        bare.querySelector('input[name="connection_id"]') === null
         && bare.querySelector("#btn-goto-connections") !== null
         // On screen, not behind the one disclosure that is left.
         && bare.querySelector("#advanced-content")
@@ -942,13 +872,13 @@ async function main() {
         && barePrimary.getAttribute("aria-describedby") === "agent-save-feedback"
         && bareLine.textContent.includes("No AI connection is configured")
         && bareLine.textContent.includes("Add one in Settings");
-    // Dropping the template answers nothing, so the block stays. There are no
-    // five selects here that could ever answer it.
+    // Dropping the template answers nothing, so the block stays. There is no
+    // control here that could ever answer it.
     await find("#quick-provenance-clear").dispatchClick();
     await drain();
     verdict.noConnectionsStaysBlockedAfterTheChipGoes =
         documentStub.querySelector("#agent-form-submit").disabled === true
-        && find("#agent-form").querySelector('select[name="model_all"]') === null;
+        && find("#agent-form").querySelector('input[name="connection_id"]') === null;
     await close();
     connectionMode = "ready";
 
@@ -1661,7 +1591,7 @@ async function main() {
         && sent.description === "Turns merged PRs into notes."
         && sent.category === "engineering"
         && typeof sent.communication === "object"
-        && !("name" in sent) && !("color" in sent) && !("model_work" in sent);
+        && !("name" in sent) && !("color" in sent) && !("connection_id" in sent);
     // It landed: the layer says where it went and offers one way out, and the
     // dialog's other views are told to re-read.
     verdict.aSavedTemplateSaysWhereItWentAndRefreshesBoth =

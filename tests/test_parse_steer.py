@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.decision_contract import ConversationDecision, parse_direct_turn_response
@@ -215,7 +216,7 @@ async def test_decision_prose_fail_closes_without_repair_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(0)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     seen = _script_completions(monkeypatch, ["Still validating the clone. No JSON."])
@@ -244,7 +245,7 @@ async def test_decision_invented_needs_approval_fail_closes_without_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(0)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     seen = _script_completions(
@@ -283,7 +284,7 @@ async def test_decision_invented_th2_fail_closes_without_repair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _limit_decision_repairs(0)
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     seen = _script_completions(
@@ -318,7 +319,7 @@ async def test_decision_invented_th2_fail_closes_without_repair(
 async def test_execution_prose_fail_closes_without_repair_loop(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -424,7 +425,7 @@ def test_say_only_does_not_parse_as_done() -> None:
 async def test_one_to_one_say_only_posts_to_chat_without_board_actions(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     seen = _script_completions(
@@ -457,7 +458,7 @@ async def test_one_to_one_say_only_posts_to_chat_without_board_actions(
 async def test_say_only_does_not_complete_or_block_active_work(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)

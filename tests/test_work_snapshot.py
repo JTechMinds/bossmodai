@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.decision_runtime import apply_decision
@@ -69,7 +70,7 @@ def _task(agent_id: str, title: str = "Execute the 9 fixes"):
 
 
 def _working_agent():
-    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     task = _task(agent.id)
     activity = activity_runtime.activate_work_activity(agent.id, task, task_status="active")
     assert activity is not None
@@ -456,7 +457,7 @@ def test_finish_restored_turn_ignores_unrestored_triggers() -> None:
 
 @pytest.mark.asyncio
 async def test_wait_feedback_keeps_the_turn_alive_until_the_wait_is_valid(monkeypatch: pytest.MonkeyPatch) -> None:
-    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     task = create_or_bind_task(
         title="Execute the 9 fixes",
         description="Apply the review fixes.",
@@ -489,7 +490,7 @@ def _thread_wake_behind_a_live_speaker(agent_id: str, *, live: bool) -> Any:
 
     Returns the peer's claimed trigger, or ``None`` when ``live`` is false.
     """
-    peer = db.create_agent("Debra", role="PM", desk_x=2, desk_y=1, model_work="test/mock")
+    peer = db.create_agent("Debra", role="PM", desk_x=2, desk_y=1, connection_id=model_connection("test/mock"))
     room = db.create_channel(name="Room", member_agent_ids=[agent_id, peer.id])
     claimed = None
     if live:

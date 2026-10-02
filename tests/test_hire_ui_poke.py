@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
@@ -292,7 +293,10 @@ def test_world_state_includes_created_agent_and_location(
     created = client.post(
         "/api/agents",
         headers=_headers(),
-        json={"name": "Poke Nova", "role": "Writer", "color": "#f59e0b"},
+        json={
+            "name": "Poke Nova", "role": "Writer", "color": "#f59e0b",
+            "connection_id": model_connection("test/mock"),
+        },
     )
     assert created.status_code == 201
     agent_id = created.json()["id"]

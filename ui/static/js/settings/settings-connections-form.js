@@ -13,6 +13,46 @@
  * there is one copy of it.
  */
 const BossModConnectionForm = (() => {
+    /**
+     * The levels a connection can offer, in the order the agent form lists
+     * them. Keys are core/models/thinking.py's ThinkingLevel; the server
+     * refuses any other.
+     */
+    const THINKING_LEVELS = Object.freeze([
+        { key: 'off', label: 'Off' },
+        { key: 'low', label: 'Low' },
+        { key: 'medium', label: 'Medium' },
+        { key: 'high', label: 'High' },
+        { key: 'xhigh', label: 'Extra high' },
+    ]);
+
+    /**
+     * Read the five thinking-level inputs into the map the server takes.
+     *
+     * @param {FormData} fd
+     * @returns {object} level → parsed JSON object; blank levels are left out,
+     *   so an all-blank form is `{}`.
+     * @throws {Error} Naming the level whose text is not a JSON object.
+     */
+    function readThinkingLevels(fd) {
+        const levels = {};
+        for (const { key, label } of THINKING_LEVELS) {
+            const text = String(fd.get(`thinking_level_${key}`) || '').trim();
+            if (!text) continue;
+            let parsed;
+            try {
+                parsed = JSON.parse(text);
+            } catch {
+                throw new Error(`Thinking level “${label}” is not valid JSON.`);
+            }
+            if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || !Object.keys(parsed).length) {
+                throw new Error(`Thinking level “${label}” must be a non-empty JSON object.`);
+            }
+            levels[key] = parsed;
+        }
+        return levels;
+    }
+
     async function copyApiKey(value, statusEl = null) {
         if (!value) return;
         try {
@@ -135,6 +175,20 @@ const BossModConnectionForm = (() => {
                                   class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
                                          bg-bm-bg font-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
                     </div>
+                    <fieldset>
+                        <legend class="block text-sm font-medium mb-1">Thinking levels</legend>
+                        <p class="text-xs text-bm-muted mb-1.5">Optional. The JSON for each level is deep-merged over Extra Body for agents that pick that level. Leave a level blank to not offer it.</p>
+                        <div class="space-y-2">
+                            ${THINKING_LEVELS.map(({ key, label }) => `<div>
+                                <label for="connection-thinking-${BossModFormat.escapeAttribute(key)}" class="block text-xs font-medium mb-1">${BossModFormat.escapeHtml(label)}</label>
+                                <input type="text" id="connection-thinking-${BossModFormat.escapeAttribute(key)}" name="thinking_level_${BossModFormat.escapeAttribute(key)}"
+                                       value="${BossModFormat.escapeAttribute(conn?.thinking_levels?.[key] ? JSON.stringify(conn.thinking_levels[key]) : '')}"
+                                       placeholder='e.g. {"thinking": {"type": "${key === 'off' ? 'disabled' : 'enabled'}"}}'
+                                       class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
+                                              bg-bm-bg font-mono">
+                            </div>`).join('')}
+                        </div>
+                    </fieldset>
                     <div id="connection-save-status" class="hidden p-3 rounded-lg text-sm"></div>
                     <div id="test-conn-result" class="hidden p-3 rounded-lg text-sm"></div>
                     <div class="flex gap-2 pt-2">
@@ -246,12 +300,25 @@ const BossModConnectionForm = (() => {
         document.getElementById('connection-form').addEventListener('submit', async (e) => {
             e.preventDefault();
             const fd = new FormData(e.target);
+            const status = document.getElementById('connection-save-status');
+            let thinkingLevels;
+            try {
+                thinkingLevels = readThinkingLevels(fd);
+            } catch (err) {
+                status.className = 'p-3 rounded-lg text-sm bg-red-50 border border-red-200 text-red-700';
+                status.textContent = err.message;
+                status.classList.remove('hidden');
+                return;
+            }
             const data = {
                 name: fd.get('name'),
                 api_base_url: fd.get('api_base_url'),
                 model: fd.get('model') || null,
                 extra_body: fd.get('extra_body')?.trim() || null,
             };
+            // An edit always sends the map, so clearing every level clears it
+            // ({}); a create with none offered sends nothing.
+            if (isEdit || Object.keys(thinkingLevels).length) data.thinking_levels = thinkingLevels;
             if (imagesToggled) data.supports_images = supportsImages;
             const enteredKey = fd.get('api_key');
             if (enteredKey) {
@@ -259,7 +326,6 @@ const BossModConnectionForm = (() => {
             } else if (!isEdit) {
                 data.api_key = null;
             }
-            const status = document.getElementById('connection-save-status');
             if (status) {
                 status.className = 'p-3 rounded-lg text-sm bg-slate-50 border border-bm-border text-bm-muted';
                 status.textContent = 'Saving...';

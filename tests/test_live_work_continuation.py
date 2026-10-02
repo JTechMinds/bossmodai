@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import ensure_live_work_continuation
@@ -63,7 +64,7 @@ def _task(agent_id: str, *, title: str = "Execute the 9 fixes", channel_id: str 
 
 
 def _working_agent(name: str = "Charles", *, model: str | None = "test/mock", channel_id: str | None = None):
-    agent = db.create_agent(name, role="Build Engineer", desk_x=1, desk_y=1, model_work=model)
+    agent = db.create_agent(name, role="Build Engineer", desk_x=1, desk_y=1, connection_id=model_connection(model))
     task = _task(agent.id, channel_id=channel_id)
     activity_runtime.activate_work_activity(agent.id, task, task_status="active")
     return agent, task
@@ -111,8 +112,8 @@ def _script(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> list[str]:
 @pytest.mark.asyncio
 async def test_channel_reply_while_working_queues_the_resume(monkeypatch: pytest.MonkeyPatch) -> None:
     """The 20:48 case: "On it… executing now" in the thread must not orphan live work."""
-    brad = db.create_agent("Brad", role="Reviewer", desk_x=2, desk_y=1, model_work="test/mock")
-    charles = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, model_work="test/mock")
+    brad = db.create_agent("Brad", role="Reviewer", desk_x=2, desk_y=1, connection_id=model_connection("test/mock"))
+    charles = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     channel = db.create_channel(
         name="Charles, Brad",
         member_agent_ids=[charles.id, brad.id],
@@ -297,7 +298,7 @@ async def test_done_resumes_paused_work_before_an_older_pending_task() -> None:
     from core.agent_loop.actions import execute_action
     from core.agent_loop.activity_scheduler import next_work_after_end
 
-    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     queued = _task(agent.id, title="Older queued work")
     _set_created_at(queued.id, "2026-01-01 00:00:00")
     paused = _task(agent.id, title="Paused work")
@@ -337,7 +338,7 @@ async def test_done_resumes_paused_work_before_an_older_pending_task() -> None:
 def test_next_work_picks_the_oldest_queued_task_and_never_a_waiting_one() -> None:
     from core.agent_loop.activity_scheduler import next_work_after_end
 
-    agent = db.create_agent("Harley", role="Planner", desk_x=1, desk_y=1, model_work="test/mock")
+    agent = db.create_agent("Harley", role="Planner", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     waiting = _task(agent.id, title="Waiting on Debra")
     activity_runtime.activate_work_activity(agent.id, waiting, task_status="active")
     activity_runtime.pause_active_work(agent.id, "Waiting on Debra.", task_status="waiting")

@@ -13,6 +13,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
@@ -1161,6 +1162,7 @@ def test_api_import_hydrates_then_operator_still_names_hire(
         headers=_headers(),
         json={
             "name": "Desk Neighbor",
+            "connection_id": model_connection("test/mock"),
             **{k: v for k, v in body["hire_fields"].items() if k in {"role", "description", "done_fail_bar"}},
         },
     )

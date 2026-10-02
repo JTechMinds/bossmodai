@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.cli_turn_result import CliSideEffectError, broadcast_cli_side_effects, map_cli_result
 from core.bm_cli.results import approval_required_result
@@ -281,7 +282,7 @@ def _schedule_changes(recording: _RecordingSink) -> list[dict[str, Any]]:
 async def test_a_decision_turn_schedules_add_reaches_the_ui_live(sink, monkeypatch) -> None:
     from core.agent_loop.loop import run_turn
 
-    ada = db.create_agent("Ada", role="Operator", model_work="test/mock")
+    ada = db.create_agent("Ada", role="Operator", connection_id=model_connection("test/mock"))
     _script(monkeypatch, [
         _cli_step(),
         '{"act":"reply","work_commit":false,"intent":"question","msg":"Scheduled.","th":"done"}',
@@ -305,7 +306,7 @@ async def test_an_execution_turn_schedules_add_broadcasts_each_effect_once(sink,
     from core.agent_loop import activity_runtime
     from core.agent_loop.loop import run_turn
 
-    ada = db.create_agent("Ada", role="Operator", model_work="test/mock")
+    ada = db.create_agent("Ada", role="Operator", connection_id=model_connection("test/mock"))
     task = create_or_bind_task(
         title="Set up the pings", description="Ping the operator.", project=None, assigned_to=ada.id,
         requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,
@@ -330,7 +331,7 @@ async def test_an_execution_turn_schedules_add_broadcasts_each_effect_once(sink,
 async def test_a_decision_turn_approval_pause_broadcasts_its_activity_once(sink, monkeypatch) -> None:
     from core.agent_loop.loop import run_turn
 
-    ada = db.create_agent("Ada", role="Operator", model_work="test/mock")
+    ada = db.create_agent("Ada", role="Operator", connection_id=model_connection("test/mock"))
     monkeypatch.setattr(
         "core.agent_loop.decision_turn.execute_bm_cli",
         lambda agent_obj, state_obj, command, content=None, **kwargs: approval_required_result(

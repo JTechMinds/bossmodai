@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.channel_round_plan import DISPATCH_ROUNDS
@@ -180,7 +181,7 @@ def test_channel_accept_posts_say_before_work_bind(monkeypatch: pytest.MonkeyPat
 async def test_human_chat_say_posts_before_cli_action(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     order: list[str] = []
@@ -229,7 +230,7 @@ async def test_human_chat_say_posts_before_cli_action(
 async def test_actions_only_cli_does_not_post_early_say(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
 

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from fastapi.testclient import TestClient
 
 import db
+from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
@@ -136,6 +137,7 @@ def test_create_and_update_agent_api_persists_specialty_and_done_fail_bar(
         headers=_headers(),
         json={
             "name": "Cap Writer",
+            "connection_id": model_connection("test/mock"),
             "role": "Writer",
             "description": "Writes first drafts and short status notes.",
             "done_fail_bar": "Good: draft path exists. Fail: empty done.",
@@ -190,7 +192,10 @@ def test_create_agent_api_allows_blank_done_fail_bar(
     created = client.post(
         "/api/agents",
         headers=_headers(),
-        json={"name": "Cap Blank", "role": "Writer", "description": "Writes notes."},
+        json={
+            "name": "Cap Blank", "role": "Writer", "description": "Writes notes.",
+            "connection_id": model_connection("test/mock"),
+        },
     )
     assert created.status_code == 201
     body = created.json()
@@ -207,7 +212,7 @@ def test_hire_prompt_prose_is_kept_whole_on_create_and_update() -> None:
     description = "Mission: " + "d" * 4991
     done = "Good: " + "g" * 1994
     assert len(description) == 5000 and len(done) == 2000
-    created = AgentCreate(name="Long Prompt", description=description, done_fail_bar=done)
+    created = AgentCreate(name="Long Prompt", connection_id="c1", description=description, done_fail_bar=done)
     assert created.description == description
     assert created.done_fail_bar == done
     updated = AgentUpdate(description=description, done_fail_bar=done)
@@ -221,16 +226,19 @@ def test_over_length_role_is_rejected_not_truncated(
     """Specialty keeps its label cap, and going over it fails loudly (422)."""
     role = "r" * 121
     with pytest.raises(ValidationError, match="role must be 120 characters or fewer"):
-        AgentCreate(name="Long Role", role=role)
+        AgentCreate(name="Long Role", connection_id="c1", role=role)
     with pytest.raises(ValidationError, match="role must be 120 characters or fewer"):
         AgentUpdate(role=role)
-    assert AgentCreate(name="Edge Role", role="r" * 120).role == "r" * 120
+    assert AgentCreate(name="Edge Role", connection_id="c1", role="r" * 120).role == "r" * 120
 
     client = _api_client(monkeypatch)
     refused = client.post(
         "/api/agents",
         headers=_headers(),
-        json={"name": "Long Role", "role": role, "description": "Writes notes."},
+        json={
+            "name": "Long Role", "role": role, "description": "Writes notes.",
+            "connection_id": model_connection("test/mock"),
+        },
     )
     assert refused.status_code == 422
     assert "role must be 120 characters or fewer" in refused.text
@@ -405,8 +413,9 @@ def test_create_agent_api_auto_assigns_an_unoccupied_desk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _api_client(monkeypatch)
-    first = client.post("/api/agents", headers=_headers(), json={"name": "Desk One"})
-    second = client.post("/api/agents", headers=_headers(), json={"name": "Desk Two"})
+    conn_id = model_connection("test/mock")
+    first = client.post("/api/agents", headers=_headers(), json={"name": "Desk One", "connection_id": conn_id})
+    second = client.post("/api/agents", headers=_headers(), json={"name": "Desk Two", "connection_id": conn_id})
     assert first.status_code == 201
     assert second.status_code == 201
     assert first.json()["desk_x"] is not None
@@ -422,7 +431,7 @@ def test_create_agent_api_auto_assigns_an_unoccupied_desk(
     explicit = client.post(
         "/api/agents",
         headers=_headers(),
-        json={"name": "Desk Pick", "desk_x": 11, "desk_y": 4},
+        json={"name": "Desk Pick", "desk_x": 11, "desk_y": 4, "connection_id": conn_id},
     )
     assert explicit.status_code == 201
     assert explicit.json()["desk_x"] == 11
@@ -437,7 +446,10 @@ def test_update_agent_api_auto_assigns_desk_when_unassigned(
 ) -> None:
     client = _api_client(monkeypatch)
     seated = db.create_agent("Seated", desk_x=3, desk_y=4)
-    open_seat = client.post("/api/agents", headers=_headers(), json={"name": "Needs Desk"})
+    open_seat = client.post(
+        "/api/agents", headers=_headers(),
+        json={"name": "Needs Desk", "connection_id": model_connection("test/mock")},
+    )
     assert open_seat.status_code == 201
     # Recreate an unassigned agent through the DB, then PATCH via API.
     wanderer = db.create_agent("Wanderer")
@@ -469,15 +481,16 @@ def test_create_agent_api_leaves_desk_unassigned_when_all_taken(
     from core.world.tilemap import DEFAULT_DESKS
 
     client = _api_client(monkeypatch)
+    conn_id = model_connection("test/mock")
     for index, desk in enumerate(DEFAULT_DESKS):
         chair = desk["chair_xy"]
         created = client.post(
             "/api/agents",
             headers=_headers(),
-            json={"name": f"Seated {index}", "desk_x": chair[0], "desk_y": chair[1]},
+            json={"name": f"Seated {index}", "desk_x": chair[0], "desk_y": chair[1], "connection_id": conn_id},
         )
         assert created.status_code == 201
-    extra = client.post("/api/agents", headers=_headers(), json={"name": "Standing"})
+    extra = client.post("/api/agents", headers=_headers(), json={"name": "Standing", "connection_id": conn_id})
     assert extra.status_code == 201
     assert extra.json()["desk_x"] is None
     assert extra.json()["desk_y"] is None

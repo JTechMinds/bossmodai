@@ -457,7 +457,7 @@ def count_tokens(text: str, model: str | None = None) -> int:
 
     Returns ``0`` when no explicit tokenizer model is configured or supported.
     """
-    effective_model = model or config.get("default_model_work")
+    effective_model = model
     if not effective_model:
         logger.warning("Token counting skipped because no tokenizer model is configured")
         return 0

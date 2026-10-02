@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core import config
+from core.llm import routing
 from core.agent_loop import activity_runtime
 from core.agent_loop.deliverables import build_work_contract
 from core.llm.client import count_tokens
@@ -78,16 +78,7 @@ def _resolve_token_model(agent: Agent, action: dict[str, Any]) -> str | None:
     explicit_model = action.get("_token_model")
     if isinstance(explicit_model, str) and explicit_model.strip():
         return explicit_model.strip()
-    for field in (
-        agent.model_work,
-        agent.model_social,
-        agent.model_reasoning,
-        agent.model_extraction,
-        agent.model_self_queue,
-    ):
-        if field and field.strip():
-            return field.strip()
-    return config.get("default_model_work")
+    return routing.agent_model(agent)
 
 
 def _count_action_tokens(agent: Agent, action: dict[str, Any], text: str) -> int:

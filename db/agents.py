@@ -30,15 +30,13 @@ from db.agent_storage_identities import (
     ensure_agent_storage_identity,
     retire_agent_storage_key,
 )
-from db.secret_store import decrypt_secret, encrypt_secret
 
 _AGENT_COLUMNS = (
     "agents.id, agent_storage_identities.storage_key, agents.name, agents.role, "
     "agents.description, agents.done_fail_bar, agents.communication, "
     "agents.prompt_template, agents.color, "
-    "agents.model_social, agents.model_work, "
-    "agents.model_reasoning, agents.model_extraction, agents.model_self_queue, "
-    "agents.api_base_url, agents.api_key, agents.extra_body, agents.desk_x, agents.desk_y, "
+    "agents.connection_id, agents.thinking_social, agents.thinking_work, "
+    "agents.desk_x, agents.desk_y, "
     "agents.guardian_token_limit, agents.guardian_velocity_limit, "
     "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
     "agents.floor_id, agents.vacation_since, agents.cli_auto_approve_dm, agents.created_at"
@@ -47,9 +45,7 @@ _AGENT_COLUMNS = (
 _AGENT_VALID_COLUMNS = {
     "name", "role", "description", "done_fail_bar", "communication",
     "prompt_template", "color",
-    "model_social", "model_work", "model_reasoning",
-    "model_extraction", "model_self_queue",
-    "api_base_url", "api_key", "extra_body", "desk_x", "desk_y",
+    "connection_id", "thinking_social", "thinking_work", "desk_x", "desk_y",
     "guardian_token_limit", "guardian_velocity_limit",
     "guardian_repetition_threshold", "guardian_no_progress_threshold",
     "floor_id", "vacation_since",
@@ -58,15 +54,6 @@ _AGENT_VALID_COLUMNS = {
 _STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since"
 
 _STATE_VALID_COLUMNS = {"x", "y", "status", "last_active_at", "idle_since"}
-
-
-def _decrypt_agent(agent: Agent | None) -> Agent | None:
-    if agent is None or not agent.api_key:
-        return agent
-    plain = decrypt_secret(agent.api_key)
-    if plain == agent.api_key:
-        return agent
-    return agent.model_copy(update={"api_key": plain})
 
 
 def _capture_snapshot(agent: Agent, *, deleted: bool) -> None:
@@ -98,14 +85,9 @@ def create_agent(
     communication: dict[str, str] | None = None,
     prompt_template: str | None = None,
     color: str = "#3b82f6",
-    model_social: str | None = None,
-    model_work: str | None = None,
-    model_reasoning: str | None = None,
-    model_extraction: str | None = None,
-    model_self_queue: str | None = None,
-    api_base_url: str | None = None,
-    api_key: str | None = None,
-    extra_body: str | None = None,
+    connection_id: str | None = None,
+    thinking_social: str = "default",
+    thinking_work: str = "default",
     desk_x: int | None = None,
     desk_y: int | None = None,
     guardian_token_limit: int = 30_000,
@@ -117,6 +99,8 @@ def create_agent(
     """Insert a new agent, its companion state rows and its snapshot atomically.
 
     Home floor defaults to Lobby. A named floor must already exist.
+    ``connection_id`` is stored as given; the API checks that it names a
+    usable connection before it gets here.
     """
     from db.floors import LOBBY_ID, ensure_lobby, get_floor
 
@@ -129,20 +113,18 @@ def create_agent(
             """
             INSERT INTO agents (
                 name, role, description, done_fail_bar, communication, prompt_template, color,
-                model_social, model_work, model_reasoning, model_extraction, model_self_queue,
-                api_base_url, api_key, extra_body, desk_x, desk_y,
+                connection_id, thinking_social, thinking_work, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
                 floor_id
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
             RETURNING id
             """,
             [
                 name, role, description, done_fail_bar,
                 dump_communication_json(communication, specialty=role),
                 prompt_template, color,
-                model_social, model_work, model_reasoning, model_extraction, model_self_queue,
-                api_base_url, encrypt_secret(api_key), extra_body, desk_x, desk_y,
+                connection_id, thinking_social, thinking_work, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
                 home,
@@ -183,17 +165,15 @@ def create_agent(
 
 def get_agent(agent_id: str) -> Agent | None:
     """Fetch a single agent by ID."""
-    return _decrypt_agent(
-        fetch_one(
-            f"""
-            SELECT {_AGENT_COLUMNS}
-            FROM agents
-            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
-            WHERE agents.id = $1
-            """,
-            [agent_id],
-            Agent,
-        )
+    return fetch_one(
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        WHERE agents.id = $1
+        """,
+        [agent_id],
+        Agent,
     )
 
 
@@ -206,53 +186,62 @@ def get_agent_by_storage_key(storage_key: str) -> Agent | None:
     token = (storage_key or "").strip()
     if not token:
         return None
-    return _decrypt_agent(
-        fetch_one(
-            f"""
-            SELECT {_AGENT_COLUMNS}
-            FROM agents
-            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
-            WHERE agent_storage_identities.storage_key = $1
-            """,
-            [token],
-            Agent,
-        )
+    return fetch_one(
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        WHERE agent_storage_identities.storage_key = $1
+        """,
+        [token],
+        Agent,
     )
 
 
 def list_agents() -> list[Agent]:
     """Return all agents ordered by creation time."""
-    return [
-        decrypted
-        for agent in fetch_all(
-            f"""
-            SELECT {_AGENT_COLUMNS}
-            FROM agents
-            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
-            ORDER BY agents.created_at
-            """,
-            model_cls=Agent,
-        )
-        if (decrypted := _decrypt_agent(agent)) is not None
-    ]
+    return fetch_all(
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        ORDER BY agents.created_at
+        """,
+        model_cls=Agent,
+    )
+
+
+def list_agents_by_connection(connection_id: str) -> list[Agent]:
+    """Return the agents linked to one AI connection, ordered by creation time.
+
+    Used to refuse deleting a connection, or removing a thinking level, that
+    agents still use, and to name them in the refusal.
+    """
+    return fetch_all(
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        WHERE agents.connection_id = $1
+        ORDER BY agents.created_at
+        """,
+        [connection_id],
+        Agent,
+    )
 
 
 def list_vacationing_agents() -> list[Agent]:
     """Return every agent on vacation, most recently sent home first."""
-    return [
-        decrypted
-        for agent in fetch_all(
-            f"""
-            SELECT {_AGENT_COLUMNS}
-            FROM agents
-            JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
-            WHERE agents.vacation_since IS NOT NULL
-            ORDER BY agents.vacation_since DESC
-            """,
-            model_cls=Agent,
-        )
-        if (decrypted := _decrypt_agent(agent)) is not None
-    ]
+    return fetch_all(
+        f"""
+        SELECT {_AGENT_COLUMNS}
+        FROM agents
+        JOIN agent_storage_identities ON agent_storage_identities.agent_id = agents.id
+        WHERE agents.vacation_since IS NOT NULL
+        ORDER BY agents.vacation_since DESC
+        """,
+        model_cls=Agent,
+    )
 
 
 def update_agent(agent_id: str, **fields: Any) -> Agent | None:
@@ -260,8 +249,6 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
 
     A write that applied anything re-captures the agent's snapshot.
     """
-    if "api_key" in fields:
-        fields = {**fields, "api_key": encrypt_secret(fields["api_key"])}
     if "communication" in fields:
         role = fields.get("role")
         if role is None:
@@ -519,11 +506,7 @@ def get_agents_by_ids(agent_ids: list[str]) -> dict[str, Agent]:
         agent_ids,
         Agent,
     )
-    return {
-        agent.id: decrypted
-        for agent in agents
-        if (decrypted := _decrypt_agent(agent)) is not None
-    }
+    return {agent.id: agent for agent in agents}
 
 
 # ---------------------------------------------------------------------------

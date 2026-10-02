@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import get_discovery, set_enabled
@@ -66,8 +67,8 @@ def _has_block(messages: list[dict]) -> bool:
 @pytest.mark.parametrize("contract_kind", ["decision", "execution"])
 def test_the_block_needs_enabled_ready_and_a_vision_model(contract_kind: str) -> None:
     db.set_supports_images("vision-model", True)
-    seer = db.create_agent("Seer", role="Researcher", model_work="vision-model")
-    blind = db.create_agent("Scribe", role="Writer", model_work="text-model")
+    seer = db.create_agent("Seer", role="Researcher", connection_id=model_connection("vision-model"))
+    blind = db.create_agent("Scribe", role="Writer", connection_id=model_connection("text-model"))
 
     set_enabled(_BV, True)
     assert not _has_block(_context(seer, contract_kind)), "enabled but not set up"
@@ -82,7 +83,7 @@ def test_the_block_needs_enabled_ready_and_a_vision_model(contract_kind: str) ->
 
 def test_the_block_sits_after_file_guidance_and_before_history() -> None:
     db.set_supports_images("vision-model", True)
-    seer = db.create_agent("Seer", role="Researcher", model_work="vision-model")
+    seer = db.create_agent("Seer", role="Researcher", connection_id=model_connection("vision-model"))
     _mark_ready()
     set_enabled(_BV, True)
     messages = _context(seer, "decision")
@@ -99,7 +100,7 @@ def test_asking_for_the_state_line_does_not_start_the_browser() -> None:
     from core.extensions.loader import load_extension
 
     db.set_supports_images("vision-model", True)
-    seer = db.create_agent("Seer", role="Researcher", model_work="vision-model")
+    seer = db.create_agent("Seer", role="Researcher", connection_id=model_connection("vision-model"))
     _mark_ready()
     set_enabled(_BV, True)
     block = next(m["content"] for m in _context(seer, "execution") if m["content"].startswith(_MARKER))
@@ -113,12 +114,12 @@ def test_an_extension_without_prompt_state_adds_only_its_static_text(monkeypatch
     from core.extensions import prompt_blocks
 
     db.set_supports_images("vision-model", True)
-    seer = db.create_agent("Seer", role="Researcher", model_work="vision-model")
+    seer = db.create_agent("Seer", role="Researcher", connection_id=model_connection("vision-model"))
     _mark_ready()
     set_enabled(_BV, True)
     monkeypatch.setattr(prompt_blocks, "load_extension", lambda entry: object())
     prompt = (get_discovery().get(_BV).root / "prompt.md").read_text(encoding="utf-8").strip()
-    assert prompt_blocks.render_extension_blocks(seer, {"type": "activity_resumed", "content": "Continue."}) == prompt
+    assert prompt_blocks.render_extension_blocks(seer) == prompt
 
 
 _MAIL = "ms365-mail"

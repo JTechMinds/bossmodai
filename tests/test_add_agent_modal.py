@@ -88,10 +88,10 @@ def test_picker_states_two_steps_and_the_quick_layout() -> None:
     The three invariants the design names are in here by name:
     `operatorFieldsUntouched` (applying a template never writes the name, the
     colour or a connection), `noCreateOnStepOne` (the primary submits a form
-    that does not exist yet), and `expandingAloneKeepsTheGuard` — which is the
-    corrected form of the third. It used to read `expandingClearsRequired`, and
+    that does not exist yet), and `aPanelToggleIsNotAnAnswer` — which is the
+    current form of the third. It used to read `expandingClearsRequired`, and
     that rule is gone: see
-    test_the_connection_guard_tracks_the_answer_not_the_disclosure.
+    test_a_panel_toggle_does_not_answer_the_ai_question.
 
     `templateHidesNothing` and `blankAndTemplateRenderTheSameSections` are the
     fourth, and they are what the two-layout design cost: a template used to
@@ -115,7 +115,7 @@ def test_picker_states_two_steps_and_the_quick_layout() -> None:
         # is no longer allowed to hide.
         "stepTwoFooter", "provenanceChip", "hydrated", "operatorFieldsUntouched",
         "connectionOnScreen", "templateHidesNothing",
-        "summaryNamesTheTools", "focusLandsOnName", "expandingAloneKeepsTheGuard",
+        "summaryNamesTheTools", "focusLandsOnName", "aPanelToggleIsNotAnAnswer",
         # Back, the chip's dismissal, and Blank.
         "backKeepsTheDraft", "chipClearsTemplateOnly", "blankIsThePlainForm",
         "blankAndTemplateRenderTheSameSections", "closes",
@@ -289,69 +289,43 @@ def test_the_picker_filter_is_the_toolbar_search() -> None:
     assert '.modal-panel[data-dialog="agents"] .search-field { flex: 0 1 280px; min-width: 0; }' in overlays
 
 
-def test_the_connection_guard_tracks_the_answer_not_the_disclosure() -> None:
-    """The rule this file used to pin was the wrong rule, and it shipped a hole.
+def test_a_panel_toggle_does_not_answer_the_ai_question() -> None:
+    """Only a pick answers the AI question; the save refuses what is unanswered.
 
-    `expandingClearsRequired` said that opening "Review & customise" hands the
-    matrix back to the operator, so the lifted AI select stops being required —
-    one way, and never restored. But that disclosure is also where the
-    template's specialty, description and what-done live, so opening it to READ
-    them — the interaction the layout invites — disarmed the guard. Pick a
-    template, open the panel, close it again without touching anything, type a
-    name, Create: five null `model_*` columns, no connection_id, no
-    api_base_url, and "Saved successfully" over the top of it.
+    A rule this file once pinned said that opening "Review & customise" hands
+    the connection question back to the operator, and a guard came off — one
+    way, and never restored. But that disclosure was where the template's
+    specialty, description and what-done lived, so opening it to READ them
+    disarmed the guard, and Create wrote an agent with no connection over
+    "Saved successfully".
 
-    The requirement changed, so this test changed with it (spec 8.3, corrected).
-    The intent the old rule was reaching for is kept — an operator who sets the
-    matrix by hand must not be blocked by the convenience select above it — but
-    an ANSWER is what proves that, not a panel toggle:
-
-    * the guard survives expand-and-close;
-    * any one of the five per-type selects releases it;
-    * clearing them all back to None re-arms it, because it is a live check in
-      both directions rather than a one-way flip.
-
-    The fan-out half — answering the lifted select itself, which writes the
-    five from script — needs the real builder to bind it and the real submit
-    path to read it back, so it is pinned in test_ui_context.py.
+    The field-level guard is gone with the matrix it sat on. The AI question
+    is the one connection picker, which writes `connection_id` only when the
+    operator picks; opening and closing Advanced leaves it unanswered, and the
+    refusal that stands behind it reads what would be SENT
+    (context/agent-form-save.js, pinned in test_ui_context.py).
     """
     payload = _harness()
-    for key in ("expandingAloneKeepsTheGuard", "answeringOneTypeReleasesTheGuard",
-                "clearingThemAllRearmsTheGuard"):
-        assert payload[key] is True, key
-    # One rule, one owner: the module that sets `required` is the module that
-    # decides when it comes off. The layout has no say — a listener on a
-    # disclosure is exactly what the old rule was. The owner is a BINDING now
-    # (context/agent-form-bindings.js), because the control it sits on is the
-    # form's own visible "Set All" rather than one lifted out of the matrix.
-    bindings = _read(CONTEXT / "agent-form-bindings.js")
-    assert "function bindConnectionGuard(form, options)" in bindings
+    assert payload["aPanelToggleIsNotAnAnswer"] is True
+    # The layout has no say: nothing in the template module listens for a
+    # disclosure or touches `required`.
     template = _read(CONTEXT / "agent-form-template.js")
     assert "addEventListener" not in template
     assert "removeAttribute('required')" not in template
     assert "setAttribute('required'" not in template
-    # ...and the guard reads the five keys the SAVE reads, never the "Set All"
-    # select's own value: a fan-out that stopped reaching them must leave the
-    # submit refused rather than answered.
-    guard = bindings.split("function bindConnectionGuard(form, options) {", 1)[1]
-    assert "BossModAgentFields.MODEL_TYPES" in guard
-    assert "matrix.some((select) => select.value)" in guard
-    # CREATE only, on the same reasoning the save-time refusal carries: an
-    # existing agent may already have none, and refusing that save would trap
-    # the operator in a dialog they cannot leave with their other edits.
-    assert "if (!options || !options.creating) return;" in guard
-    # ...and it is bound AFTER the fan-out that writes the five from script,
-    # which fires no change event of its own.
+    # ...and the binding that mounts the picker is wired by the assembler.
+    bindings = _read(CONTEXT / "agent-form-bindings.js")
+    assert "function bindAiConnection(form, connections, values)" in bindings
+    assert "bindConnectionGuard" not in bindings
     form_js = _read(CONTEXT / "agent-form.js")
-    assert form_js.index("select[name=\"model_all\"]") < form_js.index(
-        "BINDINGS.bindConnectionGuard(form, { creating: !agent });")
+    assert "BINDINGS.bindAiConnection(form, connections, values);" in form_js
 
 
 def test_no_configured_connection_is_said_in_front_and_refused() -> None:
     """The state that could create an agent that fails on its first turn.
 
-    With nothing configured the matrix renders a link to Settings and no select
-    at all. The quick layout had nothing to lift, so no `required` was set and
+    With nothing configured the AI Connection section renders a link to
+    Settings and no control at all. The quick layout had nothing to lift, so no `required` was set and
     the sweep filed the one sentence explaining any of it inside the COLLAPSED
     disclosure: Add agent → template → name → Create wrote five null `model_*`
     columns without a word.
@@ -375,10 +349,9 @@ def test_no_configured_connection_is_said_in_front_and_refused() -> None:
     # The shape is one module's — the one that RENDERS it — and it names the
     # rule it exists for.
     conn = _read(CONTEXT / "agent-form-connections.js")
-    assert ("function connectionsSection(values, connections, "
-            "{ reportMissing = false } = {})") in conn
+    assert "function connectionsSection(values, connections)" in conn
     assert 'id="btn-goto-connections"' in conn
-    assert "const noConnections = connections.length === 0;" in conn
+    assert "if (connections.length === 0) {" in conn
     # No stand-in control: the empty shape offers the link to Settings and
     # nothing that pretends to be answerable.
     assert "required" not in conn
@@ -389,7 +362,7 @@ def test_no_configured_connection_is_said_in_front_and_refused() -> None:
     assert "} else if (!agent && !staged.connections.length) {" in save
     assert "primary.blocked(token, staged.feedback.element, heldTheKeyboard);" in save
     # ONE sentence for the state, not two. The stand-in select's only option
-    # ("— None available —") sat directly above the matrix's own notice saying
+    # ("— None available —") sat directly above the section's own notice saying
     # almost the same thing, so an operator with nothing configured was told so
     # twice in two different voices. The notice is the whole explanation now.
     assert "No connections configured." in conn
@@ -816,12 +789,12 @@ def test_a_template_can_never_write_name_colour_or_a_connection() -> None:
     assert "template.description" in mapping
     assert "template.what_done_looks_like" in mapping
     assert "template.personality_hint" in mapping
-    for forbidden in ("name", "color", "colour", "model_"):
+    for forbidden in ("name", "color", "colour", "connection", "thinking"):
         assert forbidden not in mapping, forbidden
 
     hydrate = _read(CONTEXT / "agent-form-hydrate.js")
     body = hydrate.split("function applyHireFields(", 1)[1]
-    for forbidden in ('name="name"', 'name="agent-color"', 'name="model_'):
+    for forbidden in ('name="name"', 'name="agent-color"', 'name="connection_id"', 'name="thinking_'):
         assert forbidden not in body, forbidden
 
 
@@ -991,13 +964,13 @@ def test_a_recent_pick_is_a_create_and_never_an_edit() -> None:
     assert "const values = agent || prefill;" in form
     assert "if (agent && prefill) {" in form
     for value_builder in ("nameField(values)", "roleContractCard(values, roster)",
-                          "connectionsSection(values, connections, {",
+                          "connectionsSection(values, connections)",
+                          "bindAiConnection(form, connections, values)",
                           "advancedSection(values, {"):
         assert value_builder in form, value_builder
     for identity_builder in ("statusAndRecovery(agent)", "actionsRow(agent)",
                              "loadFormData(agent)",
-                             "bindDuplicateNameWarning(form, roster, agent)",
-                             "bindConnectionGuard(form, { creating: !agent })"):
+                             "bindDuplicateNameWarning(form, roster, agent)"):
         assert identity_builder in form, identity_builder
     # The chip is the marker module's, beside the template one.
     template = _read(CONTEXT / "agent-form-template.js")
@@ -1035,7 +1008,7 @@ def test_save_as_template_writes_the_form_into_the_library() -> None:
     module = _read(CONTEXT / "agent-save-template.js")
     # The contract, and nothing the operator owns.
     fields = module.split("function fieldsFromForm(form) {", 1)[1].split("\n    }", 1)[0]
-    for forbidden in ('name="name"', 'name="agent-color"', 'name="model_'):
+    for forbidden in ('name="name"', 'name="agent-color"', 'name="connection_id"', 'name="thinking_'):
         assert forbidden not in fields, forbidden
     # The app's dropdown, never a native select, and the shared field input.
     assert "BossModMenuSelect.create({" in module

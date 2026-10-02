@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.decision_parse_fail import TIMEOUT_NOTE
@@ -328,7 +329,7 @@ async def test_stall_timeout_repairs_then_can_succeed(monkeypatch: pytest.Monkey
     _set_timeouts(stall="0.15", backstop="5")
     db.set_setting("decision_repair_attempts", "1", "llm")
     config.reload()
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)
@@ -371,7 +372,7 @@ async def test_stall_timeout_fail_close_notes_and_requeues(monkeypatch: pytest.M
     _set_timeouts(stall="0.15", backstop="5")
     db.set_setting("decision_repair_attempts", "0", "llm")
     config.reload()
-    agent = db.create_agent("Jim", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     task = db.create_task("Validate clone", assigned_to=agent.id)

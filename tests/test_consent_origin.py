@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.activity_runtime import activate_work_activity
@@ -52,7 +53,7 @@ def teardown_function() -> None:
 
 
 def _agent_and_state(*, name: str = "Gerry"):
-    agent = db.create_agent(name, role="Engineer", model_work="test/mock")
+    agent = db.create_agent(name, role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     return agent, state

@@ -16,6 +16,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, ensure_local_api_token, install_local_api_auth
 from api.routes import router
 from core import config
@@ -62,7 +63,7 @@ def _enable_shell() -> None:
 
 
 def _agent(name: str = "Scope Clerk"):
-    agent = db.create_agent(name, role="Eng", model_work="test/mock")
+    agent = db.create_agent(name, role="Eng", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     return agent, state

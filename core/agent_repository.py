@@ -97,7 +97,8 @@ class AgentRepository:
 
         Args:
             **fields: ``db.create_agent``'s keyword arguments (``name``,
-                ``role``, models, credentials, desk, ``floor_id`` …).
+                ``role``, ``connection_id``, thinking levels, desk,
+                ``floor_id`` …).
 
         Returns:
             The created agent, with a storage key the ledger has never issued.

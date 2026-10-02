@@ -515,24 +515,29 @@ async def _skip_turn(
     trigger: dict[str, Any],
     trigger_type: str,
     mode: str,
-    model_source: str,
+    reason: str,
     start: float,
 ) -> TurnOutcome:
-    """Handle the case where no model is configured for the activation mode."""
+    """Skip a turn the agent's connection cannot route, saying why.
+
+    Args:
+        reason: Why the route is unavailable (``RouteUnavailable.reason``);
+            it is the activity detail and the diagnostic error.
+    """
     logger.warning(
-        "No model configured for %s (mode=%s) — skipping turn.",
-        agent.name, mode,
+        "Cannot route %s (mode=%s): %s — skipping turn.",
+        agent.name, mode, reason,
     )
     result = {
         "event": "agent_updated",
-        "detail": f"{agent.name}: no model configured for '{mode}' mode — turn skipped",
+        "detail": f"{agent.name}: {reason} — turn skipped",
         "agent_name": agent.name,
     }
     await manager.broadcast_activity(**result)
 
-    # Do not block/stall the task or tear down work. A missing model is a
-    # settings gap; the dispatcher treats skipped as completed-without-retry
-    # so the trigger is not exhausted (HA-CORR-P0-03).
+    # Do not block/stall the task or tear down work. A missing or unusable
+    # connection is a settings gap; the dispatcher treats skipped as
+    # completed-without-retry so the trigger is not exhausted (HA-CORR-P0-03).
 
     return await _finalize_turn(
         agent=agent,
@@ -540,11 +545,11 @@ async def _skip_turn(
         trigger_type=trigger_type,
         mode=mode,
         model=None,
-        model_source=model_source,
+        model_source="none",
         initial_context_json=None,
         outcome=TurnOutcome.skipped(
             result=result,
-            error=f"No model configured for '{mode}' mode",
+            error=reason,
             steps=[],
         ),
         start=start,

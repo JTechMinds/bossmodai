@@ -39,7 +39,7 @@ from core.extensions.loader import ExtensionLoadError, contract_failure, load_ex
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery, set_enabled
 from core.extensions.setup_runner import SetupAlreadyRunning, entry_setup_status, start_setup
-from core.llm.routing import select_model_with_source
+from core.llm.routing import agent_model
 from db.model_capabilities import supports_images
 
 router = APIRouter()
@@ -89,14 +89,14 @@ def _entry(ext_id: str) -> ExtensionEntry:
 
 
 def _excluded_agents() -> list[dict[str, Any]]:
-    """Agents whose work-mode model is not flagged image-capable.
+    """Agents whose connection's model is not flagged image-capable.
 
-    ``work`` is the mode agents run CLI commands in (routing picks it for
-    every trigger except ``social``), so it is the model ``bv`` checks.
+    An agent has one connection for every activation, so its model is the
+    one ``bv`` checks.
     """
     excluded = []
     for agent in db.list_agents():
-        model, _source = select_model_with_source(agent, "work")
+        model = agent_model(agent)
         if model is None or not supports_images(model):
             excluded.append({"id": agent.id, "name": agent.name, "model": model})
     return excluded

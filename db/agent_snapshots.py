@@ -7,10 +7,9 @@ and on a prompt-history policy change, and one last time on delete, stamped
 deleted. Each capture overwrites the agent's one row (there is no version
 history) and then trims the table to the newest ``recent_agents_limit``.
 
-NEVER A SECRET. What is written is an explicit column list, not the agent row:
-``api_key``, ``api_base_url`` and ``extra_body`` come from an AI connection and
-may carry credentials, so they are never read here and the table has no column
-to hold them. A recreate re-links a connection by the model names kept.
+NEVER A SECRET. What is written is an explicit column list, not the agent row.
+An agent holds no credentials of its own, only its AI connection's id, which a
+recreate links again, with the two thinking levels.
 """
 
 from __future__ import annotations
@@ -24,8 +23,8 @@ from db.crud import fetch_all, insert_returning, query
 
 _SNAPSHOT_COLUMNS = (
     "id, agent_id, name, role, description, done_fail_bar, communication, "
-    "prompt_template, color, model_social, model_work, model_reasoning, "
-    "model_extraction, model_self_queue, desk_x, desk_y, prompt_history_policy, "
+    "prompt_template, color, connection_id, thinking_social, thinking_work, "
+    "desk_x, desk_y, prompt_history_policy, "
     "captured_at, deleted_at"
 )
 
@@ -57,9 +56,8 @@ def capture_agent_snapshot(
 ) -> AgentSnapshot:
     """Write the one snapshot row for ``agent`` and trim the table.
 
-    Upserts by ``agent_id`` from an explicit, non-secret column list —
-    ``api_key``, ``api_base_url`` and ``extra_body`` are never read off the
-    agent — so the row keeps its ``id`` across captures. ``captured_at`` is
+    Upserts by ``agent_id`` from an explicit, non-secret column list, so the
+    row keeps its ``id`` across captures. ``captured_at`` is
     now (UTC); ``deleted_at`` is now when ``deleted`` and NULL otherwise.
     Then prunes to the ``recent_agents_limit`` setting.
 
@@ -86,10 +84,9 @@ def capture_agent_snapshot(
         f"""
         INSERT INTO agent_snapshots (
             agent_id, name, role, description, done_fail_bar, communication,
-            prompt_template, color, model_social, model_work, model_reasoning,
-            model_extraction, model_self_queue, desk_x, desk_y,
-            prompt_history_policy, captured_at, deleted_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+            prompt_template, color, connection_id, thinking_social, thinking_work,
+            desk_x, desk_y, prompt_history_policy, captured_at, deleted_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         ON CONFLICT (agent_id) DO UPDATE SET
             name = excluded.name,
             role = excluded.role,
@@ -98,11 +95,9 @@ def capture_agent_snapshot(
             communication = excluded.communication,
             prompt_template = excluded.prompt_template,
             color = excluded.color,
-            model_social = excluded.model_social,
-            model_work = excluded.model_work,
-            model_reasoning = excluded.model_reasoning,
-            model_extraction = excluded.model_extraction,
-            model_self_queue = excluded.model_self_queue,
+            connection_id = excluded.connection_id,
+            thinking_social = excluded.thinking_social,
+            thinking_work = excluded.thinking_work,
             desk_x = excluded.desk_x,
             desk_y = excluded.desk_y,
             prompt_history_policy = excluded.prompt_history_policy,
@@ -119,11 +114,9 @@ def capture_agent_snapshot(
             dump_communication_json(agent.communication, specialty=agent.role),
             agent.prompt_template,
             agent.color,
-            agent.model_social,
-            agent.model_work,
-            agent.model_reasoning,
-            agent.model_extraction,
-            agent.model_self_queue,
+            agent.connection_id,
+            agent.thinking_social,
+            agent.thinking_work,
             agent.desk_x,
             agent.desk_y,
             _encode_policy(policy),

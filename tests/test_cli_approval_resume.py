@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.loop import run_turn
 from core.bm_cli.approvals import resume_cli_approval
@@ -47,7 +48,7 @@ class _RecordingServices:
 
 
 def _agent():
-    return db.create_agent("Ada", role="Eng", model_work="test/mock", desk_x=1, desk_y=1)
+    return db.create_agent("Ada", role="Eng", connection_id=model_connection("test/mock"), desk_x=1, desk_y=1)
 
 
 def _dispatcher_trigger(trigger_id: str) -> dict[str, Any]:

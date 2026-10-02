@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
@@ -656,7 +657,7 @@ def _ready_push_agent(monkeypatch: pytest.MonkeyPatch, stderr: str):
     token = "ghp_visible-auth-reject-GGGG"
     write_nest_git_secret(NEST_GIT_PAT_KEY, token)
     _enable_shell()
-    agent = db.create_agent("Path Clerk", role="Writer", model_work="test/mock")
+    agent = db.create_agent("Path Clerk", role="Writer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     cwd = _real_nest_cwd(agent)

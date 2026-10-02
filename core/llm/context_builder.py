@@ -187,7 +187,7 @@ def build_context(
     file_guidance = _render_file_deliverable_guidance(turn, template_overrides)
     if file_guidance:
         messages.append({"role": "system", "content": file_guidance})
-    if extension_blocks := render_extension_blocks(turn.agent, turn.trigger):  # both contract kinds
+    if extension_blocks := render_extension_blocks(turn.agent):  # both contract kinds
         messages.append({"role": "system", "content": extension_blocks})
     if turn.contract_kind == "decision":
         messages.append(

@@ -270,36 +270,27 @@ def test_desk_notes_read_the_workspace_not_a_column() -> None:
     assert "notes.destroy();" in panel
 
 
-def test_set_all_fans_out_through_the_published_form() -> None:
-    """The convenience control that was silently dead, and the five nulls.
+def test_the_connection_pick_lands_through_the_published_form() -> None:
+    """The AI connection picker writes into the form that was published.
 
-    "Set All" is bound while the form sits on a DETACHED stage and it runs
-    after `renderInline` has published — and publishing MOVES the `<form>` out
-    of that stage and empties it. Bound to the host it was handed, every
-    `querySelector` inside the listener then answered null for the rest of the
-    form's life, `if (sel)` swallowed it, and nothing said a word.
+    The picker is mounted while the form sits on a DETACHED stage, and the
+    operator answers it after `renderInline` has published — and publishing
+    MOVES the `<form>` out of that stage and empties it. A binding rooted on
+    the host would search an emptied node for the rest of the form's life,
+    and the agent would be saved with no connection over "Saved
+    successfully".
 
-    That is not a cosmetic loss. `model_all` is the required AI question until
-    the matrix has been answered, and `buildSubmitData` reads the five
-    `model_*` selects and never `model_all` — so the fan-out IS the mechanism
-    by which answering that one control gives the agent any connection at all.
-    Answer the required select, click Create, and the
-    agent was written with five null models, no connection_id and no
-    api_base_url, over the words "Saved successfully".
+    The save carries the connection's id and the two thinking levels, and
+    nothing a connection owns: no model name, base URL, extra body or key —
+    the runtime reads the connection live. The thinking choices follow the
+    picked connection.
 
     Run against the REAL builder, the REAL publish and the REAL submit path:
-    tests/js_add_agent_harness.cjs stubs `BossModAgentForm` wholesale, which is
-    why this sailed through a green suite once already.
-
-    It drives BLANK, which is the full form. The quick layout the paragraph
-    above describes — the promotion, the guard on it, and the fan-out through
-    it into a real save — is
-    test_the_quick_path_guard_survives_a_disclosure_and_lets_an_answer_through;
-    this one holds the binding rule both of them stand on.
+    tests/js_add_agent_harness.cjs stubs `BossModAgentForm` wholesale.
     """
     payload = _harness()
-    assert payload["setAllFansOutAfterPublish"] is True
-    assert payload["theFanOutIsWhatIsSaved"] is True
+    assert payload["pickerAnswersAfterPublish"] is True
+    assert payload["thePickIsWhatIsSaved"] is True
     # The rule, where it is made: the `<form>` is the node that survives being
     # published out of its host, so it is the node every binding holds.
     form = _read(CONTEXT / "agent-form.js")
@@ -308,150 +299,86 @@ def test_set_all_fans_out_through_the_published_form() -> None:
     # builder binds, it binds off the form.
     bindings = form.split("if (!form) throw", 1)[1]
     assert "container" not in bindings
+    assert "BINDINGS.bindAiConnection(form, connections, values);" in bindings
 
 
-def test_the_quick_path_guard_survives_a_disclosure_and_lets_an_answer_through() -> None:
-    """The rule that decides whether a quick create gets a connection at all.
+def test_a_template_form_asks_the_ai_question_on_screen() -> None:
+    """A template hides nothing: the picker and the colour are on the form.
 
-    The quick layout promotes `model_all` to the ONE required AI question and
-    sweeps the five `model_*` selects behind a collapsed disclosure, and
-    `buildSubmitData` reads those five and never `model_all`. So `required` on
-    that select is the cheap gate, and the rule for when it comes off had it
-    backwards: it came off when a disclosure was OPENED. That panel was where a
-    template's specialty, description and what-done lived, so opening it to
-    read them — the interaction the layout invited — disarmed the guard, and
-    closing it again did not put it back. Type a name, click Create, and the
-    agent was written with five null models, no connection_id and no
-    api_base_url, over the words "Saved successfully".
-
-    The corrected rule (spec 8.3) tracks the ANSWER: required until at least
-    one of the five holds a value, re-armed when they are all cleared back to
-    None, live on change in both directions. All four halves are here —
-    open-and-close keeps it, one per-type select releases it, clearing them
-    re-arms it, and the fan-out through "Set All" releases it and SAVES what it
-    wrote.
-
-    The layout that made the original defect reachable is gone: nothing a
-    template fills is hidden any more, so the two paths are one form and the
-    guard sits on a control that is always on screen. The open-and-close half
-    is kept and re-pointed at the one disclosure that remains (Advanced),
-    because the property it pins is not about any particular panel — a panel
-    toggle is not an answer.
+    The layout a template once got swept the connection controls and the
+    colour behind a collapsed disclosure, so the one decision that decides
+    whether a new agent can take a turn at all was the one the template path
+    hid. The picker starts unanswered, every AI control is outside the one
+    disclosure left (Advanced), and what is picked is what the save sends.
 
     Driven through the real builder, the real publish, the real
-    `buildSubmitData` and the real POST. tests/js_add_agent_harness.cjs stubs
-    the form and the submit path, which is where this class of defect has
-    hidden three times; what the attribute buys — a refused submit — is native
-    constraint validation, so the attribute itself is what the fake can read.
+    `buildSubmitData` and the real POST.
     """
     payload = _harness()
     for key in ("theTemplateFormAsksForAConnection",
-                "readingTheDisclosureKeepsTheGuard",
-                "answeringTheMatrixReleasesTheGuard",
-                "clearingTheMatrixRearmsTheGuard",
-                "theQuickFanOutReleasesTheGuard",
                 "theQuickCreateSavesTheConnection"):
         assert payload[key] is True, key
-    # ...and the layout that made this defect possible is gone with it: a
-    # template no longer hides the five selects or the colour swatches behind
-    # anything. The guard is on the visible "Set All" now, and the panel the
-    # old rule watched (Advanced) is not where any template field lives.
     assert payload["nothingIsHiddenFromATemplate"] is True
 
 
 def test_a_create_with_no_ai_connection_is_refused_at_the_create() -> None:
-    """The fifth route, and the last one: the invariant left the controls.
+    """The invariant lives on what would be SENT, not on a control.
 
-    Five UI routes each produced an agent with no connection on any activation
-    type — none configured, a failed `/api/connections` read, the Set All
-    fan-out dying at publish, the disclosure toggle disarming the guard, and
-    this one. Each was fixed at the control that exposed it and a new one
-    appeared, always ending the same way: an agent that fails on its first turn
-    while the operator is told "Saved successfully".
-
-    This route is what proves a control can never be the guarantee. Answer the
-    lifted AI select — the fan-out fills the five, the guard releases — then
-    open "Review & customise" and set all five back to None. The guard re-arms
-    and it buys nothing: `required` asks the lifted select for A VALUE, and it
-    still holds the one that was answered. Native validation passes and
-    `buildSubmitData` writes five nulls.
-
-    So the rule is enforced once (spec 8.3), in `agent-form-save.js`'s submit
-    handler, on the built `agentData` rather than on the DOM — what would
-    actually be SENT. That handler is the seam because it is the last point
-    that still knows the save is a create; `buildSubmitData` is not, because
-    telling a form-level mapper about create-from-edit would push a
-    dialog-level rule into it. The field guards stay: they tell the operator
-    before they commit, and they are now convenience, not the guarantee.
+    Five UI routes once each produced an agent with no connection, each
+    fixed at the control that exposed it until the next appeared. So the rule
+    is enforced once (spec 8.3), in `agent-form-save.js`'s submit handler, on
+    the built `agentData` rather than on the DOM. That handler is the seam
+    because it is the last point that still knows the save is a create;
+    `buildSubmitData` is not, because telling a form-level mapper about
+    create-from-edit would push a dialog-level rule into it. The server
+    refuses it as well (`connection_id` is required).
 
     Driven end to end through the real builder, the real publish, the real
     `buildSubmitData` and a POST that would have SUCCEEDED — a refusal proven
     against an endpoint that refuses anyway proves nothing.
     """
     payload = _harness()
-    # The route is real: armed guard, satisfied anyway.
-    assert payload["theRearmedGuardIsAlreadySatisfied"] is True
-    # Nothing POSTed, dialog open, draft intact, told why, primary usable — and
-    # "told why" now means told the NEXT ACTION that exists on this path: the
-    # lifted AI field and "Review & customise", never the "AI Connections"
-    # heading, which on the template path is inside the collapsed disclosure
-    # and on a connectionless one is not in the document at all.
-    assert payload["theFiveNullCreateIsRefused"] is True
-    # ...and the same refusal on the BLANK path names the matrix instead, which
-    # is what IS on screen there. Asserted per path on purpose: one substring
-    # both wordings satisfy would pin nothing, and every single-sentence
-    # version of this message has been wrong on one path or the other.
-    assert payload["theBlankRefusalNamesTheMatrix"] is True
-    # ...and the other shape, where the matrix renders a link to Settings and
-    # no select at all: nothing on screen can be chosen, so the only next
-    # action is Settings and the sentence says so. An empty connections list is
-    # a HEALTHY read, so nothing else refuses this save first — this invariant
-    # is the one the create actually meets.
+    # Nothing POSTed, dialog open, draft intact, told why, primary usable.
+    assert payload["theConnectionlessCreateIsRefused"] is True
+    # ...and the same refusal on the BLANK path.
+    assert payload["theBlankRefusalNamesThePicker"] is True
+    # ...and the other shape, where the section renders a link to Settings
+    # and no control at all: the only next action is Settings.
     assert payload["theUnconfiguredRefusalSendsThemToSettings"] is True
-    # ...and it is refused EARLIER than that now: with nothing to choose from,
-    # the dialog withholds its primary the moment the form lands and names the
-    # line that says why. The unanswerable stand-in select this replaces let
-    # the operator fill the whole form before native validation stopped them,
-    # and it wrote to nothing.
+    # ...and it is refused EARLIER than that: with nothing to choose from, the
+    # dialog withholds its primary the moment the form lands.
     assert payload["theUnconfiguredCreateIsWithheldNotOffered"] is True
     # A gate, not a dead end: answer it and the same click goes through.
     assert payload["theCorrectedCreateGoesThrough"] is True
 
     save = _read(CONTEXT / "agent-form-save.js")
-    # It reads what would be SENT, keyed off the one owner of the vocabulary.
-    assert "isCreating && BossModAgentFields.MODEL_TYPES" in save
-    assert "agentData[key] == null" in save
+    # It reads what would be SENT.
+    assert "if (isCreating && !agentData.connection_id) {" in save
     # ...and it is upstream of the POST it is refusing.
     assert save.index("say('bad', noConnection(form))") < save.index("apiCreateAgent(agentData)")
-    # One refusal mechanism, not two: the form's existing feedback line, which
-    # is already the live region everything else in this editor reports
-    # through. No second announcement channel was invented for this tone.
+    # One refusal mechanism, not two: the form's existing feedback line.
     assert "say('bad', noConnection(form))" in save
     # The handler picks its sentence from ONE attribute read, and the module
-    # that RENDERS the two shapes is the one that names them. A save handler
-    # that queried for a section or a select would be carrying a copy of the
-    # layout, and the copy is what goes stale.
+    # that RENDERS the two shapes is the one that names them.
     assert "NO_CONNECTION_NEXT[BossModAgentFormConnections.aiQuestion(form)]" in save
-    # No class, id or section name from either layout below this point: the
+    # No class, id or section name from any layout below this point: the
     # handler must not be able to name a control, only to ask which shape the
-    # form is in. (The old three are in the list too — a re-point that silently
-    # dropped them would let the stale vocabulary back in.)
+    # form is in.
     for layout in ("quick-disclosure", "quick-ai", "Review & customise",
-                   "connection-grid", "form-section", "agent-form-grid"):
+                   "connection-grid", "form-section", "agent-form-grid", "agent-ai-mount"):
         assert layout not in save.split("const noConnection", 1)[1], layout
     # The vocabulary has one owner: the module that builds both shapes decides
     # which was built and answers for it later.
     conn = _read(CONTEXT / "agent-form-connections.js")
     assert "function shapeFor(connections)" in conn
     assert "function aiQuestion(form)" in conn
-    assert "return (connections || []).length ? MATRIX : UNAVAILABLE;" in conn
+    assert "return (connections || []).length ? PICKER : UNAVAILABLE;" in conn
     # ...and the assembler writes it from the SAME list the section was built
     # from, so the attribute and the markup cannot disagree.
     form_js = _read(CONTEXT / "agent-form.js")
     assert "BossModAgentFormConnections.AI_QUESTION," in form_js
     assert "BossModAgentFormConnections.shapeFor(connections)," in form_js
-    # The mapper stays a mapper. A dialog-level rule inside it would have to be
-    # told which of create and edit it was serving.
+    # The mapper stays a mapper.
     submit = _read(CONTEXT / "agent-submit.js")
     for leaked in ("NO_CONNECTION", "isCreating"):
         assert leaked not in submit, f"the create-only rule leaked into the mapper ({leaked})"
@@ -466,8 +393,10 @@ def test_an_edit_with_no_ai_connection_is_still_permitted() -> None:
     losing every other edit they came to make, which is a worse outcome than
     the one the rule exists to prevent: the agent already exists either way.
 
-    Driven the same way as the create: the real edit dialog, all five cleared
-    to None by hand, and the PATCH watched for on the wire.
+    Driven the same way as the create: the real edit dialog of an UNLINKED
+    agent (what the upgrade leaves when it cannot tell which connection one
+    used), which says so under the section, and the PATCH watched for on the
+    wire.
     """
     payload = _harness()
     assert payload["anEditWithNoConnectionStillSaves"] is True
@@ -620,13 +549,14 @@ def test_agent_edit_modules_stay_focused() -> None:
         lines = len(_read(path).splitlines())
         assert lines < 400, f"{path.relative_to(JS)} is {lines} lines"
 
-    # The vocabulary has ONE owner. A private MODEL_TYPES in the form and
-    # another in the submit path is a connection the operator sets and the
-    # agent never receives.
-    for name in ("MODEL_TYPES = [", "DEFAULT_PROMPT_HISTORY_POLICY = {", "DESK_OPTIONS = ["):
+    # The vocabulary has ONE owner. A private THINKING_MODES in the form and
+    # another in the submit path is a level the operator sets and the agent
+    # never receives.
+    for name in ("THINKING_MODES = [", "THINKING_CHOICES = [",
+                 "DEFAULT_PROMPT_HISTORY_POLICY = {", "DESK_OPTIONS = ["):
         owners = [path.name for path in modules if name in _read(path)]
         assert owners == ["agent-fields.js"], f"{name} is declared in {owners}"
-    for name in ("MODEL_TYPES", "DEFAULT_PROMPT_HISTORY_POLICY"):
+    for name in ("THINKING_MODES", "DEFAULT_PROMPT_HISTORY_POLICY"):
         assert f"BossModAgentFields.{name}" in _read(CONTEXT / "agent-submit.js")
 
     # Requests live in one module; nothing else calls the agent endpoints.
@@ -1008,16 +938,17 @@ def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:
     none of what identity decides is there — no Delete, no recovery tools, no
     runtime pill — while the save is a `POST /api/agents`.
 
-    Two things a snapshot cannot promise are named rather than dropped: a model
-    no connection offers any more is listed under the matrix, and a prompt no
-    personality carries any more rides in on its own option with the text in a
-    hidden input. A prompt one DOES carry selects that personality, exactly as
+    Two things a snapshot cannot promise are named rather than dropped: a
+    thinking level its connection no longer offers is listed under the AI
+    Connection section (and its control falls back to Server default), and a
+    prompt no personality carries any more rides in on its own option with the
+    text in a hidden input. A prompt one DOES carry selects that personality, exactly as
     it does for an edit.
     """
     payload = _harness()
     for key in (
         "recreateFillsTheFormFromTheSnapshot", "recreateIsACreateNotAnEdit",
-        "theMissingModelIsNamed", "keptOptionCarriesThePrompt",
+        "theUnofferedLevelIsNamed", "keptOptionCarriesThePrompt",
         "recreateSavesAsACreateWithTheKeptPrompt",
         "aMatchedPromptIsJustThatPersonality",
     ):
@@ -1040,9 +971,11 @@ def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:
     assert "const kept = formData.get('prompt_template_kept');" in submit
     # No silent fallback: a kept choice with no text is refused, not sent null.
     assert "throw new Error('The kept prompt template is missing from the form.');" in submit
-    # The missing-model note is the connections module's, drawn only where it
-    # can be acted on — under a matrix, for a recreate.
+    # The notes are the connections module's, from the one reading of the
+    # stored values that the markup and the bindings share.
     conn = _read(CONTEXT / "agent-form-connections.js")
-    assert "function missingModelNote(values, connections)" in conn
-    assert "${reportMissing ? missingModelNote(values, connections) : ''}" in conn
-    assert "reportMissing: Boolean(prefill)," in form
+    assert "function startingValues(values, connections)" in conn
+    assert "this connection doesn't offer it; pick one." in conn
+    assert "const start = startingValues(values, connections);" in conn
+    bindings = _read(CONTEXT / "agent-form-bindings.js")
+    assert "const start = CONNECTIONS.startingValues(values, connections);" in bindings

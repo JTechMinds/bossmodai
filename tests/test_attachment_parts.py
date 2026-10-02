@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.llm.attachment_parts import (
     ATTACHMENT_IDS_KEY,
@@ -413,7 +414,7 @@ def test_a_frozen_transcript_keeps_the_screenshot_paths(tmp_path):
     from core.models.message import HUMAN_SENDER_ID
     from core.tasking import create_or_bind_task
 
-    agent = db.create_agent("Iris", role="Researcher", model_work="vision-model")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("vision-model"))
     task = create_or_bind_task(
         title="Browse", description="Look at a page.", project=None, assigned_to=agent.id,
         requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,
@@ -496,7 +497,7 @@ def test_a_frozen_transcript_keeps_the_summary(tmp_path):
     from core.tasking import create_or_bind_task
 
     set_supports_images("vision-model", True)
-    agent = db.create_agent("Iris", role="Researcher", model_work="vision-model")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("vision-model"))
     task = create_or_bind_task(
         title="Browse", description="Look at a page.", project=None, assigned_to=agent.id,
         requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,
@@ -533,7 +534,7 @@ def test_a_resumed_transcript_whose_session_ended_gets_the_session_ended_notice(
     from core.tasking import create_or_bind_task
 
     set_supports_images("vision-model", True)
-    agent = db.create_agent("Iris", role="Researcher", model_work="vision-model")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("vision-model"))
     task = create_or_bind_task(
         title="Browse", description="Look at a page.", project=None, assigned_to=agent.id,
         requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,

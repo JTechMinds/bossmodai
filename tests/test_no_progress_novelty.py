@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.liveness import classify_step, next_stale_streak, step_fingerprint
@@ -93,7 +94,7 @@ def test_migration_moves_the_old_default_only() -> None:
 
 
 def _working_agent(threshold: int):
-    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     db.update_agent(agent.id, guardian_no_progress_threshold=threshold)
     agent = db.get_agent(agent.id)
     task = create_or_bind_task(

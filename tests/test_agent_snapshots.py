@@ -63,7 +63,16 @@ def _set_limit(value: str) -> None:
     config.reload()
 
 
+def _secret_connection() -> str:
+    """A connection holding every secret a snapshot must never carry."""
+    return db.create_connection(
+        name="Keyed", api_base_url=SECRET_URL, api_key=SECRET_KEY,
+        model="gpt-4o-mini", extra_body=SECRET_BODY,
+    ).id
+
+
 def test_create_captures_the_setup_and_its_policy() -> None:
+    conn_id = db.create_connection(name="Qwen", api_base_url="http://127.0.0.1:9/v1", model="qwen3.8-27b").id
     agent = db.create_agent(
         "Ada",
         role="Code Auditor",
@@ -73,8 +82,8 @@ def test_create_captures_the_setup_and_its_policy() -> None:
                        "audience": "operator"},
         prompt_template="You are terse.",
         color="#1d4ed8",
-        model_work="qwen3.8-27b",
-        model_reasoning="gpt-4o-mini",
+        connection_id=conn_id,
+        thinking_work="high",
         desk_x=3,
         desk_y=4,
     )
@@ -88,8 +97,8 @@ def test_create_captures_the_setup_and_its_policy() -> None:
     }
     assert snap.prompt_template == "You are terse."
     assert snap.color == "#1d4ed8"
-    assert (snap.model_work, snap.model_reasoning, snap.model_social) == (
-        "qwen3.8-27b", "gpt-4o-mini", None,
+    assert (snap.connection_id, snap.thinking_social, snap.thinking_work) == (
+        conn_id, "default", "high",
     )
     assert (snap.desk_x, snap.desk_y) == (3, 4)
     assert snap.deleted_at is None
@@ -104,15 +113,17 @@ def test_create_captures_the_setup_and_its_policy() -> None:
 
 
 def test_a_save_recaptures_in_place() -> None:
-    agent = db.create_agent("Ada", role="Writer", model_work="llama3.1:8b")
+    llama = db.create_connection(name="Llama", api_base_url="http://127.0.0.1:9/v1", model="llama3.1:8b").id
+    gpt = db.create_connection(name="GPT", api_base_url="http://127.0.0.1:9/v1", model="gpt-4o-mini").id
+    agent = db.create_agent("Ada", role="Writer", connection_id=llama)
     first = _only(agent.id)
     db.update_agent(agent.id, role="Editor", description="Tightens drafts.",
-                    model_work="gpt-4o-mini")
+                    connection_id=gpt, thinking_social="off")
     second = _only(agent.id)
     assert second.id == first.id, "one row per agent, overwritten — no history"
     assert second.role == "Editor"
     assert second.description == "Tightens drafts."
-    assert second.model_work == "gpt-4o-mini"
+    assert (second.connection_id, second.thinking_social) == (gpt, "off")
     assert second.captured_at > first.captured_at
     assert len(_raw_rows()) == 1
 
@@ -165,13 +176,11 @@ def test_the_table_has_no_column_that_could_hold_a_secret() -> None:
 
 
 def test_an_agent_with_credentials_leaves_no_trace_of_them() -> None:
-    agent = db.create_agent(
-        "Keyed", role="Writer", model_work="gpt-4o-mini",
-        api_base_url=SECRET_URL, api_key=SECRET_KEY, extra_body=SECRET_BODY,
-    )
-    # The agent really does hold them, so their absence below means something.
-    assert db.get_agent(agent.id).api_key == SECRET_KEY
-    db.update_agent(agent.id, role="Editor", api_key=SECRET_KEY)
+    agent = db.create_agent("Keyed", role="Writer", connection_id=_secret_connection())
+    # The agent's connection really does hold them, so their absence below
+    # means something.
+    assert db.get_connection_by_id(agent.connection_id).api_key == SECRET_KEY
+    db.update_agent(agent.id, role="Editor")
     db.update_agent_prompt_history_policy(agent.id, last_n_histories=3)
     db.delete_agent_rows(agent.id)
     rows = _raw_rows()
@@ -232,7 +241,7 @@ def _client() -> TestClient:
 def test_the_route_lists_newest_first() -> None:
     older = db.create_agent("Older", role="Writer")
     newer = db.create_agent("Newer", role="Editor")
-    gone = db.create_agent("Gone", role="Auditor", api_key=SECRET_KEY)
+    gone = db.create_agent("Gone", role="Auditor", connection_id=_secret_connection())
     db.delete_agent_rows(gone.id)
     # A save puts an agent at the top again.
     db.update_agent(older.id, description="Now first.")

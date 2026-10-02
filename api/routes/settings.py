@@ -17,6 +17,8 @@ from core.bm_cli.approval_gate import GLOBAL_AUTO_APPROVE_SETTING
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
 from core.llm.connection_url import ConnectionUrlError, is_loopback_base, validate_connection_test_url
 from core.llm.template_engine import TemplateError
+from core.llm.thinking import unoffered
+from core.models.thinking import ThinkingLevels
 from core.models import (
     AIConnectionCreate,
     AIConnectionUpdate,
@@ -355,6 +357,7 @@ async def create_connection(body: AIConnectionCreate):
         api_key=body.api_key,
         model=body.model,
         extra_body=body.extra_body,
+        thinking_levels=body.thinking_levels,
     )
     if has_model and body.supports_images is not None:
         db.set_supports_images(body.model, body.supports_images)
@@ -372,13 +375,17 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
 
     Raises:
         HTTPException: 400 when nothing is sent, or ``supports_images`` is
-            true with no effective model; 404 for an unknown connection.
+            true with no effective model; 404 for an unknown connection;
+            409 when the new ``thinking_levels`` drops a level agents on
+            this connection still pick (the detail names them).
     """
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
     if fields.get("api_key") == "":
         fields.pop("api_key", None)
+    if "thinking_levels" in fields:
+        _refuse_removing_used_levels(connection_id, fields["thinking_levels"])
     image_flag = fields.pop("supports_images", None)
     effective_model: str | None = None
     if image_flag is not None:
@@ -395,6 +402,27 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
         db.set_supports_images(effective_model, image_flag)
     await _broadcast_operator_surfaces(["connections"])
     return serialize_connection(conn)
+
+
+def _refuse_removing_used_levels(connection_id: str, new_levels: ThinkingLevels | None) -> None:
+    """Raise 409 when ``new_levels`` lacks a level an agent on the connection picks.
+
+    Raises:
+        HTTPException: 409 naming each agent and the levels it would lose.
+    """
+    in_use = []
+    for agent in db.list_agents_by_connection(connection_id):
+        missing = unoffered(
+            new_levels or None,
+            {"thinking_social": agent.thinking_social, "thinking_work": agent.thinking_work},
+        )
+        if missing:
+            in_use.append(f"{agent.name} ({', '.join(missing)})")
+    if in_use:
+        raise HTTPException(
+            409,
+            f"Still picked by: {'; '.join(in_use)}. Change their thinking level first.",
+        )
 
 
 @router.post("/connections/{connection_id}/duplicate", status_code=201)
@@ -416,6 +444,15 @@ async def duplicate_connection(connection_id: str):
 
 @router.delete("/connections/{connection_id}", status_code=204)
 async def delete_connection(connection_id: str):
+    """Delete an AI connection no agent uses.
+
+    Raises:
+        HTTPException: 409 naming the agents linked to it; 404 when unknown.
+    """
+    users = db.list_agents_by_connection(connection_id)
+    if users:
+        names = ", ".join(agent.name for agent in users)
+        raise HTTPException(409, f"Used by: {names}. Move them to another connection first.")
     if not db.delete_connection(connection_id):
         raise HTTPException(404, "Connection not found")
     await _broadcast_operator_surfaces(["connections"])

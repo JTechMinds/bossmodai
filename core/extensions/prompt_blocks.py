@@ -3,14 +3,12 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from core.agent_loop.turn_context import _determine_mode
 from core.extensions.contract import SupportsPromptState
 from core.extensions.loader import ExtensionLoadError, load_extension
 from core.extensions.registry import Discovery, ExtensionEntry, enabled_ids, get_discovery
 from core.extensions.setup_runner import entry_setup_status
-from core.llm.routing import select_model
+from core.llm.routing import agent_model
 from core.models import Agent
 from db.extension_agent_configs import get_extension_agent_config
 from db.model_capabilities import supports_images
@@ -20,14 +18,13 @@ logger = logging.getLogger(__name__)
 
 def render_extension_blocks(
     agent: Agent,
-    trigger: dict[str, Any],
     discovery: Discovery | None = None,
 ) -> str | None:
     """Return the prompt text of every extension that applies to this turn.
 
     An extension applies when it is valid, enabled, set up (or needs no
-    setup), when it requires an image model the model this turn is routed
-    to (the same mode/model the agent loop picks for ``trigger``) is flagged
+    setup), when it requires an image model the model of the agent's AI
+    connection (the one every activation is routed to) is flagged
     image-capable, and — when its manifest declares ``agent_config`` — this
     agent has a stored config (an agent without a mailbox is not told about
     ``mail``).
@@ -42,7 +39,6 @@ def render_extension_blocks(
 
     Args:
         agent: The agent the prompt is for.
-        trigger: This turn's trigger; it decides the routing mode.
         discovery: Defaults to this process's discovery.
 
     Returns:
@@ -58,7 +54,7 @@ def render_extension_blocks(
     """
     found = discovery if discovery is not None else get_discovery()
     enabled = enabled_ids()
-    model = select_model(agent, _determine_mode(trigger))
+    model = agent_model(agent)
     blocks = [
         _block(entry, agent)
         for entry in found.valid_entries()

@@ -9,12 +9,13 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from core.agent_loop.communication_contract import (
     CommunicationContractError,
     load_communication_value,
 )
+from core.models.thinking import ThinkingChoice
 
 # Hire-contract LABEL cap. Specialty renders in rosters, chips and menus, so
 # it stays short; agent packs share it. Description and done bar are the
@@ -27,8 +28,8 @@ HIRE_ROLE_MAX_LEN = 120
 # ---------------------------------------------------------------------------
 
 class Agent(BaseModel):
-    """An AI agent with its identity, prompt configuration, model overrides,
-    desk assignment, and guardian safety thresholds."""
+    """An AI agent with its identity, prompt configuration, AI connection and
+    thinking levels, desk assignment, and guardian safety thresholds."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,17 +43,12 @@ class Agent(BaseModel):
     prompt_template: str | None = None
     color: str = "#3b82f6"
 
-    # Per-agent model overrides (None = use global default)
-    model_social: str | None = None
-    model_work: str | None = None
-    model_reasoning: str | None = None
-    model_extraction: str | None = None
-    model_self_queue: str | None = None
-
-    # Optional custom provider endpoint
-    api_base_url: str | None = None
-    api_key: str | None = Field(default=None, exclude=True)
-    extra_body: str | None = None
+    # The one AI connection every activation uses, read live each turn
+    # (None = unlinked; the agent's turns are skipped until one is chosen).
+    connection_id: str | None = None
+    # Thinking level per routed activation; "default" sends no fragment.
+    thinking_social: ThinkingChoice = "default"
+    thinking_work: ThinkingChoice = "default"
 
     # Desk assignment (tile coordinates on the office map)
     desk_x: int | None = None
@@ -165,16 +161,9 @@ class AgentCreate(BaseModel):
     desk_x: int | None = None
     desk_y: int | None = None
 
-    model_social: str | None = None
-    model_work: str | None = None
-    model_reasoning: str | None = None
-    model_extraction: str | None = None
-    model_self_queue: str | None = None
-
-    api_base_url: str | None = None
-    api_key: str | None = None
-    extra_body: str | None = None
-    connection_id: str | None = None
+    connection_id: str
+    thinking_social: ThinkingChoice = "default"
+    thinking_work: ThinkingChoice = "default"
     floor_id: str | None = None
 
     @field_validator("role")
@@ -212,16 +201,9 @@ class AgentUpdate(BaseModel):
     prompt_template: str | None = None
     color: str | None = None
 
-    model_social: str | None = None
-    model_work: str | None = None
-    model_reasoning: str | None = None
-    model_extraction: str | None = None
-    model_self_queue: str | None = None
-
-    api_base_url: str | None = None
-    api_key: str | None = None
-    extra_body: str | None = None
     connection_id: str | None = None
+    thinking_social: ThinkingChoice | None = None
+    thinking_work: ThinkingChoice | None = None
 
     desk_x: int | None = None
     desk_y: int | None = None

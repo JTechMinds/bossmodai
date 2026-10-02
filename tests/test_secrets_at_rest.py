@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -12,7 +13,7 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.redaction import serialize_connection, serialize_setting
 from api.routes import router
 from core import config
-from core.models import Setting
+from core.models import Agent, Setting
 from db.secret_store import SECRET_PREFIX, data_key_path, is_encrypted, migrate_plaintext_secrets
 from fastapi import FastAPI
 
@@ -61,19 +62,21 @@ def test_connection_api_key_not_plaintext_in_sqlite() -> None:
     assert loaded.api_key == secret
 
 
-def test_agent_api_key_not_plaintext_in_sqlite() -> None:
+def test_agents_keep_no_copy_of_a_connection_secret() -> None:
+    """An agent links its connection by id; the key lives only on the connection."""
+    columns = {row["name"] for row in db.query("PRAGMA table_info(agents)")}
+    assert columns, "agents does not exist"
+    assert not columns & {"api_key", "api_base_url", "extra_body"}
+    assert not set(Agent.model_fields) & {"api_key", "api_base_url", "extra_body"}
     secret = "sk-test-plaintext-agent-key"
-    agent = db.create_agent("Ada", role="Eng", api_key=secret, desk_x=1, desk_y=1)
-    assert agent.api_key == secret
-
-    stored = _raw_value("SELECT api_key FROM agents WHERE id = $1", [agent.id])
-    assert stored is not None
+    conn = db.create_connection(
+        name="Keyed", api_base_url="http://127.0.0.1:9/v1", api_key=secret, model="test",
+    )
+    agent = db.create_agent("Ada", role="Eng", connection_id=conn.id, desk_x=1, desk_y=1)
+    stored = json.dumps(db.query("SELECT * FROM agents WHERE id = $1", [agent.id]), default=str)
     assert secret not in stored
-    assert is_encrypted(stored)
-
-    loaded = db.get_agent(agent.id)
-    assert loaded is not None
-    assert loaded.api_key == secret
+    # migrate_plaintext_secrets has no agents pass left to run.
+    assert migrate_plaintext_secrets() == 0
 
 
 def test_secret_settings_not_plaintext_in_sqlite() -> None:

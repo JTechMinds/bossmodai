@@ -41,7 +41,7 @@ from core.bm_cli.results import error_result, success_result
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.extensions.contract import SetupStatus
-from core.llm.routing import select_model_with_source
+from core.llm.routing import agent_model
 from core.models import Agent
 from db.model_capabilities import supports_images
 
@@ -212,10 +212,10 @@ class CommandError(ValueError):
 def routed_vision_model(agent: Agent) -> tuple[str | None, bool]:
     """Return the agent's routed model and whether it is flagged image-capable.
 
-    Agents run CLI commands on turns routed in ``work`` mode: routing picks
-    ``work`` for every trigger except ``social``.
+    An agent has one AI connection for every activation, so its model is the
+    one CLI commands run on; None when the agent has no usable connection.
     """
-    model, _source = select_model_with_source(agent, "work")
+    model = agent_model(agent)
     return model, model is not None and supports_images(model)
 
 

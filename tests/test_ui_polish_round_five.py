@@ -159,63 +159,47 @@ def _column_steps(css: str) -> list[tuple[int, int]]:
     ]
 
 
-def test_the_matrix_is_a_two_column_grid() -> None:
-    """Five activation types rendered as five full-width rows.
+def test_the_thinking_levels_are_a_two_column_grid() -> None:
+    """One connection across the column, the two thinking levels side by side.
 
-    Each `<select>` spanned ~600px to display the word `None` and the block
-    cost ~264px of a dialog that already scrolls.
+    The section once rendered five per-activation connection rows; the runtime
+    routes two activations, and an agent has one connection, so there is one
+    full-width connection picker and a two-column row for the two thinking
+    levels under it.
 
-    The plan asked for `payload["matrixColumns"]` off the markup builder. The
-    count is read from the stylesheet instead: overlays.css is the only thing
-    that lays the grid out, and a builder that also named a column count would
-    be a second source of truth for a number it does not own. The property is
-    asserted on the value that actually applies.
-
-    TWO, down from three, and the governing number is unchanged: it is the
-    per-select WIDTH, not the column count. The matrix spanned a whole 760px
-    dialog when three columns gave it ~225px each. It now sits in the
-    right-hand column of the form grid — ~450px of a 960px panel — where three
-    would give ~140px, which truncates a connection label at ~18 characters and
-    real ones already exceed that. That is the same measurement that rejected
-    five columns across the full width. Two gives ~215px: the width three had
-    before, so no label clips that did not clip already.
+    The column count is read from the stylesheet: overlays.css is the only
+    thing that lays the grid out, and a builder that also named a column count
+    would be a second source of truth for a number it does not own.
     """
     payload = _agent_form_payload()
-    # Still five activation types, still one Set All. Both of these PASSED
-    # before this round: they are regression guards on the fieldset the layout
-    # change moves, not evidence that it moved.
-    assert payload["matrixCoversEveryModelType"] is True, payload["matrixSelectNames"]
-    # `Set All` writes to the other five rather than being a sixth value, so it
-    # stays full width above the grid. That is what stops it reading as one.
-    assert payload["setAllIsOutsideTheGrid"] is True
+    assert payload["sectionCoversEveryRoutedMode"] is True
+    # The connection spans the column above the grid, the levels share it.
+    assert payload["thinkingIsAGridOfTwo"] is True
 
     css = _read(CSS / "overlays.css")
     assert _grid_columns(css) == 2
-    # Which is the whole point: five selects across two columns is THREE rows
-    # where five full-width rows cost five, in a column half the width.
-    activation_types = len(payload["matrixSelectNames"]) - 1
-    assert activation_types == 5, payload["matrixSelectNames"]
-    assert -(-activation_types // _grid_columns(css)) == 3
+    # Two routed activations across two columns is ONE row.
+    assert -(-2 // _grid_columns(css)) == 1
 
-    # Labels above, and associated — not bare spans. A form control whose label
-    # is a `<span>` beside it is a screen-reader dead end.
-    assert payload["everySelectHasAnAssociatedLabel"] is True
+    # Every control is named by visible text the menu trigger repeats in its
+    # accessible name.
+    assert payload["everyControlIsNamedOnScreen"] is True
 
 
 def test_a_long_connection_name_stays_recoverable() -> None:
     """Names are arbitrary operator input; the layout must not lose them.
 
-    A label is `${name} (${model})`, so a three-column select at the dialog's
-    760px shows roughly thirty characters of one. Truncation is acceptable only
-    because it stays recoverable: the `title` carries the full label on hover,
-    and the native dropdown popup is not bounded by the control's width.
+    A label is `${name} (${model})`, so the picker's trigger can clip one.
+    Clipping is acceptable only because it stays recoverable: the trigger's
+    accessible name is the full label (core/menu-select.js), and the open menu
+    lists every row in full.
     """
     payload = _agent_form_payload()
-    assert payload["optionsCarryTitleAttribute"] is True, (
-        payload["optionsMissingTheirFullLabel"]
-    )
-    css = _read(CSS / "overlays.css")
-    assert "text-overflow: ellipsis" in _rule(css, ".connection-select")
+    assert payload["connectionOptionsNameTheModel"] is True
+    css = _read(CSS / "controls.css")
+    assert "text-overflow: ellipsis" in _rule(css, ".menu-select-field .menu-select-value")
+    menu = _read(JS / "core" / "menu-select.js")
+    assert "trigger.setAttribute('aria-label', `${label}: ${option.label}`);" in menu
 
 
 def test_the_grid_collapses_before_it_crushes() -> None:
@@ -243,13 +227,18 @@ def test_the_grid_collapses_before_it_crushes() -> None:
     assert form_grid_steps == ["900"], form_grid_steps
 
 
-def test_the_matrix_kept_every_behaviour() -> None:
-    """All four PASSED before this round. They are here because a layout change
-    to a markup builder is exactly where a behaviour quietly stops happening,
-    and because `matrixError` is the round-one arity repair's guard: this
+def test_the_ai_section_kept_every_behaviour() -> None:
+    """A layout change to a markup builder is exactly where a behaviour quietly
+    stops happening, and `sectionError` is the arity repair's guard: this
     harness CALLS the builder, and a source grep cannot see a throw."""
     payload = _agent_form_payload()
-    assert payload["matrixError"] is None, payload["matrixError"]
-    assert payload["matrixRendersConnectionOptions"] is True
-    assert payload["matrixPreselectsTheStoredModel"] is True
-    assert payload["emptyMatrixLinksToSettings"] is True
+    assert payload["sectionError"] is None, payload["sectionError"]
+    assert payload["sectionHasNoNativeSelect"] is True
+    assert payload["sectionCarriesTheStoredChoice"] is True
+    assert payload["anUnofferedLevelIsResetAndNamed"] is True
+    assert payload["anUnlinkedAgentIsToldToChoose"] is True
+    assert payload["aBlankFormSaysNothing"] is True
+    assert payload["thinkingOptionsFollowTheConnection"] is True
+    assert payload["emptySectionLinksToSettings"] is True
+    assert payload["submitSendsTheConnectionAndLevels"] is True
+    assert payload["submitSendsNullWhileUnchosen"] is True

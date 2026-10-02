@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime, channel_idle_check
 from core.agent_loop.channel_host import pause_thread
@@ -62,10 +63,15 @@ def teardown_function() -> None:
     db.close_connection()
 
 
-def _team():
-    harley = db.create_agent("Harley", role="Feature Planner", desk_x=1, desk_y=1, model_work="identity-big")
-    charles = db.create_agent("Charles", role="Engineer", desk_x=2, desk_y=1, model_work="identity-big")
-    brian = db.create_agent("Brian", role="Spec Author", desk_x=3, desk_y=1, model_work="identity-big")
+def _team(*, connected: bool = True):
+    # System AI falls back to the first connection when unset, so a test of
+    # "no System AI" needs a team with no connections at all.
+    def link() -> str | None:
+        return model_connection("identity-big") if connected else None
+
+    harley = db.create_agent("Harley", role="Feature Planner", desk_x=1, desk_y=1, connection_id=link())
+    charles = db.create_agent("Charles", role="Engineer", desk_x=2, desk_y=1, connection_id=link())
+    brian = db.create_agent("Brian", role="Spec Author", desk_x=3, desk_y=1, connection_id=link())
     channel = db.create_channel(
         name="M2",
         member_agent_ids=[harley.id, charles.id, brian.id],
@@ -649,7 +655,7 @@ def test_unset_system_ai_warns_once_and_records_the_check(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    harley, charles, _brian, channel = _team()
+    harley, charles, _brian, channel = _team(connected=False)
     latest = _charles_case(channel, harley, charles)
     calls = _no_judge(monkeypatch)
     with caplog.at_level(logging.WARNING, logger="core.agent_loop.channel_idle_check"):

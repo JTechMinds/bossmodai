@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.decision_contract import (
@@ -124,7 +125,7 @@ def test_reply_without_work_commit_fails_the_shape() -> None:
 
 @pytest.mark.asyncio
 async def test_reply_without_work_commit_is_repaired_in_turn(monkeypatch: pytest.MonkeyPatch) -> None:
-    agent = db.create_agent("Debra", role="Analyst", model_work="test/mock")
+    agent = db.create_agent("Debra", role="Analyst", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     prompts = _script(
@@ -146,7 +147,7 @@ async def test_reply_without_work_commit_is_repaired_in_turn(monkeypatch: pytest
 async def test_committed_reply_with_no_live_work_is_repaired_and_nothing_posts(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    agent = db.create_agent("Charles", role="Build Engineer", model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     posted_before_repair: list[int] = []
@@ -275,7 +276,7 @@ def test_uncommitted_reply_never_requeues_work() -> None:
 async def test_validation_repair_respects_the_shared_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     db.set_setting("decision_repair_attempts", "1", "llm")
     config.reload()
-    agent = db.create_agent("Debra", role="Analyst", model_work="test/mock")
+    agent = db.create_agent("Debra", role="Analyst", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     committed = '{"act":"reply","intent":"work","msg":"Starting now.","work_commit":true,"th":"go"}'

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.work_binding import (
@@ -46,7 +47,7 @@ def teardown_function() -> None:
 
 def _working_agent(name: str):
     """An agent whose live work activity is bound to a task."""
-    agent = db.create_agent(name, role="Engineer", model_work="test/mock")
+    agent = db.create_agent(name, role="Engineer", connection_id=model_connection("test/mock"))
     task = create_or_bind_task(
         title=f"{name}'s task",
         description="Do the work.",

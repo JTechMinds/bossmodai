@@ -156,13 +156,6 @@ def migrate_plaintext_secrets() -> int:
                 [encrypt_secret(str(row["api_key"])), row["id"]],
             )
             rewritten += 1
-    for row in query("SELECT id, api_key FROM agents"):
-        if _needs_wrap(row.get("api_key")):
-            execute(
-                "UPDATE agents SET api_key = $1 WHERE id = $2",
-                [encrypt_secret(str(row["api_key"])), row["id"]],
-            )
-            rewritten += 1
     for row in query("SELECT key, value FROM settings"):
         key = str(row.get("key") or "")
         if not is_secret_setting_key(key):

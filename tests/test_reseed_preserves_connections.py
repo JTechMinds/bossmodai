@@ -27,6 +27,7 @@ from db.secret_store import is_encrypted
 _API_KEY = "sk-reseed-survivor-1234567890"
 _BASE_URL = "https://api.example.test/v1"
 _EXTRA_BODY = '{"temperature": 0.2}'
+_LEVELS = {"off": {"thinking": {"type": "disabled"}}}
 
 
 @pytest.fixture(autouse=True)
@@ -62,6 +63,7 @@ def _create_connection():
         api_key=_API_KEY,
         model="gpt-test",
         extra_body=_EXTRA_BODY,
+        thinking_levels=_LEVELS,
     )
 
 
@@ -83,6 +85,7 @@ def test_reset_and_restore_round_trips_the_connection() -> None:
     assert after.created_at == created.created_at
     # The operator's key must come back usable, not merely present.
     assert after.api_key == _API_KEY
+    assert after.thinking_levels == _LEVELS
 
 
 def test_restored_key_is_still_encrypted_at_rest() -> None:

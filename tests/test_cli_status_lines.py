@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.turn_helpers import announce_extension_result, post_cli_status_lines
 from core.models.message import HUMAN_SENDER_ID
@@ -187,7 +188,7 @@ def _script(monkeypatch, contents: list[str]) -> None:
 async def test_a_decision_turn_bv_open_posts_the_browsing_line_to_its_thread(sink, monkeypatch) -> None:
     from core.agent_loop.loop import run_turn
 
-    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("test/mock"))
     peer = db.create_agent("Peer")
     channel = db.create_channel(name="Pricing", member_agent_ids=[agent.id, peer.id], created_by=agent.id)
     seen: dict[str, Any] = {}
@@ -219,7 +220,7 @@ async def test_an_execution_turn_bv_open_posts_the_browsing_line_to_the_task_ori
     from core.agent_loop import activity_runtime
     from core.agent_loop.loop import run_turn
 
-    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("test/mock"))
     task = _task(agent.id, channel_id=None)
     activity_runtime.activate_work_activity(agent.id, task, task_status="active")
 
@@ -301,7 +302,7 @@ async def test_an_unknown_stamped_extension_is_logged_and_not_announced(sink, ca
 async def test_a_decision_turn_bv_command_announces_the_live_view(sink, monkeypatch) -> None:
     from core.agent_loop.loop import run_turn
 
-    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("test/mock"))
     _script(monkeypatch, [
         '{"act":"cli","data":{"cmd":"bv open example.com"},"th":"look"}',
         '{"act":"reply","work_commit":false,"intent":"question","msg":"It is off.","th":"answer"}',
@@ -321,7 +322,7 @@ async def test_an_execution_turn_bv_command_announces_the_live_view(sink, monkey
     from core.agent_loop import activity_runtime
     from core.agent_loop.loop import run_turn
 
-    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("test/mock"))
     task = _task(agent.id, channel_id=None)
     activity_runtime.activate_work_activity(agent.id, task, task_status="active")
     _script(monkeypatch, [
@@ -340,7 +341,7 @@ async def test_an_execution_turn_bv_command_announces_the_live_view(sink, monkey
 async def test_a_core_command_in_a_turn_announces_nothing(sink, monkeypatch) -> None:
     from core.agent_loop.loop import run_turn
 
-    agent = db.create_agent("Iris", role="Researcher", model_work="test/mock")
+    agent = db.create_agent("Iris", role="Researcher", connection_id=model_connection("test/mock"))
     _script(monkeypatch, [
         '{"act":"cli","data":{"cmd":"pwd"},"th":"where"}',
         '{"act":"reply","work_commit":false,"intent":"question","msg":"Here.","th":"answer"}',

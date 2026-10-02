@@ -11,6 +11,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop.decision_peek import (
     IDENTICAL_PEEK_STEER,
@@ -115,7 +116,7 @@ def _script_completions(monkeypatch: pytest.MonkeyPatch, contents: list[str]) ->
 
 
 def _agent_and_state():
-    agent = db.create_agent("Peek Clerk", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Peek Clerk", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     return agent, state

@@ -16,6 +16,7 @@ from typing import Any
 import pytest
 
 import db
+from tests._connections import model_connection
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.dispatcher import NOT_RETRIED_NO_REPEAT_REASON, TurnDispatcher
@@ -76,7 +77,7 @@ def _task(agent_id: str):
 
 def _working_agent_with_snapshot():
     """An agent mid-task whose work activity already carries a frozen transcript."""
-    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     task = _task(agent.id)
     activity = _freeze_live_work(agent, task)
     return agent, task, activity
@@ -305,7 +306,7 @@ async def test_a_turn_that_raised_without_a_listed_command_is_still_retried(
 
 @pytest.mark.asyncio
 async def test_idle_does_not_complete_a_meeting(monkeypatch: pytest.MonkeyPatch) -> None:
-    agent = db.create_agent("Iris", role="Researcher", desk_x=1, desk_y=1, model_work="test/mock")
+    agent = db.create_agent("Iris", role="Researcher", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     meeting = activity_runtime.begin_commitment_activity(
         agent.id, kind="meeting", title="Planning sync", reason="Joined the meeting.",
     )
@@ -414,7 +415,7 @@ def _channel_worker():
     """An agent on live work whose task was assigned from a shared thread."""
     from tests.test_consent_origin import _channel_for, _channel_task
 
-    agent = db.create_agent("Gerry", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Gerry", role="Engineer", connection_id=model_connection("test/mock"))
     peer = db.create_agent("Jim", role="Engineer")
     channel = _channel_for(agent.id, peer.id)
     task = _channel_task(assignee_id=agent.id, channel_id=channel.id).task
@@ -560,7 +561,7 @@ async def test_l5_work_output_is_not_written_against_the_paused_task() -> None:
     from core.agent_loop.actions import execute_action
     from core.world.tilemap import DEFAULT_DESKS, get_room_at
 
-    agent = db.create_agent("Charles", role="Build Engineer", model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", connection_id=model_connection("test/mock"))
     task = _task(agent.id)
     # "accepted" is the state _handle_work would move to "active".
     activity = _freeze_live_work(agent, task, task_status="accepted")
@@ -1144,7 +1145,7 @@ def test_r4_other_consent_cards_never_share_a_row_across_origins(kind: str, tmp_
     from tests.test_consent_origin import _host_file
 
     fixture = _host_file(tmp_path)
-    agent = db.create_agent("Charles", role="Build Engineer", model_work="test/mock")
+    agent = db.create_agent("Charles", role="Build Engineer", connection_id=model_connection("test/mock"))
 
     def _open(trigger: dict[str, Any]):
         with bind_turn(agent.id, trigger):

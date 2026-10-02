@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from api.redaction import serialize_secret_field
 from api.routes._desk import _build_agent_desk_payload
 from api.routes._shared import (
     _IMAGE_MIME_TYPES,
@@ -24,6 +23,7 @@ from core.bm_cli.approval_gate import global_auto_approve_enabled
 from core.bm_cli.fs_commands import write_virtual_text
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.llm.template_engine import TemplateError
+from core.llm.thinking import unoffered
 from core.messaging import route_human_channel_message, route_human_dm
 from core.models import (
     Agent,
@@ -113,33 +113,36 @@ class AgentDeskSaveBody(BaseModel):
 CHANNEL_NAME_MAX_LENGTH = 120
 
 
-def _credentials_from_connection(connection_id: str | None) -> dict[str, Any]:
-    """Resolve stored connection secrets so the UI never needs raw keys."""
-    if not connection_id:
-        return {}
-    conn = db.get_connection_by_id(connection_id)
-    if conn is None:
-        raise HTTPException(400, "Connection not found")
-    return {
-        "api_base_url": conn.api_base_url,
-        "api_key": conn.api_key,
-        "extra_body": conn.extra_body,
-    }
+def _validate_ai_choice(
+    connection_id: str | None,
+    thinking_social: str,
+    thinking_work: str,
+) -> None:
+    """Check an agent's AI connection and thinking levels before they are saved.
 
+    Args:
+        connection_id: The connection the agent will use, or None when it
+            stays unlinked (allowed only with both levels at ``default``).
+        thinking_social: The Social activation's thinking choice.
+        thinking_work: The Work activation's thinking choice.
 
-def _apply_connection_credentials(fields: dict[str, Any]) -> dict[str, Any]:
-    """Fill api_base_url / api_key / extra_body from connection_id when omitted."""
-    connection_id = fields.pop("connection_id", None)
-    if not connection_id:
-        return fields
-    creds = _credentials_from_connection(connection_id)
-    if not fields.get("api_base_url"):
-        fields["api_base_url"] = creds["api_base_url"]
-    if not fields.get("api_key"):
-        fields["api_key"] = creds["api_key"]
-    if fields.get("extra_body") is None:
-        fields["extra_body"] = creds["extra_body"]
-    return fields
+    Raises:
+        HTTPException: 400 when the connection does not exist, has no model,
+            or does not offer a chosen level (the detail names the field).
+    """
+    levels = None
+    if connection_id is not None:
+        conn = db.get_connection_by_id(connection_id)
+        if conn is None:
+            raise HTTPException(400, "AI connection not found")
+        if not (conn.model or "").strip():
+            raise HTTPException(
+                400, f"AI connection '{conn.name}' has no model. Set one in Settings → Connections first.",
+            )
+        levels = conn.thinking_levels
+    missing = unoffered(levels, {"thinking_social": thinking_social, "thinking_work": thinking_work})
+    if missing:
+        raise HTTPException(400, f"Thinking level not offered by this AI connection: {', '.join(missing)}")
 
 
 # ─── Agents CRUD ───
@@ -537,15 +540,6 @@ async def seat_channel_member(channel_id: str, body: ChannelMemberBody):
     return summary
 
 
-@router.get("/agents/{agent_id}/api-key")
-async def get_agent_api_key(agent_id: str):
-    """Return whether an agent has an API key, plus last-4 only."""
-    agent = db.get_agent(agent_id)
-    if not agent:
-        raise HTTPException(404, "Agent not found")
-    return serialize_secret_field("api_key", agent.api_key)
-
-
 @router.get("/agents/{agent_id}/prompt-history-policy")
 async def get_agent_prompt_history_policy(agent_id: str) -> AgentPromptHistoryPolicy:
     """Return the backend-owned prompt-history policy for one agent."""
@@ -704,12 +698,7 @@ async def create_agent(body: AgentCreate) -> Agent:
             _validate_authored_prompt_template(body.prompt_template)
         except TemplateError as exc:
             raise HTTPException(400, str(exc)) from exc
-    creds = _apply_connection_credentials({
-        "connection_id": body.connection_id,
-        "api_base_url": body.api_base_url,
-        "api_key": body.api_key,
-        "extra_body": body.extra_body,
-    })
+    _validate_ai_choice(body.connection_id, body.thinking_social, body.thinking_work)
     desk_x, desk_y = _auto_assign_desk(body.desk_x, body.desk_y)
     try:
         agent = agent_repository.create(
@@ -722,14 +711,9 @@ async def create_agent(body: AgentCreate) -> Agent:
             color=body.color,
             desk_x=desk_x,
             desk_y=desk_y,
-            model_social=body.model_social,
-            model_work=body.model_work,
-            model_reasoning=body.model_reasoning,
-            model_extraction=body.model_extraction,
-            model_self_queue=body.model_self_queue,
-            api_base_url=creds.get("api_base_url"),
-            api_key=creds.get("api_key"),
-            extra_body=creds.get("extra_body"),
+            connection_id=body.connection_id,
+            thinking_social=body.thinking_social,
+            thinking_work=body.thinking_work,
             floor_id=body.floor_id,
         )
     except ValueError as exc:
@@ -772,12 +756,18 @@ async def return_agent_from_vacation(agent_id: str, body: VacationReturnBody) ->
 
 @router.patch("/agents/{agent_id}")
 async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
-    fields = _apply_connection_credentials(body.model_dump(exclude_none=True))
+    fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
     current = db.get_agent(agent_id)
     if not current:
         raise HTTPException(404, "Agent not found")
+    if {"connection_id", "thinking_social", "thinking_work"} & fields.keys():
+        _validate_ai_choice(
+            fields.get("connection_id", current.connection_id),
+            fields.get("thinking_social", current.thinking_social),
+            fields.get("thinking_work", current.thinking_work),
+        )
     next_desk_x = fields["desk_x"] if "desk_x" in fields else current.desk_x
     next_desk_y = fields["desk_y"] if "desk_y" in fields else current.desk_y
     assigned_x, assigned_y = _auto_assign_desk(
@@ -1204,15 +1194,21 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
 def _serialize_agent(agent: Agent) -> dict[str, object]:
     """Serialize one agent for the single-agent routes.
 
-    The Agent model's own JSON (``api_key`` stays excluded by the model),
-    plus ``cli_auto_approve_global`` so the DM's auto-approve switch can be
-    greyed out without a second request.
+    The Agent model's own JSON, plus ``cli_auto_approve_global`` so the DM's
+    auto-approve switch can be greyed out without a second request, and
+    ``connection`` — ``{id, name, model}`` of the linked AI connection, or
+    None when unlinked or the connection is gone — for the desk and the
+    form. Never a secret.
 
     Raises:
         ConfigError: The Global auto-approve setting is missing or not a boolean.
     """
     payload: dict[str, object] = agent.model_dump(mode="json")
     payload["cli_auto_approve_global"] = global_auto_approve_enabled()
+    conn = db.get_connection_by_id(agent.connection_id) if agent.connection_id else None
+    payload["connection"] = (
+        {"id": conn.id, "name": conn.name, "model": conn.model} if conn is not None else None
+    )
     return payload
 
 

@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
@@ -858,7 +859,7 @@ async def test_consent_resolved_resume_continues_with_chat_history(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     ask = "Hey jimothy can you review the code at /home/jordan/Desktop/Projects/Jtech-CLI/"
-    agent = db.create_agent("Jimothy", role="Engineer", model_work="test/mock")
+    agent = db.create_agent("Jimothy", role="Engineer", connection_id=model_connection("test/mock"))
     state = db.get_agent_state(agent.id)
     assert state is not None
     db.create_message(HUMAN_SENDER_ID, agent.id, ask, message_type="human")

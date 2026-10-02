@@ -26,14 +26,11 @@ CREATE TABLE IF NOT EXISTS agents (
     communication                 TEXT,
     prompt_template               TEXT,
     color                         VARCHAR DEFAULT '#3b82f6',
-    model_social                  VARCHAR,
-    model_work                    VARCHAR,
-    model_reasoning               VARCHAR,
-    model_extraction              VARCHAR,
-    model_self_queue              VARCHAR,
-    api_base_url                  VARCHAR,
-    api_key                       VARCHAR,
-    extra_body                    TEXT,
+    -- The one AI connection, read live each turn. No FK: the 409 delete
+    -- guard keeps it valid and names the agents that use it.
+    connection_id                 VARCHAR,
+    thinking_social               VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','low','medium','high','xhigh')),
+    thinking_work                 VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','low','medium','high','xhigh')),
     desk_x                        INTEGER,
     desk_y                        INTEGER,
     guardian_token_limit           INTEGER DEFAULT 30000,
@@ -394,6 +391,7 @@ CREATE TABLE IF NOT EXISTS ai_connections (
     api_key      VARCHAR,
     model        VARCHAR,
     extra_body   TEXT,
+    thinking_levels TEXT,                 -- JSON: level → fragment merged over extra_body, or NULL
     created_at   TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -881,8 +879,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_templates_local
 -- Captured by db/agents.py on create, on every save and on a prompt-history
 -- policy change, and once more on delete (stamped deleted_at), then trimmed to
 -- the newest `recent_agents_limit`. The column list is EXPLICIT and carries no
--- api_key, api_base_url or extra_body: those are connection-derived and may
--- hold credentials, so a recreate re-links the connection by model name.
+-- credentials: only the connection id, which a recreate links again.
 CREATE TABLE IF NOT EXISTS agent_snapshots (
     id                    VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     agent_id              VARCHAR NOT NULL UNIQUE,   -- no FK: outlives the agent
@@ -893,11 +890,9 @@ CREATE TABLE IF NOT EXISTS agent_snapshots (
     communication         TEXT,                      -- same JSON text as agents.communication
     prompt_template       TEXT,
     color                 VARCHAR,
-    model_social          VARCHAR,
-    model_work            VARCHAR,
-    model_reasoning       VARCHAR,
-    model_extraction      VARCHAR,
-    model_self_queue      VARCHAR,
+    connection_id         VARCHAR,
+    thinking_social       VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','low','medium','high','xhigh')),
+    thinking_work         VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','low','medium','high','xhigh')),
     desk_x                INTEGER,
     desk_y                INTEGER,
     prompt_history_policy TEXT,                      -- JSON: the 4 policy fields, or NULL

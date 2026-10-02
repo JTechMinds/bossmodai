@@ -69,9 +69,11 @@ const BossModDeskActions = (() => {
                 metaEl.append(h('p', { class: 'context-skeleton' }, 'Loading workspace…'));
                 return;
             }
-            // A null model override means the company default, which is a real
-            // configuration rather than a missing value.
-            const model = detail.model_work || detail.model_reasoning || 'Company default';
+            // The agent's one connection, as the server names it; an unlinked
+            // agent (or one whose connection is gone) runs no turns, so it says so.
+            const model = detail.connection
+                ? `${detail.connection.name} (${detail.connection.model})`
+                : 'No AI connection';
             // The shared fact list, the task detail's: two quiet facts about
             // the desk rather than two more sentences.
             metaEl.append(BossModFactList.create([

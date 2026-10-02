@@ -213,3 +213,85 @@ def test_serialize_connection_reports_the_model_flag() -> None:
     assert serialize_connection(source)["supports_images"] is True
     blank = db.create_connection(name="Blank", api_base_url=_BASE_URL, model=None)
     assert serialize_connection(blank)["supports_images"] is False
+
+
+# ─── Thinking levels: carried on a copy, guarded where agents use them ───
+
+_LEVELS = {"off": {"thinking": {"type": "disabled"}}, "high": {"thinking": {"type": "enabled"}}}
+
+
+def test_copy_carries_the_thinking_levels() -> None:
+    source = db.create_connection(
+        name="Leveled", api_base_url=_BASE_URL, api_key=_API_KEY, model="gpt-test",
+        thinking_levels=_LEVELS,
+    )
+    copy = db.duplicate_connection(source.id)
+    assert copy is not None
+    assert copy.thinking_levels == _LEVELS
+
+
+def test_levels_round_trip_through_the_api_and_an_empty_map_clears_them() -> None:
+    client = _settings_client()
+    created = client.post("/api/connections", json={
+        "name": "Leveled", "api_base_url": _BASE_URL, "model": "gpt-test", "thinking_levels": _LEVELS,
+    })
+    assert created.status_code == 201, created.text
+    assert created.json()["thinking_levels"] == _LEVELS
+    conn_id = created.json()["id"]
+
+    patched = client.patch(f"/api/connections/{conn_id}", json={"thinking_levels": {"low": {"a": 1}}})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["thinking_levels"] == {"low": {"a": 1}}
+
+    cleared = client.patch(f"/api/connections/{conn_id}", json={"thinking_levels": {}})
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["thinking_levels"] is None
+    assert query_one("SELECT thinking_levels FROM ai_connections WHERE id = $1", [conn_id])["thinking_levels"] is None
+
+
+def test_a_malformed_level_map_is_refused() -> None:
+    client = _settings_client()
+    bad = client.post("/api/connections", json={
+        "name": "Bad", "api_base_url": _BASE_URL, "thinking_levels": {"turbo": {"a": 1}},
+    })
+    assert bad.status_code == 422
+    assert db.list_connections() == []
+    source = _create_source()
+    bad = client.patch(f"/api/connections/{source.id}", json={"thinking_levels": {"high": "yes"}})
+    assert bad.status_code == 422
+
+
+def test_removing_a_level_agents_pick_is_refused_and_names_them() -> None:
+    client = _settings_client()
+    source = db.create_connection(
+        name="Leveled", api_base_url=_BASE_URL, model="gpt-test", thinking_levels=_LEVELS,
+    )
+    db.create_agent("Ada", connection_id=source.id, thinking_work="high")
+    db.create_agent("Bo", connection_id=source.id)
+
+    refused = client.patch(f"/api/connections/{source.id}", json={"thinking_levels": {"off": _LEVELS["off"]}})
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == (
+        "Still picked by: Ada (thinking_work: high). Change their thinking level first."
+    )
+    assert db.get_connection_by_id(source.id).thinking_levels == _LEVELS
+    # Clearing every level is the same removal.
+    assert client.patch(f"/api/connections/{source.id}", json={"thinking_levels": {}}).status_code == 409
+    # Removing a level nobody picks is fine.
+    kept = client.patch(f"/api/connections/{source.id}", json={"thinking_levels": {"high": _LEVELS["high"]}})
+    assert kept.status_code == 200, kept.text
+
+
+def test_deleting_a_connection_agents_use_is_refused_and_names_them() -> None:
+    client = _settings_client()
+    source = _create_source()
+    db.create_agent("Ada", connection_id=source.id)
+    db.create_agent("Bo", connection_id=source.id)
+
+    refused = client.delete(f"/api/connections/{source.id}")
+    assert refused.status_code == 409
+    assert refused.json()["detail"] == "Used by: Ada, Bo. Move them to another connection first."
+    assert db.get_connection_by_id(source.id) is not None
+
+    unused = _create_source(name="Unused")
+    assert client.delete(f"/api/connections/{unused.id}").status_code == 204

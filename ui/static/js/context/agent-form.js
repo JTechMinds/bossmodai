@@ -3,20 +3,19 @@
  *
  * The composition half of what `buildFormHTML` used to be: it fetches what the
  * form needs, asks each field group for its section in reading order, and
- * binds the three controls that only make sense once the whole form exists —
- * the two Settings links, the "Set All" connection convenience, and the
- * Advanced disclosure. The per-field behaviours are
- * context/agent-form-bindings.js.
+ * binds the controls that only make sense once the whole form exists — the
+ * two Settings links and the Advanced disclosure. The per-field behaviours,
+ * the AI Connection dropdowns among them, are context/agent-form-bindings.js.
  *
  * BOUND TO THE FORM, NEVER TO THE HOST. `container` is scaffolding:
  * context/agent-form-save.js builds onto a detached stage and publishes with
  * `replaceChildren(...stage.children)`, which MOVES the `<form>` out and
  * leaves the stage empty. A listener that re-queries the host it was handed
  * therefore searches an emptied node for the rest of its life — which is
- * exactly what silently killed "Set All": every `querySelector` came back
- * null, the guard swallowed it, and the quick create path wrote five null
- * connections while reporting success. The `<form>` is the node that travels,
- * so it is the node every binding here holds.
+ * exactly what once silently killed a connection control: every
+ * `querySelector` came back null, the guard swallowed it, and the quick create
+ * path wrote no connection while reporting success. The `<form>` is the node
+ * that travels, so it is the node every binding here holds.
  *
  * VALUES ARE NOT IDENTITY. `agent` used to answer two questions: what the
  * fields show, and WHO the form is for — which decides the recovery tools,
@@ -261,9 +260,7 @@ const BossModAgentForm = (() => {
                     ${BossModAgentFormFields.nameField(values)}
                     ${BossModAgentFormFields.roleContractCard(values, roster)}
                 </section>
-                ${BossModAgentFormConnections.connectionsSection(values, connections, {
-                    reportMissing: Boolean(prefill),
-                })}
+                ${BossModAgentFormConnections.connectionsSection(values, connections)}
                 <div class="agent-form-wide">
                     ${BossModAgentFormAdvanced.advancedSection(values, {
                         personalities, roster, promptHistoryPolicy, keptPrompt,
@@ -309,21 +306,6 @@ const BossModAgentForm = (() => {
             BossModAgentFormConnections.shapeFor(connections),
         );
 
-        // "Set All" connection convenience dropdown. Re-queried on each change
-        // rather than captured: the nodes survive any rearrangement, their
-        // place in the tree may not. The root it searches is the form for the
-        // reason in the header.
-        const setAllSelect = form.querySelector('select[name="model_all"]');
-        if (setAllSelect) {
-            setAllSelect.addEventListener('change', () => {
-                if (!setAllSelect.value) return;
-                BossModAgentFields.MODEL_TYPES.forEach(t => {
-                    const sel = form.querySelector(`select[name="${t.key}"]`);
-                    if (sel) sel.value = setAllSelect.value;
-                });
-            });
-        }
-
         const advancedToggle = form.querySelector('#advanced-toggle');
         const advancedContent = form.querySelector('#advanced-content');
         if (advancedToggle && advancedContent) {
@@ -355,13 +337,7 @@ const BossModAgentForm = (() => {
         BINDINGS.bindDuplicateNameWarning(form, roster, agent);
         BINDINGS.bindColorSwatchInitial(form);
         BINDINGS.bindHireTextAutoGrow(form);
-        // LAST, and after the "Set All" fan-out above it — the ordering is
-        // load-bearing. The fan-out writes the five per-type selects FROM
-        // SCRIPT, and a value assigned that way fires no change event of its
-        // own, so the guard has to be registered after it to read the five
-        // once they have been written. Registered the other way round it would
-        // simply stay armed one interaction longer, which is the safe side.
-        BINDINGS.bindConnectionGuard(form, { creating: !agent });
+        BINDINGS.bindAiConnection(form, connections, values);
     }
 
     return { buildFormHTML, loadFormData };

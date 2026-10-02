@@ -95,11 +95,7 @@ def test_parse_action_code_fence_and_walk() -> None:
 async def test_execute_action_unknown_action_is_status_changed() -> None:
     class _Agent:
         name = "Ada"
-        model_work = None
-        model_social = None
-        model_reasoning = None
-        model_extraction = None
-        model_self_queue = None
+        connection_id = None
 
     class _State:
         x = 0
