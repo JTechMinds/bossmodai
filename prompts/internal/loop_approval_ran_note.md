@@ -1,0 +1,1 @@
+The operator approved `{{command}}` and it has already run once; its result is above. Do not send it again to re-check or to test the approval. Running it again needs a new approval. Use the result to choose your next step.

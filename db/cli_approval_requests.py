@@ -35,7 +35,10 @@ def create_approval_request(
     review_note: str | None = None,
     detached_origin: bool = False,
 ) -> CliApprovalRequest:
-    """Insert a new approval request, or reuse a pending row for this command.
+    """Insert a new approval request, or reuse a live pending twin of it.
+
+    The twin key is :func:`find_pending_request`'s, so the runtime's
+    pre-gate lookup and this insert agree on what counts as the same card.
 
     Args:
         detached_origin: The request was opened in a detached turn
@@ -45,7 +48,9 @@ def create_approval_request(
     """
     origin = (channel_id or "").strip() or None
     note = (review_note or "").strip() or None
-    existing = get_pending_for_command(agent_id, command, cwd=cwd, detached_origin=detached_origin)
+    existing = find_pending_request(
+        agent_id, command=command, cwd=cwd, channel_id=origin, detached_origin=detached_origin,
+    )
     if existing is not None:
         if note and not (existing.review_note or "").strip():
             updated = _set_review_note(existing.id, note)
@@ -105,25 +110,50 @@ def bind_approval_channel(request_id: str, channel_id: str) -> CliApprovalReques
     )
 
 
-def get_pending_for_command(
+def find_pending_request(
     agent_id: str,
-    command: str,
-    cwd: str | None = None,
     *,
-    detached_origin: bool = False,
+    command: str,
+    cwd: str | None,
+    channel_id: str | None,
+    detached_origin: bool,
 ) -> CliApprovalRequest | None:
-    """Return the newest pending approval for this agent, command, cwd and origin."""
-    scope = (cwd or "").strip()
+    """Return the newest live pending request that is a twin of this one.
+
+    A twin has the same agent, the exact same command text and cwd, the
+    same origin channel and the same detached origin. Two commands that
+    differ by one flag are different requests. The channel is part of the
+    key because the card lives in the origin conversation and the decision
+    resumes there; the origin because a detached and an attached turn each
+    need their own resume.
+
+    Args:
+        agent_id: The requesting agent.
+        command: The exact command (or script) text.
+        cwd: The virtual cwd the command was asked from; ``None`` matches
+            only ``NULL``.
+        channel_id: The origin thread; blank is the same as ``None`` (as
+            :func:`create_approval_request` stores it), and ``None`` matches
+            only ``NULL``.
+        detached_origin: Whether the asking turn is detached.
+
+    Returns:
+        The newest matching row whose status is ``pending`` and whose expiry
+        has not passed (a row without an expiry never expires, as in
+        :func:`expire_stale_requests`), or ``None``.
+    """
+    origin = (channel_id or "").strip() or None
     return fetch_one(
         f"""
         SELECT {_ALL_COLUMNS}
         FROM cli_approval_requests
         WHERE agent_id = $1 AND command = $2 AND status = 'pending'
-          AND COALESCE(cwd, '') = $3 AND detached_origin = $4
+          AND cwd IS $3 AND channel_id IS $4 AND detached_origin = $5
+          AND (expires_at IS NULL OR expires_at > $6)
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
-        [agent_id, command, scope, bool(detached_origin)],
+        [agent_id, command, cwd, origin, bool(detached_origin), datetime.now(timezone.utc)],
         CliApprovalRequest,
     )
 

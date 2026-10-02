@@ -157,6 +157,16 @@ async def _run_execution_turn(
                 channel_id=consent_origin_channel_id(trigger),
             )
             approval_context_msg = cli_result.prompt_content
+            # Only a shell result means the command actually ran; a jail
+            # block or a consent pause must not be described as a finished run.
+            # Without the note the agent re-sent approved commands to
+            # "re-check" or to test whether the approval had stuck.
+            if cli_result.kind == "shell":
+                ran_note = _render_loop_prompt(
+                    "internal_loop_approval_ran_note",
+                    command=approval_fields.get("command", ""),
+                )
+                approval_context_msg = f"{approval_context_msg}\n\n{ran_note}"
         else:
             note = approval_fields.get("decision_note") or "No reason given."
             cmd = approval_fields.get("command", "unknown")

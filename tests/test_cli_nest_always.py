@@ -274,7 +274,7 @@ async def test_always_allow_collapses_cwd_siblings(monkeypatch: pytest.MonkeyPat
         agent_id=agent.id, command="awk '{print}' x", cwd="/me/host-work/one",
     )
     monkeypatch.setattr(
-        "db.cli_approval_requests.get_pending_for_command",
+        "db.cli_approval_requests.find_pending_request",
         lambda *args, **kwargs: None,
     )
     second = db.create_cli_approval_request(

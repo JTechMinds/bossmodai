@@ -264,6 +264,10 @@ def test_locked_clone_unmatched_write_is_an_approval_on_the_clone(
     assert auth.kind == "approval"
     assert auth.materialize is not None
     materialized = auth.materialize(content=None, channel_id=None)
+    # A still-pending identical card would be reused (``reused_pending``),
+    # so decide it first and compare two fresh cards.
+    assert materialized.approval_request_id is not None
+    assert db.reject_cli_approval_request(materialized.approval_request_id) is not None
     executed = execute_bm_cli(agent, state, command)
     assert _projection(materialized) == _projection(executed)
     assert materialized.approval_required is True

@@ -974,6 +974,10 @@ def test_dm_flag_auto_approves_dm_work(monkeypatch: pytest.MonkeyPatch) -> None:
     carded = execute_bm_cli(agent, state, "rm notes.txt")
     assert carded.approval_required is True
     assert notes.read_text(encoding="utf-8") == "keep"
+    # A still-pending identical card is reused without asking the gate, so
+    # the operator decides this one before the flag-on ask.
+    assert carded.approval_request_id is not None
+    assert db.reject_cli_approval_request(carded.approval_request_id) is not None
 
     db.set_agent_cli_auto_approve_dm(agent.id, True)
     monkeypatch.setattr(_COMPLETE, _verdict("approve", "task_work", "deletes one project file"))

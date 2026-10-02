@@ -544,7 +544,7 @@ def test_duplicate_command_reuses_pending_approval() -> None:
 async def test_approve_collapses_duplicate_pending_command(monkeypatch: pytest.MonkeyPatch) -> None:
     gerry, _state = _agent_and_state()
     first = db.create_cli_approval_request(agent_id=gerry.id, command=EDITABLE_CMD)
-    monkeypatch.setattr("db.cli_approval_requests.get_pending_for_command", lambda *args, **kwargs: None)
+    monkeypatch.setattr("db.cli_approval_requests.find_pending_request", lambda *args, **kwargs: None)
     second = db.create_cli_approval_request(agent_id=gerry.id, command=EDITABLE_CMD)
     assert first.id != second.id
     client = _api_client()

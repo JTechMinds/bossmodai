@@ -433,6 +433,10 @@ def execute_approved_command(
         parsed = parse_cli_command(command)
     except ValueError as exc:
         return error_result(command, str(exc), cwd=cwd_before, executor="shell")
+    # The agent's results name the command it asked for, in its /me and
+    # /projects world; the rewrites below change only what runs and what the
+    # audit row records.
+    submitted = parsed.raw
 
     from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.locked_clone_outcome import prepare_locked_clone_approved
@@ -498,7 +502,7 @@ def execute_approved_command(
     if blocked is not None:
         return blocked
 
-    prepared = _prepare_native_shell(agent, parsed, cwd_before)
+    prepared = _prepare_native_shell(agent, parsed, cwd_before, submitted=submitted)
     if isinstance(prepared, BossModCliResult):
         return prepared
     parsed, shell_cwd, roots, timeout, max_output = prepared
@@ -513,7 +517,7 @@ def execute_approved_command(
         extra_env=_shell_extra_env(agent, parsed, cwd_before),
     )
     if shell_exec.denied_by_path_jail:
-        result = _path_jail_cli_result(agent, parsed, cwd_before, shell_exec.stderr)
+        result = _path_jail_cli_result(agent, replace(parsed, raw=submitted), cwd_before, shell_exec.stderr)
         record_bm_cli_event(
             agent_id=agent.id,
             command=parsed.raw,
@@ -555,7 +559,7 @@ def execute_approved_command(
         return auth_failed
 
     result = shell_result(
-        command=parsed.raw,
+        command=submitted,
         exit_code=shell_exec.exit_code,
         stdout=shell_exec.stdout,
         stderr=shell_exec.stderr,
@@ -1143,6 +1147,69 @@ def _maybe_auto_approve(
     ))
 
 
+def _reuse_pending_twin(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd_before: str,
+    policy: object,
+    trigger_type: str | None,
+    channel_id: str | None,
+    detached_origin: bool,
+) -> BossModCliResult | None:
+    """Pause on an identical card the operator has not decided yet, if there is one.
+
+    Args:
+        agent: The asking agent.
+        parsed: The command (or full script) as the card would show it.
+        content: The CLI body, kept on the audit row.
+        cwd_before: The virtual cwd the command was asked from.
+        policy: The approval_required policy decision.
+        trigger_type: The turn trigger, kept on the audit row.
+        channel_id: The cleaned origin thread, or ``None``.
+        detached_origin: Whether the asking turn is detached.
+
+    Returns:
+        The approval_required result naming the existing request, with
+        ``data["reused_pending"]`` set, after one audit row for the re-ask;
+        or ``None`` when no live twin exists and a card must be decided.
+    """
+    twin = db.find_pending_cli_approval_request(
+        agent.id,
+        command=parsed.raw,
+        cwd=cwd_before,
+        channel_id=channel_id,
+        detached_origin=detached_origin,
+    )
+    if twin is None:
+        return None
+    paused = approval_required_result(
+        parsed.raw,
+        policy.message or "Approval required.",
+        cwd=cwd_before,
+        executor=policy.executor,
+        matched_rule_id=policy.matched_rule_id,
+        approval_request_id=twin.id,
+        approval_request=twin,
+    )
+    result = replace(paused, data={**(paused.data or {}), "reused_pending": True})
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor=policy.executor,
+        cwd_before=cwd_before,
+        cwd_after=result.cwd,
+        policy_tier=policy.tier,
+        decision="approval_required",
+        result=result,
+        trigger_type=trigger_type,
+        approval_request_id=twin.id,
+    )
+    return result
+
+
 def _handle_approval_required(
     *,
     agent: Agent,
@@ -1155,6 +1222,10 @@ def _handle_approval_required(
     script: ScriptApproval | None = None,
 ) -> BossModCliResult:
     """Create an approval request and return the pausing result.
+
+    A live pending twin (same command, cwd, origin thread and detached
+    origin) is reused before the auto-approve gate: the agent pauses on that
+    card and nothing new is created, posted or reviewed.
 
     For a *script*, ``parsed.raw`` is the full script text: its segments
     already passed the project-env gate, the gate judges every segment, and
@@ -1192,6 +1263,24 @@ def _handle_approval_required(
             executor=getattr(policy, "executor", "shell"),
         )
 
+    from core.agent_loop.work_binding import current_turn_detached
+
+    detached = current_turn_detached(agent.id)
+    # Before the gate: while the operator is still deciding the same card,
+    # System AI is not asked again and no second card is posted.
+    reused = _reuse_pending_twin(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd_before=cwd_before,
+        policy=policy,
+        trigger_type=trigger_type,
+        channel_id=origin_channel,
+        detached_origin=detached,
+    )
+    if reused is not None:
+        return reused
+
     auto = _maybe_auto_approve(
         agent=agent,
         parsed=parsed,
@@ -1207,8 +1296,6 @@ def _handle_approval_required(
     notes = [script.review_note if script is not None else "", auto.card_why]
     review_note = "\n".join(note for note in notes if note)
 
-    from core.agent_loop.work_binding import current_turn_detached
-
     timeout_minutes = config.require_int("cli_approval_timeout_minutes")
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
 
@@ -1222,7 +1309,7 @@ def _handle_approval_required(
             expires_at=expires_at,
             channel_id=origin_channel,
             review_note=review_note or None,
-            detached_origin=current_turn_detached(agent.id),
+            detached_origin=detached,
         )
     except Exception:
         logger.exception("CLI approval create failed for %s", parsed.raw)
@@ -1432,8 +1519,23 @@ def _prepare_native_shell(
     agent: Agent,
     parsed: ParsedCliCommand,
     cwd_before: str,
+    *,
+    submitted: str,
 ) -> tuple[ParsedCliCommand, Path, tuple[Path, ...], int, int] | BossModCliResult:
     """Rewrite virtual mounts, then resolve cwd, path-jail roots and shell limits.
+
+    Args:
+        agent: The agent running the command.
+        parsed: The decided command; its ``/me`` and ``/projects`` tokens
+            are rewritten to real paths for the executor.
+        cwd_before: The virtual cwd the command runs from.
+        submitted: The command as the agent asked for it, echoed by the
+            error results here so they never show host paths.
+
+    Returns:
+        The rewritten command, the real cwd, the path-jail roots, and the
+        timeout and output cap; or an error result when the cwd has no
+        real workspace path.
 
     Raises:
         ConfigError: ``cli_shell_timeout_seconds`` or
@@ -1446,10 +1548,10 @@ def _prepare_native_shell(
     try:
         resolved = resolve_cli_path(agent.storage_key, cwd_before, ".")
     except ValueError as exc:
-        return error_result(parsed.raw, str(exc), cwd=cwd_before, executor="shell")
+        return error_result(submitted, str(exc), cwd=cwd_before, executor="shell")
     if resolved is None or resolved.real_path is None:
         return error_result(
-            parsed.raw,
+            submitted,
             "Shell cwd is not a real workspace path",
             cwd=cwd_before,
             executor="shell",
@@ -1496,7 +1598,10 @@ def _execute_shell(
     )
     if blocked is not None:
         return blocked
-    prepared = _prepare_native_shell(agent, parsed, cwd_before)
+    # The result echoes the command as decided, before the /me and
+    # /projects rewrite; the audit row keeps what actually ran.
+    submitted = parsed.raw
+    prepared = _prepare_native_shell(agent, parsed, cwd_before, submitted=submitted)
     if isinstance(prepared, BossModCliResult):
         return prepared
     parsed, shell_cwd, roots, timeout, max_output = prepared
@@ -1511,7 +1616,7 @@ def _execute_shell(
         extra_env=_shell_extra_env(agent, parsed, cwd_before),
     )
     if shell_exec.denied_by_path_jail:
-        result = _path_jail_cli_result(agent, parsed, cwd_before, shell_exec.stderr)
+        result = _path_jail_cli_result(agent, replace(parsed, raw=submitted), cwd_before, shell_exec.stderr)
         record_bm_cli_event(
             agent_id=agent.id,
             command=parsed.raw,
@@ -1551,7 +1656,7 @@ def _execute_shell(
         return auth_failed
 
     result = shell_result(
-        command=parsed.raw,
+        command=submitted,
         exit_code=shell_exec.exit_code,
         stdout=shell_exec.stdout,
         stderr=shell_exec.stderr,

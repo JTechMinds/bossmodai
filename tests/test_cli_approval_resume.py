@@ -17,6 +17,7 @@ from core.llm.client import LLMResponse
 
 COMMAND = "curl https://example.invalid/probe"
 _REJECT_MARK = "rejected by the operator"
+_RAN_MARK = "has already run once"
 
 
 def setup_function() -> None:
@@ -71,6 +72,7 @@ def _install_turn_doubles(
     monkeypatch: pytest.MonkeyPatch,
     *,
     reask_on_reject: bool = False,
+    result_kind: str = "shell",
 ) -> tuple[list[dict[str, Any]], list[str]]:
     executed: list[dict[str, Any]] = []
     prompts: list[str] = []
@@ -87,6 +89,7 @@ def _install_turn_doubles(
         )
 
         class _Result:
+            kind = result_kind
             prompt_content = f"BOSSMOD CLI RESULT\ncommand: {command}\n\nexit 0"
 
         return _Result()
@@ -149,6 +152,8 @@ async def test_approve_wake_executes_flattened_trigger_without_reask(
     assert prompts
     assert _REJECT_MARK not in prompts[0]
     assert "No reason given." not in prompts[0]
+    assert f"The operator approved `{COMMAND}` and it has already run once" in prompts[0]
+    assert "Do not send it again" in prompts[0]
     assert db.list_cli_approval_requests(status="pending", agent_id=agent.id) == []
     assert db.get_cli_approval_request(request.id).status == "approved"
 
@@ -179,6 +184,7 @@ async def test_flat_always_allowed_executes_on_the_same_reader(
     assert executed[0]["command"] == COMMAND
     assert executed[0]["approval_request_id"] == "always-1"
     assert _REJECT_MARK not in prompts[0]
+    assert f"`{COMMAND}` and it has already run once" in prompts[0]
 
 
 @pytest.mark.asyncio
@@ -272,6 +278,36 @@ async def test_flat_approved_wins_over_nested_reject_and_real_reject_keeps_note(
     assert len(executed) == 1
     assert "too dangerous" in prompts[-1]
     assert "No reason given." not in prompts[-1]
+    assert _RAN_MARK not in prompts[-1]
+
+
+@pytest.mark.asyncio
+async def test_approved_command_that_did_not_run_gets_no_ran_note(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A jail block or a consent pause on resume is not described as a finished run."""
+    agent = _agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    executed, prompts = _install_turn_doubles(monkeypatch, result_kind="error")
+
+    await run_turn(
+        agent,
+        state,
+        {
+            "type": "cli_approval_resolved",
+            "status": "approved",
+            "command": COMMAND,
+            "cwd": "/me",
+            "approval_request_id": "blocked-1",
+            "trigger_id": "approved-blocked",
+            "source_channel": "system",
+            "claim_generation": 1,
+        },
+    )
+    assert executed[-1]["approval_request_id"] == "blocked-1"
+    assert f"command: {COMMAND}" in prompts[-1]
+    assert _RAN_MARK not in prompts[-1]
 
 
 @pytest.mark.asyncio
