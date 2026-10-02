@@ -29,7 +29,6 @@ WRITE_NAMES = frozenset({
     "rm", "rmdir", "unlink", "mv", "cp", "chmod", "chown", "chgrp",
     "touch", "mkdir", "install", "tee", "dd", "truncate", "ln", "shred",
 })
-REDIRECT_TOKENS = frozenset({">", ">>"})
 
 _DELETE_NAMES = frozenset({"rm", "rmdir", "unlink", "shred"})
 _HOST_PROCESS_NAMES = frozenset({"kill", "pkill", "killall", "docker"})
@@ -79,8 +78,9 @@ def classify_effect(parsed: ParsedCliCommand) -> EffectClass:
     The order is: delete, host process, install, network write, network
     read, local write, then ``read_only`` when the ``_READ_ONLY`` table
     matches and ``unknown`` otherwise. ``find`` with an exec, delete,
-    ``-fprint*`` or ``-fls`` action is not read-only. A redirect makes an
-    otherwise read-only or unknown command a ``local_write``.
+    ``-fprint*`` or ``-fls`` action is not read-only. Redirects are not
+    argv: a script segment's redirect targets are added by
+    :func:`~core.bm_cli.approval_gate.facts.command_facts`.
 
     Args:
         parsed: The parsed command.
@@ -101,8 +101,6 @@ def classify_effect(parsed: ParsedCliCommand) -> EffectClass:
     if remote is not None:
         return remote
     if name in WRITE_NAMES or (name == "git" and sub in _GIT_LOCAL_WRITE):
-        return "local_write"
-    if any(token in REDIRECT_TOKENS for token in args):
         return "local_write"
     if _is_read_only(name, args):
         return "read_only"

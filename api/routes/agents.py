@@ -4,13 +4,14 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from api.redaction import serialize_secret_field
 from api.routes._desk import _build_agent_desk_payload
 from api.routes._shared import (
+    _IMAGE_MIME_TYPES,
     _available_folder_opener_options,
     _launch_file_explorer,
     _validate_authored_prompt_template,
@@ -20,6 +21,7 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_repository import agent_repository
 from core.bm_cli.approval_gate import global_auto_approve_enabled
+from core.bm_cli.fs_commands import write_virtual_text
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.llm.template_engine import TemplateError
 from core.messaging import route_human_channel_message, route_human_dm
@@ -98,6 +100,11 @@ class AgentCliAutoApproveBody(BaseModel):
 
 class ChannelMemberBody(BaseModel):
     agent_id: str
+
+
+class AgentDeskSaveBody(BaseModel):
+    path: str
+    content: str
 
 
 # A thread name is one line in the roster rail and one line in the chat header.
@@ -556,6 +563,97 @@ async def get_agent_desk(agent_id: str, path: str = "/me"):
         raise HTTPException(404, "Agent not found")
 
     return await asyncio.to_thread(_build_agent_desk_payload, agent, path)
+
+
+@router.put("/agents/{agent_id}/desk")
+async def save_agent_desk_file(agent_id: str, body: AgentDeskSaveBody) -> dict[str, object]:
+    """Write an operator's edit back to an existing file on an agent's desk.
+
+    The path is agent-virtual (``/me/...``, ``/projects/...``) and resolves in
+    the agent's own namespace, the same one the desk GET reads from. The write
+    goes through the CLI's ``write_virtual_text`` so it gets the CLI size cap,
+    write normalization and the ``/me`` auto-commit: an operator edit shows up
+    in the agent's workspace history like any other write.
+
+    Args:
+        agent_id: The agent whose desk holds the file.
+        body: ``path`` (agent-virtual) and the full new ``content``. Empty
+            content is allowed; clearing a file is a legitimate edit.
+
+    Returns:
+        ``{"status": "ok", "path": <virtual path>, "commit_sha": <sha|None>}``.
+
+    Raises:
+        HTTPException: 404 when the agent or the file does not exist (save
+            edits an existing file and never creates one); 400 when the path
+            is outside the agent's roots or the write is refused, for example
+            over the CLI write size limit.
+    """
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    try:
+        resolved = resolve_cli_path(agent.storage_key, "/", body.path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if resolved.real_path is None or not resolved.exists or not resolved.real_path.is_file():
+        raise HTTPException(404, "File not found")
+
+    try:
+        outcome = await asyncio.to_thread(
+            write_virtual_text,
+            agent,
+            cwd="/",
+            raw_path=resolved.virtual_path,
+            content=body.content,
+            allow_empty=True,
+            reason=f"operator edit {resolved.virtual_path}",
+        )
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    return {"status": "ok", "path": outcome.virtual_path, "commit_sha": outcome.commit_sha}
+
+
+@router.get("/agents/{agent_id}/desk/raw")
+async def get_agent_desk_file_raw(agent_id: str, path: str = Query(..., min_length=1)):
+    """Return the raw bytes of one file on an agent's desk.
+
+    The desk GET returns text previews only; the shared file viewer needs the
+    bytes to preview a desk image. The path resolves in the agent's namespace
+    through ``resolve_cli_path``, the same jail the desk GET uses.
+
+    Args:
+        agent_id: The agent whose desk holds the file.
+        path: An agent-virtual path (``/me/...``, ``/projects/...``).
+
+    Returns:
+        A ``FileResponse`` typed from the suffix for known images, otherwise
+        ``application/octet-stream``.
+
+    Raises:
+        HTTPException: 404 when the agent or the file does not exist; 400 when
+            the path is outside the agent's roots or names a directory.
+    """
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+
+    try:
+        resolved = resolve_cli_path(agent.storage_key, "/", path)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+    if resolved.real_path is None or not resolved.exists:
+        raise HTTPException(404, "File not found")
+    if not resolved.real_path.is_file():
+        raise HTTPException(400, "Path is not a file")
+
+    real_path = resolved.real_path
+    mime_type = _IMAGE_MIME_TYPES.get(real_path.suffix.lower(), "application/octet-stream")
+    return FileResponse(str(real_path), media_type=mime_type)
 
 
 @router.post("/agents/{agent_id}/desk/open-folder")

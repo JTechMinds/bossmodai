@@ -16,7 +16,7 @@ import db
 from core import config
 from core.agent_loop.deliverables import get_work_contract
 from core.agent_loop.work_binding import bound_task_id
-from core.bm_cli.approval_gate.effects import REDIRECT_TOKENS, WRITE_NAMES
+from core.bm_cli.approval_gate.effects import WRITE_NAMES
 from core.bm_cli.approval_gate.facts import CommandFacts, looks_like_path
 from core.bm_cli.floor_roots import agent_floor_id, floor_root
 from core.bm_cli.parser import parse_cli_command
@@ -111,12 +111,6 @@ def command_shape(command: str) -> Shape | None:
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in REDIRECT_TOKENS:
-            if index + 1 >= len(tokens):
-                return None
-            operands.append("<path>")
-            index += 2
-            continue
         if not end_flags and token == "--":
             end_flags = True
             index += 1

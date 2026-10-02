@@ -54,7 +54,12 @@ const BossModTaskDeliverables = (() => {
                 await BossModFileViewer.open(payload.company_path, { api });
                 return;
             }
-            await BossModFileViewer.open(target, { api, apiUrl: deskUrl });
+            await BossModFileViewer.open(target, {
+                api,
+                apiUrl: deskUrl,
+                saveUrl: `/api/agents/${encodeURIComponent(agentId)}/desk`,
+                rawUrl: `/api/agents/${encodeURIComponent(agentId)}/desk/raw`,
+            });
             return;
         }
         if (payload.company_path) {

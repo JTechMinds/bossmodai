@@ -95,7 +95,8 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "Examples:\n"
             "  cd /me/projects  — jump to projects root\n"
             "  cd ..            — move up one level\n"
-            "  cd src/utils     — descend into a relative path"
+            "  cd src/utils     — descend into a relative path\n"
+            "  cd /projects/x && git status  — cd, then run the rest of a script there"
         ),
     ),
     "ls": VirtualCommandMeta(

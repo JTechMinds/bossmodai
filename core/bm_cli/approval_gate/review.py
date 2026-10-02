@@ -120,15 +120,30 @@ def review_command(facts: CommandFacts, context: ReviewContext) -> ReviewOutcome
 
 
 def review_payload(facts: CommandFacts, context: ReviewContext) -> dict[str, Any]:
-    """Return the JSON-ready user message: command facts plus work context."""
-    return {
+    """Return the JSON-ready user message: command facts plus work context.
+
+    A script's facts are the union over its segments; ``segments`` then
+    lists each one (command, effect, paths, write targets) so the reviewer
+    sees which part does what.
+    """
+    payload: dict[str, Any] = {
         "command": facts.command,
         "cwd": facts.cwd_virtual,
         "effect": facts.effect,
         "paths": [_path_item(fact) for fact in facts.paths],
         "write_targets": [fact.label for fact in facts.write_targets],
-        **asdict(context),
     }
+    if facts.segments:
+        payload["segments"] = [
+            {
+                "command": segment.command,
+                "effect": segment.effect,
+                "paths": [_path_item(fact) for fact in segment.paths],
+                "write_targets": [fact.label for fact in segment.write_targets],
+            }
+            for segment in facts.segments
+        ]
+    return {**payload, **asdict(context)}
 
 
 def parse_verdict(raw: str | None) -> ReviewVerdict | None:

@@ -6,7 +6,7 @@ gate. Probe fail does not persist host Enable On.
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import db
@@ -56,6 +56,87 @@ from core.models.nest_git import (
 
 NestGitDecision = Literal["enable", "credentials", "use"]
 
+# A resume after the operator answered a card re-runs the command; it must
+# fail closed instead of opening a second card.
+_CONSENT_RESOLVED_TRIGGER = "host_path_consent_resolved"
+
+
+@dataclass(frozen=True, slots=True)
+class NestGitGate:
+    """What the nest git or gh gate decided, before any card or note exists.
+
+    Attributes:
+        action: ``"consent"`` opens (or reuses) the Nest git card;
+            ``"blocked"`` refuses without a card.
+        reason: The card's reason line for ``"consent"``; None keeps the
+            default card body.
+        unmatched: Saved credentials exist but none matches this remote
+            (nest git ``"blocked"`` only).
+        nest_ready: Nest git auth is usable for this command (gh
+            ``"blocked"`` only; picks the compare-URL how-to).
+    """
+
+    action: Literal["consent", "blocked"]
+    reason: str | None = None
+    unmatched: bool = False
+    nest_ready: bool = False
+
+
+def decide_nest_git(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd: str,
+    trigger_type: str | None = None,
+) -> NestGitGate | None:
+    """Decide the nest git auth gate for one command without creating chrome.
+
+    Args:
+        agent: The agent running the command.
+        parsed: The command.
+        cwd: The agent's virtual working directory.
+        trigger_type: The turn trigger; a consent resume fails closed.
+
+    Returns:
+        None when the command is not a nest remote-git op or auth is ready,
+        otherwise the card or refusal to materialize with
+        :func:`apply_nest_git_gate`.
+    """
+    if not command_needs_nest_git_auth(agent, parsed, cwd):
+        return None
+    if nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd):
+        return None
+    if trigger_type == _CONSENT_RESOLVED_TRIGGER:
+        if nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd):
+            return None
+        return NestGitGate(action="blocked", unmatched=_unmatched(agent, parsed, cwd))
+    reason = no_match_blocked_message() if _unmatched(agent, parsed, cwd) else None
+    return NestGitGate(action="consent", reason=reason)
+
+
+def apply_nest_git_gate(
+    gate: NestGitGate,
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd: str,
+    task_id: str | None,
+    channel_id: str | None,
+) -> BossModCliResult:
+    """Materialize a :func:`decide_nest_git` outcome: the card, or the refusal."""
+    if gate.action == "blocked":
+        return _blocked_result(parsed.raw, cwd=cwd, unmatched=gate.unmatched)
+    return request_nest_git_consent(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd,
+        task_id=task_id,
+        channel_id=channel_id,
+        reason=gate.reason,
+    )
+
 
 def maybe_pause_for_nest_git(
     *,
@@ -68,23 +149,91 @@ def maybe_pause_for_nest_git(
     trigger_type: str | None = None,
 ) -> BossModCliResult | None:
     """Pause for the nest git card when a nest remote-git op has no creds."""
-    if not command_needs_nest_git_auth(agent, parsed, cwd):
+    gate = decide_nest_git(agent=agent, parsed=parsed, cwd=cwd, trigger_type=trigger_type)
+    if gate is None:
         return None
-    if nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd):
-        return None
-    if trigger_type == "host_path_consent_resolved":
-        if nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd):
-            return None
-        return _blocked_result(parsed.raw, cwd=cwd, unmatched=_unmatched(agent, parsed, cwd))
-    reason = no_match_blocked_message() if _unmatched(agent, parsed, cwd) else None
-    return request_nest_git_consent(
+    return apply_nest_git_gate(
+        gate,
         agent=agent,
         parsed=parsed,
         content=content,
         cwd=cwd,
         task_id=task_id,
         channel_id=channel_id,
-        reason=reason,
+    )
+
+
+def decide_gh_cli_block(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd: str,
+    trigger_type: str | None = None,
+    persist_chrome: bool = True,
+) -> NestGitGate | None:
+    """Decide the gh auth gate for one command without creating chrome.
+
+    A matching Nest git PAT is injected into the gh subprocess, so that
+    path passes. When Nest git is not ready, the Nest git card is reused;
+    otherwise the command is refused with one Blocked note.
+
+    Args:
+        agent: The agent running the command.
+        parsed: The command.
+        cwd: The agent's virtual working directory.
+        trigger_type: The turn trigger; a consent resume never opens a card.
+        persist_chrome: False (dry run) never opens a card.
+
+    Returns:
+        None when gh needs no gate, otherwise the card or refusal to
+        materialize with :func:`apply_gh_cli_block`.
+    """
+    if not command_needs_gh_auth(parsed):
+        return None
+    if command_dumps_secret_token_env(parsed.raw):
+        return None
+    if nest_git_can_inject_gh(agent, parsed, cwd):
+        return None
+    ready = nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd)
+    if not ready and trigger_type != _CONSENT_RESOLVED_TRIGGER and persist_chrome:
+        reason = (
+            no_match_blocked_message()
+            if _unmatched(agent, parsed, cwd)
+            else gh_auth_blocked_message(agent, parsed, cwd, nest_ready=False)
+        )
+        return NestGitGate(action="consent", reason=reason)
+    return NestGitGate(action="blocked", nest_ready=ready)
+
+
+def apply_gh_cli_block(
+    gate: NestGitGate,
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd: str,
+    task_id: str | None,
+    channel_id: str | None,
+    persist_chrome: bool = True,
+) -> BossModCliResult:
+    """Materialize a :func:`decide_gh_cli_block` outcome: the card, or the Blocked note."""
+    if gate.action == "consent":
+        return request_nest_git_consent(
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd=cwd,
+            task_id=task_id,
+            channel_id=channel_id,
+            reason=gate.reason,
+        )
+    return _gh_blocked_result(
+        agent=agent,
+        parsed=parsed,
+        cwd=cwd,
+        channel_id=channel_id,
+        nest_ready=gate.nest_ready,
+        persist_chrome=persist_chrome,
     )
 
 
@@ -101,39 +250,25 @@ def maybe_block_gh_cli(
 ) -> BossModCliResult | None:
     """Fail-closed one Nest git / compare-URL card for a gh auth miss. No Approve.
 
-    A matching Nest git PAT is injected into the gh subprocess — this gate
-    stays off that path. When Nest git is not ready, reuse the Nest git card.
-    When Nest git covers push but has no PAT (SSH / host Enable), post one
-    Blocked note with the compare URL instead of Approve spam.
+    :func:`decide_gh_cli_block` then :func:`apply_gh_cli_block`.
     """
-    if not command_needs_gh_auth(parsed):
-        return None
-    if command_dumps_secret_token_env(parsed.raw):
-        return None
-    if nest_git_can_inject_gh(agent, parsed, cwd):
-        return None
-    ready = nest_git_auth_ready(agent=agent, parsed=parsed, cwd=cwd)
-    if not ready and trigger_type != "host_path_consent_resolved" and persist_chrome:
-        reason = (
-            no_match_blocked_message()
-            if _unmatched(agent, parsed, cwd)
-            else gh_auth_blocked_message(agent, parsed, cwd, nest_ready=False)
-        )
-        return request_nest_git_consent(
-            agent=agent,
-            parsed=parsed,
-            content=content,
-            cwd=cwd,
-            task_id=task_id,
-            channel_id=channel_id,
-            reason=reason,
-        )
-    return _gh_blocked_result(
+    gate = decide_gh_cli_block(
         agent=agent,
         parsed=parsed,
         cwd=cwd,
+        trigger_type=trigger_type,
+        persist_chrome=persist_chrome,
+    )
+    if gate is None:
+        return None
+    return apply_gh_cli_block(
+        gate,
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd,
+        task_id=task_id,
         channel_id=channel_id,
-        nest_ready=ready,
         persist_chrome=persist_chrome,
     )
 

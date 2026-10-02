@@ -28,6 +28,7 @@ from core.bm_cli.host_roots import is_within_roots
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policy_engine import CommandPolicyDecision, argv0_basename_after_resolve
 from core.bm_cli.project_repo import project_directory_for
+from core.bm_cli.shell_script import is_compound
 from core.bm_cli.types import ParsedCliCommand
 from core.models import Agent
 from core.models.cli_policy import CliApprovalRequest, CliPolicyRule
@@ -147,8 +148,9 @@ def always_allow_pattern(command: str, matched_rule_id: str | None = None) -> st
     The pattern names what the command really runs: policy evaluates a
     wrapped command (``timeout 5 cp a b``) as ``cp a b``, so a ``timeout``
     rule would never match. A command that runs more than one command
-    (``find -exec``, ``find -delete``) gets no pattern: one rule cannot
-    cover both.
+    (``find -exec``, ``find -delete``, or a script with pipes, connectors,
+    redirects, assignments or globs) gets no pattern: one rule cannot
+    cover them all.
 
     For that one command: reuses the matched rule's prefix pattern when
     present (``git push``), unless it is a bare subcommand tool (``git``).
@@ -168,6 +170,8 @@ def always_allow_pattern(command: str, matched_rule_id: str | None = None) -> st
     Raises:
         ValueError: The command does not parse.
     """
+    if is_compound(command):
+        return None
     effective = effective_commands(command)
     if len(effective) != 1:
         return None

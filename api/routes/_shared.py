@@ -14,6 +14,17 @@ _TEXT_FILE_EXTENSIONS = {
     ".rst", ".tex", ".makefile", ".dockerfile", ".gitignore",
 }
 
+_IMAGE_MIME_TYPES = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".svg": "image/svg+xml",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".ico": "image/x-icon",
+}
+
 _RUNTIME_CONTRACT_KEYS = {
     "decision": "runtime_contract_decision",
     "execution": "runtime_contract_execution",

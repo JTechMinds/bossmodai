@@ -43,6 +43,8 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/agents/{agent_id}/api-key", "get_agent_api_key"),
     (("GET",), "/api/agents/{agent_id}/prompt-history-policy", "get_agent_prompt_history_policy"),
     (("GET",), "/api/agents/{agent_id}/desk", "get_agent_desk"),
+    (("PUT",), "/api/agents/{agent_id}/desk", "save_agent_desk_file"),
+    (("GET",), "/api/agents/{agent_id}/desk/raw", "get_agent_desk_file_raw"),
     (("POST",), "/api/agents/{agent_id}/desk/open-folder", "open_agent_desk_folder"),
     (("POST",), "/api/agents", "create_agent"),
     (("PATCH",), "/api/agents/{agent_id}", "update_agent"),
@@ -180,7 +182,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 156
+    assert len(got) == 158
 
 
 def test_from_api_routes_import_router_still_works() -> None:

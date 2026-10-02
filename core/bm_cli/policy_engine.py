@@ -255,8 +255,8 @@ class PolicyEngine:
         CommandPolicyDecision
             The strictest first-match decision across the commands
             *command_str* really runs (:func:`strictest`). Assigning a
-            :data:`~core.bm_cli.effective_commands.PROGRAM_SELECTING_ENV`
-            name is never_allowed. A wrapper option that hides what runs
+            name :func:`~core.bm_cli.effective_commands.selects_program`
+            accepts is never_allowed. A wrapper option that hides what runs
             needs approval at least.
         """
         # Extract the bare command name (first whitespace-delimited token).

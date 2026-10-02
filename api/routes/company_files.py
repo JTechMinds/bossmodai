@@ -19,6 +19,7 @@ from pydantic import BaseModel
 from starlette.responses import FileResponse
 
 from api.routes._shared import (
+    _IMAGE_MIME_TYPES,
     _TEXT_FILE_EXTENSIONS,
     _available_folder_opener_options,
     _child_virtual_path,
@@ -114,17 +115,6 @@ async def open_company_folder(body: dict) -> dict[str, object]:
 
 _INVALID_NAME_RE = re.compile(r"(/|\.\.)")
 _GIT_NAME_RE = re.compile(r"^\.git")
-
-_IMAGE_MIME_TYPES = {
-    ".png": "image/png",
-    ".jpg": "image/jpeg",
-    ".jpeg": "image/jpeg",
-    ".gif": "image/gif",
-    ".svg": "image/svg+xml",
-    ".webp": "image/webp",
-    ".bmp": "image/bmp",
-    ".ico": "image/x-icon",
-}
 
 
 def _validate_name(name: str) -> None:

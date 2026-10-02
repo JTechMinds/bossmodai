@@ -12,13 +12,13 @@ are decided from them in code.
 from __future__ import annotations
 
 import shlex
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path, PurePosixPath
 from typing import Literal
 
 from core.bm_cli import install_layout
 from core.bm_cli.approval_gate.effects import (
-    REDIRECT_TOKENS,
     WRITE_NAMES,
     EffectClass,
     classify_effect,
@@ -106,9 +106,13 @@ class CommandFacts:
             over every effective command (wrappers unwrapped, ``find``
             actions added).
         write_targets: The subset of ``paths`` the commands write, move or
-            delete, in argv order.
+            delete (redirect targets included), in argv order.
         effect: The strictest class from the effect table across the
-            effective commands.
+            effective commands; a redirect makes it at least
+            ``local_write``.
+        segments: For a script, each segment's own facts in source order
+            (``paths``, ``write_targets`` and ``effect`` above are their
+            union); empty for a single command.
     """
 
     command: str
@@ -117,6 +121,24 @@ class CommandFacts:
     paths: tuple[PathFact, ...]
     write_targets: tuple[PathFact, ...]
     effect: EffectClass
+    segments: tuple[CommandFacts, ...] = ()
+
+
+@dataclass(frozen=True)
+class GateSegment:
+    """One simple command of a script, as the approval gate judges it.
+
+    Attributes:
+        parsed: The segment's argv (globs expanded; virtual paths may
+            remain, :func:`command_facts` rewrites them).
+        cwd: The virtual working directory the segment runs in.
+        redirect_writes: The segment's ``>``/``>>``/``&>`` targets, as real
+            or cwd-relative paths. They are write targets.
+    """
+
+    parsed: ParsedCliCommand
+    cwd: str
+    redirect_writes: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -125,7 +147,13 @@ class _Mounts:
     projects: Path | None
 
 
-def command_facts(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> CommandFacts:
+def command_facts(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd: str,
+    *,
+    redirect_writes: tuple[str, ...] = (),
+) -> CommandFacts:
     """Resolve and classify one shell command for the approval gate.
 
     ``/me`` and ``/projects`` argv tokens are rewritten to real paths first,
@@ -137,14 +165,16 @@ def command_facts(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> CommandFa
         agent: The agent running the command.
         parsed: The parsed command (virtual paths not yet rewritten).
         cwd: The agent's virtual working directory.
+        redirect_writes: Files a script segment's redirects write (real or
+            cwd-relative). Each is a write target, and the effect is at
+            least ``local_write``.
 
     Returns:
         The command's facts.
 
     Raises:
         PathJailError: A token cannot be resolved, or uses ``~user``.
-        ValueError: ``cwd`` is not a real workspace path, or a redirect has
-            no target.
+        ValueError: ``cwd`` is not a real workspace path.
         LookupError: No agent owns ``agent.storage_key``.
     """
     from core.bm_cli.locked_clone_outcome import rewrite_virtual_shell_paths
@@ -172,6 +202,11 @@ def command_facts(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> CommandFa
             if is_write:
                 writes.append(fact)
         effects.add(effect)
+    for token in redirect_writes:
+        fact = _path_fact(agent, _resolve_token(token, real_cwd), mounts)
+        paths.append(fact)
+        writes.append(fact)
+        effects.add("local_write")
     return CommandFacts(
         command=parsed.raw,
         cwd_virtual=cwd,
@@ -179,6 +214,43 @@ def command_facts(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> CommandFa
         paths=tuple(paths),
         write_targets=tuple(writes),
         effect=next(effect for effect in _EFFECT_STRICTNESS if effect in effects),
+    )
+
+
+def script_facts(agent: Agent, segments: Sequence[GateSegment], *, command: str) -> CommandFacts:
+    """Facts for a script: each segment's facts, and their union for the invariants.
+
+    Args:
+        agent: The agent running the script.
+        segments: The script's simple commands, in source order.
+        command: The full script text (what the card and the reviewer show).
+
+    Returns:
+        The union (paths, write targets, strictest effect) with the
+        working directory of the first segment, and ``segments`` holding
+        each segment's own facts.
+
+    Raises:
+        ValueError: *segments* is empty, or a segment's cwd is not a real
+            workspace path.
+        PathJailError: A segment's token cannot be resolved.
+        LookupError: No agent owns ``agent.storage_key``.
+    """
+    if not segments:
+        raise ValueError("script_facts needs at least one segment")
+    each = tuple(
+        command_facts(agent, segment.parsed, segment.cwd, redirect_writes=segment.redirect_writes)
+        for segment in segments
+    )
+    effects = {facts.effect for facts in each}
+    return CommandFacts(
+        command=command,
+        cwd_virtual=each[0].cwd_virtual,
+        cwd_real=each[0].cwd_real,
+        paths=tuple(path for facts in each for path in facts.paths),
+        write_targets=tuple(path for facts in each for path in facts.write_targets),
+        effect=next(effect for effect in _EFFECT_STRICTNESS if effect in effects),
+        segments=each,
     )
 
 
@@ -266,8 +338,10 @@ def looks_like_path(token: str) -> bool:
 def _path_tokens(args: tuple[str, ...], *, force_operands: bool) -> list[tuple[str, bool]]:
     """Return ``(token, is_write)`` for every path-like argv entry.
 
-    Operands of a write command and redirect targets are writes. Flag
-    payloads (``--out=/x``) and other path operands are reads.
+    Operands of a write command are writes. Flag payloads (``--out=/x``)
+    and other path operands are reads. Argv never holds a redirect: a
+    command line with one is a script, and its targets arrive as
+    ``redirect_writes``.
     """
     tokens = list(args)
     found: list[tuple[str, bool]] = []
@@ -275,12 +349,6 @@ def _path_tokens(args: tuple[str, ...], *, force_operands: bool) -> list[tuple[s
     index = 0
     while index < len(tokens):
         token = tokens[index]
-        if token in REDIRECT_TOKENS:
-            if index + 1 >= len(tokens):
-                raise ValueError("redirect has no target")
-            found.append((tokens[index + 1], True))
-            index += 2
-            continue
         if not end_flags and token == "--":
             end_flags = True
             index += 1

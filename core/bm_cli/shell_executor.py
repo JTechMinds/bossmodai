@@ -3,7 +3,9 @@
 Executes real shell commands (npm, pip, python, curl, etc.) with timeout
 enforcement, output truncation, environment sanitization, and a path jail.
 Commands are parsed via shlex.split() and run without a shell (``shell=False``)
-to prevent shell injection.
+to prevent shell injection. Scripts (pipes, connectors, redirects; see
+:mod:`core.bm_cli.shell_script`) run as chains of such processes, wired by
+this module, never by a shell.
 
 The path jail (HA-SEC-P0-03) inspects argv tokens that look like filesystem
 paths and rejects any that resolve outside the allowed roots (agent workspace,
@@ -18,13 +20,15 @@ import multiprocessing
 import os
 import shlex
 import subprocess
+import tempfile
 import time
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import IO, Any
 
 from core.bm_cli.host_roots import allowed_workspace_roots, is_within_roots
+from core.bm_cli.shell_script import Connector, Pipeline, Redirect, ShellScript, Word
 from core.loop_breathing import (
     SHELL_WORKER_ENV,
     in_shell_worker_process,
@@ -259,19 +263,29 @@ def _redact_injected_secrets(text: str, extra_env: dict[str, str] | None) -> str
 
 
 def _shell_process_main(conn: Any, payload: dict[str, Any]) -> None:
-    """Run one shell command in a child process and send the result back."""
+    """Run one shell command or script in a child process and send the result back."""
     os.environ[SHELL_WORKER_ENV] = "1"
     try:
         raw_roots = payload.get("allowed_roots")
         roots = tuple(Path(item) for item in raw_roots) if raw_roots else None
-        result = execute_shell_command(
-            str(payload["command"]),
-            cwd=Path(str(payload["cwd"])),
-            timeout_seconds=int(payload["timeout_seconds"]),
-            max_output_bytes=int(payload["max_output_bytes"]),
-            allowed_roots=roots,
-            extra_env=payload.get("extra_env"),
-        )
+        if "script" in payload:
+            result = execute_shell_script(
+                payload["script"],
+                cwd=Path(str(payload["cwd"])),
+                timeout_seconds=int(payload["timeout_seconds"]),
+                max_output_bytes=int(payload["max_output_bytes"]),
+                allowed_roots=roots or (),
+                extra_env=payload["extra_env"],
+            )
+        else:
+            result = execute_shell_command(
+                str(payload["command"]),
+                cwd=Path(str(payload["cwd"])),
+                timeout_seconds=int(payload["timeout_seconds"]),
+                max_output_bytes=int(payload["max_output_bytes"]),
+                allowed_roots=roots,
+                extra_env=payload.get("extra_env"),
+            )
         conn.send(result)
     except Exception as exc:
         conn.send(exc)
@@ -279,30 +293,15 @@ def _shell_process_main(conn: Any, payload: dict[str, Any]) -> None:
         conn.close()
 
 
-def _run_shell_in_worker_thread(
-    command: str,
-    *,
-    cwd: Path,
-    timeout_seconds: int,
-    max_output_bytes: int,
-    allowed_roots: Sequence[Path] | None,
-    extra_env: dict[str, str] | None,
-) -> ShellExecutionResult:
-    """Run one shell on this thread when the child process cannot start.
+def _run_shell_in_worker_thread(run: Callable[[], ShellExecutionResult]) -> ShellExecutionResult:
+    """Run one shell (command or script) on this thread when the child process cannot start.
 
     The caller is already off the serve loop. The env flag stops another spawn.
     """
     previous = os.environ.get(SHELL_WORKER_ENV)
     os.environ[SHELL_WORKER_ENV] = "1"
     try:
-        return execute_shell_command(
-            command,
-            cwd=cwd,
-            timeout_seconds=timeout_seconds,
-            max_output_bytes=max_output_bytes,
-            allowed_roots=allowed_roots,
-            extra_env=extra_env,
-        )
+        return run()
     finally:
         if previous is None:
             os.environ.pop(SHELL_WORKER_ENV, None)
@@ -324,22 +323,37 @@ def _execute_shell_in_process(
     The caller is a worker thread, not the serve loop. The child runs the
     same executor with ``BOSSMOD_SHELL_WORKER`` set so it does not spawn again.
     """
+    payload = {
+        "command": command,
+        "cwd": str(cwd),
+        "timeout_seconds": int(timeout_seconds),
+        "max_output_bytes": int(max_output_bytes),
+        "allowed_roots": [str(root) for root in allowed_roots] if allowed_roots else None,
+        "extra_env": extra_env,
+    }
+
+    def fallback() -> ShellExecutionResult:
+        return execute_shell_command(
+            command,
+            cwd=cwd,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            allowed_roots=allowed_roots,
+            extra_env=extra_env,
+        )
+
+    return _wait_in_child_process(payload, timeout_seconds, fallback)
+
+
+def _wait_in_child_process(
+    payload: dict[str, Any],
+    timeout_seconds: int,
+    fallback: Callable[[], ShellExecutionResult],
+) -> ShellExecutionResult:
+    """Run *payload* in a spawned child and wait; *fallback* runs here if the child dies early."""
     ctx = multiprocessing.get_context("spawn")
     parent, child = ctx.Pipe(duplex=False)
-    proc = ctx.Process(
-        target=_shell_process_main,
-        args=(
-            child,
-            {
-                "command": command,
-                "cwd": str(cwd),
-                "timeout_seconds": int(timeout_seconds),
-                "max_output_bytes": int(max_output_bytes),
-                "allowed_roots": [str(root) for root in allowed_roots] if allowed_roots else None,
-                "extra_env": extra_env,
-            },
-        ),
-    )
+    proc = ctx.Process(target=_shell_process_main, args=(child, payload))
     proc.start()
     child.close()
     message: object
@@ -359,14 +373,7 @@ def _execute_shell_in_process(
             logger.warning(
                 "shell worker process exited before a result; waiting on the worker thread"
             )
-            return _run_shell_in_worker_thread(
-                command,
-                cwd=cwd,
-                timeout_seconds=timeout_seconds,
-                max_output_bytes=max_output_bytes,
-                allowed_roots=allowed_roots,
-                extra_env=extra_env,
-            )
+            return _run_shell_in_worker_thread(fallback)
     finally:
         parent.close()
         proc.join(timeout=5)
@@ -581,3 +588,324 @@ def execute_shell_command(
             timed_out=False,
             duration_ms=duration_ms,
         )
+
+
+def resolve_redirect_target(token: str, *, cwd: Path, allowed_roots: Sequence[Path]) -> Path:
+    """Resolve a script redirect's file and require it inside the jail.
+
+    Unlike an argv operand, a redirect target is always a path, even when
+    the file does not exist yet (``> new.txt``).
+
+    Args:
+        token: The target word (real or cwd-relative; ``~`` is *cwd*).
+        cwd: The script's real working directory.
+        allowed_roots: The jail roots.
+
+    Returns:
+        The resolved real path.
+
+    Raises:
+        PathJailError: The target uses ``~user``, cannot be resolved, or
+            resolves outside *allowed_roots*.
+    """
+    try:
+        resolved = _resolve_user_path(token, Path(cwd).resolve())
+    except OSError as exc:
+        raise PathJailError(f"Path jail: cannot resolve {token!r}: {exc}") from exc
+    if not is_within_roots(resolved, tuple(allowed_roots)):
+        raise PathJailError(f"Path jail: {token!r} resolves outside the allowed workspace roots")
+    return resolved
+
+
+def assert_script_within_path_jail(script: ShellScript, *, cwd: Path, allowed_roots: Sequence[Path]) -> None:
+    """Jail-check every argv and redirect target of *script*, as the executor does first.
+
+    Raises:
+        PathJailError: The first argv operand or redirect target outside
+            *allowed_roots* (or the cwd itself outside them).
+    """
+    for command in script.commands():
+        assert_argv_within_path_jail([word.text for word in command.argv], cwd=cwd, allowed_roots=allowed_roots)
+        for redirect in command.redirects:
+            if redirect.target is not None:
+                resolve_redirect_target(redirect.target.text, cwd=cwd, allowed_roots=allowed_roots)
+
+
+def execute_shell_script(
+    script: ShellScript,
+    *,
+    cwd: Path,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    allowed_roots: Sequence[Path],
+    extra_env: Sequence[Mapping[str, str]],
+) -> ShellExecutionResult:
+    """Run a parsed script as chains of ``shell=False`` processes; never a shell.
+
+    Every argv and every redirect target is checked against the path jail
+    before anything starts. Each pipeline is a ``Popen`` chain: stdout feeds
+    the next stdin, and the parent closes its pipe copies so SIGPIPE
+    reaches a writer whose reader exited. Redirect files are opened here
+    (``>`` truncates, ``>>`` appends, ``<`` reads); ``2>&1`` sends stderr
+    where stdout goes at that point; ``&>`` sends both to the file.
+
+    Connectors follow bash: ``&&`` runs the next pipeline on status 0,
+    ``||`` on non-zero, ``;`` always; a skipped pipeline leaves the status
+    unchanged. A pipeline's status is its last command's, and the script's
+    is the last run pipeline's. One deadline covers the whole script; on
+    expiry every live process is killed and the exit is 124. The captured
+    stdout (each pipeline's final, unredirected stdout) and stderr are
+    capped at *max_output_bytes* each and stripped of injected secrets.
+
+    Args:
+        script: The script with globs already expanded and virtual paths
+            rewritten (no word may still have ``glob=True``).
+        cwd: Real working directory; also ``HOME``.
+        timeout_seconds: The whole script's wall-clock budget.
+        max_output_bytes: Cap for captured stdout and for stderr.
+        allowed_roots: Real directories the script may touch.
+        extra_env: One mapping per simple command, in source order: the
+            env added on top of the sanitized env for that command (agent
+            git identity, nest-git auth). Its values are redacted from the
+            output. The command's own ``NAME=value`` assignments apply
+            after it; ``GIT_CEILING_DIRECTORIES`` is set last.
+
+    Returns:
+        The combined result. A jail refusal returns ``denied_by_path_jail``
+        and nothing runs. A missing program is status 127 for that
+        command, an unreadable redirect file status 1, as in bash.
+
+    Raises:
+        ValueError: *extra_env* does not have one entry per command, a word
+            still needs glob expansion, or *allowed_roots* is empty.
+        ShellOnRequestLoopError: A long wait was asked on the serve loop.
+    """
+    commands = script.commands()
+    if len(extra_env) != len(commands):
+        raise ValueError(f"extra_env has {len(extra_env)} entries for {len(commands)} commands")
+    if any(word.glob for command in commands for word in command.argv):
+        raise ValueError("expand globs before executing a script")
+    roots = tuple(Path(root) for root in allowed_roots)
+    if not roots:
+        raise ValueError("a script needs at least one allowed root")
+    try:
+        assert_script_within_path_jail(script, cwd=Path(cwd), allowed_roots=roots)
+    except PathJailError as exc:
+        logger.warning("shell script denied by path jail: %s", exc)
+        return _path_jail_denied_result(str(exc))
+
+    if shell_is_long(timeout_seconds) and on_request_loop() and not in_shell_worker_process():
+        raise ShellOnRequestLoopError(f"shell timeout {timeout_seconds}s must run off the request loop")
+    envs = [dict(item) for item in extra_env]
+    if shell_uses_worker_process(timeout_seconds) and not in_shell_worker_process():
+        payload = {
+            "script": script,
+            "cwd": str(cwd),
+            "timeout_seconds": int(timeout_seconds),
+            "max_output_bytes": int(max_output_bytes),
+            "allowed_roots": [str(root) for root in roots],
+            "extra_env": envs,
+        }
+        return _wait_in_child_process(
+            payload,
+            timeout_seconds,
+            lambda: _run_script(script, Path(cwd), timeout_seconds, max_output_bytes, roots, envs),
+        )
+    return _run_script(script, Path(cwd), timeout_seconds, max_output_bytes, roots, envs)
+
+
+def _run_script(
+    script: ShellScript,
+    cwd: Path,
+    timeout_seconds: int,
+    max_output_bytes: int,
+    roots: tuple[Path, ...],
+    envs: list[dict[str, str]],
+) -> ShellExecutionResult:
+    start = time.monotonic()
+    deadline = start + timeout_seconds
+    ceiling = os.pathsep.join(sorted({str(root.resolve().parent) for root in roots}))
+    status = 0
+    timed_out = False
+    with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        first = 0
+        previous: Connector | None = None
+        for pipeline, connector in script.items:
+            count = len(pipeline.commands)
+            if _runs_after(previous, status):
+                status, timed_out = _run_pipeline(
+                    pipeline, envs[first:first + count], cwd=cwd, roots=roots, ceiling=ceiling,
+                    out=out, err=err, deadline=deadline,
+                )
+                if timed_out:
+                    break
+            first += count
+            previous = connector
+        duration_ms = int((time.monotonic() - start) * 1000)
+        stdout = _captured(out, max_output_bytes, envs)
+        stderr = _captured(err, max_output_bytes, envs)
+    if timed_out:
+        logger.warning("shell script timed out after %ds", timeout_seconds)
+        return ShellExecutionResult(
+            exit_code=124,
+            stdout=stdout,
+            stderr=stderr or f"Command timed out after {timeout_seconds}s",
+            timed_out=True,
+            duration_ms=duration_ms,
+        )
+    logger.info("shell script commands=%d exit_code=%d duration_ms=%d", len(envs), status, duration_ms)
+    return ShellExecutionResult(
+        exit_code=status, stdout=stdout, stderr=stderr, timed_out=False, duration_ms=duration_ms,
+    )
+
+
+def _runs_after(previous: Connector | None, status: int) -> bool:
+    """Whether the next pipeline runs, by bash's rules for the connector before it."""
+    if previous is None or previous == ";":
+        return True
+    return status == 0 if previous == "&&" else status != 0
+
+
+def _run_pipeline(
+    pipeline: Pipeline,
+    envs: list[dict[str, str]],
+    *,
+    cwd: Path,
+    roots: tuple[Path, ...],
+    ceiling: str,
+    out: IO[bytes],
+    err: IO[bytes],
+    deadline: float,
+) -> tuple[int, bool]:
+    """Start every command of one pipeline, then wait; return ``(status, timed_out)``."""
+    procs: list[subprocess.Popen[bytes]] = []
+    final: int | None = None  # set when the last command could not start
+    parent_fds: set[int] = set()  # pipe ends this process still holds
+    try:
+        stdin = subprocess.DEVNULL
+        for index, command in enumerate(pipeline.commands):
+            last = index == len(pipeline.commands) - 1
+            stdout = out.fileno()
+            read_end: int | None = None
+            if not last:
+                read_end, stdout = os.pipe()
+                parent_fds.update((read_end, stdout))
+            proc, failed = _spawn(
+                command.argv, command.assignments, command.redirects, envs[index],
+                stdin=stdin, stdout=stdout, stderr=err.fileno(),
+                cwd=cwd, roots=roots, ceiling=ceiling, err=err,
+            )
+            if proc is not None:
+                procs.append(proc)
+            if last:
+                final = failed
+            # The parent's copies must close, or a reader never sees EOF and
+            # a writer whose reader exited never gets SIGPIPE.
+            for fd in (stdin, None if last else stdout):
+                if fd is not None and fd in parent_fds:
+                    os.close(fd)
+                    parent_fds.discard(fd)
+            stdin = read_end if read_end is not None else subprocess.DEVNULL
+        for proc in procs:
+            proc.wait(timeout=max(deadline - time.monotonic(), 0))
+    except subprocess.TimeoutExpired:
+        _kill_all(procs)
+        return 124, True
+    except BaseException:
+        _kill_all(procs)
+        raise
+    finally:
+        for fd in parent_fds:
+            os.close(fd)
+    if final is not None:
+        return final, False
+    return procs[-1].returncode, False
+
+
+def _spawn(
+    argv: Sequence[Word],
+    assignments: Sequence[tuple[str, str]],
+    redirects: Sequence[Redirect],
+    extra: Mapping[str, str],
+    *,
+    stdin: int,
+    stdout: int,
+    stderr: int,
+    cwd: Path,
+    roots: tuple[Path, ...],
+    ceiling: str,
+    err: IO[bytes],
+) -> tuple[subprocess.Popen[bytes] | None, int | None]:
+    """Start one command; return ``(process, None)`` or ``(None, status)`` when it could not start."""
+    args = [word.text for word in argv]
+    opened: list[int] = []
+    try:
+        for redirect in redirects:
+            if redirect.mode == "dup_out":
+                stderr = stdout
+                continue
+            if redirect.target is None:
+                raise ValueError(f"{redirect.mode} redirect has no target")
+            try:
+                # Checked before the script started; checked again in case
+                # the path changed (a swapped symlink) since then.
+                path = resolve_redirect_target(redirect.target.text, cwd=cwd, allowed_roots=roots)
+                fd = _open_redirect(redirect, path)
+            except PathJailError as exc:
+                os.write(err.fileno(), f"{exc}\n".encode())
+                return None, PATH_JAIL_DENIED_EXIT_CODE
+            except OSError as exc:
+                os.write(err.fileno(), f"{redirect.target.text}: {exc.strerror}\n".encode())
+                return None, 1
+            opened.append(fd)
+            if redirect.mode == "read":
+                stdin = fd
+            elif redirect.fd == "both":
+                stdout = stderr = fd
+            elif redirect.fd == 2:
+                stderr = fd
+            else:
+                stdout = fd
+        env = _sanitize_env(cwd)
+        env.update(extra)
+        env.update(dict(assignments))
+        # Last, so neither the caller nor an assignment widens git discovery.
+        env["GIT_CEILING_DIRECTORIES"] = ceiling
+        if Path(args[0]).name.lower() in {"git", "git.exe"}:
+            env.setdefault("GIT_TERMINAL_PROMPT", "0")
+            env.setdefault("GCM_INTERACTIVE", "never")
+        try:
+            return subprocess.Popen(args, cwd=str(cwd), env=env, stdin=stdin, stdout=stdout, stderr=stderr), None
+        except FileNotFoundError:
+            os.write(err.fileno(), f"Command not found: {args[0]}\n".encode())
+            return None, 127
+        except PermissionError:
+            os.write(err.fileno(), f"Permission denied: {args[0]}\n".encode())
+            return None, 126
+    finally:
+        for fd in opened:
+            os.close(fd)
+
+
+def _open_redirect(redirect: Redirect, path: Path) -> int:
+    if redirect.mode == "read":
+        return os.open(path, os.O_RDONLY)
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if redirect.mode == "append" else os.O_TRUNC)
+    return os.open(path, flags, 0o666)
+
+
+def _kill_all(procs: Sequence[subprocess.Popen[bytes]]) -> None:
+    for proc in procs:
+        if proc.poll() is None:
+            proc.kill()
+    for proc in procs:
+        proc.wait()
+
+
+def _captured(capture: IO[bytes], max_output_bytes: int, envs: Sequence[dict[str, str]]) -> str:
+    """The capture, capped, with every command's injected secret values redacted."""
+    capture.seek(0)
+    text = _truncate(capture.read(), max_output_bytes)
+    for env in envs:
+        text = _redact_injected_secrets(text, env)
+    return text

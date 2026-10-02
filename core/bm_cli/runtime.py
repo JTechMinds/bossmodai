@@ -6,13 +6,12 @@ import logging
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import db
 from core import config
 from core.bm_cli.artifacts import register_cli_artifacts
 from core.bm_cli.audit import record_bm_cli_event
-from core.bm_cli.cli_always import contain_scoped_always
 from core.bm_cli.fs_commands import (
     handle_append,
     handle_batch_write,
@@ -35,7 +34,6 @@ from core.bm_cli.help_commands import (
     handle_learn,
 )
 from core.bm_cli.parser import parse_cli_command
-from core.bm_cli.policies import evaluate_parsed_command_policy
 from core.bm_cli.policy_engine import CommandPolicyDecision, policy_engine
 from core.bm_cli.pref_commands import handle_pref
 from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
@@ -45,7 +43,17 @@ from core.bm_cli.results import approval_required_result, error_result, shell_re
 from core.bm_cli.retry_policy import NoRetryListError, blocks_retry, load_no_retry_list
 from core.bm_cli.schedule_commands import handle_schedules
 from core.bm_cli.session import get_cli_cwd
+from core.bm_cli.shell_authorization import (
+    ShellAuthorization,
+    authorize_shell_command,
+    authorize_shell_policy,
+    gh_cli_authorization,
+    nest_git_authorization,
+    project_env_authorization,
+    scoped_policy,
+)
 from core.bm_cli.shell_executor import allowed_shell_roots, execute_shell_command
+from core.bm_cli.shell_script import is_compound
 from core.bm_cli.state_commands import (
     handle_activity,
     handle_current_task,
@@ -64,6 +72,10 @@ from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCo
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.extensions.cli_bridge import extension_handlers
 from core.models import Agent, AgentState
+
+if TYPE_CHECKING:
+    from core.bm_cli.approval_gate.facts import GateSegment
+    from core.bm_cli.script_runner import ScriptApproval
 
 logger = logging.getLogger(__name__)
 
@@ -124,9 +136,15 @@ def preview_bm_cli(
 
     Used by the CLI simulator dry-run default (HA-SEC-P1-06). ``content`` is
     accepted so the request shape matches execute, but it is never applied.
+    A script is decided segment by segment exactly as a real run decides it
+    (:func:`core.bm_cli.script_decision.preview_script`).
     """
     del state, content
     cwd_before = get_cli_cwd(agent.id)
+    if is_compound(command):
+        from core.bm_cli.script_decision import preview_script
+
+        return preview_script(agent, command, cwd_before, virtual_commands=VIRTUAL_COMMANDS)
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
@@ -135,6 +153,7 @@ def preview_bm_cli(
     from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
     from core.bm_cli.nest_git_consent import maybe_block_gh_cli
+    from core.bm_cli.project_env import gate_locked_clone_command
 
     gh_preview = maybe_block_gh_cli(
         agent=agent,
@@ -158,15 +177,14 @@ def preview_bm_cli(
     if preview_outcome is not None:
         return _preview_locked_clone_outcome(preview_outcome, cwd_before)
 
-    gated = _apply_project_env_gate(agent, parsed, cwd_before)
+    gated = gate_locked_clone_command(
+        agent, parsed, cwd_before, task_id=bound_task_id(agent.id),
+    )
     if isinstance(gated, BossModCliResult):
         return gated
     parsed = gated
     # Same evaluation as _execute_bm_cli_inner, so a dry run matches a real run.
-    policy = evaluate_parsed_command_policy(
-        parsed, VIRTUAL_COMMANDS, agent_id=agent.id, cwd=cwd_before,
-    )
-    policy = contain_scoped_always(agent, parsed, cwd_before, policy)
+    policy = scoped_policy(agent, parsed, cwd_before)
 
     if policy.approval_required:
         return approval_required_result(
@@ -277,7 +295,18 @@ def _execute_bm_cli_inner(
     cwd_before: str,
     channel_id: str | None = None,
 ) -> BossModCliResult:
-    """Parse, authorize, and execute one CLI command inside the consent scope."""
+    """Parse, authorize, and execute one CLI command inside the consent scope.
+
+    A compound line (pipes, connectors, redirects, assignments, globs) is a
+    script: :mod:`core.bm_cli.script_runner` decides every segment first.
+    """
+    if is_compound(command):
+        from core.bm_cli.script_runner import run_script
+
+        return run_script(
+            agent, state, command,
+            content=content, cwd_before=cwd_before, trigger_type=trigger_type, channel_id=channel_id,
+        )
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
@@ -296,112 +325,12 @@ def _execute_bm_cli_inner(
         )
         return result
 
-    paused = _maybe_gh_cli_block(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd_before=cwd_before,
-        trigger_type=trigger_type,
-        channel_id=channel_id,
-    )
-    if paused is not None:
-        return paused
-
-    paused = _maybe_shell_executor_consent(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd_before=cwd_before,
-        trigger_type=trigger_type,
-        channel_id=channel_id,
-    )
-    if paused is not None:
-        return paused
-
-    paused = _maybe_nest_git_consent(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd_before=cwd_before,
-        trigger_type=trigger_type,
-        channel_id=channel_id,
-    )
-    if paused is not None:
-        return paused
-
-    locked = _apply_locked_clone_shell_outcome(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd_before=cwd_before,
-        trigger_type=trigger_type,
-        channel_id=channel_id,
-    )
-    if locked is not None:
-        return locked
-
-    gated = _gate_locked_clone_project_env(
-        agent,
-        parsed,
-        cwd_before,
-        content=content,
-        trigger_type=trigger_type,
-    )
-    if isinstance(gated, BossModCliResult):
-        return gated
-    parsed = gated
-
-    # Evaluate policy (DB-driven, with agent-specific rules). The cwd lets
-    # project- and /me-scoped Always rules match; their paths are then
-    # checked against the scope.
-    policy = evaluate_parsed_command_policy(
-        parsed, VIRTUAL_COMMANDS, agent_id=agent.id, cwd=cwd_before,
-    )
-    policy = contain_scoped_always(agent, parsed, cwd_before, policy)
-
-    # --- Approval required: create request, pause turn ---
-    if policy.approval_required:
-        return _handle_approval_required(
-            agent=agent,
-            parsed=parsed,
-            content=content,
-            cwd_before=cwd_before,
-            policy=policy,
-            trigger_type=trigger_type,
-            channel_id=channel_id,
-        )
-
-    # --- Denied: return error ---
-    if not policy.allowed:
-        if policy.tier == "never_allowed":
-            return _deny_policy_never_allowed(
-                agent=agent,
-                parsed=parsed,
-                content=content,
-                cwd_before=cwd_before,
-                policy=policy,
-                trigger_type=trigger_type,
-                channel_id=channel_id,
-            )
-        result = error_result(
-            parsed.raw,
-            policy.message or f"Command not permitted: {parsed.name}",
-            cwd=cwd_before,
-            executor=policy.executor,
-        )
-        record_bm_cli_event(
-            agent_id=agent.id,
-            command=parsed.raw,
-            content=content,
-            executor=policy.executor,
-            cwd_before=cwd_before,
-            cwd_after=result.cwd,
-            policy_tier=policy.tier,
-            decision="denied",
-            result=result,
-            trigger_type=trigger_type,
-        )
-        return result
+    # Every gate decides first; only a non-run decision creates a card,
+    # chrome or record, and only when materialized here.
+    auth = authorize_shell_command(agent, parsed, cwd_before, trigger_type=trigger_type)
+    if auth.materialize is not None:
+        return auth.materialize(content=content, channel_id=channel_id)
+    parsed, policy = auth.parsed, _run_policy(auth)
 
     # --- Virtual git that belongs on the clone or is not a virtual subcommand ---
     if policy.executor == "virtual" and _use_shell_git(agent, parsed, cwd_before):
@@ -488,9 +417,18 @@ def execute_approved_command(
     Command-tier policy is not re-evaluated (the operator already approved
     this argv), but the path jail still applies. Approval is not a jailbreak.
     Host pip on a locked clone is also not an approval bypass — rewrite to
-    the clone uv/venv or deny.
+    the clone uv/venv or deny. An approved script re-checks each segment
+    the same way (:func:`core.bm_cli.script_runner.run_approved_script`).
     """
     cwd_before = cwd or get_cli_cwd(agent.id)
+    if is_compound(command):
+        from core.bm_cli.script_runner import run_approved_script
+
+        return run_approved_script(
+            agent, state, command, content,
+            approval_request_id=approval_request_id, cwd_before=cwd_before,
+            trigger_type=trigger_type, channel_id=channel_id, system_audit=system_audit,
+        )
     try:
         parsed = parse_cli_command(command)
     except ValueError as exc:
@@ -670,44 +608,54 @@ def _mark_retry(result: BossModCliResult, listed: bool) -> BossModCliResult:
     return replace(result, blocks_retry=True) if listed else result
 
 
-def _maybe_shell_executor_consent(
+def _run_policy(auth: ShellAuthorization) -> CommandPolicyDecision:
+    """The policy a ``run`` authorization executes under.
+
+    Raises:
+        ValueError: *auth* carries no policy (not a run decision).
+    """
+    if auth.policy is None:
+        raise ValueError(f"{auth.kind} authorization for {auth.parsed.raw!r} has no policy")
+    return auth.policy
+
+
+def _paused(
+    auth: ShellAuthorization | None,
     *,
-    agent: Agent,
-    parsed: ParsedCliCommand,
     content: str | None,
-    cwd_before: str,
-    trigger_type: str | None,
     channel_id: str | None,
 ) -> BossModCliResult | None:
-    """Pause for Shell Executor Enable/Deny when a locked clone needs shell."""
-    from core.agent_loop.work_binding import bound_task_id
-    from core.bm_cli.shell_executor_consent import maybe_pause_for_shell_executor
-
-    paused = maybe_pause_for_shell_executor(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd=cwd_before,
-        task_id=bound_task_id(agent.id),
-        channel_id=channel_id,
-        trigger_type=trigger_type,
-    )
-    if paused is None:
+    """Materialize a gate's non-run decision, or None when the gate passed."""
+    if auth is None or auth.materialize is None:
         return None
-    data = paused.data or {}
+    return auth.materialize(content=content, channel_id=channel_id)
+
+
+def _record_gate_pause(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd_before: str,
+    result: BossModCliResult,
+    *,
+    content: str | None,
+    trigger_type: str | None,
+    default_tier: str,
+) -> BossModCliResult:
+    """Record a consent gate's card or refusal, then return it unchanged."""
+    data = result.data or {}
     record_bm_cli_event(
         agent_id=agent.id,
         command=parsed.raw,
         content=content,
-        executor=paused.executor,
+        executor=result.executor,
         cwd_before=cwd_before,
-        cwd_after=paused.cwd,
-        policy_tier=str(data.get("policy_tier") or "disabled"),
-        decision="approval_required" if paused.consent_required else "denied",
-        result=paused,
+        cwd_after=result.cwd,
+        policy_tier=str(data.get("policy_tier") or default_tier),
+        decision="approval_required" if result.consent_required else "denied",
+        result=result,
         trigger_type=trigger_type,
     )
-    return paused
+    return result
 
 
 def _maybe_nest_git_auth_failure(
@@ -759,33 +707,11 @@ def _maybe_nest_git_consent(
 ) -> BossModCliResult | None:
     """Pause or fail-closed for nest git auth. Always-allow does not skip this."""
     from core.agent_loop.work_binding import bound_task_id
-    from core.bm_cli.nest_git_consent import maybe_pause_for_nest_git
 
-    paused = maybe_pause_for_nest_git(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd=cwd_before,
-        task_id=bound_task_id(agent.id),
-        channel_id=channel_id,
-        trigger_type=trigger_type,
+    auth = nest_git_authorization(
+        agent, parsed, cwd_before, task_id=bound_task_id(agent.id), trigger_type=trigger_type,
     )
-    if paused is None:
-        return None
-    data = paused.data or {}
-    record_bm_cli_event(
-        agent_id=agent.id,
-        command=parsed.raw,
-        content=content,
-        executor=paused.executor,
-        cwd_before=cwd_before,
-        cwd_after=paused.cwd,
-        policy_tier=str(data.get("policy_tier") or "nest_git"),
-        decision="approval_required" if paused.consent_required else "denied",
-        result=paused,
-        trigger_type=trigger_type,
-    )
-    return paused
+    return _paused(auth, content=content, channel_id=channel_id)
 
 
 def _maybe_gh_cli_block(
@@ -799,33 +725,11 @@ def _maybe_gh_cli_block(
 ) -> BossModCliResult | None:
     """Fail-closed one Nest git / compare-URL card for gh. No Approve spam."""
     from core.agent_loop.work_binding import bound_task_id
-    from core.bm_cli.nest_git_consent import maybe_block_gh_cli
 
-    blocked = maybe_block_gh_cli(
-        agent=agent,
-        parsed=parsed,
-        content=content,
-        cwd=cwd_before,
-        task_id=bound_task_id(agent.id),
-        channel_id=channel_id,
-        trigger_type=trigger_type,
+    auth = gh_cli_authorization(
+        agent, parsed, cwd_before, task_id=bound_task_id(agent.id), trigger_type=trigger_type,
     )
-    if blocked is None:
-        return None
-    data = blocked.data or {}
-    record_bm_cli_event(
-        agent_id=agent.id,
-        command=parsed.raw,
-        content=content,
-        executor=blocked.executor,
-        cwd_before=cwd_before,
-        cwd_after=blocked.cwd,
-        policy_tier=str(data.get("policy_tier") or "nest_git"),
-        decision="approval_required" if blocked.consent_required else "denied",
-        result=blocked,
-        trigger_type=trigger_type,
-    )
-    return blocked
+    return _paused(auth, content=content, channel_id=channel_id)
 
 
 def _deny_policy_never_allowed(
@@ -871,106 +775,74 @@ def _deny_policy_never_allowed(
     return result
 
 
-def _apply_locked_clone_shell_outcome(
-    *,
+def _deny_locked_clone(
     agent: Agent,
     parsed: ParsedCliCommand,
-    content: str | None,
+    refused: ParsedCliCommand,
     cwd_before: str,
+    message: str,
+    *,
+    result_kind: str,
+    content: str | None,
     trigger_type: str | None,
-    channel_id: str | None,
-) -> BossModCliResult | None:
-    """Apply the shared locked-clone shell outcome, or None for the desk path."""
-    from core.agent_loop.work_binding import bound_task_id
-    from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
+) -> BossModCliResult:
+    """Refuse a locked-clone command outside policy (host path, host pip).
 
-    outcome = decide_locked_clone_shell_outcome(
-        agent,
-        parsed,
-        cwd_before,
-        task_id=bound_task_id(agent.id),
-        virtual_commands=VIRTUAL_COMMANDS,
+    The result names the rewritten command (*refused*); the audit record
+    keeps the command the agent sent (*parsed*).
+    """
+    result = error_result(
+        refused.raw,
+        message,
+        cwd=cwd_before,
+        executor="shell",
+        kind=result_kind,
     )
-    if outcome is None:
-        return None
-    if outcome.kind == "never_allowed":
-        if (
-            outcome.policy is not None
-            and outcome.policy.tier == "never_allowed"
-        ):
-            return _deny_policy_never_allowed(
-                agent=agent,
-                parsed=outcome.parsed,
-                content=content,
-                cwd_before=cwd_before,
-                policy=outcome.policy,
-                trigger_type=trigger_type,
-                channel_id=channel_id,
-            )
-        result = error_result(
-            outcome.parsed.raw,
-            outcome.message or outcome.blocked_why or "Command not permitted",
-            cwd=cwd_before,
-            executor="shell",
-            kind="host_deny" if outcome.blocked_why and "host path" in (outcome.blocked_why or "").lower() else "error",
-        )
-        record_bm_cli_event(
-            agent_id=agent.id,
-            command=parsed.raw,
-            content=content,
-            executor="shell",
-            cwd_before=cwd_before,
-            cwd_after=result.cwd,
-            policy_tier="never_allowed",
-            decision="denied",
-            result=result,
-            trigger_type=trigger_type,
-        )
-        return result
-    if outcome.kind == "approval_required":
-        policy = outcome.policy
-        if policy is None:
-            from core.bm_cli.policy_engine import CommandPolicyDecision
-
-            policy = CommandPolicyDecision(
-                allowed=False,
-                tier="approval_required",
-                executor="shell",
-                approval_required=True,
-                message=outcome.message,
-            )
-        return _handle_approval_required(
-            agent=agent,
-            parsed=outcome.parsed,
-            content=content,
-            cwd_before=cwd_before,
-            policy=policy,
-            trigger_type=trigger_type,
-            channel_id=channel_id,
-        )
-    policy = outcome.policy
-    if policy is None:
-        return None
-    policy = contain_scoped_always(agent, outcome.parsed, cwd_before, policy)
-    if policy.approval_required:
-        return _handle_approval_required(
-            agent=agent,
-            parsed=outcome.parsed,
-            content=content,
-            cwd_before=cwd_before,
-            policy=policy,
-            trigger_type=trigger_type,
-            channel_id=channel_id,
-        )
-    return _execute_shell(
-        agent=agent,
-        parsed=outcome.parsed,
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
         content=content,
+        executor="shell",
         cwd_before=cwd_before,
-        policy=policy,
+        cwd_after=result.cwd,
+        policy_tier="never_allowed",
+        decision="denied",
+        result=result,
         trigger_type=trigger_type,
-        channel_id=channel_id,
     )
+    return result
+
+
+def _deny_policy(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd_before: str,
+    policy: CommandPolicyDecision,
+    message: str,
+    *,
+    content: str | None,
+    trigger_type: str | None,
+) -> BossModCliResult:
+    """Refuse a command policy does not permit (not never_allowed) and record it."""
+    result = error_result(
+        parsed.raw,
+        message,
+        cwd=cwd_before,
+        executor=policy.executor,
+    )
+    record_bm_cli_event(
+        agent_id=agent.id,
+        command=parsed.raw,
+        content=content,
+        executor=policy.executor,
+        cwd_before=cwd_before,
+        cwd_after=result.cwd,
+        policy_tier=policy.tier,
+        decision="denied",
+        result=result,
+        trigger_type=trigger_type,
+    )
+    return result
 
 
 def _preview_locked_clone_outcome(outcome: object, cwd_before: str) -> BossModCliResult:
@@ -1049,23 +921,6 @@ def _path_jail_cli_result(
     return path_jail_blocked_result(parsed.raw, cwd_before, jail_message)
 
 
-def _apply_project_env_gate(
-    agent: Agent,
-    parsed: ParsedCliCommand,
-    cwd_before: str,
-) -> ParsedCliCommand | BossModCliResult:
-    """Rewrite or deny host pip on a locked clone; prefer uv/venv pytest."""
-    from core.agent_loop.work_binding import bound_task_id
-    from core.bm_cli.project_env import gate_locked_clone_command
-
-    return gate_locked_clone_command(
-        agent,
-        parsed,
-        cwd_before,
-        task_id=bound_task_id(agent.id),
-    )
-
-
 def _gate_locked_clone_project_env(
     agent: Agent,
     parsed: ParsedCliCommand,
@@ -1074,23 +929,43 @@ def _gate_locked_clone_project_env(
     content: str | None = None,
     trigger_type: str | None = None,
 ) -> ParsedCliCommand | BossModCliResult:
-    """Same as :func:`_apply_project_env_gate`, recording a deny audit event."""
-    gated = _apply_project_env_gate(agent, parsed, cwd_before)
-    if not isinstance(gated, BossModCliResult):
+    """Rewrite or deny host pip on a locked clone, recording a deny audit event."""
+    from core.agent_loop.work_binding import bound_task_id
+
+    gated = project_env_authorization(
+        agent, parsed, cwd_before, task_id=bound_task_id(agent.id), trigger_type=trigger_type,
+    )
+    if isinstance(gated, ParsedCliCommand):
         return gated
+    paused = _paused(gated, content=content, channel_id=None)
+    if paused is None:
+        raise ValueError(f"project-env gate for {parsed.raw!r} blocked without a result")
+    return paused
+
+
+def _record_project_env_deny(
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd_before: str,
+    denied: BossModCliResult,
+    *,
+    content: str | None,
+    trigger_type: str | None,
+) -> BossModCliResult:
+    """Record a project-env deny (host pip on a locked clone), then return it."""
     record_bm_cli_event(
         agent_id=agent.id,
         command=parsed.raw,
         content=content,
-        executor=gated.executor,
+        executor=denied.executor,
         cwd_before=cwd_before,
-        cwd_after=gated.cwd,
+        cwd_after=denied.cwd,
         policy_tier="never_allowed",
         decision="denied",
-        result=gated,
+        result=denied,
         trigger_type=trigger_type,
     )
-    return gated
+    return denied
 
 
 def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
@@ -1143,34 +1018,6 @@ def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[s
     return extra
 
 
-def _shell_policy_for_command(
-    agent: Agent,
-    parsed: ParsedCliCommand,
-    cwd: str,
-) -> CommandPolicyDecision:
-    """Match seed rules for project ``git -C`` without changing other ``-C`` forms.
-
-    An operator Deny on the raw command still wins. ``git -C /projects/<slug>
-    status`` matches ``git status``. ``git -C . status`` in ``/me`` does not.
-    """
-    raw = policy_engine.evaluate(
-        parsed.raw, frozenset(), agent_id=agent.id, cwd=cwd,
-    )
-    if raw.matched_rule_id:
-        return raw
-    from core.bm_cli.git_argv import git_policy_subject
-
-    subject = git_policy_subject(agent, parsed, cwd)
-    if not subject or subject == parsed.raw:
-        return raw
-    scoped = policy_engine.evaluate(
-        subject, frozenset(), agent_id=agent.id, cwd=cwd,
-    )
-    if scoped.matched_rule_id:
-        return scoped
-    return raw
-
-
 def _execute_shell_policy(
     *,
     agent: Agent,
@@ -1181,55 +1028,15 @@ def _execute_shell_policy(
     channel_id: str | None = None,
 ) -> BossModCliResult:
     """Evaluate shell policy for a command that left the virtual handler."""
-    shell_policy = contain_scoped_always(
-        agent, parsed, cwd_before, _shell_policy_for_command(agent, parsed, cwd_before),
-    )
-    if shell_policy.approval_required:
-        return _handle_approval_required(
-            agent=agent,
-            parsed=parsed,
-            content=content,
-            cwd_before=cwd_before,
-            policy=shell_policy,
-            trigger_type=trigger_type,
-            channel_id=channel_id,
-        )
-    if not shell_policy.allowed:
-        if shell_policy.tier == "never_allowed":
-            return _deny_policy_never_allowed(
-                agent=agent,
-                parsed=parsed,
-                content=content,
-                cwd_before=cwd_before,
-                policy=shell_policy,
-                trigger_type=trigger_type,
-                channel_id=channel_id,
-            )
-        result = error_result(
-            parsed.raw,
-            shell_policy.message or f"Command not permitted: {parsed.name}",
-            cwd=cwd_before,
-            executor=shell_policy.executor,
-        )
-        record_bm_cli_event(
-            agent_id=agent.id,
-            command=parsed.raw,
-            content=content,
-            executor=shell_policy.executor,
-            cwd_before=cwd_before,
-            cwd_after=result.cwd,
-            policy_tier=shell_policy.tier,
-            decision="denied",
-            result=result,
-            trigger_type=trigger_type,
-        )
-        return result
+    auth = authorize_shell_policy(agent, parsed, cwd_before, trigger_type=trigger_type)
+    if auth.materialize is not None:
+        return auth.materialize(content=content, channel_id=channel_id)
     return _execute_shell(
         agent=agent,
-        parsed=parsed,
+        parsed=auth.parsed,
         content=content,
         cwd_before=cwd_before,
-        policy=shell_policy,
+        policy=_run_policy(auth),
         trigger_type=trigger_type,
         channel_id=channel_id,
     )
@@ -1252,12 +1059,14 @@ def _maybe_auto_approve(
     policy: object,
     trigger_type: str | None,
     channel_id: str | None,
+    gate_segments: tuple[GateSegment, ...] = (),
 ) -> _ThreadAutoGate:
     """Auto-approve one approval_required command through the gate, or leave a card.
 
     A host-guardrail refusal is a path-jail block. System AI never sees it.
     A card keeps ``card_why`` when auto-approve is on, so the operator
-    sees why it did not run the command.
+    sees why it did not run the command. A script passes its
+    ``gate_segments`` so the gate judges every segment.
     """
     from core.bm_cli.approval_gate import (
         audit_line,
@@ -1271,6 +1080,7 @@ def _maybe_auto_approve(
         cwd_before,
         policy_tier=str(getattr(policy, "tier", "") or ""),
         channel_id=channel_id,
+        segments=gate_segments,
     )
     if plan.action == "card":
         return _ThreadAutoGate(card_why=plan.card_why)
@@ -1342,29 +1152,36 @@ def _handle_approval_required(
     policy: object,
     trigger_type: str | None,
     channel_id: str | None = None,
+    script: ScriptApproval | None = None,
 ) -> BossModCliResult:
-    """Create an approval request and return the pausing result."""
+    """Create an approval request and return the pausing result.
+
+    For a *script*, ``parsed.raw`` is the full script text: its segments
+    already passed the project-env gate, the gate judges every segment, and
+    the card's review note lists each segment's tier.
+    """
     from core.bm_cli.host_path_consent import _clean_channel_id
     from core.models.channel import THREAD_ARCHIVED_CONSENT_DENY
 
-    gated = _gate_locked_clone_project_env(
-        agent,
-        parsed,
-        cwd_before,
-        content=content,
-        trigger_type=trigger_type,
-    )
-    if isinstance(gated, BossModCliResult):
-        return gated
-    if gated.raw != parsed.raw:
-        return _execute_shell_policy(
-            agent=agent,
-            parsed=gated,
+    if script is None:
+        gated = _gate_locked_clone_project_env(
+            agent,
+            parsed,
+            cwd_before,
             content=content,
-            cwd_before=cwd_before,
             trigger_type=trigger_type,
-            channel_id=channel_id,
         )
+        if isinstance(gated, BossModCliResult):
+            return gated
+        if gated.raw != parsed.raw:
+            return _execute_shell_policy(
+                agent=agent,
+                parsed=gated,
+                content=content,
+                cwd_before=cwd_before,
+                trigger_type=trigger_type,
+                channel_id=channel_id,
+            )
 
     origin_channel = _clean_channel_id(channel_id)
     if origin_channel and db.is_channel_archived(origin_channel):
@@ -1383,9 +1200,12 @@ def _handle_approval_required(
         policy=policy,
         trigger_type=trigger_type,
         channel_id=origin_channel,
+        gate_segments=script.segments if script is not None else (),
     )
     if auto.result is not None:
         return auto.result
+    notes = [script.review_note if script is not None else "", auto.card_why]
+    review_note = "\n".join(note for note in notes if note)
 
     from core.agent_loop.work_binding import current_turn_detached
 
@@ -1401,7 +1221,7 @@ def _handle_approval_required(
             matched_rule_id=policy.matched_rule_id,
             expires_at=expires_at,
             channel_id=origin_channel,
-            review_note=auto.card_why or None,
+            review_note=review_note or None,
             detached_origin=current_turn_detached(agent.id),
         )
     except Exception:
@@ -1613,7 +1433,13 @@ def _prepare_native_shell(
     parsed: ParsedCliCommand,
     cwd_before: str,
 ) -> tuple[ParsedCliCommand, Path, tuple[Path, ...], int, int] | BossModCliResult:
-    """Rewrite virtual mounts, then resolve cwd and path-jail roots."""
+    """Rewrite virtual mounts, then resolve cwd, path-jail roots and shell limits.
+
+    Raises:
+        ConfigError: ``cli_shell_timeout_seconds`` or
+            ``cli_shell_max_output_bytes`` is missing or not an int (both
+            are seeded; a missing one is a bug, not a default).
+    """
     from core.bm_cli.locked_clone_outcome import rewrite_virtual_shell_paths
 
     parsed = rewrite_virtual_shell_paths(agent, parsed, cwd_before)
@@ -1628,8 +1454,8 @@ def _prepare_native_shell(
             cwd=cwd_before,
             executor="shell",
         )
-    timeout = config.get_int("cli_shell_timeout_seconds") or 30
-    max_output = config.get_int("cli_shell_max_output_bytes") or 65536
+    timeout = config.require_int("cli_shell_timeout_seconds")
+    max_output = config.require_int("cli_shell_max_output_bytes")
     return (
         parsed,
         Path(resolved.real_path),

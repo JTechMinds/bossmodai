@@ -8,7 +8,9 @@
  * A read still in flight when the place is left never paints the next mount.
  * The real file viewer's folder line lists folders only (house root, chevron
  * separators, the server's root label kept as a visually-hidden name) and is
- * absent for a file directly under the root.
+ * absent for a file directly under the root. The viewer's Save and image
+ * preview use the endpoints its opener passed (a desk opener passes the
+ * desk's), and fall back to the company endpoints when none are passed.
  *
  * Re-pointed in Phase 3B from company-files.js to places/files/. The payload
  * keys are byte-identical to the dock-era harness: the properties are the same,
@@ -159,7 +161,55 @@ async function viewerFolderLine(crumbs) {
     return { rows: rows.length, tokens, painted };
 }
 
+/**
+ * Open the REAL viewer, Save an edit, and record where each request went.
+ *
+ * A text file is edited and saved, then an image is opened, so the result
+ * names the read, the PUT, and the raw-bytes fetch in order.
+ *
+ * @param {object} endpoints  `apiUrl`, `saveUrl`, `rawUrl`, or none of them.
+ * @returns {Promise<{saveCalls: string[], rawCalls: string[], saveBody: object|null}>}
+ */
+async function viewerEndpoints(endpoints) {
+    const calls = [];
+    let reading = { name: "a.md", path: "/me/a.md", content: "hello", size_bytes: 5, breadcrumbs: [] };
+    const api = (url, init) => {
+        calls.push({ url: String(url), method: (init && init.method) || "GET", body: init && init.body });
+        if (String(url).includes("raw?path=")) {
+            return Promise.resolve({ ok: true, status: 200, blob: () => Promise.resolve(new Blob(["png"])) });
+        }
+        if (init && init.method === "PUT") return Promise.resolve(ok({ status: "ok" }));
+        return Promise.resolve(ok(reading));
+    };
+    await RealFileViewer.open("/me/a.md", { api, ...endpoints });
+    const button = (label) => documentStub.body.querySelectorAll("button")
+        .find((el) => el.textContent === label);
+    await button("Edit").dispatchClick();
+    documentStub.body.querySelector(".file-view-editor").value = "edited";
+    await button("Save").dispatchClick();
+    await drain();
+    RealFileViewer.close();
+    reading = { name: "pic.png", path: "/me/pic.png", size_bytes: 3, breadcrumbs: [] };
+    await RealFileViewer.open("/me/pic.png", { api, ...endpoints });
+    await drain();
+    RealFileViewer.close();
+    const put = calls.find((call) => call.method === "PUT");
+    return {
+        saveCalls: calls.filter((call) => call.method === "PUT").map((call) => call.url),
+        rawCalls: calls.filter((call) => call.url.includes("raw?path=")).map((call) => call.url),
+        saveBody: put ? JSON.parse(put.body) : null,
+    };
+}
+
 async function main() {
+    // ─── The viewer's endpoints come from its opener ───
+    const deskEndpoints = await viewerEndpoints({
+        apiUrl: "/api/agents/a1/desk?path=%2Fme%2Fa.md",
+        saveUrl: "/api/agents/a1/desk",
+        rawUrl: "/api/agents/a1/desk/raw",
+    });
+    const companyEndpoints = await viewerEndpoints({});
+
     // ─── The viewer's folder line: folders only, house root, chevrons ───
     const deskLine = await viewerFolderLine([
         { path: "/", label: "/" },
@@ -375,6 +425,8 @@ async function main() {
         viewerDeskLine: deskLine,
         viewerCompanyLine: companyLine,
         viewerRootFileLine: rootFileLine,
+        viewerDeskEndpoints: deskEndpoints,
+        viewerCompanyEndpoints: companyEndpoints,
         floorRowsShowNames,
         floorGlyphs,
         gridPainted,

@@ -205,7 +205,6 @@ def test_facts_detect_whole_roots() -> None:
         ("git clean -fd", "delete"),
         ("mv a.txt b.txt", "local_write"),
         ("git -C /projects/demo commit -m wip", "local_write"),
-        ("cat a.txt > b.txt", "local_write"),
         ("git push origin main", "network_write"),
         ("gh pr create --fill", "network_write"),
         ("gh repo delete o/r", "network_write"),

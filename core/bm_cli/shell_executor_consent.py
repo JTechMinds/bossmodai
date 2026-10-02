@@ -8,14 +8,15 @@ the setting on and resumes the pending command. Deny refuses cleanly.
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, Literal
 
 import db
 from core import config
 from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
 from core.agent_loop.work_binding import current_turn_detached
 from core.bm_cli.host_path_consent import _clean_channel_id, _enqueue_resume
-from core.bm_cli.policy_engine import policy_engine
+from core.bm_cli.policy_engine import CommandPolicyDecision, policy_engine
 from core.bm_cli.results import consent_required_result, error_result
 from core.bm_cli.types import BossModCliResult, ParsedCliCommand
 from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
@@ -28,6 +29,9 @@ from core.models.host_path_consent import (
     SHELL_EXECUTOR_KIND,
     HostPathConsentRequest,
 )
+
+if TYPE_CHECKING:
+    from core.bm_cli.nest_git_consent import NestGitGate
 
 ShellExecutorDecision = Literal["enable", "deny"]
 
@@ -45,11 +49,17 @@ def shell_executor_is_enabled() -> bool:
     return config.get_live(_SETTING_KEY) == "true"
 
 
-def command_needs_shell_executor(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
-    """Return True when this CLI would use the shell executor if it were on."""
+def command_needs_shell_executor(
+    agent: Agent, parsed: ParsedCliCommand, cwd: str, *, native: bool = False,
+) -> bool:
+    """Return True when this CLI would use the shell executor if it were on.
+
+    ``native`` marks a command that runs on the native shell whatever its
+    name (a script segment such as ``ls`` or ``cat``), so it always does.
+    """
     from core.bm_cli.runtime import VIRTUAL_COMMANDS
 
-    if parsed.name not in VIRTUAL_COMMANDS:
+    if native or parsed.name not in VIRTUAL_COMMANDS:
         return True
     if parsed.name != "git":
         return False
@@ -59,6 +69,139 @@ def command_needs_shell_executor(agent: Agent, parsed: ParsedCliCommand, cwd: st
     if subcommand not in _VIRTUAL_GIT_SUBCOMMANDS:
         return True
     return cwd_is_nested_clone_repo(agent, cwd)
+
+
+@dataclass(frozen=True, slots=True)
+class ShellExecutorGate:
+    """What the Shell Executor gate decided, before any card or note exists.
+
+    Attributes:
+        action: ``"gh"`` defers to the gh auth gate (``gh``);
+            ``"never_allowed"`` refuses with the policy steer (``peek``);
+            ``"denied"`` refuses because the operator already denied Enable
+            for this scope; ``"consent"`` opens (or reuses) the card.
+        gh: The gh gate outcome for ``"gh"``.
+        peek: The never_allowed decision for ``"never_allowed"``.
+    """
+
+    action: Literal["gh", "never_allowed", "denied", "consent"]
+    gh: NestGitGate | None = None
+    peek: CommandPolicyDecision | None = None
+
+
+def decide_shell_executor(
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    cwd: str,
+    task_id: str | None,
+    trigger_type: str | None = None,
+    native: bool = False,
+) -> ShellExecutorGate | None:
+    """Decide the Shell Executor gate for one command without creating chrome.
+
+    Args:
+        agent: The agent running the command.
+        parsed: The command.
+        cwd: The agent's virtual working directory.
+        task_id: The turn's bound task, which scopes locked copies and denials.
+        trigger_type: The turn trigger; a consent resume re-runs ungated.
+        native: The command runs on the native shell whatever its name
+            (a script segment), so a virtual name does not skip the gate.
+
+    Returns:
+        None when the shell is on, not needed, or no copy is locked;
+        otherwise the outcome to materialize with
+        :func:`apply_shell_executor_gate`.
+    """
+    if shell_executor_is_enabled():
+        return None
+    # A just-granted resume must re-run, not open a second pending card.
+    if trigger_type == "host_path_consent_resolved":
+        return None
+    if not command_needs_shell_executor(agent, parsed, cwd, native=native):
+        return None
+    from core.bm_cli.nest_git import command_needs_gh_auth
+
+    if command_needs_gh_auth(parsed):
+        from core.bm_cli.nest_git_consent import decide_gh_cli_block
+
+        gh = decide_gh_cli_block(
+            agent=agent,
+            parsed=parsed,
+            cwd=cwd,
+            trigger_type=trigger_type,
+        )
+        if gh is not None:
+            return ShellExecutorGate(action="gh", gh=gh)
+    if not locked_workspace_copies_for_turn(agent.id, task_id):
+        return None
+
+    peek = policy_engine.evaluate(
+        parsed.raw,
+        frozenset(),
+        agent_id=agent.id,
+        assume_shell=True,
+        cwd=cwd,
+    )
+    if peek.tier == "never_allowed":
+        return ShellExecutorGate(action="never_allowed", peek=peek)
+    if _denied_for_scope(agent.id, task_id=task_id) is not None:
+        return ShellExecutorGate(action="denied")
+    return ShellExecutorGate(action="consent")
+
+
+def apply_shell_executor_gate(
+    gate: ShellExecutorGate,
+    *,
+    agent: Agent,
+    parsed: ParsedCliCommand,
+    content: str | None,
+    cwd: str,
+    task_id: str | None,
+    channel_id: str | None,
+) -> BossModCliResult:
+    """Materialize a :func:`decide_shell_executor` outcome: card, note or refusal.
+
+    Raises:
+        ValueError: A ``"gh"`` or ``"never_allowed"`` gate lacks its payload.
+    """
+    if gate.action == "gh":
+        if gate.gh is None:
+            raise ValueError("Shell Executor gh gate has no gh outcome")
+        from core.bm_cli.nest_git_consent import apply_gh_cli_block
+
+        return apply_gh_cli_block(
+            gate.gh,
+            agent=agent,
+            parsed=parsed,
+            content=content,
+            cwd=cwd,
+            task_id=task_id,
+            channel_id=channel_id,
+        )
+    if gate.action == "never_allowed":
+        if gate.peek is None:
+            raise ValueError("Shell Executor never_allowed gate has no policy decision")
+        from core.bm_cli.locked_clone_outcome import never_allowed_cli_result
+
+        return never_allowed_cli_result(
+            agent,
+            parsed,
+            cwd,
+            gate.peek,
+            channel_id=channel_id,
+        )
+    if gate.action == "denied":
+        return _denied_result(parsed.raw, cwd=cwd)
+    return request_shell_executor_consent(
+        agent=agent,
+        parsed=parsed,
+        content=content,
+        cwd=cwd,
+        task_id=task_id,
+        channel_id=channel_id,
+    )
 
 
 def maybe_pause_for_shell_executor(
@@ -71,51 +214,21 @@ def maybe_pause_for_shell_executor(
     channel_id: str | None,
     trigger_type: str | None = None,
 ) -> BossModCliResult | None:
-    """Pause for Enable/Deny when a locked clone needs the shell executor."""
-    if shell_executor_is_enabled():
-        return None
-    # A just-granted resume must re-run, not open a second pending card.
-    if trigger_type == "host_path_consent_resolved":
-        return None
-    if not command_needs_shell_executor(agent, parsed, cwd):
-        return None
-    from core.bm_cli.nest_git import command_needs_gh_auth
+    """Pause for Enable/Deny when a locked clone needs the shell executor.
 
-    if command_needs_gh_auth(parsed):
-        from core.bm_cli.nest_git_consent import maybe_block_gh_cli
-
-        blocked = maybe_block_gh_cli(
-            agent=agent,
-            parsed=parsed,
-            content=content,
-            cwd=cwd,
-            task_id=task_id,
-            channel_id=channel_id,
-            trigger_type=trigger_type,
-        )
-        if blocked is not None:
-            return blocked
-    if not locked_workspace_copies_for_turn(agent.id, task_id):
-        return None
-
-    peek = policy_engine.evaluate(
-        parsed.raw,
-        frozenset(),
-        agent_id=agent.id,
-        assume_shell=True,
+    :func:`decide_shell_executor` then :func:`apply_shell_executor_gate`.
+    """
+    gate = decide_shell_executor(
+        agent=agent,
+        parsed=parsed,
         cwd=cwd,
+        task_id=task_id,
+        trigger_type=trigger_type,
     )
-    if peek.tier == "never_allowed":
-        from core.bm_cli.locked_clone_outcome import never_allowed_cli_result
-
-        return never_allowed_cli_result(
-            agent,
-            parsed,
-            cwd,
-            peek,
-            channel_id=channel_id,
-        )
-    return request_shell_executor_consent(
+    if gate is None:
+        return None
+    return apply_shell_executor_gate(
+        gate,
         agent=agent,
         parsed=parsed,
         content=content,

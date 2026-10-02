@@ -131,15 +131,17 @@ def decide_locked_clone_shell_outcome(
     *,
     task_id: str | None,
     virtual_commands: frozenset[str],
+    native: bool = False,
 ) -> LockedCloneShellOutcome | None:
     """Return the shared outcome for one locked-clone shell command.
 
     ``None`` means this is not a locked-clone shell command — callers keep
-    the existing desk / virtual path.
+    the existing desk / virtual path. ``native`` marks a command that runs
+    on the native shell whatever its name (a script segment).
     """
     if not is_locked_clone_context(agent, cwd, task_id=task_id):
         return None
-    if not command_needs_shell_executor(agent, parsed, cwd):
+    if not command_needs_shell_executor(agent, parsed, cwd, native=native):
         return None
 
     rewritten = False

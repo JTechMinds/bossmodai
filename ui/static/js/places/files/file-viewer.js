@@ -111,16 +111,17 @@ const BossModFileViewer = (() => {
      * @param {HTMLElement} deps.imgEl
      * @param {HTMLElement} deps.statusEl
      * @param {string} deps.path
+     * @param {string} deps.rawUrl  The raw-bytes endpoint of the namespace the
+     *   file was read from; `path` goes on as its query.
      * @returns {Promise<void>} Never rejects; a failure replaces the status
      *   line, because a preview that silently never appears tells the operator
      *   nothing about why.
      */
-    async function loadAuthenticatedImage({ api, imgEl, statusEl, path }) {
-        const rawUrl = `/api/company/files/raw?path=${encodeURIComponent(path)}`;
+    async function loadAuthenticatedImage({ api, imgEl, statusEl, path, rawUrl }) {
         const opened = sheet;
         try {
             revokeImageObjectUrl();
-            const url = await fetchBlobUrl(api, rawUrl);
+            const url = await fetchBlobUrl(api, `${rawUrl}?path=${encodeURIComponent(path)}`);
             if (sheet !== opened) {
                 // The operator closed or replaced the panel while this was in
                 // flight; the URL would otherwise leak for the page's lifetime.
@@ -140,7 +141,7 @@ const BossModFileViewer = (() => {
 
     // ─── Panel ───
 
-    function render(payload, api) {
+    function render(payload, api, { saveUrl, rawUrl }) {
         const name = String(payload.name || 'File');
         const image = CONTENT.isImage(name);
         const binary = payload.binary === true && !image;
@@ -197,7 +198,7 @@ const BossModFileViewer = (() => {
             status.textContent = '';
             status.classList.remove('file-view-error');
             try {
-                const res = await api('/api/company/files', {
+                const res = await api(saveUrl, {
                     method: 'PUT',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ path: payload.path, content: next }),
@@ -237,7 +238,7 @@ const BossModFileViewer = (() => {
             // A file being READ closes on an outside click; one being EDITED
             // refuses, so a stray click cannot discard an unsaved draft.
             openSheet({ title: name, body, tools, closeOnBackdrop: () => !editing });
-            void loadAuthenticatedImage({ api, imgEl: img, statusEl: loading, path: payload.path });
+            void loadAuthenticatedImage({ api, imgEl: img, statusEl: loading, path: payload.path, rawUrl });
             return;
         }
 
@@ -285,12 +286,21 @@ const BossModFileViewer = (() => {
      * @param {Function} deps.api  Authenticated fetch helper, from ctx.
      * @param {string} [deps.apiUrl]  A different read endpoint — the desk
      *   browser reads an agent's desk rather than the company workspace.
+     * @param {string} [deps.saveUrl]  The PUT endpoint for Save; defaults to
+     *   `/api/company/files`.
+     * @param {string} [deps.rawUrl]  The raw-bytes base URL for image
+     *   previews; defaults to `/api/company/files/raw`.
+     *   `apiUrl`, `saveUrl` and `rawUrl` must address one namespace: a caller
+     *   that overrides `apiUrl` must override all three, or Save and preview
+     *   resolve the path somewhere it does not live.
      * @returns {Promise<void>}
      * @throws {Error} When the file cannot be read. The caller decides what to
      *   say; swallowing it would leave a click that does nothing.
      */
     async function open(path, deps) {
-        const { api, apiUrl } = deps || {};
+        const {
+            api, apiUrl, saveUrl = '/api/company/files', rawUrl = '/api/company/files/raw',
+        } = deps || {};
         if (typeof api !== 'function') throw new Error('[file-viewer] deps.api is required');
         close();
         const url = apiUrl || `/api/company/files?path=${encodeURIComponent(path)}`;
@@ -303,7 +313,7 @@ const BossModFileViewer = (() => {
             console.error('[file-viewer] could not load the file', err);
             throw err;
         }
-        render(payload, api);
+        render(payload, api, { saveUrl, rawUrl });
     }
 
     /**

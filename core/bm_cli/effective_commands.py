@@ -10,7 +10,7 @@ runs. Pure; the policy engine imports it. Rules:
       ``-delete`` adds ``rm <paths>``; ``-fprint*``/``-fls FILE`` add
       ``tee FILE``. ``find`` itself stays.
     * ``time -o FILE`` adds ``tee FILE``.
-    * Assigning a :data:`PROGRAM_SELECTING_ENV` name is reported.
+    * Assigning a name :func:`selects_program` accepts is reported.
     * An unknown wrapper option, or ``env -C``, is reported as needing approval.
 """
 
@@ -24,13 +24,31 @@ from pathlib import PurePosixPath
 
 from core.bm_cli.find_actions import find_extras
 
-# Variables that change which binary (or which code) an allowed name runs.
+# Variables that change which binary (or which code) an allowed name runs:
+# loader and interpreter hooks, git's transport/helper programs, and the
+# editors and pagers git and other tools start.
 PROGRAM_SELECTING_ENV: frozenset[str] = frozenset({
     "PATH", "LD_PRELOAD", "LD_LIBRARY_PATH", "LD_AUDIT",
     "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "BASH_ENV", "ENV",
     "GIT_SSH", "GIT_SSH_COMMAND", "GIT_EXEC_PATH", "GIT_ASKPASS",
     "NODE_OPTIONS", "PYTHONSTARTUP",
+    "GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "EDITOR", "VISUAL", "GIT_PAGER", "PAGER",
 })
+# ``GIT_CONFIG_COUNT``/``_KEY_<n>``/``_VALUE_<n>``, ``GIT_CONFIG_PARAMETERS``,
+# ``GIT_CONFIG_GLOBAL``/``_SYSTEM``: any of them can set ``core.sshCommand``,
+# ``core.pager`` or ``alias.x=!cmd``, so the whole family selects a program.
+_PROGRAM_SELECTING_PREFIXES: tuple[str, ...] = ("GIT_CONFIG",)
+
+
+def selects_program(name: str) -> bool:
+    """Whether assigning env var *name* can change which program (or code) runs.
+
+    The one predicate for the wrapper path (``env NAME=…``, a ``NAME=``
+    argv0) and a script segment's ``NAME=value`` prefix, so they cannot
+    drift. Exact names are :data:`PROGRAM_SELECTING_ENV`; any name starting
+    with ``GIT_CONFIG`` also counts.
+    """
+    return name in PROGRAM_SELECTING_ENV or name.startswith(_PROGRAM_SELECTING_PREFIXES)
 
 _SHELL_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 
@@ -106,7 +124,7 @@ class EffectiveCommands:
         argvs: The same commands as argv tuples.
         replaced: True when the first command is not the raw command (a
             wrapper was replaced by what it wraps).
-        program_env: The first :data:`PROGRAM_SELECTING_ENV` name assigned,
+        program_env: The first name assigned that :func:`selects_program`,
             or None.
         approval_reason: Why the command cannot be proven to run only the
             listed commands (an unknown wrapper option, ``env -C``, or an
@@ -133,7 +151,7 @@ class _Acc:
     approval_reason: str | None = None
 
     def assign(self, name: str) -> None:
-        if self.program_env is None and name in PROGRAM_SELECTING_ENV:
+        if self.program_env is None and selects_program(name):
             self.program_env = name
 
     def needs_approval(self, reason: str) -> None:

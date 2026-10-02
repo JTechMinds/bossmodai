@@ -131,8 +131,12 @@ const BossModDeskNotes = (() => {
                             return;
                         }
                         // The one viewer, the same one desk-files.js opens.
-                        void BossModFileViewer.open(path, { api, apiUrl: deskUrl(path) })
-                            .catch(() => renderError('That note could not be opened.'));
+                        void BossModFileViewer.open(path, {
+                            api,
+                            apiUrl: deskUrl(path),
+                            saveUrl: `/api/agents/${agentId}/desk`,
+                            rawUrl: `/api/agents/${agentId}/desk/raw`,
+                        }).catch(() => renderError('That note could not be opened.'));
                     },
                 },
                     h('i', { 'data-lucide': 'notebook-pen', 'aria-hidden': 'true' }),

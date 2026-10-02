@@ -18,6 +18,7 @@ from core import config
 from core.bm_cli.effective_commands import (
     PROGRAM_SELECTING_ENV,
     effective_commands,
+    selects_program,
     unwrap_command,
 )
 from core.bm_cli.find_actions import has_test_predicates
@@ -160,6 +161,32 @@ def test_program_selecting_assignment_is_never_allowed() -> None:
         assert decision.approval_required is False
     message = policy_engine.evaluate("PATH=. ls", frozenset()).message or ""
     assert "setting PATH changes which program runs; run the program directly" in message
+
+
+_EDITOR_PAGER_NAMES = ("GIT_EDITOR", "GIT_SEQUENCE_EDITOR", "EDITOR", "VISUAL", "GIT_PAGER", "PAGER")
+_GIT_CONFIG_NAMES = (
+    "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+    "GIT_CONFIG_PARAMETERS", "GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM",
+)
+
+
+@pytest.mark.parametrize("name", [*_EDITOR_PAGER_NAMES, *_GIT_CONFIG_NAMES])
+def test_git_config_editor_and_pager_variables_select_a_program(name: str) -> None:
+    assert selects_program(name)
+    for command in (f"{name}=x git log", f"env {name}=x git log", f"timeout 5 env {name}=x git fetch"):
+        assert unwrap_command(command).program_env == name, command
+        decision = policy_engine.evaluate(command, frozenset())
+        assert decision.tier == "never_allowed", command
+        assert f"setting {name} changes which program runs" in (decision.message or "")
+
+
+def test_git_config_injection_through_env_is_never_allowed() -> None:
+    command = "env GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.sshCommand GIT_CONFIG_VALUE_0=evil git fetch"
+    decision = policy_engine.evaluate(command, frozenset())
+    assert decision.tier == "never_allowed"
+    assert "GIT_CONFIG_COUNT" in (decision.message or "")
+    assert not selects_program("GIT_AUTHOR_NAME")
+    assert not selects_program("FOO")
 
 
 def test_find_trampolines_need_approval() -> None:

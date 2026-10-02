@@ -7,6 +7,7 @@ The user message is JSON:
 - effect: a code-computed hint (read_only, local_write, delete, network_read, network_write, install, unknown). It is a hint, not a verdict.
 - paths: every path the command touches, with a label naming where it is (the agent's /me, a locked clone, a floor project, or outside both). A virtual path (/projects/x, /me/y) and its real host path are the same place. Judge by the labels, not by raw host paths.
 - write_targets: the labels of paths it writes, moves or deletes.
+- segments: present only when the command is a script (several commands joined by |, &&, ||, ; or with redirects). One entry per simple command, with its own command, effect, paths and write_targets; the top-level paths, write_targets and effect are their union. The whole line runs only if you approve it as a whole, so every segment counts in the rubric below: approve only when the rubric would approve each one; one segment that needs asking means ask.
 - agent: who is asking (name, specialty, description).
 - floor_projects: the projects on the agent's floor.
 - task: the task the agent is bound to, with its project and deliverables. null means the agent is not bound to a task right now.

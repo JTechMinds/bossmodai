@@ -203,3 +203,13 @@ def test_company_files_named_path_harness() -> None:
     assert company_line["painted"] is True
     # A file directly under the root: a lone house would say nothing.
     assert payload["viewerRootFileLine"]["rows"] == 0
+    # Save and image preview address the namespace the file was read from:
+    # a desk opener's endpoints are used, and the company ones are the default.
+    desk = payload["viewerDeskEndpoints"]
+    assert desk["saveCalls"] == ["/api/agents/a1/desk"]
+    assert desk["saveBody"] == {"path": "/me/a.md", "content": "edited"}
+    assert desk["rawCalls"] == ["/api/agents/a1/desk/raw?path=%2Fme%2Fpic.png"]
+    company = payload["viewerCompanyEndpoints"]
+    assert company["saveCalls"] == ["/api/company/files"]
+    assert company["saveBody"] == {"path": "/me/a.md", "content": "edited"}
+    assert company["rawCalls"] == ["/api/company/files/raw?path=%2Fme%2Fpic.png"]

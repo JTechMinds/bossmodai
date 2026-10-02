@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Literal
 
@@ -20,9 +21,11 @@ from core.config import ConfigError
 from core.bm_cli.approval_gate.context import build_review_context
 from core.bm_cli.approval_gate.facts import (
     CommandFacts,
+    GateSegment,
     command_facts,
     effective_parsed_commands,
     host_refusal,
+    script_facts,
 )
 from core.bm_cli.approval_gate.review import review_command
 from core.bm_cli.policy_engine import argv0_basename_after_resolve
@@ -151,19 +154,25 @@ def plan_auto_approve(
     *,
     policy_tier: str,
     channel_id: str | None,
+    segments: Sequence[GateSegment] = (),
 ) -> AutoApprovePlan:
     """Decide card, block, or approve. Does not execute or write a decision.
 
     Order: enablement, facts, host refusal, invariants (whole-root delete or
-    move, host processes), review context, System AI review.
+    move, host processes), review context, System AI review. A script is
+    one decision: its facts are the union over *segments* (with each
+    segment's facts listed for the reviewer), and every invariant applies
+    to every segment.
 
     Args:
         agent: The agent running the command.
-        parsed: The parsed command.
+        parsed: The parsed command; for a script, its ``raw`` is the full
+            script text and its argv is not used.
         cwd: The agent's virtual working directory.
         policy_tier: The tier policy assigned (logged context only; the
             gate runs for approval-required commands).
         channel_id: The origin thread, or None for a DM.
+        segments: A script's simple commands; empty for a single command.
 
     Returns:
         The plan. Every review failure is a card that says why.
@@ -176,8 +185,12 @@ def plan_auto_approve(
     """
     if not auto_approve_effective(agent, channel_id):
         return AutoApprovePlan(action="card")
+    units = tuple(segments) or (GateSegment(parsed, cwd),)
     try:
-        facts = command_facts(agent, parsed, cwd)
+        facts = (
+            script_facts(agent, units, command=parsed.raw) if segments
+            else command_facts(agent, parsed, cwd)
+        )
     except PathJailError as exc:
         return AutoApprovePlan(action="block", jail_message=str(exc))
     except ValueError:
@@ -186,7 +199,11 @@ def plan_auto_approve(
     refusal = host_refusal(agent, facts)
     if refusal is not None:
         return AutoApprovePlan(action="block", jail_message=refusal)
-    if _removes_or_moves_a_root(agent, parsed, cwd, facts):
+    each = facts.segments or (facts,)
+    if any(
+        _removes_or_moves_a_root(agent, unit.parsed, unit.cwd, unit_facts)
+        for unit, unit_facts in zip(units, each, strict=True)
+    ):
         return AutoApprovePlan(action="card", card_why=NOT_ASKED_ROOT)
     if facts.effect == "host_process":
         return AutoApprovePlan(action="card", card_why=NOT_ASKED_HOST_PROCESS)
