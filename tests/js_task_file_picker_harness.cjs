@@ -117,7 +117,7 @@ async function main() {
     await drain();
     const opensAsALayer = typeof handle.close === "function" && layers().length === 1
         && panel.getAttribute("aria-label") === "Choose a file" && panel.getAttribute("data-size") === "panel"
-        && Boolean(label) && label.textContent === "File name" && name.classList.contains("assign-input")
+        && Boolean(label) && label.textContent === "File name" && name.classList.contains("field-input")
         && document.activeElement === name && loadingFirst;
     if (!opensAsALayer) fail("the picker is not a labelled panel layer that starts in the name field");
 

@@ -720,7 +720,6 @@ def test_text_fields_step_grey_instead_of_ringing() -> None:
         ("controls.css", ".field-input,\n.field-select,\n.field-textarea {"),
         ("controls.css", ".search-field {"),
         ("context.css", ".desk-opener-custom {"),
-        ("places.css", ".assign-input,\n.assign-select {"),
         ("places.css", ".files-path,\n.files-search {"),
         ("places.css", ".file-form-input {"),
         ("controls.css", ".text-editor {"),

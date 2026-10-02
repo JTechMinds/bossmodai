@@ -291,16 +291,17 @@ def test_day_labels_and_date_times_read_the_local_calendar() -> None:
     assert payload["dateTimeLastYear"] == "Sep 21, 2025, 9:05 PM"
 
 
-def test_clock_time_is_local_24_hour_and_refuses_an_unreadable_value() -> None:
+def test_clock_time_is_local_12_hour_and_refuses_an_unreadable_value() -> None:
     """``formatClockTime``: the desk's schedules and extensions share it.
 
-    Local, not UTC (Kolkata is +05:30, so the minutes move too), zero-padded
-    24-hour, and an unreadable value throws rather than rendering a guess,
-    because a time the server just sent being unreadable is a bug.
+    Local, not UTC (Kolkata is +05:30, so the minutes move too), 12-hour like
+    every other operator-facing time, and an unreadable value throws rather
+    than rendering a guess, because a time the server just sent being
+    unreadable is a bug.
     """
     payload = _format_payload()
-    assert payload["clockUtc"] == "09:05"
-    assert payload["clockKolkata"] == "14:35"
+    assert payload["clockUtc"] == "9:05 AM"
+    assert payload["clockKolkata"] == "2:35 PM"
     assert payload["clockRefusals"] == [
         "[format] unreadable time not a timestamp",
         "[format] unreadable time ",

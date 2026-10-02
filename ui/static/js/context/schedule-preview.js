@@ -9,15 +9,22 @@
  * preview cannot disagree with the real runs. Nothing is saved.
  *
  * Changes are debounced, and a load generation drops an answer for a draft
- * that has since changed. A draft the editor already knows is invalid shows
- * that sentence and sends nothing; the server's 422 sentence shows the same
- * way.
+ * that has since changed. It is fed the editor's `read()` result as is, and
+ * tells its three states apart: a readable rule is sent to the server; an
+ * UNFINISHED draft (a required value not filled in yet — a new schedule's
+ * empty first time) gets a neutral hint, because the operator has done
+ * nothing wrong yet; an INVALID draft shows the editor's sentence as an error.
+ * Neither of the last two sends anything. The server's 422 sentence shows as
+ * an error too.
  */
 const BossModSchedulePreview = (() => {
     const { h, clear } = BossModDom;
 
     /** Typing in a field fires a change per key; ask once it settles. */
     const DEBOUNCE_MS = 300;
+
+    /** What an unfinished draft shows in place of runs: a hint, not an error. */
+    const INCOMPLETE_HINT = 'Upcoming runs appear once every time is filled in.';
 
     /**
      * Build the preview.
@@ -26,10 +33,14 @@ const BossModSchedulePreview = (() => {
      * @param {Function} deps.api  Authenticated fetch helper.
      * @param {number} deps.count  How many runs to list (the server allows 1..20).
      * @returns {{element: HTMLElement,
-     *   update: (rule: object|null, clientError: string|null) => void,
-     *   destroy: () => void}} `update` takes the draft rule, or null with the
-     *   editor's own error sentence. `destroy` drops a pending or in-flight
-     *   request.
+     *   update: (result: {ok: boolean, rule?: object, error?: string,
+     *     incomplete?: true}) => void,
+     *   destroy: () => void}} `update` takes exactly what
+     *   BossModScheduleFields' `read()` returned: `ok` asks the server
+     *   (debounced), `incomplete` shows INCOMPLETE_HINT, anything else shows
+     *   its `error` as an error; neither of the last two sends a request.
+     *   `update` throws when `result` is not an object with a boolean `ok`.
+     *   `destroy` drops a pending or in-flight request.
      * @throws {Error} When api is missing or count is not a positive whole number.
      */
     function create(deps) {
@@ -67,16 +78,23 @@ const BossModSchedulePreview = (() => {
         }
 
         /** See @returns. */
-        function update(rule, clientError) {
+        function update(result) {
+            if (!result || typeof result !== 'object' || typeof result.ok !== 'boolean') {
+                throw new Error('[schedule-preview] update takes the editor\'s read() result');
+            }
             const loadId = load.next();
             clearTimeout(timer);
-            if (!rule) {
-                if (!clientError) throw new Error('[schedule-preview] update needs a rule or the reason there is none');
-                show(h('p', { class: 'context-error schedule-preview-error' }, String(clientError)));
+            if (result.ok) {
+                show(h('p', { class: 'context-skeleton' }, 'Working out the next runs…'));
+                timer = setTimeout(() => { void ask(result.rule, loadId); }, DEBOUNCE_MS);
                 return;
             }
-            show(h('p', { class: 'context-skeleton' }, 'Working out the next runs…'));
-            timer = setTimeout(() => { void ask(rule, loadId); }, DEBOUNCE_MS);
+            if (result.incomplete) {
+                show(h('p', { class: 'field-hint schedule-preview-hint' }, INCOMPLETE_HINT));
+                return;
+            }
+            if (!result.error) throw new Error('[schedule-preview] a refused draft must say why');
+            show(h('p', { class: 'context-error schedule-preview-error' }, String(result.error)));
         }
 
         return {

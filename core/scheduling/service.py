@@ -227,8 +227,9 @@ def to_view(schedule: AgentSchedule, *, now: datetime) -> ScheduleView:
         now: The aware request time "Next run" is computed after.
 
     Returns:
-        The view with ``summary`` (``describe``), ``next_run_at`` (``None``
-        while disabled), ``last_task_status`` (``None`` when there is no
+        The view with ``summary`` (``describe`` in 12-hour time: the view
+        is operator-facing), ``next_run_at`` (``None`` while disabled),
+        ``last_task_status`` (``None`` when there is no
         last task or it no longer exists) and ``created_by_name`` (the
         agent's name when an agent set it up; ``None`` for the operator or
         an agent since deleted).
@@ -240,7 +241,7 @@ def to_view(schedule: AgentSchedule, *, now: datetime) -> ScheduleView:
     creator = db.get_agent(schedule.created_by) if schedule.created_by != HUMAN_SENDER_ID else None
     return ScheduleView(
         **schedule.model_dump(),
-        summary=describe(schedule.recurrence),
+        summary=describe(schedule.recurrence, clock="12h"),
         next_run_at=next_occurrence(schedule.recurrence, after=now) if schedule.enabled else None,
         last_task_status=last_task.status if last_task is not None else None,
         created_by_name=creator.name if creator is not None else None,

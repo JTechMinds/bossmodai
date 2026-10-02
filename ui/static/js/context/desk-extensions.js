@@ -8,8 +8,8 @@
  * view action (BossModAgentViewDialog, e.g. "Open inbox").
  *
  * A configured extension that wakes agents (manifest `wake`) adds one health
- * line: "Last checked 13:42" (local, absolute, so it is never stale on
- * screen) with "· 2 new at 13:41" when the last find was new, "Can't check
+ * line: "Last checked 1:42 PM" (local, absolute, so it is never stale on
+ * screen) with "· 2 new at 1:41 PM" when the last find was new, "Can't check
  * <setting group>: <sentence>" in the alert ink, or "Waiting for first check".
  * It is re-read when the desk opens and after the settings dialog closes;
  * there is no polling.

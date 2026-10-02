@@ -236,7 +236,7 @@ def _row(schedule: AgentSchedule, *, now: datetime) -> dict[str, Any]:
     return {
         "id": schedule.id,
         "title": schedule.title,
-        "repeats": describe(schedule.recurrence),
+        "repeats": describe(schedule.recurrence, clock="24h"),
         "enabled": schedule.enabled,
         "agent_can_change": schedule.agent_can_change,
         "next_run": format_local_run(next_occurrence(schedule.recurrence, after=now)) if schedule.enabled else None,

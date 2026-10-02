@@ -73,7 +73,7 @@ def test_create_list_update_delete(client: TestClient, worker_running: None) -> 
     assert view["recurrence"]["times"] == ["06:00", "12:00"]
     assert view["notification_policy"] == "completion_blocked"
     assert view["enabled"] is True
-    assert view["summary"] == "Every weekday at 06:00, 12:00"
+    assert view["summary"] == "Every weekday at 6:00 AM, 12:00 PM"
     assert view["next_run_at"] is not None
     assert datetime.fromisoformat(view["next_run_at"]) > datetime.now(timezone.utc)
     assert view["last_outcome"] is None and view["last_task_status"] is None
@@ -218,7 +218,7 @@ def test_an_every_rule_round_trips_and_has_a_next_run(client: TestClient) -> Non
     assert view["recurrence"]["times"] == []
     assert (view["recurrence"]["every_minutes"], view["recurrence"]["window_start"],
             view["recurrence"]["window_end"]) == (15, "09:00", "17:00")
-    assert view["summary"] == "Every day, every 15 minutes from 09:00 to 17:00"
+    assert view["summary"] == "Every day, every 15 minutes from 9:00 AM to 5:00 PM"
     next_run = datetime.fromisoformat(view["next_run_at"]).astimezone()
     assert next_run > datetime.now(timezone.utc)
     # A 15-minute slot inside the 09:00-17:00 window, on the host's clock.
@@ -227,7 +227,7 @@ def test_an_every_rule_round_trips_and_has_a_next_run(client: TestClient) -> Non
     patched = client.patch(f"/api/schedules/{view['id']}", json={"recurrence": {**EVERY_RULE, "every_minutes": 120}})
     assert patched.status_code == 200, patched.text
     assert patched.json()["recurrence"]["every_minutes"] == 120
-    assert patched.json()["summary"] == "Every day, every 2 hours from 09:00 to 17:00"
+    assert patched.json()["summary"] == "Every day, every 2 hours from 9:00 AM to 5:00 PM"
     listed = client.get(f"/api/agents/{ada.id}/schedules").json()
     assert listed[0]["recurrence"] == patched.json()["recurrence"]
 
@@ -319,7 +319,7 @@ def test_preview_lists_the_draft_rules_next_runs(client: TestClient) -> None:
     response = client.post("/api/schedules/preview", json={"recurrence": RULE, "count": 5})
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["summary"] == "Every weekday at 06:00, 12:00"
+    assert body["summary"] == "Every weekday at 6:00 AM, 12:00 PM"
     runs = [datetime.fromisoformat(item) for item in body["next_runs"]]
     assert len(runs) == 5
     assert all(later > earlier for earlier, later in zip(runs, runs[1:]))

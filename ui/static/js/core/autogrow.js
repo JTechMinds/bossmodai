@@ -9,12 +9,17 @@
  * copying it.
  *
  * The ceiling is CSS, never a number here: a field's `max-height` (the
- * `--field-grow-max` token on `.field-textarea[data-autogrow]` and
+ * `--field-grow-max` token on `.field-textarea[data-autogrow]` and an editable
  * `.edit-field-multiline`) clamps the height this sets, and the clamp is read
  * back as "the content is taller than the box", which is exactly when the
  * scrollbar is needed.
  *
- * Pure measuring with no state of its own; `bind` owns one input listener.
+ * Text wraps to the field's width, so a width change is a height change the
+ * operator did not type: page CSS arriving after the form was mounted (the
+ * settings sections bind straight after `innerHTML`, before the Tailwind
+ * runtime styles them), a window resize, a panel revealed from hidden. `bind`
+ * therefore owns one input listener AND one ResizeObserver; `fit` itself is
+ * pure measuring with no state.
  */
 const BossModAutoGrow = (() => {
 
@@ -57,15 +62,29 @@ const BossModAutoGrow = (() => {
     }
 
     /**
-     * Keep one textarea sized to its text as the operator types.
+     * Keep one textarea sized to its text as the operator types and as its
+     * width changes.
      *
      * Fits once immediately. A caller that changes the value from script
      * (restoring a draft, filling a template) calls the returned `fit`,
      * because a scripted value fires no input event.
      *
+     * A ResizeObserver re-fits when the field's content-box width differs
+     * from the last width seen — including the first observation, and a
+     * field going from 0 wide (hidden) to shown. Widths are compared, not
+     * every notification acted on, because `fit` changes the height and that
+     * notifies the observer again: re-fitting on height would loop. The fit
+     * runs on the next animation frame, not inside the notification: resizing
+     * the observed field from its own callback is a layout change the browser
+     * cannot deliver in the same frame, and it reports that as a
+     * "ResizeObserver loop" error. A field removed from the document without
+     * `destroy` (a settings section re-rendered through `innerHTML`)
+     * disconnects its own observer on the next notification, so the observer
+     * never outlives the field.
+     *
      * @param {HTMLTextAreaElement} textarea
      * @returns {{fit: () => void, destroy: () => void}} `destroy` removes the
-     *   input listener; the field stops growing.
+     *   input listener and disconnects the observer; the field stops growing.
      * @throws {Error} When `textarea` is not a <textarea> — a contenteditable
      *   or an input has no rows to grow, and binding one would silently do
      *   nothing.
@@ -75,12 +94,34 @@ const BossModAutoGrow = (() => {
             throw new Error('[autogrow] bind takes a textarea element');
         }
         const onInput = () => fit(textarea);
+        let lastWidth = null;
+        let frame = null;
+        const observer = new ResizeObserver((entries) => {
+            if (!textarea.isConnected) {
+                destroy();
+                return;
+            }
+            const width = entries[entries.length - 1].contentRect.width;
+            if (width === lastWidth) return;
+            lastWidth = width;
+            // A 0-wide field is not on screen; it has no wrap to measure, and
+            // the change back to a real width is the one that refits it.
+            if (width <= 0 || frame !== null) return;
+            frame = requestAnimationFrame(() => {
+                frame = null;
+                fit(textarea);
+            });
+        });
+        function destroy() {
+            textarea.removeEventListener('input', onInput);
+            observer.disconnect();
+            if (frame !== null) cancelAnimationFrame(frame);
+            frame = null;
+        }
         textarea.addEventListener('input', onInput);
+        observer.observe(textarea);
         fit(textarea);
-        return {
-            fit: () => fit(textarea),
-            destroy: () => textarea.removeEventListener('input', onInput),
-        };
+        return { fit: () => fit(textarea), destroy };
     }
 
     return { fit, bind };

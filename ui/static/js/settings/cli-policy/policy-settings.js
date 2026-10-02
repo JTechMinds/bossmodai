@@ -129,7 +129,7 @@ const BossModCliPolicySettings = (() => {
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
                     <select data-cli-setting-input="${escAttr(s.key)}"
-                            class="w-full max-w-xs px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                            class="field-select max-w-xs">
                         ${options}
                     </select>`;
             } else if (meta.type === 'textarea') {
@@ -137,7 +137,7 @@ const BossModCliPolicySettings = (() => {
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
                     <textarea data-cli-setting-input="${escAttr(s.key)}" data-autogrow
-                              class="field-textarea field-textarea-mono"
+                              class="field-textarea field-mono"
                               ${meta.placeholder ? `placeholder="${escAttr(meta.placeholder)}"` : ''}>${esc(s.value || '')}</textarea>`;
             } else {
                 html += `
@@ -145,7 +145,7 @@ const BossModCliPolicySettings = (() => {
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
                     <input type="number" data-cli-setting-input="${escAttr(s.key)}"
                            value="${escAttr(s.value)}"
-                           class="w-full max-w-xs px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">`;
+                           class="field-input max-w-xs">`;
             }
 
             html += '</div>';

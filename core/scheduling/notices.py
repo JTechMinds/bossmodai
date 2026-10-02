@@ -20,8 +20,8 @@ AgentScheduleVerb = Literal["scheduled", "changed", "switched on", "switched off
 
 
 def agent_change_line(agent: Agent, verb: AgentScheduleVerb, schedule: AgentSchedule) -> str:
-    """The note's sentence, e.g. ``Brian scheduled "Check GitHub": Every weekday at 09:00``."""
-    return f'{agent.name} {verb} "{schedule.title}": {describe(schedule.recurrence)}'
+    """The note's sentence, e.g. ``Brian scheduled "Check GitHub": Every weekday at 9:00 AM``."""
+    return f'{agent.name} {verb} "{schedule.title}": {describe(schedule.recurrence, clock="12h")}'
 
 
 def note_agent_change(agent: Agent, verb: AgentScheduleVerb, schedule: AgentSchedule) -> dict[str, Any]:

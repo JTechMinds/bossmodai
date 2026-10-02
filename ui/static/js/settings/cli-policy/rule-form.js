@@ -40,7 +40,7 @@ const BossModCliPolicyRuleForm = (() => {
                     <div>
                         <label class="block text-xs font-medium mb-1">Tier</label>
                         <select name="tier" required
-                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                                class="field-select">
                             <option value="never_allowed" ${rule?.tier === 'never_allowed' ? 'selected' : ''}>Never Allowed</option>
                             <option value="always_allowed" ${rule?.tier === 'always_allowed' ? 'selected' : ''}>Always Allowed</option>
                             <option value="approval_required" ${rule?.tier === 'approval_required' ? 'selected' : ''}>Approval Required</option>
@@ -49,7 +49,7 @@ const BossModCliPolicyRuleForm = (() => {
                     <div>
                         <label class="block text-xs font-medium mb-1">Match Mode</label>
                         <select name="match_mode" required
-                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                                class="field-select">
                             <option value="prefix" ${rule?.match_mode === 'prefix' ? 'selected' : ''}>Prefix</option>
                             <option value="exact" ${rule?.match_mode === 'exact' ? 'selected' : ''}>Exact</option>
                             <option value="glob" ${rule?.match_mode === 'glob' ? 'selected' : ''}>Glob</option>
@@ -60,12 +60,12 @@ const BossModCliPolicyRuleForm = (() => {
                         <input type="text" name="pattern" required
                                value="${escAttr(rule?.pattern || '')}"
                                placeholder="e.g. rm -rf, git push --force"
-                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">
+                               class="field-input field-mono">
                     </div>
                     <div>
                         <label class="block text-xs font-medium mb-1">Applies To</label>
                         <select name="agent_id"
-                                class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                                class="field-select">
                             <option value="" ${!rule?.agent_id ? 'selected' : ''}>All Agents</option>
                             ${agentOptions}
                         </select>
@@ -74,21 +74,21 @@ const BossModCliPolicyRuleForm = (() => {
                         <label class="block text-xs font-medium mb-1">Priority</label>
                         <input type="number" name="priority"
                                value="${escAttr(String(rule?.priority ?? 0))}" min="0" max="9999"
-                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                               class="field-input">
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">CWD prefix</label>
                         <input type="text" name="cwd_prefix"
                                value="${escAttr(rule?.cwd_prefix || '')}"
                                placeholder="Optional. Nest Always uses /me/host-work"
-                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">
+                               class="field-input field-mono">
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">Description</label>
                         <input type="text" name="description"
                                value="${escAttr(rule?.description || '')}"
                                placeholder="What this rule does"
-                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                               class="field-input">
                     </div>
                     <div>
                         <label class="block text-xs font-medium mb-1">Category</label>
@@ -96,7 +96,7 @@ const BossModCliPolicyRuleForm = (() => {
                                value="${escAttr(rule?.category || 'general')}"
                                placeholder="e.g. filesystem, network, packages"
                                list="cli-category-suggestions"
-                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text">
+                               class="field-input">
                         <datalist id="cli-category-suggestions">
                             <option value="general">
                             <option value="filesystem">
@@ -112,13 +112,13 @@ const BossModCliPolicyRuleForm = (() => {
                         <input type="text" name="usage_syntax"
                                value="${escAttr(rule?.usage_syntax || '')}"
                                placeholder="e.g. curl [options] <url>"
-                               class="w-full px-3 py-2 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-mono">
+                               class="field-input field-mono">
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">Help Text</label>
                         <textarea name="help_text" data-autogrow
                                   placeholder="Detailed help shown when agents type: learn commandname"
-                                  class="field-textarea field-textarea-mono">${esc(rule?.help_text || '')}</textarea>
+                                  class="field-textarea field-mono">${esc(rule?.help_text || '')}</textarea>
                     </div>
                     <div class="md:col-span-2 flex items-center gap-4">
                         <label class="flex items-center gap-2 text-sm">

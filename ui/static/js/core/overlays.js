@@ -158,7 +158,10 @@ const BossModOverlays = (() => {
      *   input) in place of this layer's title text, and keeps it there across
      *   every trail re-render — a caller-mounted node would otherwise be
      *   wiped by the next layer change. The accessible name stays the title,
-     *   crumbs above still read it, and null restores the text.
+     *   crumbs above still read it, and null restores the text. While a
+     *   control is mounted the title carries `is-editing`, which lifts the
+     *   ellipsis clip (overlays.css) that would otherwise cut the control's
+     *   edit hairline; null removes it.
      *
      *   Focus on open: the first control in the BODY that actually takes focus
      *   (a hidden one does not) unless `focusBody` is false; else the last
@@ -346,6 +349,7 @@ const BossModOverlays = (() => {
         /** Edit this layer's title in place, or stop; see @returns. */
         function setTitleEditor(node) {
             layer.titleEditor = node;
+            titleNode.classList.toggle('is-editing', Boolean(node));
             renderTrails();
         }
 

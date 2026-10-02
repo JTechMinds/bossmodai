@@ -276,7 +276,7 @@ def _schedule_payload(task: Task) -> dict[str, str]:
     )
     return {
         "schedule_title": schedule.title,
-        "schedule_summary": describe(schedule.recurrence),
+        "schedule_summary": describe(schedule.recurrence, clock="24h"),
         "schedule_next_run": next_run,
         "schedule_enabled": "true" if schedule.enabled else "false",
     }

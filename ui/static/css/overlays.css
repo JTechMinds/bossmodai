@@ -119,6 +119,11 @@
   font-weight: 600;
   color: var(--ink);
 }
+/* A title edited in place (core/overlays.js setTitleEditor) holds an input,
+   not text to ellipsize, and the clip would cut the input's 1px edit
+   hairline. The input's own max-width (.edit-field-title) keeps it inside
+   the head. */
+.modal-title.is-editing { overflow: visible; }
 
 .modal-subtitle { flex: 0 0 auto; font-size: 12px; color: var(--muted); }
 

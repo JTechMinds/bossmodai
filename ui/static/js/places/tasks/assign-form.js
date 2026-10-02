@@ -84,12 +84,12 @@ const BossModAssignForm = (() => {
         let submitting = false;
 
         const titleInput = h('input', {
-            class: 'assign-input', type: 'text', required: true, maxlength: '200',
+            class: 'field-input', type: 'text', required: true, maxlength: '200',
             placeholder: 'What should they work on?',
             oninput: () => refreshSpecialtyHints(),
         });
         const agentSelect = h('select', {
-            class: 'assign-select', id: 'ct-assign-agent',
+            class: 'field-select', id: 'ct-assign-agent',
             onchange: (event) => { chosen = event.target.value; refreshSpecialtyHints(); },
         });
         const mismatch = h('div', { class: 'assign-mismatch', id: 'ct-assign-mismatch', hidden: true });

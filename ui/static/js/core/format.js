@@ -185,8 +185,9 @@ const BossModFormat = (() => {
     }
 
     /**
-     * `13:42`: an instant as LOCAL 24-hour time, by hand for the reason
-     * formatActivityTime gives.
+     * `1:42 PM`: an instant as LOCAL 12-hour time (clockTime), by hand for the
+     * reason formatActivityTime gives — the operator's clock, as every other
+     * time on screen is.
      *
      * For a time the server just sent and the screen must state, such as a
      * schedule's next run or an extension's last check; unlike the rail's
@@ -199,7 +200,7 @@ const BossModFormat = (() => {
     function formatClockTime(isoString) {
         const then = parse(isoString);
         if (!then) throw new Error(`[format] unreadable time ${isoString}`);
-        return `${String(then.getHours()).padStart(2, '0')}:${String(then.getMinutes()).padStart(2, '0')}`;
+        return clockTime(then);
     }
 
     /**

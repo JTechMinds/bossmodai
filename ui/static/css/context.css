@@ -330,6 +330,11 @@
    then one line per run. */
 .schedule-preview-list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
 
+/* The facts while editing (schedule-view.js facts() with `edit`): the cells
+   hold multi-row controls, not one line of text, so .fact-list's 2px row gap
+   ran Next run into "+ Add time". Labels sit on their control's first line. */
+.schedule-facts-edit { row-gap: 12px; align-items: baseline; }
+
 /* ─── Desk files ─── */
 
 .desk-files { display: flex; flex-direction: column; gap: 8px; }

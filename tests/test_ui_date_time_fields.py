@@ -61,4 +61,5 @@ def test_date_time_fields_and_autogrow_harness() -> None:
         "aMonthStepClampsTheDay": True,
         "autogrowSkipsANodeWithNoLayout": True,
         "autogrowBindsTextareasOnly": True,
+        "autogrowRefitsOnWidthOnly": True,
     }

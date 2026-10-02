@@ -361,7 +361,7 @@ const SCHEDULE_ONE = {
     created_by: "__human__", agent_can_change: false, created_by_name: null,
     last_occurrence_at: "2026-09-29T10:00:00Z", last_outcome: "missed", last_outcome_detail: null,
     last_task_id: null, created_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
-    summary: "Every weekday at 06:00, 12:00", next_run_at: "2026-09-30T10:00:00Z", last_task_status: null,
+    summary: "Every weekday at 6:00 AM, 12:00 PM", next_run_at: "2026-09-30T10:00:00Z", last_task_status: null,
 };
 const SCHEDULES = { a1: [SCHEDULE_ONE], a2: [], a3: [] };
 // Set by the section that proves a failed read is said, with a retry.
@@ -472,7 +472,7 @@ function api(url, init) {
         const body = JSON.parse(init.body);
         previewRequests.push(body);
         const runs = Array.from({ length: body.count }, (_, index) => `2026-10-0${index + 2}T10:00:00Z`);
-        return jsonResponse({ summary: "Every weekday at 06:00, 12:00", next_runs: runs });
+        return jsonResponse({ summary: "Every weekday at 6:00 AM, 12:00 PM", next_runs: runs });
     }
     const runOne = String(url).match(/^\/api\/schedules\/([^/]+)\/run$/);
     if (runOne && init && init.method === "POST") {
@@ -1063,7 +1063,7 @@ async function main() {
 
     const scheduleRows = () => inDesk(".desk-schedules").querySelectorAll(".desk-schedule");
     const topLayer = () => modals()[modals().length - 1];
-    // Every row time goes through the shared 24-hour formatter: spied on for
+    // Every row time goes through the shared 12-hour formatter: spied on for
     // this first paint, so the row's text must be built from what it returned.
     const realClockTime = global.BossModFormat.formatClockTime;
     const clockCalls = [];
@@ -1078,8 +1078,9 @@ async function main() {
     const row0 = scheduleRows()[0];
     const clockOf = (iso) => (clockCalls.find((call) => call.iso === iso) || {}).text;
     const WEEKDAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    const timesUseTheSharedClock = Boolean(clockOf(SCHEDULE_ONE.next_run_at))
-        && Boolean(clockOf(SCHEDULE_ONE.last_occurrence_at))
+    const twelveHour = (text) => /^\d{1,2}:\d{2} [AP]M$/.test(String(text));
+    const timesUseTheSharedClock = twelveHour(clockOf(SCHEDULE_ONE.next_run_at))
+        && twelveHour(clockOf(SCHEDULE_ONE.last_occurrence_at))
         && row0.querySelector(".desk-schedule-next").textContent
             === `Next: ${WEEKDAY_NAMES[new Date(SCHEDULE_ONE.next_run_at).getDay()]} ${clockOf(SCHEDULE_ONE.next_run_at)}`
         && row0.querySelector(".desk-schedule-tone").textContent
@@ -1087,7 +1088,7 @@ async function main() {
     const scheduleSectionRendersRows = scheduleRows().length === 1
         && row0.getAttribute("data-schedule-id") === "s1"
         && row0.querySelector(".desk-schedule-title").textContent === "Status check"
-        && row0.querySelector(".desk-schedule-meta").textContent === "Every weekday at 06:00, 12:00"
+        && row0.querySelector(".desk-schedule-meta").textContent === "Every weekday at 6:00 AM, 12:00 PM"
         && row0.querySelector(".desk-schedule-next").textContent.startsWith("Next: ")
         && row0.querySelector(".desk-schedule-tone").textContent.startsWith("Missed ")
         && row0.querySelector(".desk-schedule-tone").textContent.endsWith(", computer was asleep");
@@ -1171,7 +1172,9 @@ async function main() {
         return JSON.stringify(facts.labels) === JSON.stringify(labels)
             && Boolean(facts.cell("Repeats").querySelector(".schedule-fields"))
             && Boolean(facts.cell("Next run").querySelector(".schedule-preview"))
-            && Boolean(facts.cell("Notify").querySelector(".menu-select-trigger"));
+            && Boolean(facts.cell("Notify").querySelector(".menu-select-trigger"))
+            // Spaced for multi-row controls, which view mode's list is not.
+            && layer.querySelector(".fact-list").classList.contains("schedule-facts-edit");
     };
     const noNativeDateTimeOrNumber = (layer) => ["date", "time", "number"]
         .every((type) => layer.querySelectorAll(`input[type="${type}"]`).length === 0);
@@ -1182,7 +1185,8 @@ async function main() {
     const viewLayer = topLayer();
     const aRowOpensTheScheduleLayer = modals().length === 2 && deskModal().hidden === true
         && viewLayer.getAttribute("aria-label") === "Status check"
-        && viewLayer.querySelector(".fact-list").textContent.includes("Every weekday at 06:00, 12:00")
+        && viewLayer.querySelector(".fact-list").textContent.includes("Every weekday at 6:00 AM, 12:00 PM")
+        && !viewLayer.querySelector(".fact-list").classList.contains("schedule-facts-edit")
         && viewLayer.querySelector(".switch-row").getAttribute("aria-checked") === "true";
     await viewLayer.querySelector("#schedule-edit").dispatchClick();
     await drain();
@@ -1339,7 +1343,8 @@ async function main() {
         && Boolean(runResult().querySelector(".schedule-run-open-task"));
 
     // Edit mode previews the draft's next runs after the debounce; an
-    // invalid draft says why and sends nothing.
+    // unfinished draft gets a neutral hint, an invalid one says why, and
+    // neither sends anything.
     await runLayer.querySelector("#schedule-edit").dispatchClick();
     const previewsBefore = previewRequests.length;
     await advance(299);
@@ -1359,8 +1364,16 @@ async function main() {
     firstTime.value = "";
     firstTime.dispatchEvent({ type: "input" });
     await advance(400);
-    const anInvalidDraftIsSaidNotSent = previewRequests.length === previewsBefore + 1
-        && runLayer.querySelector(".schedule-preview-error").textContent === "Fill in or remove the empty time.";
+    const anUnfinishedDraftIsHintedNotSent = previewRequests.length === previewsBefore + 1
+        && !runLayer.querySelector(".schedule-preview-error")
+        && runLayer.querySelector(".schedule-preview-hint").textContent
+            === "Upcoming runs appear once every time is filled in.";
+    typeTime(firstTime, "25:00");
+    await advance(400);
+    const anInvalidDraftIsSaidNotSent = anUnfinishedDraftIsHintedNotSent
+        && previewRequests.length === previewsBefore + 1
+        && !runLayer.querySelector(".schedule-preview-hint")
+        && runLayer.querySelector(".schedule-preview-error").textContent === "\u201c25:00\u201d is not a time (try 7:30 PM).";
     await runLayer.querySelector("#schedule-discard").dispatchClick();
     await runLayer.querySelector(".modal-back").dispatchClick();
     await drain();
@@ -1370,10 +1383,23 @@ async function main() {
         .find((node) => node.textContent === "New").dispatchClick();
     await drain();
     const offLayer = topLayer();
+    // A new schedule's empty first time is unfinished, not wrong: Next run
+    // opens on the neutral hint, never on a red error.
+    const aNewScheduleOpensOnTheHint = !offLayer.querySelector(".schedule-preview-error")
+        && factCells(offLayer).cell("Next run").querySelector(".schedule-preview-hint").textContent
+            === "Upcoming runs appear once every time is filled in.";
     offLayer.querySelector(".edit-field-title").value = "Dry run";
     offLayer.querySelector(".schedule-instructions").value = "Try it once.";
     // A time the field cannot read is marked, said on ✓, and nothing is sent.
     const offTime = offLayer.querySelector(".time-field-input");
+    // ✓ on that unfinished draft is still refused with its sentence.
+    const writesBeforeEmptyTime = scheduleWrites.length;
+    await offLayer.querySelector("#schedule-save").dispatchClick();
+    await drain();
+    const anUnfinishedSaveSaysWhy = aNewScheduleOpensOnTheHint
+        && scheduleWrites.length === writesBeforeEmptyTime
+        && offLayer.querySelector(".schedule-layer-error").textContent
+            .includes("Fill in or remove the empty time.");
     typeTime(offTime, "25:00");
     const writesBeforeBadTime = scheduleWrites.length;
     await offLayer.querySelector("#schedule-save").dispatchClick();
@@ -1393,11 +1419,13 @@ async function main() {
         && JSON.stringify(scheduleWrites[writesBeforeOff].body.recurrence.times) === JSON.stringify(["07:00"]);
     if (!runNowIsDisabledWhileRunning || !runNowStartsARealRun || !anOpenRunRefusalSaysWhy
         || !theDraftIsPreviewed || !anInvalidDraftIsSaidNotSent || !aNewScheduleCanBeSavedOff
-        || !anEditKeepsTheFactsInPlace || !anInvalidTypedTimeIsSaidNotSent || !aTypedTimeIsShownFormatted) {
+        || !anEditKeepsTheFactsInPlace || !anInvalidTypedTimeIsSaidNotSent || !aTypedTimeIsShownFormatted
+        || !anUnfinishedSaveSaysWhy) {
         throw new Error(`Run now / preview: disabled ${runNowIsDisabledWhileRunning}, run ${runNowStartsARealRun}, `
             + `open ${anOpenRunRefusalSaysWhy}, preview ${theDraftIsPreviewed}, invalid ${anInvalidDraftIsSaidNotSent}, `
             + `off ${aNewScheduleCanBeSavedOff}, in place ${anEditKeepsTheFactsInPlace}, `
-            + `bad time ${anInvalidTypedTimeIsSaidNotSent}, formatted ${aTypedTimeIsShownFormatted}`);
+            + `bad time ${anInvalidTypedTimeIsSaidNotSent}, formatted ${aTypedTimeIsShownFormatted}, `
+            + `unfinished ${anUnfinishedSaveSaysWhy}`);
     }
 
     // A run left open makes every later run skip: the row says the schedule
@@ -2564,6 +2592,7 @@ async function main() {
         anOpenRunRefusalSaysWhy,
         theDraftIsPreviewed,
         anInvalidDraftIsSaidNotSent,
+        anUnfinishedSaveSaysWhy,
         aNewScheduleCanBeSavedOff,
         aNewScheduleEditsInPlace,
         anEditKeepsTheFactsInPlace,

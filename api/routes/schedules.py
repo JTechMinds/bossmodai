@@ -97,7 +97,7 @@ async def preview_schedule(body: SchedulePreviewRequest) -> SchedulePreview:
             ``count`` outside 1..20.
     """
     return SchedulePreview(
-        summary=describe(body.recurrence),
+        summary=describe(body.recurrence, clock="12h"),
         next_runs=upcoming(body.recurrence, after=_now(), count=body.count),
     )
 

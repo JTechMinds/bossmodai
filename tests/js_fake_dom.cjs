@@ -579,6 +579,34 @@ function installDom() {
     const stored = new Map();
     const mediaQueries = new Map();
     global.document = documentStub;
+    // Real browser API, not a module: core/autogrow.js observes every field it
+    // binds, and uses the constructor unguarded as browsers all ship it. The
+    // fake has no layout, so nothing fires by itself; a harness calls
+    // `window._resize(target, width, height)` to deliver one notification to
+    // every live observer watching `target`, and `window._observing(target)`
+    // to count them.
+    const observers = new Set();
+    global.ResizeObserver = class FakeResizeObserver {
+        constructor(callback) {
+            this._callback = callback;
+            this._targets = new Set();
+            observers.add(this);
+        }
+        observe(target) { this._targets.add(target); }
+        unobserve(target) { this._targets.delete(target); }
+        disconnect() {
+            this._targets.clear();
+            observers.delete(this);
+        }
+    };
+    const resize = (target, width, height) => {
+        Array.from(observers)
+            .filter((observer) => observer._targets.has(target))
+            .forEach((observer) => observer._callback(
+                [{ target, contentRect: { width, height } }], observer));
+    };
+    const observing = (target) => Array.from(observers)
+        .filter((observer) => observer._targets.has(target)).length;
     // Real browser API, not a module: BossModMentionDraft asks the browser
     // where the caret is, and a click on a listbox option moves the selection
     // OUT of the field before the click handler runs. Empty by default, which
@@ -591,6 +619,9 @@ function installDom() {
     global.window = {
         document: documentStub,
         lucide: null,
+        ResizeObserver: global.ResizeObserver,
+        _resize: resize,
+        _observing: observing,
         getSelection: () => selection,
         _setSelection: (node, offset) => {
             selection = node

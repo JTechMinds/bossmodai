@@ -470,7 +470,8 @@ const verdict = {};
     verdict.deskDestroyClosesItsDialogs = !layers.includes(reopened);
 
     // 11. The desk's wake line: waiting, last checked (+ new), and can't check.
-    const hhmm = (iso) => { const d = new Date(iso); return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`; };
+    // Local 12-hour time, the operator's clock everywhere on screen.
+    const hhmm = (iso) => { const d = new Date(iso); const hour = d.getHours(); return `${hour % 12 || 12}:${String(d.getMinutes()).padStart(2, "0")} ${hour < 12 ? "AM" : "PM"}`; };
     const configured = { id: "mail", name: "Microsoft 365 Mailbox", config_label: "Microsoft 365 mailbox", view_label: "Open inbox", configured: true, summary: "reports@contoso.com", wakes: true };
     const deskWith = async (wake) => {
         deskReply = [{ ...configured, wake }];

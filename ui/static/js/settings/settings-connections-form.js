@@ -130,8 +130,7 @@ const BossModConnectionForm = (() => {
                         <input type="text" name="name" required
                                value="${BossModFormat.escapeAttribute(conn?.name || '')}"
                                placeholder="e.g. OpenAI Production"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg">
+                               class="field-input">
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Base URL</label>
@@ -139,8 +138,7 @@ const BossModConnectionForm = (() => {
                         <input type="url" name="api_base_url" required
                                value="${BossModFormat.escapeAttribute(conn?.api_base_url || '')}"
                                placeholder="https://api.openai.com/v1"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg">
+                               class="field-input">
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">API Key</label>
@@ -151,8 +149,7 @@ const BossModConnectionForm = (() => {
                             <input id="connection-api-key-input" type="password" name="api_key"
                                    value=""
                                    placeholder="${isEdit && conn?.has_api_key ? '••••' + BossModFormat.escapeAttribute(conn.api_key_last4 || '') : 'sk-...'}"
-                                   class="flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg
-                                          bg-bm-bg">
+                                   class="field-input flex-1">
                             <button type="button"
                                     data-toggle-api-key="connection-api-key-input"
                                     class="px-3 py-2 border border-bm-border rounded-lg hover:bg-slate-50 transition-colors text-sm font-medium">
@@ -173,8 +170,7 @@ const BossModConnectionForm = (() => {
                         <input type="text" name="model"
                                value="${BossModFormat.escapeAttribute(conn?.model || '')}"
                                placeholder="e.g. llama3 or openai/gpt-4.1-mini"
-                               class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                      bg-bm-bg">
+                               class="field-input">
                         <div id="connection-supports-images" class="mt-2"></div>
                         <p class="text-xs text-bm-muted mt-1">Applies to every agent using this model. Names match exactly: <code>gpt-4o</code> and <code>openai/gpt-4o</code> are separate.</p>
                     </div>
@@ -183,7 +179,7 @@ const BossModConnectionForm = (() => {
                         <p class="text-xs text-bm-muted mb-1.5">Optional JSON merged into every request body. For provider-specific fields.</p>
                         <textarea name="extra_body" data-autogrow
                                   placeholder='e.g. {"stream": false, "thinking": {"type": "disabled"}}'
-                                  class="field-textarea field-textarea-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
+                                  class="field-textarea field-mono">${BossModFormat.escapeHtml(conn?.extra_body || '')}</textarea>
                     </div>
                     <fieldset>
                         <legend class="block text-sm font-medium mb-1">Thinking levels</legend>
@@ -194,8 +190,7 @@ const BossModConnectionForm = (() => {
                                 <input type="text" id="connection-thinking-${BossModFormat.escapeAttribute(key)}" name="thinking_level_${BossModFormat.escapeAttribute(key)}"
                                        value="${BossModFormat.escapeAttribute(conn?.thinking_levels?.[key] ? JSON.stringify(conn.thinking_levels[key]) : '')}"
                                        placeholder='e.g. {"thinking": {"type": "${key === 'off' ? 'disabled' : 'enabled'}"}}'
-                                       class="w-full px-3 py-2 text-sm border border-bm-border rounded-lg
-                                              bg-bm-bg font-mono">
+                                       class="field-input field-mono">
                             </div>`).join('')}
                         </div>
                         ${BossModThinkingExamples.renderPanel(THINKING_LEVELS)}

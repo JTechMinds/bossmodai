@@ -72,7 +72,9 @@ const BossModScheduleView = (() => {
      *   edit?: {repeats: Node, nextRun: Node, notify: Node}}} options
      *   `edit` puts the recurrence editor, the upcoming-runs preview and the
      *   Notify dropdown in those facts' cells.
-     * @returns {HTMLElement} `dl.fact-list`.
+     * @returns {HTMLElement} `dl.fact-list`; with `edit` it also carries
+     *   `schedule-facts-edit`, which spaces the multi-row controls apart and
+     *   lines each label up with the first line of its control.
      * @throws {Error} When onOpenTask is missing, an `edit` slot is missing,
      *   or `schedule` is null without `edit`.
      */
@@ -84,7 +86,7 @@ const BossModScheduleView = (() => {
         }
         if (!schedule && !edit) throw new Error('[schedule-view] facts needs a schedule unless it is editing a new one');
         const policy = schedule && NOTIFY.find((item) => item.value === schedule.notification_policy);
-        return BossModFactList.create([
+        const list = BossModFactList.create([
             ...(schedule && schedule.created_by_name ? [{ label: 'Set up by', value: String(schedule.created_by_name) }] : []),
             { label: 'Repeats', value: edit ? edit.repeats : String(schedule.summary) },
             {
@@ -98,6 +100,8 @@ const BossModScheduleView = (() => {
                 value: edit ? edit.notify : (policy ? policy.label : String(schedule.notification_policy)),
             },
         ]);
+        if (edit) list.classList.add('schedule-facts-edit');
+        return list;
     }
 
     /**

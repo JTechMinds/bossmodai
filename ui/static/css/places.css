@@ -505,17 +505,6 @@ button.task-detail-file-path:disabled { border-bottom-color: transparent; cursor
 .assign-field { display: block; margin-bottom: 10px; }
 .assign-field-label { display: block; margin-bottom: 3px; font-size: 11px; font-weight: 500; color: var(--muted); }
 
-.assign-input,
-.assign-select {
-  width: 100%;
-  padding: 6px 8px;
-  border: 1px solid var(--line-field);
-  border-radius: 6px;
-  background: var(--panel);
-  color: var(--ink);
-  font-size: 13px;
-}
-
 .assign-hint { margin: 0 0 8px; font-size: 11px; color: var(--hint); }
 
 /* The outcome panels are the shared .callout (controls.css); the form only

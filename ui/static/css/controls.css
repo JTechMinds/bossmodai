@@ -361,8 +361,9 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 }
 .field-textarea[data-size="long"] { min-height: var(--field-min-long); }
 
-/* Code, JSON, keys and templates: what is typed must line up as typed. */
-.field-textarea-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* Code, JSON, keys, paths and templates: what is typed must line up as typed.
+   A font rule for any field — a .field-input or a .field-textarea. */
+.field-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 /* An auto-growing field (core/autogrow.js) sizes to its content up to this
    ceiling, then scrolls. The cap lives here, not in script, so the binding
@@ -562,19 +563,24 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
    nothing. While editable it opens at the long resting height, so an empty
    field is a real writing area; at rest it is sized to its text
    (core/autogrow.js), so view mode leaves no empty block — the room added on
-   entering edit mode appears only below the text. Past --field-grow-max it
-   scrolls. */
+   entering edit mode appears only below the text. The --field-grow-max
+   ceiling applies only while editing: at rest the field shows all its text
+   and the panel it sits in is the one scroller; while editing it grows up to
+   the ceiling, then scrolls inside. */
 .edit-field-multiline {
   display: block;
   width: 100%;
-  max-height: var(--field-grow-max);
   padding: 6px 8px;
   border: 1px solid transparent;
   border-radius: var(--r);
   color: inherit;
   resize: none;
 }
-.edit-field-multiline:not([readonly]) { border-color: var(--line-control); min-height: var(--field-min-long); }
+.edit-field-multiline:not([readonly]) {
+  border-color: var(--line-control);
+  min-height: var(--field-min-long);
+  max-height: var(--field-grow-max);
+}
 .edit-field-multiline:focus-visible { border-color: var(--accent); }
 
 /* ─── Menu select ───

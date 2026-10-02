@@ -32,6 +32,21 @@ function makeEl(tag) {
             if (i !== -1) l.splice(i, 1);
         },
         focus() { activeElement = this; },
+        // core/overlays.js marks a title edited in place with a class; the
+        // class lives in the same `class` attribute everything else reads.
+        classList: {
+            toggle(name, force) {
+                const set = new Set(String(el.attributes.class || "").split(/\s+/).filter(Boolean));
+                const on = force === undefined ? !set.has(name) : Boolean(force);
+                if (on) set.add(name);
+                else set.delete(name);
+                el.attributes.class = Array.from(set).join(" ");
+                return on;
+            },
+            contains(name) {
+                return String(el.attributes.class || "").split(/\s+/).includes(name);
+            },
+        },
         // A fake element is "rendered" unless it is hidden — the trap asks
         // this to skip controls a browser would skip. Task 3's ‹ is hidden on
         // a base layer, and must not become the trap's first stop.
@@ -818,7 +833,8 @@ const backButtonIsNotExported = typeof BossModOverlays.backButton === "undefined
 
 // A title edited in place (the task detail's Edit mode): the frame keeps the
 // caller's control mounted in the title across every trail re-render, the
-// dialog is still named for the title, and null puts the text back.
+// dialog is still named for the title, and null puts the text back. While
+// editing the title wears `is-editing` (no ellipsis clip on the hairline).
 const titleNodeOf = (handle) => {
     const items = trailItemsOf(handle);
     return findIn(items[items.length - 1], "modal-title");
@@ -827,7 +843,8 @@ const editor = makeEl("input");
 trailA.setTitleEditor(editor);
 const titleA = titleNodeOf(trailA);
 const editorMounted = titleA.children.length === 1 && titleA.children[0] === editor
-    && trailA.element.getAttribute("aria-label") === "Brian Ops";
+    && trailA.element.getAttribute("aria-label") === "Brian Ops"
+    && titleA.classList.contains("is-editing");
 const trailF = BossModOverlays.createModal({ title: "Edit role", body: "x", actions: [] });
 const survivesPush = titleA.children[0] === editor && titleNodeOf(trailA) === titleA
     && trailOf(trailF) === "Brian Ops › Edit role";
@@ -835,7 +852,8 @@ trailF.close();
 const survivesPop = titleA.children.length === 1 && titleA.children[0] === editor
     && trailA.element.hidden === false;
 trailA.setTitleEditor(null);
-const restoresText = titleA.textContent === "Brian Ops" && trailOf(trailA) === "Brian Ops";
+const restoresText = titleA.textContent === "Brian Ops" && trailOf(trailA) === "Brian Ops"
+    && !titleA.classList.contains("is-editing");
 const setTitleEditorSurvivesRerenders = editorMounted && survivesPush && survivesPop && restoresText;
 trailA.close();
 if (panels().length !== 0 || scrims().length !== 0) throw new Error("trail block must leave nothing open");

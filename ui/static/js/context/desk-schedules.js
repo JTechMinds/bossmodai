@@ -23,7 +23,7 @@ const BossModDeskSchedules = (() => {
     const WEEKDAYS = Object.freeze(['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']);
 
     /**
-     * `Tue 06:00`: an ISO instant's local weekday and 24-hour time.
+     * `Tue 6:00 AM`: an ISO instant's local weekday and 12-hour time.
      * @throws {Error} When the server sent an unreadable time (BossModFormat.formatClockTime).
      */
     function dayAndTime(iso) {

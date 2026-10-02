@@ -103,7 +103,7 @@ const BossModTaskFilePicker = (() => {
         const crumbsSlot = h('div', { class: 'task-file-picker-crumbs' });
         const listSlot = h('div', { class: 'task-file-picker-list' });
         const nameInput = h('input', {
-            class: 'assign-input', id: NAME_ID, type: 'text', autocomplete: 'off', spellcheck: 'false',
+            class: 'field-input', id: NAME_ID, type: 'text', autocomplete: 'off', spellcheck: 'false',
             oninput: () => { markSelected(); sync(); },
         });
         const form = h('form', {

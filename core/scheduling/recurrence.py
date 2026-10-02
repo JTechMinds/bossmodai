@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import calendar
 from datetime import date, datetime, time, timedelta
+from typing import Literal
 
 from core.models.schedule import RecurrenceRule
 from core.time import local_date_of, local_wall_clock_to_utc
@@ -199,24 +200,50 @@ def _repeat_words(minutes: int) -> str:
     return "minute" if minutes == 1 else f"{minutes} minutes"
 
 
-def describe(rule: RecurrenceRule) -> str:
-    """The one human summary of a rule.
+def _twelve_hour(hhmm: str) -> str:
+    """``07:30`` as ``7:30 AM``; ``00:00`` is ``12:00 AM`` and ``12:00`` is ``12:00 PM``."""
+    hours, minutes = hhmm.split(":")
+    hour = int(hours)
+    meridiem = "AM" if hour < 12 else "PM"
+    return f"{hour % 12 or 12}:{minutes} {meridiem}"
+
+
+def describe(rule: RecurrenceRule, *, clock: Literal["24h", "12h"]) -> str:
+    """The one human summary of a rule, in the clock its reader uses.
 
     "At" mode: ``Every weekday at 06:00, 12:00``. "Every" mode: ``Every
     weekday, every 15 minutes from 09:00 to 17:00``, with the window dropped
     when it is the whole day (00:00-23:59) and hours used when the step is a
     whole number of hours.
 
+    ``clock`` is required so every caller states its audience: agents type
+    ``HH:MM`` into ``schedules add/edit`` and read 24-hour run times, so
+    agent-facing text is ``"24h"`` (``Every weekday at 06:00, 12:00``); the
+    operator's UI reads 12-hour time, so operator-facing text is ``"12h"``
+    (``Every weekday at 6:00 AM, 12:00 PM``; ``Every weekday, every 15
+    minutes from 9:00 AM to 5:00 PM``).
+
     Args:
         rule: A validated rule.
+        clock: ``"24h"`` writes times as stored; ``"12h"`` writes the
+            times and the window ends as ``7:30 AM``.
 
     Returns:
         One sentence without a trailing period.
+
+    Raises:
+        ValueError: When ``clock`` is neither ``"24h"`` nor ``"12h"``.
     """
+    if clock == "24h":
+        spell = str
+    elif clock == "12h":
+        spell = _twelve_hour
+    else:
+        raise ValueError(f"clock must be '24h' or '12h', not {clock!r}")
     cadence = _day_cadence(rule)
     if rule.times:
-        return f"{cadence} at {', '.join(rule.times)}"
+        return f"{cadence} at {', '.join(spell(item) for item in rule.times)}"
     repeat = f"{cadence}, every {_repeat_words(int(rule.every_minutes))}"
     if (rule.window_start, rule.window_end) == (_WHOLE_DAY_START, _WHOLE_DAY_END):
         return repeat
-    return f"{repeat} from {rule.window_start} to {rule.window_end}"
+    return f"{repeat} from {spell(rule.window_start)} to {spell(rule.window_end)}"

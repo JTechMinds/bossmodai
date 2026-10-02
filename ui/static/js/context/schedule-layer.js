@@ -224,10 +224,9 @@ const BossModScheduleLayer = (() => {
             pencilButton.focus();
         }
 
-        /** Feed the preview the draft rule, or the editor's reason there is none. */
+        /** Feed the preview the editor's read: a rule, an unfinished draft, or why it is wrong. */
         function refreshPreview() {
-            const read = fields.read();
-            preview.update(read.ok ? read.rule : null, read.ok ? null : read.error);
+            preview.update(fields.read());
         }
 
         /** ✕: a new schedule is abandoned (the layer closes); an edit is put back. */

@@ -267,6 +267,44 @@ const offGridToggle = offGrid.element.querySelector(".time-field-toggle");
         fail(`autogrow: skip ${autogrowSkipsANodeWithNoLayout}, bind ${autogrowBindsTextareasOnly}`);
     }
 
+    // A width change re-wraps the text, so it re-fits — on the next frame,
+    // never inside the notification; a height-only change (fit's own) must
+    // not, or fitting would loop.
+    const frames = [];
+    global.requestAnimationFrame = (fn) => frames.push(fn);
+    global.cancelAnimationFrame = (id) => { frames[id - 1] = null; };
+    const flushFrames = () => frames.splice(0).forEach((fn) => fn && fn());
+    const watched = Dom.h("textarea", {});
+    Object.assign(watched, { isConnected: true, scrollHeight: 100, clientHeight: 100, offsetHeight: 102 });
+    const watching = AutoGrow.bind(watched);
+    window._resize(watched, 300, 102);
+    Object.assign(watched, { scrollHeight: 160, clientHeight: 160, offsetHeight: 162 });
+    window._resize(watched, 200, 102);
+    const notInsideTheNotification = watched.style.height === "102px";
+    flushFrames();
+    const aWidthChangeRefits = notInsideTheNotification && watched.style.height === "162px";
+    Object.assign(watched, { scrollHeight: 240 });
+    window._resize(watched, 200, 162);
+    flushFrames();
+    const aHeightOnlyChangeDoesNot = watched.style.height === "162px";
+    watching.destroy();
+    const destroyDisconnects = window._observing(watched) === 0;
+    // Removed without destroy (a section re-rendered through innerHTML): the
+    // next notification disconnects it, so the observer never outlives it.
+    const orphan = Dom.h("textarea", {});
+    Object.assign(orphan, { isConnected: true, scrollHeight: 100, clientHeight: 100, offsetHeight: 102 });
+    AutoGrow.bind(orphan);
+    const orphanWasObserved = window._observing(orphan) === 1;
+    orphan.isConnected = false;
+    window._resize(orphan, 300, 102);
+    const aDetachedTargetDisconnects = orphanWasObserved && window._observing(orphan) === 0;
+    const autogrowRefitsOnWidthOnly = aWidthChangeRefits && aHeightOnlyChangeDoesNot
+        && destroyDisconnects && aDetachedTargetDisconnects;
+    if (!autogrowRefitsOnWidthOnly) {
+        fail(`autogrow observer: width ${aWidthChangeRefits}, height-only ${aHeightOnlyChangeDoesNot}, `
+            + `destroy ${destroyDisconnects}, detached ${aDetachedTargetDisconnects}`);
+    }
+
     process.stdout.write(`${JSON.stringify({
         ok: true,
         parseTimeReadsTheListedForms,
@@ -289,5 +327,6 @@ const offGridToggle = offGrid.element.querySelector(".time-field-toggle");
         aMonthStepClampsTheDay,
         autogrowSkipsANodeWithNoLayout,
         autogrowBindsTextareasOnly,
+        autogrowRefitsOnWidthOnly,
     })}\n`);
 })().catch((err) => fail(err && err.stack ? err.stack : String(err)));

@@ -722,6 +722,7 @@ def test_desk_schedules_section_and_layer() -> None:
         "repeatModeShowsOnlyItsControls", "anOvernightWindowIsRefusedHere", "aRepeatPostsMinutesAndAWindow",
         "aStoredRepeatEditsInHours", "runNowIsDisabledWhileRunning", "runNowStartsARealRun",
         "anOpenRunRefusalSaysWhy", "theDraftIsPreviewed", "anInvalidDraftIsSaidNotSent", "aNewScheduleCanBeSavedOff",
+        "anUnfinishedSaveSaysWhy",
         "anOpenRunShowsThePausedTone", "aSkipOffersTheOpenRun",
         "theLockAndTheAuthorShow", "setUpByShows", "theLockSwitchPatches", "createSendsTheLock",
         "timesUseTheSharedClock", "scheduleRefusalsSayWhy",

@@ -85,13 +85,18 @@ const BossModScheduleFields = (() => {
      *   schedule starts daily, every 1, with one empty time, from today.
      * @param {() => void} deps.onChange  Any control changed.
      * @returns {{element: HTMLElement,
-     *   read: () => ({ok: true, rule: object}|{ok: false, error: string}),
+     *   read: () => ({ok: true, rule: object}
+     *     |{ok: false, error: string, incomplete?: true}),
      *   setDisabled: (disabled: boolean) => void, destroy: () => void}}
      *   `read` returns the rule in the server's shape — exactly one time
      *   mode populated (`times` sorted with the repeat fields null, or
      *   `times` empty with `every_minutes` and the window set), `weekdays`
      *   sorted and empty unless weekly, `month_day` null unless monthly —
-     *   or the first problem as a sentence.
+     *   or the first problem as a sentence. `incomplete: true` marks a draft
+     *   blocked only because a required value is not filled in yet (an empty
+     *   At time, an empty window end): unfinished, not wrong, so the preview
+     *   shows a neutral hint rather than an error. Save still refuses it with
+     *   the same sentence.
      * @throws {Error} When onChange is missing or the rule has an unknown frequency.
      */
     function create(deps) {
@@ -245,24 +250,29 @@ const BossModScheduleFields = (() => {
         sync();
 
         /**
-         * One window end as `{value}` or `{error}`: an empty one asks for
-         * both ends; an unreadable one says so in the field's own words.
+         * One window end as `{value}` or `{error, incomplete?}`: an empty one
+         * asks for both ends (incomplete); an unreadable one says so in the
+         * field's own words.
          */
         function readWindowEnd(field) {
             const result = field.read();
             if (result.ok) return { value: result.value };
-            return { error: result.empty ? 'Pick when the repeat starts and ends.' : result.error };
+            return result.empty
+                ? { error: 'Pick when the repeat starts and ends.', incomplete: true }
+                : { error: result.error };
         }
 
         /**
          * The chosen time mode as rule fields, the other mode's fields null
          * (or empty), or the first problem, mirroring RecurrenceRule.
-         * @returns {{mode: object}|{error: string}}
+         * @returns {{mode: object}|{error: string, incomplete?: true}}
          */
         function readTimes() {
             if (timeMode === 'at') {
                 const reads = timeRows.map((entry) => entry.field.read());
-                if (reads.some((result) => result.empty)) return { error: 'Fill in or remove the empty time.' };
+                if (reads.some((result) => result.empty)) {
+                    return { error: 'Fill in or remove the empty time.', incomplete: true };
+                }
                 const unreadable = reads.find((result) => !result.ok);
                 if (unreadable) return { error: unreadable.error };
                 const times = reads.map((result) => result.value);
@@ -273,9 +283,9 @@ const BossModScheduleFields = (() => {
             const n = wholeIn(repeatEvery.value, 1, unitSpec.max);
             if (n === null) return { error: `Repeat every must be a whole number from 1 to ${unitSpec.max} ${unitSpec.label}.` };
             const from = readWindowEnd(windowStart);
-            if (from.error) return { error: from.error };
+            if (from.error) return from;
             const to = readWindowEnd(windowEnd);
-            if (to.error) return { error: to.error };
+            if (to.error) return to;
             if (to.value < from.value) return { error: 'The window must end after it starts (overnight windows are not supported).' };
             return { mode: { times: [], every_minutes: n * unitSpec.factor, window_start: from.value, window_end: to.value } };
         }
@@ -286,7 +296,11 @@ const BossModScheduleFields = (() => {
             const interval = wholeIn(every.value, 1, item.max);
             if (interval === null) return { ok: false, error: `Every must be a whole number from 1 to ${item.max}.` };
             const slots = readTimes();
-            if (slots.error) return { ok: false, error: slots.error };
+            if (slots.error) {
+                return slots.incomplete
+                    ? { ok: false, error: slots.error, incomplete: true }
+                    : { ok: false, error: slots.error };
+            }
             const weekdays = frequency === 'weekly' ? Array.from(chosen).sort((a, b) => a - b) : [];
             if (frequency === 'weekly' && !weekdays.length) return { ok: false, error: 'Pick at least one weekday.' };
             // The dropdown only offers 1–31; checked anyway, as the server checks it.

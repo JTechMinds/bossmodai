@@ -75,7 +75,7 @@ const dayNever = withClock(NOW_MS, () => [day(null), day("nope")].join("|"));
 const dateTime = withClock(NOW_MS, () => dateTimeOf(iso(2026, 8, 21, 9, 35, 0)));
 const dateTimeLastYear = withClock(NOW_MS, () => dateTimeOf(iso(2025, 8, 21, 21, 5, 0)));
 
-// ─── The 24-hour clock time, local, and its refusal ───
+// ─── The 12-hour clock time, local, and its refusal ───
 //
 // A schedule's next run and an extension's last check state a time the
 // server just sent; an unreadable one is a bug the formatter must not hide.

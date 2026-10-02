@@ -54,7 +54,7 @@ const BossModHostRoots = (() => {
         if (typeof api !== 'function') throw new Error('[host-roots] deps.api is required');
 
         const input = h('textarea', {
-            class: 'field-textarea field-textarea-mono',
+            class: 'field-textarea field-mono',
             id: 'host-roots-input',
             'data-autogrow': true,
             placeholder: PLACEHOLDER,
@@ -75,6 +75,7 @@ const BossModHostRoots = (() => {
                     });
                 },
             }],
+            onClose: () => grow.destroy(),
             onSubmit: async () => {
                 const value = String(input.value || '');
                 const res = await api(
@@ -112,8 +113,8 @@ const BossModHostRoots = (() => {
         }
 
         // Bound once the panel has mounted it, so the first fit can measure.
-        // The panel has no close hook to unbind from, and needs none: the one
-        // listener lives on this textarea and goes with the panel.
+        // Destroyed by the panel's onClose above: the binding's observer must
+        // not outlive the field.
         const grow = BossModAutoGrow.bind(input);
         void loadSaved();
         input.focus();

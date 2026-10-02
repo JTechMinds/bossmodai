@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import time as time_module
 from datetime import date, datetime, timedelta, timezone
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -205,14 +206,14 @@ def test_the_validator_refuses_bad_rules(fields) -> None:
 
 
 def test_describe_wording() -> None:
-    assert describe(_rule(times=["12:00", "06:00"])) == "Every day at 06:00, 12:00"
-    assert describe(_rule(interval=2)) == "Every 2 days at 06:00"
-    assert describe(_rule(frequency="weekly", weekdays=[0, 1, 2, 3, 4])) == "Every weekday at 06:00"
-    assert describe(_rule(frequency="weekly", weekdays=[0, 1, 2, 3, 4, 5, 6])) == "Every day at 06:00"
-    assert describe(_rule(frequency="weekly", weekdays=[0, 2])) == "Every week on Mon, Wed at 06:00"
-    assert describe(_rule(frequency="weekly", interval=2, weekdays=[4])) == "Every 2 weeks on Fri at 06:00"
-    assert describe(_rule(frequency="monthly", month_day=15)) == "Every month on day 15 at 06:00"
-    assert describe(_rule(frequency="monthly", interval=3, month_day=31)) == "Every 3 months on day 31 at 06:00"
+    assert describe(_rule(times=["12:00", "06:00"]), clock="24h") == "Every day at 06:00, 12:00"
+    assert describe(_rule(interval=2), clock="24h") == "Every 2 days at 06:00"
+    assert describe(_rule(frequency="weekly", weekdays=[0, 1, 2, 3, 4]), clock="24h") == "Every weekday at 06:00"
+    assert describe(_rule(frequency="weekly", weekdays=[0, 1, 2, 3, 4, 5, 6]), clock="24h") == "Every day at 06:00"
+    assert describe(_rule(frequency="weekly", weekdays=[0, 2]), clock="24h") == "Every week on Mon, Wed at 06:00"
+    assert describe(_rule(frequency="weekly", interval=2, weekdays=[4]), clock="24h") == "Every 2 weeks on Fri at 06:00"
+    assert describe(_rule(frequency="monthly", month_day=15), clock="24h") == "Every month on day 15 at 06:00"
+    assert describe(_rule(frequency="monthly", interval=3, month_day=31), clock="24h") == "Every 3 months on day 31 at 06:00"
 
 
 # ─── "Every" mode: repeats within a window ───
@@ -305,13 +306,34 @@ def test_a_stored_rule_without_repeat_keys_parses_as_at_mode() -> None:
 
 
 def test_describe_every_forms() -> None:
-    assert describe(_every(15, "09:00", "17:00", frequency="weekly", weekdays=[0, 1, 2, 3, 4])) \
+    assert describe(_every(15, "09:00", "17:00", frequency="weekly", weekdays=[0, 1, 2, 3, 4]), clock="24h") \
         == "Every weekday, every 15 minutes from 09:00 to 17:00"
-    assert describe(_every(60, "00:00", "23:59")) == "Every day, every hour"
-    assert describe(_every(120, "08:00", "20:00", interval=2)) == "Every 2 days, every 2 hours from 08:00 to 20:00"
-    assert describe(_every(1, "00:00", "23:59", frequency="monthly", month_day=5)) == "Every month on day 5, every minute"
-    assert describe(_every(90, "00:15", "23:59", frequency="weekly", weekdays=[0, 2])) \
+    assert describe(_every(60, "00:00", "23:59"), clock="24h") == "Every day, every hour"
+    assert describe(_every(120, "08:00", "20:00", interval=2), clock="24h") == "Every 2 days, every 2 hours from 08:00 to 20:00"
+    assert describe(_every(1, "00:00", "23:59", frequency="monthly", month_day=5), clock="24h") == "Every month on day 5, every minute"
+    assert describe(_every(90, "00:15", "23:59", frequency="weekly", weekdays=[0, 2]), clock="24h") \
         == "Every week on Mon, Wed, every 90 minutes from 00:15 to 23:59"
+
+
+def test_describe_writes_twelve_hour_time_for_the_operator() -> None:
+    assert describe(_rule(times=["12:00", "06:00"]), clock="12h") == "Every day at 6:00 AM, 12:00 PM"
+    assert describe(_rule(times=["07:30", "19:05"]), clock="12h") == "Every day at 7:30 AM, 7:05 PM"
+    assert describe(_rule(times=["00:00", "12:00", "23:59"]), clock="12h") \
+        == "Every day at 12:00 AM, 12:00 PM, 11:59 PM"
+    assert describe(_every(15, "09:00", "17:00", frequency="weekly", weekdays=[0, 1, 2, 3, 4]), clock="12h") \
+        == "Every weekday, every 15 minutes from 9:00 AM to 5:00 PM"
+    assert describe(_every(30, "00:00", "12:00"), clock="12h") \
+        == "Every day, every 30 minutes from 12:00 AM to 12:00 PM"
+    # The whole day stays unsaid in either clock.
+    assert describe(_every(60, "00:00", "23:59"), clock="12h") == "Every day, every hour"
+
+
+def test_describe_refuses_an_unknown_clock() -> None:
+    # Typed as Any on purpose: this is the value a caller outside the type
+    # checker could still pass.
+    unknown: Any = "am/pm"
+    with pytest.raises(ValueError, match="clock"):
+        describe(_rule(), clock=unknown)
 
 
 # ─── upcoming (the editor's preview) ───

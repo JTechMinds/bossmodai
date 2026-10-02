@@ -9,11 +9,15 @@ utility string copied between two settings sections, and heights from 2 to 12
 rows set per call site. Three classes remain:
 
 - `field-textarea` (controls.css): a form field, short by default and
-  `data-size="long"` for prompts and descriptions; `field-textarea-mono` for
-  code, JSON, keys and templates;
+  `data-size="long"` for prompts and descriptions; `field-mono` (a font rule
+  for any field) for code, JSON, keys and templates;
 - `edit-field-multiline` (controls.css): prose edited in place in a record's
   Edit mode;
 - `text-editor` (controls.css): a full-pane editor.
+
+The single-line inputs and native selects in the same forms followed in a
+second pass: a grey shared textarea under white Tailwind or `.assign-*` inputs
+was two field looks in one form. They wear `field-input` / `field-select`.
 """
 
 from __future__ import annotations
@@ -77,8 +81,68 @@ def test_the_copied_editor_class_string_is_gone() -> None:
     offenders = [name for name, source in _app_sources().items() if "TEXTAREA_CLS" in source]
     assert offenders == [], offenders
     controls = (CSS / "controls.css").read_text(encoding="utf-8")
-    for rule in (".field-textarea {", '.field-textarea[data-size="long"]', ".field-textarea-mono {", ".text-editor {"):
+    for rule in (".field-textarea {", '.field-textarea[data-size="long"]', ".field-mono {", ".text-editor {"):
         assert rule in controls, rule
     places = (CSS / "places.css").read_text(encoding="utf-8")
     for retired in (".assign-textarea", ".file-form-textarea", ".file-view-editor"):
         assert retired not in places, f"{retired} is a private copy of the field box"
+
+
+# The forms whose textareas moved to the standard, whose sibling inputs and
+# selects followed (and the file picker, the last other `.assign-input`).
+SIBLING_FORMS = (
+    "places/tasks/assign-form.js",
+    "places/tasks/task-file-picker.js",
+    "settings/settings-nest-git.js",
+    "settings/settings-personalities.js",
+    "settings/cli-policy/rule-form.js",
+    "settings/cli-policy/policy-settings.js",
+    "settings/settings-connections-form.js",
+)
+# Quote-aware, so a `>` inside an attribute value (`<url>` in a placeholder)
+# does not end the tag early.
+MARKUP_CONTROL = re.compile(r"""<(input|select)\b((?:[^>"']|"[^"]*"|'[^']*')*)>""")
+BUILT_CONTROL = re.compile(r"h\('(input|select)',\s*\{(.*?)\}\)", re.S)
+CONTROL_TYPE = re.compile(r"""\btype['"]?\s*[=:]\s*['"](\w+)""")
+CONTROL_CLASS = re.compile(r"""\bclass['"]?\s*[=:]\s*(?:"([^"]*)"|'([^']*)')""")
+# Checkboxes, switches and buttons keep their own look.
+NOT_TEXT_LIKE = {"checkbox", "radio", "hidden", "button", "submit", "file", "range", "color"}
+DRIFTED = ("bg-white", "border-bm-border", "assign-input", "assign-select")
+
+
+def _sibling_controls() -> list[tuple[str, str, str]]:
+    """Every text-like input and native select in SIBLING_FORMS, as (module, tag, class)."""
+    found = []
+    for name in SIBLING_FORMS:
+        source = (JS / name).read_text(encoding="utf-8")
+        for match in list(MARKUP_CONTROL.finditer(source)) + list(BUILT_CONTROL.finditer(source)):
+            tag, attrs = match.group(1), match.group(2)
+            kind = CONTROL_TYPE.search(attrs)
+            if tag == "input" and kind and kind.group(1) in NOT_TEXT_LIKE:
+                continue
+            classes = CONTROL_CLASS.search(attrs)
+            found.append((name, tag, (classes.group(1) or classes.group(2)) if classes else ""))
+    return found
+
+
+def test_sibling_inputs_and_selects_wear_the_shared_field_classes() -> None:
+    controls = _sibling_controls()
+    # 26 when this landed; a scanner that stopped matching cannot pass.
+    assert len(controls) >= 26, controls
+    offenders = [
+        control for control in controls
+        if ("field-select" if control[1] == "select" else "field-input") not in control[2].split()
+        or any(drift in control[2] for drift in DRIFTED)
+    ]
+    assert offenders == [], f"inputs and selects outside the shared field look: {offenders}"
+    for name in ("places/tasks/assign-form.js", "places/tasks/task-file-picker.js"):
+        source = (JS / name).read_text(encoding="utf-8")
+        assert "assign-input" not in source and "assign-select" not in source, name
+    places = (CSS / "places.css").read_text(encoding="utf-8")
+    assert ".assign-input" not in places and ".assign-select" not in places
+
+
+def test_the_mono_rule_is_one_font_rule_for_any_field() -> None:
+    offenders = [name for name, source in _app_sources().items() if "field-textarea-mono" in source]
+    assert offenders == [], offenders
+    assert "field-textarea-mono" not in (CSS / "controls.css").read_text(encoding="utf-8")

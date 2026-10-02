@@ -70,11 +70,11 @@ const NestGitSection = (() => {
                     <label class="block text-sm font-medium mb-1">Name</label>
                     <input type="text" id="nest-git-label" value=""
                            placeholder="Name"
-                           class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white mb-3">
+                           class="setting-input field-input mb-3">
                     <label class="block text-sm font-medium mb-1">Remote match</label>
                     <input type="text" id="nest-git-match" value=""
                            placeholder="github.com/Org/* or github.com/Org/repo"
-                           class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono mb-3">
+                           class="setting-input field-input field-mono mb-3">
                     <label class="flex items-center gap-2 text-xs text-bm-muted mb-3">
                         <input type="checkbox" id="nest-git-default" data-nest-default ${creds.some((item) => item.is_default) ? '' : 'checked'}>
                         Use for remotes that don’t match another credential
@@ -87,13 +87,13 @@ const NestGitSection = (() => {
                         <input type="text" id="nest-git-pat" data-focus="pat" data-credential-field="pat" data-secret-field="pat"
                                autocomplete="off" spellcheck="false" autocapitalize="off"
                                placeholder="GitHub access token"
-                               class="setting-input flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg bg-white font-mono bm-secret-masked">
+                               class="setting-input field-input field-mono flex-1 bm-secret-masked">
                         <button type="button" id="nest-git-pat-toggle" data-secret-toggle="#nest-git-pat"
                                 class="hpc-action text-sm" aria-pressed="false">Show</button>
                     </div>
                     <label class="block text-sm font-medium mb-1">SSH key (optional)</label>
                     <textarea id="nest-git-ssh" data-credential-field="ssh" data-autogrow
-                              class="setting-input field-textarea field-textarea-mono"
+                              class="setting-input field-textarea field-mono"
                               placeholder="SSH key (optional)"></textarea>
                     <div class="flex gap-2 mt-4">
                         <button type="button" id="nest-git-save"
@@ -139,19 +139,19 @@ const NestGitSection = (() => {
                     </div>
                 </div>
                 <div class="hidden nest-git-edit-form mt-3 space-y-2">
-                    <input type="text" class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg nest-edit-label"
+                    <input type="text" class="setting-input field-input nest-edit-label"
                            value="${BossModFormat.escapeAttribute(item.label || '')}" placeholder="Name">
-                    <input type="text" class="setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-match"
+                    <input type="text" class="setting-input field-input field-mono nest-edit-match"
                            value="${BossModFormat.escapeAttribute(item.match || '')}" placeholder="github.com/Org/* or github.com/Org/repo">
                     <div class="flex gap-2">
                         <input type="text" data-credential-field="pat" data-secret-field="pat"
                                autocomplete="off" spellcheck="false" autocapitalize="off"
-                               class="setting-input flex-1 px-3 py-2 text-sm border border-bm-border rounded-lg font-mono nest-edit-pat bm-secret-masked"
+                               class="setting-input field-input field-mono flex-1 nest-edit-pat bm-secret-masked"
                                placeholder="${item.has_pat ? '••••' + BossModFormat.escapeAttribute(item.pat_last4 || '') : 'GitHub access token'}">
                         <button type="button" data-secret-toggle=".nest-edit-pat" class="hpc-action text-xs" aria-pressed="false">Show</button>
                     </div>
                     <textarea data-credential-field="ssh" data-autogrow
-                              class="setting-input field-textarea field-textarea-mono nest-edit-ssh"
+                              class="setting-input field-textarea field-mono nest-edit-ssh"
                               placeholder="SSH key (optional)"></textarea>
                     <label class="flex items-center gap-2 text-xs text-bm-muted">
                         <input type="checkbox" class="nest-edit-default" data-nest-default ${item.is_default ? 'checked' : ''}>

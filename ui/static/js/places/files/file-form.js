@@ -54,10 +54,13 @@ const BossModFileForm = (() => {
      *   after one runs, as every non-submit action does.
      * @param {() => Promise<void>} spec.onSubmit  Rejecting shows its message
      *   and leaves the panel exactly as the operator left it.
+     * @param {() => void} [spec.onClose]  Called after the panel closes,
+     *   however it closes (submit, Cancel, ✕, Esc) — where a field's owner
+     *   tears down what it bound, such as an autogrow binding.
      * @returns {{ close: () => void, error: (message: string) => void,
      *             element: HTMLElement }}
      */
-    function openFormPanel({ title, submitLabel, busyLabel, fields, extraActions, onSubmit }) {
+    function openFormPanel({ title, submitLabel, busyLabel, fields, extraActions, onSubmit, onClose }) {
         const errorEl = h('p', { class: 'file-form-error', role: 'alert', hidden: true });
         let busy = false;
         let modal = null;
@@ -101,6 +104,7 @@ const BossModFileForm = (() => {
                 { label: 'Cancel' },
                 { label: submitLabel, tone: 'primary', id: SUBMIT_ID, form: FORM_ID },
             ],
+            onClose,
         });
         return { close: modal.close, error, element: modal.element };
     }
