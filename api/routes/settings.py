@@ -17,9 +17,11 @@ from core.bm_cli.approval_gate import GLOBAL_AUTO_APPROVE_SETTING
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
 from core.llm.connection_url import ConnectionUrlError, is_loopback_base, validate_connection_test_url
 from core.llm.template_engine import TemplateError
+from core.llm.system_completion import resolve_system_connection
 from core.llm.thinking import unoffered
-from core.models.thinking import ThinkingLevels
+from core.models.thinking import THINKING_CHOICES, ThinkingLevels
 from core.models import (
+    AIConnection,
     AIConnectionCreate,
     AIConnectionUpdate,
     AIPersonality,
@@ -37,7 +39,7 @@ _IMAGE_FLAG_NEEDS_MODEL = "Set a model before marking it image-capable"
 
 def _operator_surfaces_for_setting(key: str, category: str) -> list[str]:
     """Map one persisted setting to the Settings section ids the UI owns."""
-    if key == "system_ai_connection":
+    if key in {"system_ai_connection", "system_ai_thinking"}:
         return ["connections"]
     # Global auto-approve also changes every conversation's auto-approve
     # switch, so an open conversation refetches its header (`chat`).
@@ -284,6 +286,83 @@ def _validate_boolean_setting(key: str, value: str) -> None:
         raise HTTPException(400, f"{label} must be true or false.")
 
 
+def _validate_system_ai_thinking(key: str, value: str) -> None:
+    """Reject a ``system_ai_thinking`` value the System AI connection cannot apply.
+
+    ``complete_text`` merges the choice like an agent's, so a level the
+    resolved System AI connection does not offer would only fail later, at
+    call time. It is refused here instead.
+
+    Args:
+        key: Setting key being written. Other keys are not checked.
+        value: Raw value from the request.
+
+    Raises:
+        HTTPException: 400 when the value is not a thinking choice; when it
+            is a level and there is no usable System AI connection; or when
+            the System AI connection does not offer that level.
+    """
+    if key != "system_ai_thinking":
+        return
+    if value not in THINKING_CHOICES:
+        raise HTTPException(400, f"System AI thinking must be one of: {', '.join(THINKING_CHOICES)}.")
+    if value == "default":
+        return
+    connection = resolve_system_connection()
+    if connection is None:
+        raise HTTPException(
+            400,
+            "There is no usable System AI connection, so only Server default can be chosen for System AI thinking.",
+        )
+    if unoffered(connection.thinking_levels, {"system_ai_thinking": value}):
+        raise HTTPException(
+            400,
+            f"System AI connection '{connection.name}' does not offer thinking level '{value}'. "
+            "Add it to the connection's thinking levels, or choose Server default.",
+        )
+
+
+def _system_connection_after(connection_id: str) -> AIConnection | None:
+    """Return the connection System AI would use with ``connection_id`` saved.
+
+    The same rule as ``resolve_system_connection``, applied to the value
+    being written rather than the stored one: an id that names a connection
+    is used, otherwise the first connection, otherwise None.
+    """
+    if connection_id:
+        connection = db.get_connection_by_id(connection_id)
+        if connection is not None:
+            return connection
+    connections = db.list_connections()
+    return connections[0] if connections else None
+
+
+def _refuse_orphaning_system_ai_thinking(key: str, value: str) -> None:
+    """Raise 409 when a new System AI connection would not offer the stored level.
+
+    Args:
+        key: Setting key being written. Other keys are not checked.
+        value: The System AI connection id being saved.
+
+    Raises:
+        HTTPException: 409 naming the stored level and the connection.
+    """
+    if key != "system_ai_connection":
+        return
+    stored = config.get("system_ai_thinking")
+    if stored is None:
+        return
+    connection = _system_connection_after(value.strip())
+    levels = connection.thinking_levels if connection is not None else None
+    if unoffered(levels, {"system_ai_thinking": stored}):
+        named = f"connection '{connection.name}'" if connection is not None else "no connection"
+        raise HTTPException(
+            409,
+            f"System AI thinking is '{stored}', which {named} does not offer. "
+            "Set System AI thinking to Server default or an offered level first.",
+        )
+
+
 # Settings with their own route, which validates what the generic PUT cannot
 # (enabling an extension needs its setup to be ready).
 _OWN_ROUTE_SETTINGS = {
@@ -305,6 +384,8 @@ async def set_setting(key: str, value: str, category: str = "general"):
     _validate_positive_int_setting(key, value)
     _validate_non_negative_int_setting(key, value)
     _validate_boolean_setting(key, value)
+    _validate_system_ai_thinking(key, value)
+    _refuse_orphaning_system_ai_thinking(key, value)
     if key == "workspace_host_roots":
         from core.bm_cli.host_roots import SETTING_CATEGORY, normalize_host_root_setting
 
@@ -377,7 +458,8 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
         HTTPException: 400 when nothing is sent, or ``supports_images`` is
             true with no effective model; 404 for an unknown connection;
             409 when the new ``thinking_levels`` drops a level agents on
-            this connection still pick (the detail names them).
+            this connection, or System AI on it, still pick (the detail
+            names them).
     """
     fields = body.model_dump(exclude_none=True)
     if not fields:
@@ -405,10 +487,14 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
 
 
 def _refuse_removing_used_levels(connection_id: str, new_levels: ThinkingLevels | None) -> None:
-    """Raise 409 when ``new_levels`` lacks a level an agent on the connection picks.
+    """Raise 409 when ``new_levels`` lacks a level the connection's users pick.
+
+    Its users are the agents linked to it and, when it is the resolved
+    System AI connection, System AI with its ``system_ai_thinking`` choice.
 
     Raises:
-        HTTPException: 409 naming each agent and the levels it would lose.
+        HTTPException: 409 naming each agent, and "System AI", with the
+            levels it would lose.
     """
     in_use = []
     for agent in db.list_agents_by_connection(connection_id):
@@ -418,6 +504,12 @@ def _refuse_removing_used_levels(connection_id: str, new_levels: ThinkingLevels 
         )
         if missing:
             in_use.append(f"{agent.name} ({', '.join(missing)})")
+    system = resolve_system_connection()
+    stored = config.get("system_ai_thinking")
+    if system is not None and system.id == connection_id and stored is not None:
+        missing = unoffered(new_levels or None, {"system_ai_thinking": stored})
+        if missing:
+            in_use.append(f"System AI ({', '.join(missing)})")
     if in_use:
         raise HTTPException(
             409,

@@ -1,7 +1,11 @@
 /**
- * Node harness: Settings → AI Connections renders System AI as the first
- * control under the heading. An unset or missing pick shows the first
- * connection. Rendering does not write the stored pick.
+ * Node harness: Settings → AI Connections renders the page description under
+ * the heading, then System AI as one row of two toolbar dropdowns — the
+ * connection and its thinking level — over one hint line. An unset or missing
+ * pick shows the first connection. Rendering does not write the stored pick.
+ * The thinking dropdown offers the effective connection's levels, saves a
+ * level change, and resets an orphaned level to `default` before a
+ * connection switch is saved; refusals put the control back.
  * Invoked by tests/test_system_ai_compaction_settings.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -86,11 +90,14 @@ Object.defineProperty(FakeEl.prototype, "innerHTML", {
 
 const fetches = [];
 const saves = [];
+const rowErrors = [];
 const world = {
     settings: [],
     connections: [],
     connectionsOk: true,
     settingsOk: true,
+    // Setting key → the detail a PUT of it is refused with.
+    refuse: {},
 };
 
 global.apiFetch = async (url) => {
@@ -108,17 +115,69 @@ global.apiFetch = async (url) => {
 
 global.apiFetchOk = async (url, init) => {
     saves.push({ url, method: init && init.method });
+    const key = decodeURIComponent(url.split("?")[0].split("/").pop());
+    if (world.refuse[key]) throw new Error(world.refuse[key]);
     return { ok: true };
 };
 
-global.showRowError = () => {};
+global.showRowError = (_container, message) => { rowErrors.push(message); };
+global.BossModOperatorInvalidate = { notifyLocal() {} };
+global.BossModAgentStatus = { AGENT_COLOR_PALETTE: [] };
+
+// A recording stand-in for core/menu-select.js with the same contract the
+// module relies on: a trigger button named by the label, a value that must be
+// one of the options, and setOptions. The real control is proved in
+// js_toolbar_controls_harness.cjs.
+const menuSelects = [];
+global.BossModMenuSelect = {
+    create(deps) {
+        const variant = deps.variant === undefined ? "button" : deps.variant;
+        let list = deps.options.map((option) => ({ value: option.value, label: option.label }));
+        let current = deps.value;
+        const check = () => {
+            if (!list.some((option) => option.value === current)) throw new Error(`"${current}" is not an option`);
+        };
+        check();
+        const element = new FakeEl("span");
+        const trigger = new FakeEl("button");
+        trigger.setAttribute("aria-label", deps.label);
+        element.append(trigger);
+        const api = {
+            element,
+            label: deps.label,
+            variant,
+            getValue: () => current,
+            options: () => list.map((option) => ({ ...option })),
+            setOptions(next, value) {
+                list = next.map((option) => ({ value: option.value, label: option.label }));
+                if (value !== undefined) current = value;
+                check();
+            },
+            async pick(value) {
+                current = value;
+                await deps.onChange(value);
+            },
+        };
+        menuSelects.push(api);
+        return api;
+    },
+};
+
+/** The stand-in created with `label`, or null. */
+function menuSelect(label) {
+    return menuSelects.find((select) => select.label === label) || null;
+}
 
 // settings-system.js registers a repaint hook on render; the harness drives
 // renders directly, so the hook is a no-op.
 global.SettingsView = { bindRepaint() {} };
 
-eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
-eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.ConnectionsSection = ConnectionsSection;\n`);
+const NAMES = ["BossModFormat", "BossModAgentFields", "BossModSystemAi", "ConnectionsSection"];
+const paths = process.argv.slice(2);
+if (paths.length !== NAMES.length) throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
+NAMES.forEach((name, index) => {
+    eval(`${fs.readFileSync(paths[index], "utf8")}\n;global.${name} = ${name};\n`);
+});
 
 function setting(key, value) {
     return { key, value, category: "llm", updated_at: "2026-01-01T00:00:00Z" };
@@ -130,51 +189,48 @@ async function settle() {
     }
 }
 
-async function dispatchChange(control) {
-    const event = { target: control };
-    for (const fn of [...(control.listeners.change || [])]) await fn(event);
+function elements(node) {
+    return node.children.filter((child) => child.nodeType === 1);
+}
+
+function describe(select) {
+    return select
+        ? { label: select.label, variant: select.variant, value: select.getValue(), options: select.options() }
+        : null;
 }
 
 function capture(root, paintSaves) {
     const block = root.querySelector("[data-system-ai]");
     const heading = root.querySelector("h2");
-    const control = block ? block.querySelector("select") : null;
-    const add = root.querySelector("#btn-add-connection");
+    const siblings = heading && heading.parent ? elements(heading.parent) : [];
+    const row = block ? block.querySelector("[data-system-ai-row]") : null;
     const controls = root.querySelectorAll("button, select, input, textarea").map((el) => ({
         tag: el.tagName,
         id: el.id || "",
-        key: el.dataset.settingKey || "",
+        label: el.getAttribute("aria-label") || "",
     }));
-    const options = control
-        ? control.querySelectorAll("option").map((option) => ({
-            value: option.getAttribute("value"),
-            label: option.textContent.trim(),
-            title: option.getAttribute("title"),
-            selected: option.hasAttribute("selected"),
-        }))
-        : null;
     return {
         heading: heading ? heading.textContent.trim() : "",
-        underHeading: Boolean(heading && block && heading.parent === block.parent),
-        directlyUnderHeading: Boolean(
-            heading
-            && block
-            && heading.parent
-            && heading.parent.children.filter((node) => node.nodeType === 1)[1] === block
-        ),
-        label: block && block.querySelector("label") ? block.querySelector("label").textContent.trim() : "",
+        // h2, then the description, then the System AI block, in one column.
+        order: siblings.map((node) => (
+            node === block ? "system-ai" : `${node.tagName.toLowerCase()}:${node.textContent.trim()}`
+        )),
+        label: row ? elements(row)[0].textContent.trim() : "",
+        nativeSelects: block ? block.querySelectorAll("select").length : null,
+        menuSelects: menuSelects.map((select) => select.label),
+        connection: describe(menuSelect("System AI connection")),
+        thinking: describe(menuSelect("System AI thinking")),
+        rowText: row ? row.textContent.replace(/\s+/g, " ").trim() : "",
         paragraphs: block ? block.querySelectorAll("p").map((node) => node.textContent.trim()) : [],
         pageText: root.textContent,
         controls,
-        value: control ? control.value : null,
-        disabled: control ? control.hasAttribute("disabled") : null,
-        options,
         saves: paintSaves,
     };
 }
 
 async function paint() {
     const before = saves.length;
+    menuSelects.length = 0;
     document.body.replaceChildren();
     const el = new FakeEl("div");
     document.body.append(el);
@@ -183,28 +239,103 @@ async function paint() {
     return { el, view: capture(el, saves.slice(before)) };
 }
 
+function systemAi(id, thinking = "default") {
+    return [setting("system_ai_connection", id), setting("system_ai_thinking", thinking)];
+}
+
 async function main() {
-    const plain = { id: "conn-plain", name: "Local", model: "mock-small", api_base_url: "http://127.0.0.1:9" };
-    const quoted = { id: "conn-quote", name: 'Bob "fast" <Local>', model: "gpt-4", api_base_url: "http://127.0.0.1:9" };
+    const plain = {
+        id: "conn-plain", name: "Local", model: "mock-small", api_base_url: "http://127.0.0.1:9",
+        thinking_levels: { off: { reasoning_effort: "none" }, low: { reasoning_effort: "low" } },
+    };
+    const quoted = {
+        id: "conn-quote", name: 'Bob "fast" <Local>', model: "gpt-4", api_base_url: "http://127.0.0.1:9",
+        thinking_levels: { high: { reasoning_effort: "high" } },
+    };
     world.connections = [plain, quoted];
-    world.settings = [setting("system_ai_connection", "")];
+    world.settings = systemAi("");
 
-    const unsetPaint = await paint();
-    const unset = unsetPaint.view;
-    const select = unsetPaint.el.querySelector("select");
-    select.value = "conn-quote";
-    const savesBeforeChange = saves.length;
-    await dispatchChange(select);
-    const swapped = saves.slice(savesBeforeChange);
+    const unset = (await paint()).view;
+    let before = saves.length;
+    await menuSelect("System AI connection").pick("conn-quote");
+    const swapped = saves.slice(before);
+    const swappedThinking = menuSelect("System AI thinking").options();
 
-    world.settings = [setting("system_ai_connection", "conn-quote")];
+    world.settings = systemAi("conn-quote");
     const kept = (await paint()).view;
 
-    world.settings = [setting("system_ai_connection", "stale-id")];
+    world.settings = systemAi("stale-id");
     const gone = (await paint()).view;
 
+    // A level change saves the setting, and a refused one goes back with the
+    // server's detail shown.
+    world.settings = systemAi("");
+    await paint();
+    const level = menuSelect("System AI thinking");
+    before = saves.length;
+    await level.pick("low");
+    const levelSaved = { saves: saves.slice(before), value: level.getValue() };
+    world.refuse.system_ai_thinking = "System AI connection 'Local' does not offer thinking level 'off'.";
+    before = saves.length;
+    let errorsBefore = rowErrors.length;
+    await level.pick("off");
+    const levelRefused = {
+        saves: saves.slice(before),
+        value: level.getValue(),
+        errors: rowErrors.slice(errorsBefore),
+    };
+    delete world.refuse.system_ai_thinking;
+
+    // Switching to a connection that lacks the stored level resets it first.
+    world.settings = systemAi("", "low");
+    await paint();
+    before = saves.length;
+    await menuSelect("System AI connection").pick("conn-quote");
+    const orphanSwitch = {
+        saves: saves.slice(before),
+        value: menuSelect("System AI thinking").getValue(),
+        options: menuSelect("System AI thinking").options(),
+    };
+
+    // A refused reset saves no connection and puts the connection back.
+    world.settings = systemAi("", "low");
+    world.refuse.system_ai_thinking = "nope: reset refused";
+    await paint();
+    before = saves.length;
+    errorsBefore = rowErrors.length;
+    await menuSelect("System AI connection").pick("conn-quote");
+    const resetRefused = {
+        saves: saves.slice(before),
+        connection: menuSelect("System AI connection").getValue(),
+        value: menuSelect("System AI thinking").getValue(),
+        errors: rowErrors.slice(errorsBefore),
+    };
+    delete world.refuse.system_ai_thinking;
+
+    // A refused connection save puts the connection back and keeps the levels.
+    world.settings = systemAi("");
+    world.refuse.system_ai_connection = "nope: connection refused";
+    await paint();
+    before = saves.length;
+    errorsBefore = rowErrors.length;
+    await menuSelect("System AI connection").pick("conn-quote");
+    const connectionRefused = {
+        saves: saves.slice(before),
+        connection: menuSelect("System AI connection").getValue(),
+        options: menuSelect("System AI thinking").options(),
+        errors: rowErrors.slice(errorsBefore),
+    };
+    delete world.refuse.system_ai_connection;
+
+    // A stored level the fallback connection lacks is shown, marked.
+    world.settings = systemAi("stale-id", "high");
+    const unofferedStored = (await paint()).view;
+
+    world.settings = [setting("system_ai_connection", "")];
+    const thinkingMissing = (await paint()).view;
+
     world.connectionsOk = false;
-    world.settings = [setting("system_ai_connection", "conn-quote")];
+    world.settings = systemAi("conn-quote");
     const failedLoad = (await paint()).view;
 
     world.connectionsOk = true;
@@ -213,10 +344,10 @@ async function main() {
 
     world.settingsOk = true;
     world.connections = [];
-    world.settings = [setting("system_ai_connection", "")];
+    world.settings = systemAi("");
     const emptyList = (await paint()).view;
 
-    world.settings = [setting("system_ai_connection", "stale-id")];
+    world.settings = systemAi("stale-id");
     const emptyListKept = (await paint()).view;
 
     process.stdout.write(JSON.stringify({
@@ -224,8 +355,16 @@ async function main() {
         fetches,
         unset,
         swapped,
+        swappedThinking,
         kept,
         gone,
+        levelSaved,
+        levelRefused,
+        orphanSwitch,
+        resetRefused,
+        connectionRefused,
+        unofferedStored,
+        thinkingMissing,
         failedLoad,
         settingsFailed,
         emptyList,

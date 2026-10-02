@@ -321,7 +321,10 @@ def test_api_fetch_ok_throws_on_http_error_with_parsed_detail() -> None:
 _SAVE_OK_SITES = {
     "settings/settings-connections.js": [
         "apiFetchOk(`/api/connections/${btn.dataset.deleteConn}`",
-        "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`",
+    ],
+    # Revision 5: the System AI save moved to its own module.
+    "settings/settings-system-ai.js": [
+        "apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=llm`",
     ],
     "settings/settings-connections-form.js": [
         "apiFetchOk(`/api/connections/${conn.id}`",

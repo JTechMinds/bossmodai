@@ -73,6 +73,7 @@ SETTINGS_SCRIPTS = [
     "js/settings/settings-shared.js",
     "js/settings/settings-thinking-examples.js",
     "js/settings/settings-connections-form.js",
+    "js/settings/settings-system-ai.js",
     "js/settings/settings-connections.js",
     "js/settings/settings-personalities.js",
     "js/settings/settings-system-meta.js",

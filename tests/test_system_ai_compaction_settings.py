@@ -629,6 +629,8 @@ def _render_connections() -> dict:
             "node",
             str(harness),
             str(JS / "core" / "format.js"),
+            str(JS / "context" / "agent-fields.js"),
+            str(JS / "settings" / "settings-system-ai.js"),
             str(JS / "settings" / "settings-connections.js"),
         ],
         check=False,
@@ -639,28 +641,37 @@ def _render_connections() -> dict:
     return json.loads(result.stdout.strip().splitlines()[-1])
 
 
-def test_system_ai_is_the_first_control_under_ai_connections() -> None:
+SYSTEM_AI_HINT = (
+    "Used for compaction, channel routing and auto-approve reviews. "
+    "Off or Low thinking is usually enough."
+)
+DESCRIPTION = "p:Manage your LLM provider API connections."
+CONNECTION_OPTIONS = [
+    {"value": "conn-plain", "label": "Local (mock-small)"},
+    {"value": "conn-quote", "label": 'Bob "fast" <Local> (gpt-4)'},
+]
+
+
+def test_system_ai_is_one_row_under_the_description() -> None:
     payload = _render_connections()
     unset = payload["unset"]
     assert unset["heading"] == "AI Connections"
-    assert unset["underHeading"] is True
-    assert unset["directlyUnderHeading"] is True
+    # Title, description, then the System AI block, in one column.
+    assert unset["order"] == ["h2:AI Connections", DESCRIPTION, "system-ai"]
     assert unset["label"] == "System AI"
-    assert unset["paragraphs"][0] == (
-        "Choose the AI used for system processes (compaction, channel router, etc.)."
-    )
-    assert unset["controls"][0]["key"] == "system_ai_connection"
-    assert unset["controls"][1]["id"] == "btn-add-connection"
+    # No native <select>: two menu selects, both the toolbar 'button' look.
+    assert unset["nativeSelects"] == 0
+    assert unset["menuSelects"] == ["System AI connection", "System AI thinking"]
+    assert unset["connection"]["variant"] == "button"
+    assert unset["thinking"]["variant"] == "button"
+    # Exactly one hint line under the row.
+    assert unset["paragraphs"] == [SYSTEM_AI_HINT]
+    # The two dropdowns come before Add Connection.
+    assert [c["label"] for c in unset["controls"][:2]] == ["System AI connection", "System AI thinking"]
+    assert unset["controls"][2]["id"] == "btn-add-connection"
     assert unset["saves"] == []
-    assert unset["value"] == "conn-plain"
-    assert [opt["value"] for opt in unset["options"]] == ["conn-plain", "conn-quote"]
-    assert unset["options"][0]["selected"] is True
-    assert unset["options"][0]["label"] == "Local (mock-small)"
-    quoted = unset["options"][1]
-    assert quoted["label"] == 'Bob "fast" <Local> (gpt-4)'
-    assert quoted["title"] == 'Bob "fast" <Local> (gpt-4)'
-    assert quoted["selected"] is False
-    assert "" not in [opt["value"] for opt in unset["options"]]
+    assert unset["connection"]["value"] == "conn-plain"
+    assert unset["connection"]["options"] == CONNECTION_OPTIONS
     assert set(payload["fetches"]) == {"/api/settings", "/api/connections"}
 
     assert payload["swapped"] == [
@@ -672,58 +683,123 @@ def test_system_ai_is_the_first_control_under_ai_connections() -> None:
 
     kept = payload["kept"]
     assert kept["saves"] == []
-    assert kept["value"] == "conn-quote"
-    assert kept["options"][1]["selected"] is True
-    assert kept["options"][0]["selected"] is False
-    assert kept["controls"][0]["key"] == "system_ai_connection"
+    assert kept["connection"]["value"] == "conn-quote"
 
     gone = payload["gone"]
     assert gone["saves"] == []
-    assert gone["value"] == "conn-plain"
-    assert [opt["value"] for opt in gone["options"]] == ["conn-plain", "conn-quote"]
-    assert gone["options"][0]["selected"] is True
-    assert "Saved connection unavailable" not in gone["pageText"]
+    assert gone["connection"]["value"] == "conn-plain"
+    assert gone["connection"]["options"] == CONNECTION_OPTIONS
 
-    failed = payload["failedLoad"]
-    assert failed["saves"] == []
-    assert failed["underHeading"] is True
-    assert failed["value"] == "conn-quote"
-    assert failed["options"] == [
-        {
-            "value": "conn-quote",
-            "label": "Saved connection unavailable",
-            "title": "Saved connection unavailable",
-            "selected": True,
-        },
+    # Each state that cannot draw the row is one line and no controls.
+    for state, line in (
+        ("failedLoad", "AI connections could not be loaded."),
+        ("settingsFailed", "System AI could not be loaded."),
+        ("emptyList", "No AI connections yet."),
+        ("emptyListKept", "No AI connections yet."),
+    ):
+        view = payload[state]
+        assert view["saves"] == [], state
+        assert view["order"] == ["h2:AI Connections", DESCRIPTION, "system-ai"], state
+        assert view["paragraphs"] == [line], state
+        assert view["menuSelects"] == [], state
+        assert view["nativeSelects"] == 0, state
+        assert view["controls"][0]["id"] == "btn-add-connection", state
+    assert "Failed to load connections." in payload["failedLoad"]["pageText"]
+    assert "No connections yet" in payload["emptyList"]["pageText"]
+    assert "Saved connection unavailable" not in payload["emptyListKept"]["pageText"]
+
+
+def _choices(options: list[dict]) -> list[tuple[str, str]]:
+    return [(opt["value"], opt["label"]) for opt in options]
+
+
+def test_system_ai_thinking_follows_the_effective_connection() -> None:
+    payload = _render_connections()
+
+    # Unset System AI falls back to the first connection, which offers off/low.
+    unset = payload["unset"]["thinking"]
+    assert unset["label"] == "System AI thinking"
+    assert unset["value"] == "default"
+    assert _choices(unset["options"]) == [
+        ("default", "Thinking: Server default"), ("off", "Thinking: Off"), ("low", "Thinking: Low"),
     ]
-    assert any("could not be loaded" in line for line in failed["paragraphs"])
-    assert "Failed to load connections." in failed["pageText"]
+    # A saved id uses that connection's levels.
+    assert _choices(payload["kept"]["thinking"]["options"]) == [
+        ("default", "Thinking: Server default"), ("high", "Thinking: High"),
+    ]
+    # A stale id falls back to the first connection, as resolve_system_connection does.
+    assert _choices(payload["gone"]["thinking"]["options"]) == [
+        ("default", "Thinking: Server default"), ("off", "Thinking: Off"), ("low", "Thinking: Low"),
+    ]
+    # Switching the connection re-options the control.
+    assert _choices(payload["swappedThinking"]) == [
+        ("default", "Thinking: Server default"), ("high", "Thinking: High"),
+    ]
+    # A stored level the fallback lacks is shown, marked, not replaced.
+    stored = payload["unofferedStored"]["thinking"]
+    assert stored["value"] == "high"
+    assert stored["options"][-1] == {"value": "high", "label": "Thinking: High (not offered)"}
+    assert payload["unofferedStored"]["saves"] == []
 
-    blocked = payload["settingsFailed"]
-    assert blocked["saves"] == []
-    assert blocked["underHeading"] is True
-    assert blocked["value"] is None
-    assert blocked["paragraphs"][0].startswith("Choose the AI used for system processes")
-    assert any("could not be loaded" in line for line in blocked["paragraphs"])
-    assert blocked["controls"][0]["id"] == "btn-add-connection"
+    # A missing thinking row keeps the connection control and says so in
+    # place of the thinking control, still over the one hint line.
+    missing = payload["thinkingMissing"]
+    assert missing["thinking"] is None
+    assert missing["menuSelects"] == ["System AI connection"]
+    assert missing["rowText"] == "System AI System AI thinking could not be loaded."
+    assert missing["paragraphs"] == [SYSTEM_AI_HINT]
 
-    empty = payload["emptyList"]
-    assert empty["saves"] == []
-    assert empty["controls"][0]["key"] == "system_ai_connection"
-    assert empty["options"] == []
-    assert empty["disabled"] is True
-    assert any("No AI connections yet." in line for line in empty["paragraphs"])
-    assert "No connections yet" in empty["pageText"]
 
-    kept_stale = payload["emptyListKept"]
-    assert kept_stale["saves"] == []
-    assert kept_stale["value"] == "stale-id"
-    assert kept_stale["options"][0]["label"] == "Saved connection unavailable"
-    assert kept_stale["options"][0]["selected"] is True
+def test_system_ai_thinking_saves_and_resets_before_a_switch() -> None:
+    payload = _render_connections()
+
+    assert payload["levelSaved"] == {
+        "saves": [{"url": "/api/settings/system_ai_thinking?value=low&category=llm", "method": "PUT"}],
+        "value": "low",
+    }
+    refused = payload["levelRefused"]
+    assert refused["saves"] == [
+        {"url": "/api/settings/system_ai_thinking?value=off&category=llm", "method": "PUT"},
+    ]
+    assert refused["value"] == "low"
+    assert refused["errors"] == [
+        "System AI thinking could not be saved: "
+        "System AI connection 'Local' does not offer thinking level 'off'.",
+    ]
+
+    # The stored "low" is not offered by conn-quote: default first, then the connection.
+    orphan = payload["orphanSwitch"]
+    assert orphan["saves"] == [
+        {"url": "/api/settings/system_ai_thinking?value=default&category=llm", "method": "PUT"},
+        {"url": "/api/settings/system_ai_connection?value=conn-quote&category=llm", "method": "PUT"},
+    ]
+    assert orphan["value"] == "default"
+    assert _choices(orphan["options"]) == [("default", "Thinking: Server default"), ("high", "Thinking: High")]
+
+    # A refused reset saves no connection and the connection control goes back.
+    reset = payload["resetRefused"]
+    assert reset["saves"] == [
+        {"url": "/api/settings/system_ai_thinking?value=default&category=llm", "method": "PUT"},
+    ]
+    assert reset["connection"] == "conn-plain"
+    assert reset["value"] == "low"
+    assert reset["errors"] == ["System AI thinking could not be reset: nope: reset refused"]
+
+    # A refused connection save goes back, and the levels stay the old connection's.
+    conn = payload["connectionRefused"]
+    assert conn["saves"] == [
+        {"url": "/api/settings/system_ai_connection?value=conn-quote&category=llm", "method": "PUT"},
+    ]
+    assert conn["connection"] == "conn-plain"
+    assert _choices(conn["options"]) == [
+        ("default", "Thinking: Server default"), ("off", "Thinking: Off"), ("low", "Thinking: Low"),
+    ]
+    assert conn["errors"] == ["System AI could not be saved: nope: connection refused"]
 
 
 def test_system_ai_picker_source_is_under_ai_connections() -> None:
     connections = (JS / "settings" / "settings-connections.js").read_text(encoding="utf-8")
+    system_ai = (JS / "settings" / "settings-system-ai.js").read_text(encoding="utf-8")
     # The System section is its renderer plus its setting catalog.
     system = (JS / "settings" / "settings-system.js").read_text(encoding="utf-8") + (
         JS / "settings" / "settings-system-meta.js"
@@ -731,12 +807,17 @@ def test_system_ai_picker_source_is_under_ai_connections() -> None:
     completion = (ROOT / "core" / "llm" / "system_completion.py").read_text(encoding="utf-8")
     assert "system_ai_connection" not in system
     h2 = connections.index('<h2 class="text-lg font-semibold">AI Connections</h2>')
-    block = connections.index("${systemAiBlock(state)}")
+    description = connections.index("Manage your LLM provider API connections.")
+    block = connections.index("${BossModSystemAi.markup(state)}")
     empty = connections.index("No connections yet")
     edit = connections.index("data-edit-conn")
-    assert h2 < block < empty
+    assert h2 < description < block < empty
     assert block < edit
-    assert 'data-setting-key="system_ai_connection"' in connections
-    assert "Choose the AI used for system processes (compaction, channel router, etc.)." in connections
+    # The System AI save path lives in its own module, not a generic handler.
+    assert 'data-setting-key="system_ai_connection"' not in connections
+    assert "setting-input" not in connections
+    assert "<select" not in system_ai
+    assert "variant:" not in system_ai
+    assert not (JS / "settings" / "settings-system-ai-thinking.js").exists()
     assert "set_setting" not in completion
     assert "never blocks the agent turn" in system

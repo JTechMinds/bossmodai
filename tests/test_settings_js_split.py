@@ -33,6 +33,7 @@ SHELL_GLOBALS = {
 SPLIT_HALVES = {
     "settings/settings-thinking-examples.js": "BossModThinkingExamples",
     "settings/settings-connections-form.js": "BossModConnectionForm",
+    "settings/settings-system-ai.js": "BossModSystemAi",
     "settings/settings-runtime-contracts-actions.js": "BossModRuntimeContractActions",
     "settings/settings-system-meta.js": "BossModSystemSettingsMeta",
 }
@@ -55,6 +56,7 @@ REQUIRED_SCRIPTS = [
     "js/settings/settings-shared.js",
     "js/settings/settings-thinking-examples.js",
     "js/settings/settings-connections-form.js",
+    "js/settings/settings-system-ai.js",
     "js/settings/settings-connections.js",
     "js/settings/settings-personalities.js",
     "js/settings/settings-system-meta.js",
@@ -266,6 +268,8 @@ def test_index_loads_split_scripts_in_dependency_order() -> None:
             < index["js/settings/settings-connections-form.js"])
     assert (index["js/settings/settings-connections-form.js"]
             < index["js/settings/settings-connections.js"])
+    assert (index["js/settings/settings-system-ai.js"]
+            < index["js/settings/settings-connections.js"])
     assert (index["js/settings/settings-runtime-contracts-actions.js"]
             < index["js/settings/settings-runtime-contracts.js"])
     assert index["js/settings/settings-system-meta.js"] < index["js/settings/settings-system.js"]
@@ -412,6 +416,7 @@ def test_split_halves_define_their_own_iifes() -> None:
         assert f"const {global_name} = (() => {{" in source, filename
     connections = _read("settings/settings-connections.js")
     assert "BossModConnectionForm.renderForm(conn, { container, onDone: renderList })" in connections
+    assert "BossModSystemAi.bind(container, state);" in connections
     contracts = _read("settings/settings-runtime-contracts.js")
     assert "BossModRuntimeContractActions.bindActions({ onRefresh: () => render(el) })" in contracts
     system = _read("settings/settings-system.js")

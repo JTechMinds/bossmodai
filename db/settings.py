@@ -103,6 +103,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # connection is kept on upgrade; this seed does not overwrite it.
     # Channel rounds use it for one short route. compaction_mode is off | pressure_only.
     ("system_ai_connection", "", "llm"),
+    # Thinking choice for System AI calls, merged like an agent's
+    # (core.llm.thinking). "default" sends the connection's extra_body as
+    # stored; a level must be one the System AI connection offers.
+    ("system_ai_thinking", "default", "llm"),
     # Default output cap for System AI completions. Reasoning tokens count
     # against it on reasoning models, so a small cap truncates the answer.
     # Every System AI completion uses it: channel routes, chat fade, sticky

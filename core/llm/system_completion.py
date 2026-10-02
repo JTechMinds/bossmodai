@@ -7,6 +7,12 @@ or a failed call returns ``None`` so the caller can fall back. An unset
 id, or a saved id that no longer names a connection, uses the first
 connection. This module does not write the setting, so an operator's
 saved pick stays put on upgrade.
+
+The ``system_ai_thinking`` setting picks a thinking choice with the same
+vocabulary and merge as an agent's (``core.llm.thinking``): ``default`` sends
+the connection's ``extra_body`` as stored, and a level deep-merges that
+level's fragment over it. A level the connection does not offer is logged as
+a WARNING and the call returns ``None``, like any other unusable System AI.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ litellm.num_retries = 0
 from core import config
 from core.llm.call_budget import budget
 from core.llm.client import canonicalize_openai_compatible_model, validate_api_base
+from core.llm.thinking import ThinkingConfigError, effective_extra_body
 from core.models import AIConnection
 
 logger = logging.getLogger(__name__)
@@ -75,19 +82,21 @@ def complete_text(
 
     Returns:
         The completion text, or ``None`` when there is no usable connection,
-        the call-budget lane is full, the call fails, or the text is empty.
+        the connection cannot apply the ``system_ai_thinking`` choice (logged
+        as a WARNING), the call-budget lane is full, the call fails, or the text is empty.
         A ``finish_reason`` of ``length`` is logged as a truncation warning;
         the (possibly partial) text is still returned for the caller to judge.
 
     Raises:
-        ConfigError: ``max_tokens`` is ``None`` and the setting is missing or
-            not an integer; or ``system_ai_timeout_seconds`` is missing or not
-            an integer.
+        ConfigError: ``system_ai_thinking`` is missing; ``max_tokens`` is
+            ``None`` and the setting is missing or not an integer; or
+            ``system_ai_timeout_seconds`` is missing or not an integer.
     """
     connection = resolve_system_connection()
     if connection is None:
         logger.debug("system completion skipped: system AI unavailable")
         return None
+    thinking = config.require("system_ai_thinking")
     cap = config.require_int("system_ai_max_tokens") if max_tokens is None else max_tokens
     model = str(connection.model or "").strip()
     api_base = str(connection.api_base_url or "").strip() or None
@@ -112,7 +121,17 @@ def complete_text(
         kwargs["api_key"] = connection.api_key or "local-openai-compatible"
     elif connection.api_key:
         kwargs["api_key"] = connection.api_key
-    extra = _extra_body(connection.extra_body)
+    try:
+        body = effective_extra_body(connection.extra_body, connection.thinking_levels, thinking)
+    except ThinkingConfigError as exc:
+        logger.warning(
+            "system completion skipped: connection %r cannot apply System AI thinking %r: %s",
+            connection.name,
+            thinking,
+            exc,
+        )
+        return None
+    extra = _extra_body(body)
     if extra:
         kwargs["extra_body"] = extra
     lane = budget.try_acquire(kind="system", owner="system-ai")

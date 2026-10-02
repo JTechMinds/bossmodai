@@ -281,8 +281,13 @@
     <script src="{{ static_url('js/settings/cli-policy/approvals.js') }}"></script>
     <script src="{{ static_url('js/settings/cli-policy/section.js') }}"></script>
     <script src="{{ static_url('js/settings/settings-shared.js') }}"></script>
+    <!-- The agent form's vocabulary. It loads ahead of Settings because the
+         System AI thinking control labels its levels from THINKING_CHOICES;
+         it needs only format.js and agent-status.js, both loaded above. -->
+    <script src="{{ static_url('js/context/agent-fields.js') }}"></script>
     <script src="{{ static_url('js/settings/settings-thinking-examples.js') }}"></script>
     <script src="{{ static_url('js/settings/settings-connections-form.js') }}"></script>
+    <script src="{{ static_url('js/settings/settings-system-ai.js') }}"></script>
     <script src="{{ static_url('js/settings/settings-connections.js') }}"></script>
     <script src="{{ static_url('js/settings/settings-personalities.js') }}"></script>
     <script src="{{ static_url('js/settings/settings-system-meta.js') }}"></script>
@@ -363,7 +368,6 @@
     <script src="{{ static_url('js/extensions/agent-config-dialog.js') }}"></script>
     <script src="{{ static_url('js/extensions/agent-view-dialog.js') }}"></script>
 
-    <script src="{{ static_url('js/context/agent-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-fields.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-advanced.js') }}"></script>
     <script src="{{ static_url('js/context/agent-form-connections.js') }}"></script>

@@ -14,74 +14,6 @@
 const ConnectionsSection = (() => {
     let container = null;
 
-    const SYSTEM_AI_COPY = 'Choose the AI used for system processes (compaction, channel router, etc.).';
-    const INPUT_CLASS = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white';
-
-    function connectionLabel(conn) {
-        return conn.model ? `${conn.name} (${conn.model})` : conn.name;
-    }
-
-    /**
-     * System AI dropdown. Options are the current connections, labeled
-     * `name (model)`. A saved id that is still in the list stays selected.
-     * An unset id, or one that is no longer listed, shows the first
-     * connection. This render does not write the setting.
-     *
-     * @param {string} savedId
-     * @param {object[]} connections
-     * @param {boolean} connectionsFailed
-     * @returns {string}
-     */
-    function systemAiControl(savedId, connections, connectionsFailed) {
-        const current = savedId || '';
-        const known = connections.some(conn => conn.id === current);
-        const fallback = !connectionsFailed && connections.length ? connections[0].id : '';
-        const selectedId = known ? current : (connectionsFailed ? current : fallback);
-        let options = '';
-        if (connectionsFailed) {
-            if (current) {
-                const missing = 'Saved connection unavailable';
-                options += `<option value="${BossModFormat.escapeAttribute(current)}" title="${BossModFormat.escapeAttribute(missing)}" selected>${BossModFormat.escapeHtml(missing)}</option>`;
-            }
-        } else {
-            for (const conn of connections) {
-                const label = connectionLabel(conn);
-                const selected = selectedId === conn.id ? ' selected' : '';
-                options += `<option value="${BossModFormat.escapeAttribute(conn.id)}" title="${BossModFormat.escapeAttribute(label)}"${selected}>${BossModFormat.escapeHtml(label)}</option>`;
-            }
-            if (!connections.length && current) {
-                const missing = 'Saved connection unavailable';
-                options += `<option value="${BossModFormat.escapeAttribute(current)}" title="${BossModFormat.escapeAttribute(missing)}" selected>${BossModFormat.escapeHtml(missing)}</option>`;
-            }
-        }
-        let hint = '';
-        if (connectionsFailed) {
-            hint = '<p class="text-xs text-bm-muted mt-1.5">AI connections could not be loaded.</p>';
-        } else if (!connections.length) {
-            hint = '<p class="text-xs text-bm-muted mt-1.5">No AI connections yet.</p>';
-        }
-        const disabled = options ? '' : ' disabled';
-        return `<select data-setting-key="system_ai_connection"
-                        data-setting-category="llm"
-                        class="${INPUT_CLASS}"${disabled}>${options}</select>${hint}`;
-    }
-
-    /**
-     * @param {{savedId: string, connections: object[], connectionsFailed: boolean, settingsFailed: boolean}} state
-     * @returns {string}
-     */
-    function systemAiBlock(state) {
-        const body = state.settingsFailed
-            ? '<p class="text-xs text-bm-muted">System AI could not be loaded.</p>'
-            : systemAiControl(state.savedId, state.connections, state.connectionsFailed);
-        return `
-            <div class="mt-3 max-w-2xl" data-system-ai>
-                <label class="block text-sm font-medium mb-1">System AI</label>
-                <p class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(SYSTEM_AI_COPY)}</p>
-                ${body}
-            </div>`;
-    }
-
     async function render(el) {
         container = el;
         SettingsView.bindRepaint('connections', () => renderList());
@@ -93,6 +25,7 @@ const ConnectionsSection = (() => {
             connections: [],
             connectionsFailed: false,
             savedId: '',
+            thinking: null,
             settingsFailed: false,
         };
         try {
@@ -111,6 +44,10 @@ const ConnectionsSection = (() => {
                 ? settings.find(item => item.key === 'system_ai_connection')
                 : null;
             state.savedId = row && row.value ? String(row.value) : '';
+            const thinkingRow = Array.isArray(settings)
+                ? settings.find(item => item.key === 'system_ai_thinking')
+                : null;
+            state.thinking = thinkingRow && thinkingRow.value ? String(thinkingRow.value) : null;
         } catch (err) {
             state.settingsFailed = true;
         }
@@ -120,8 +57,8 @@ const ConnectionsSection = (() => {
             <div class="flex items-start justify-between gap-4 mb-6">
                 <div class="min-w-0 flex-1">
                     <h2 class="text-lg font-semibold">AI Connections</h2>
-                    ${systemAiBlock(state)}
-                    <p class="text-sm text-bm-muted mt-4">Manage your LLM provider API connections.</p>
+                    <p class="text-sm text-bm-muted mt-1">Manage your LLM provider API connections.</p>
+                    ${BossModSystemAi.markup(state)}
                 </div>
                 <button id="btn-add-connection"
                         class="flex items-center gap-2 px-3 py-2 bg-bm-accent text-white rounded-lg
@@ -183,30 +120,10 @@ const ConnectionsSection = (() => {
         container.innerHTML = html;
         BossModIcons.paint(container, 'settings-connections');
 
-        // Bind events. The System AI select saves only after the operator
-        // changes it. Painting a fallback does not write the stored pick.
         const addBtn = document.getElementById('btn-add-connection');
         if (addBtn) addBtn.addEventListener('click', () => openForm(null));
 
-        container.querySelectorAll('.setting-input').forEach(input => {
-            input.addEventListener('change', async (e) => {
-                const key = e.target.dataset.settingKey;
-                const category = e.target.dataset.settingCategory;
-                const value = e.target.value;
-                try {
-                    await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=${encodeURIComponent(category)}`, {
-                        method: 'PUT',
-                    });
-                    BossModOperatorInvalidate.notifyLocal(['connections']);
-                    e.target.classList.add('border-emerald-400');
-                    setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
-                } catch {
-                    e.target.classList.add('border-red-400');
-                    showRowError(container, 'System AI could not be saved.');
-                    setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
-                }
-            });
-        });
+        BossModSystemAi.bind(container, state);
 
         container.querySelectorAll('[data-edit-conn]').forEach(btn => {
             btn.addEventListener('click', async () => {
