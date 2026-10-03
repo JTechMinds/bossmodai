@@ -23,7 +23,7 @@ from core import config
 from core.bm_cli import filesystem, install_layout
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.floor_roots import floor_root
-from core.bm_cli.locked_clone_outcome import PATH_JAIL_BLOCKED_WHY
+from core.bm_cli.locked_clone_outcome import PATH_JAIL_STEER
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
 from core.bm_cli.session import get_cli_cwd
@@ -108,7 +108,7 @@ def _assert_path_jail_block(result) -> None:
     assert result.ok is False
     assert result.approval_required is False
     assert result.kind == "host_deny"
-    assert PATH_JAIL_BLOCKED_WHY in result.detail
+    assert PATH_JAIL_STEER in result.detail
     assert "resolves outside the allowed workspace roots" in result.detail
 
 

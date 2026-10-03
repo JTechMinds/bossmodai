@@ -376,6 +376,28 @@ def test_moving_a_file_into_a_project_root_is_reviewed(monkeypatch: pytest.Monke
     assert _card_note(result) == f"{UNSURE_PREFIX}check"
 
 
+def test_a_null_device_redirect_is_reviewed_not_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=True)
+    _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    seen: list = []
+
+    def _ask(messages):
+        seen.append(_user_payload(messages))
+        return json.dumps({"decision": "ask", "basis": "unsure", "why": "check"})
+
+    monkeypatch.setattr(_COMPLETE, _ask)
+    result = execute_bm_cli(agent, state, "sed s/a/b/ notes.txt 2>/dev/null", channel_id=channel.id)
+
+    assert seen, "/dev/null is not a write target, so the host refusal must not stop the review"
+    assert result.approval_required is True
+    facts = json.dumps({key: seen[0][key] for key in ("paths", "write_targets")})
+    assert "/dev/null" not in facts
+    assert _card_note(result).endswith(f"{UNSURE_PREFIX}check")
+
+
 @pytest.mark.parametrize("command", ["docker ps", "kill 1234", "env kill 1234", "nohup docker ps"])
 def test_host_process_commands_are_a_card(monkeypatch: pytest.MonkeyPatch, command: str) -> None:
     _enable_shell()

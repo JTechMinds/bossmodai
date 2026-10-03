@@ -188,6 +188,14 @@ def test_the_executor_jails_argv_and_redirects_before_anything_runs(tmp_path: Pa
     assert not (tmp_path / "escape.txt").exists()
 
 
+def test_the_executor_lets_the_null_device_through_the_jail(tmp_path: Path) -> None:
+    result = _run(tmp_path, "printf x 2>/dev/null; printf y >/dev/null; cat </dev/null")
+
+    assert result.denied_by_path_jail is False
+    assert result.exit_code == 0
+    assert result.stdout == "x"
+
+
 def test_the_executor_refuses_unexpanded_globs(tmp_path: Path) -> None:
     script = parse_shell_script("ls *.txt")
     with pytest.raises(ValueError, match="expand globs"):
@@ -301,7 +309,15 @@ def test_an_approved_script_rechecks_the_jail() -> None:
     assert not Path("/etc/bossmod-script-test").exists()
 
 
-@pytest.mark.parametrize("target", ["/etc/bossmod-script-test", "../../../../../../escape-script-test.txt"])
+@pytest.mark.parametrize(
+    "target",
+    [
+        "/etc/bossmod-script-test",
+        "../../../../../../escape-script-test.txt",
+        "/dev/zero",
+        "/dev/../etc/bossmod-script-test",
+    ],
+)
 def test_a_redirect_outside_the_jail_is_a_block(target: str) -> None:
     _enable_shell()
     agent, state, root = _agent_in_project()
@@ -314,6 +330,22 @@ def test_a_redirect_outside_the_jail_is_a_block(target: str) -> None:
     assert "Path jail" in _error(result)
     assert not (root / "first.txt").exists()
     assert _audit() == [(script, "never_allowed", "denied")]
+
+
+def test_a_null_device_redirect_runs_and_is_not_a_jail_block() -> None:
+    _enable_shell()
+    agent, state, _root = _agent_in_project()
+    script = "ls missing.txt 2>/dev/null || echo NONE"
+
+    result = execute_bm_cli(agent, state, script)
+
+    assert result.ok is True
+    assert result.kind != "host_deny"
+    assert "NONE" in result.prompt_content
+    assert "STDERR" not in result.prompt_content
+    [(command, tier, _decision)] = _audit()
+    assert command == script
+    assert tier != "never_allowed"
 
 
 def test_glob_expansion_is_sorted_keeps_unmatched_words_and_stays_jailed(tmp_path: Path) -> None:

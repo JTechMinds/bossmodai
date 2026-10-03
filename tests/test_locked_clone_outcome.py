@@ -14,8 +14,10 @@ from core.bm_cli.locked_clone_outcome import (
     DEFAULT_APPROVAL_MESSAGE,
     HOST_OUTSIDE_NEST_WHY,
     PATH_JAIL_BLOCKED_WHY,
+    PATH_JAIL_STEER,
     decide_locked_clone_shell_outcome,
     is_virtual_cli_path,
+    path_jail_blocked_result,
     rewrite_virtual_shell_paths,
 )
 from core.bm_cli.parser import parse_cli_command
@@ -298,3 +300,21 @@ def test_path_jail_blocked_why_steers_projects_rewrite() -> None:
     assert "/projects" in PATH_JAIL_BLOCKED_WHY
     assert "rewrite" in PATH_JAIL_BLOCKED_WHY
     assert "enablement" in PATH_JAIL_BLOCKED_WHY
+
+
+def test_path_jail_blocked_result_leads_with_the_offending_path() -> None:
+    message = "Path jail: 'x' resolves outside the allowed workspace roots"
+
+    result = path_jail_blocked_result("cat x", "/me", message)
+
+    why = (result.data or {})["error"]
+    assert why.startswith("Blocked — Path jail: 'x'")
+    assert PATH_JAIL_STEER in why
+    assert why.count("Blocked —") == 1
+    assert result.detail == f"BossMod CLI error: {why}"
+    assert result.kind == "host_deny"
+
+    bare = path_jail_blocked_result("cat x", "/me")
+
+    assert (bare.data or {})["error"] == PATH_JAIL_BLOCKED_WHY
+    assert bare.kind == "host_deny"

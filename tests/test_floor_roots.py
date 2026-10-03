@@ -40,7 +40,7 @@ from core.bm_cli.host_roots import (
     normalize_host_root_setting,
 )
 from core.bm_cli.install_layout import RetiredProjectsRootSetting
-from core.bm_cli.locked_clone_outcome import PATH_JAIL_BLOCKED_WHY
+from core.bm_cli.locked_clone_outcome import PATH_JAIL_STEER
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.project_repo import project_directory_for
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
@@ -177,7 +177,7 @@ def test_shell_jail_refuses_git_on_another_floors_project() -> None:
     )
     assert foreign.ok is False
     assert foreign.kind == "host_deny"
-    assert PATH_JAIL_BLOCKED_WHY in foreign.detail
+    assert PATH_JAIL_STEER in foreign.detail
     assert "resolves outside the allowed workspace roots" in foreign.detail
     assert project_directory_for(ada.storage_key, theirs) is None
     assert project_directory_for(bob.storage_key, theirs) == theirs.resolve()

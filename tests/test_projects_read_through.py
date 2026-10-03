@@ -15,7 +15,7 @@ import db
 from core import config
 from core.bm_cli.floor_roots import floor_root
 from core.bm_cli.locked_clone_outcome import (
-    PATH_JAIL_BLOCKED_WHY,
+    PATH_JAIL_STEER,
     rewrite_virtual_shell_paths,
 )
 from core.bm_cli.parser import parse_cli_command
@@ -127,7 +127,7 @@ def test_outside_jail_is_blocked_with_why_and_steer() -> None:
     assert "/projects" in blob
     assert "rewrite" in blob.lower()
     assert "root:" not in blob
-    assert PATH_JAIL_BLOCKED_WHY in (denied.data or {}).get("error", "")
+    assert PATH_JAIL_STEER in (denied.data or {}).get("error", "")
 
 
 def test_desktop_mutate_stays_denied(tmp_path: Path) -> None:

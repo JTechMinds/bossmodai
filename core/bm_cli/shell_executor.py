@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 # Permission-denied style exit: the command was not started.
 PATH_JAIL_DENIED_EXIT_CODE = 126
 
+# The one redirect target allowed outside the jail: it discards every write
+# and reads empty, so it can neither leak nor change host data.
+NULL_DEVICE = Path(os.devnull)
+
 # ── Environment allowlist ────────────────────────────────────────────
 # Only these environment variables are forwarded to child processes.
 # Everything else (API keys, tokens, secrets) is stripped.
@@ -594,7 +598,9 @@ def resolve_redirect_target(token: str, *, cwd: Path, allowed_roots: Sequence[Pa
     """Resolve a script redirect's file and require it inside the jail.
 
     Unlike an argv operand, a redirect target is always a path, even when
-    the file does not exist yet (``> new.txt``).
+    the file does not exist yet (``> new.txt``). The exact token
+    ``os.devnull`` is the one target outside the jail, because it discards
+    every write and reads empty.
 
     Args:
         token: The target word (real or cwd-relative; ``~`` is *cwd*).
@@ -602,12 +608,15 @@ def resolve_redirect_target(token: str, *, cwd: Path, allowed_roots: Sequence[Pa
         allowed_roots: The jail roots.
 
     Returns:
-        The resolved real path.
+        The resolved real path, or :data:`NULL_DEVICE` unresolved.
 
     Raises:
         PathJailError: The target uses ``~user``, cannot be resolved, or
             resolves outside *allowed_roots*.
     """
+    # Exact token only: /dev/zero, /dev/../x and symlinks to it stay jailed.
+    if token == os.devnull:
+        return NULL_DEVICE
     try:
         resolved = _resolve_user_path(token, Path(cwd).resolve())
     except OSError as exc:

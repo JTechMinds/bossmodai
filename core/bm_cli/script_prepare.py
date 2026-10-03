@@ -27,7 +27,7 @@ from core.bm_cli.command_registry import resolve_virtual_command_name
 from core.bm_cli.host_roots import is_within_roots
 from core.bm_cli.locked_clone_outcome import rewrite_virtual_shell_paths
 from core.bm_cli.parser import parse_cli_command
-from core.bm_cli.shell_executor import PathJailError, allowed_shell_roots, resolve_redirect_target
+from core.bm_cli.shell_executor import NULL_DEVICE, PathJailError, allowed_shell_roots, resolve_redirect_target
 from core.bm_cli.shell_script import (
     Redirect,
     ShellScript,
@@ -80,7 +80,8 @@ class ScriptSegment:
             words keep their virtual form, as a lone command would) and
             redirect targets as resolved real paths.
         parsed: The segment's argv as a command: the policy subject.
-        redirect_writes: Real paths the segment's redirects write.
+        redirect_writes: Real paths the segment's redirects write (never
+            the null device).
     """
 
     command: SimpleCommand
@@ -210,9 +211,11 @@ def _prepare_command(
             redirects.append(redirect)
             continue
         (real_token,) = _rewrite_tokens(agent, (redirect.target.text,), cwd)
-        path = str(resolve_redirect_target(real_token, cwd=cwd_real, allowed_roots=roots))
+        resolved = resolve_redirect_target(real_token, cwd=cwd_real, allowed_roots=roots)
+        path = str(resolved)
         redirects.append(Redirect(redirect.fd, redirect.mode, Word(path, False, glob.escape(path))))
-        if redirect.mode != "read":
+        # The null device changes nothing, so it is not a write for the gate.
+        if redirect.mode != "read" and resolved != NULL_DEVICE:
             writes.append(path)
     expanded = SimpleCommand(command.assignments, argv, tuple(redirects))
     return ScriptSegment(expanded, parse_cli_command(segment_raw(expanded)), tuple(writes))

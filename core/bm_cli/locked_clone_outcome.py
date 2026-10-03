@@ -51,12 +51,14 @@ HOST_OUTSIDE_NEST_WHY = (
     "Do not invent a desk deny. Do not park @Operator as an enablement switch."
 )
 
-PATH_JAIL_BLOCKED_WHY = (
-    "Blocked — path jail. Shared /projects paths rewrite into the projects artifact root. "
+PATH_JAIL_STEER = (
+    "Shared /projects paths rewrite into the projects artifact root. "
     "Nest paths rewrite under /me/host-work. Stay inside those roots after rewrite. "
     "Host writes outside the jail stay denied. "
     "Do not invent a desk deny. Do not park @Operator as an enablement switch."
 )
+
+PATH_JAIL_BLOCKED_WHY = "Blocked — path jail. " + PATH_JAIL_STEER
 
 DEFAULT_APPROVAL_MESSAGE = (
     "No matching rule on a locked clone — approval required. "
@@ -255,13 +257,28 @@ def path_jail_blocked_result(
     cwd: str | None,
     jail_message: str | None = None,
 ) -> BossModCliResult:
-    """Convert a quiet path-jail drop into an explicit Blocked {why}."""
+    """Convert a quiet path-jail drop into an explicit Blocked {why}.
+
+    Args:
+        command: The raw command that was blocked.
+        cwd: The working directory the command would have run in.
+        jail_message: The jail's specific refusal (e.g. ``Path jail: 'x'
+            resolves outside ...``), or ``None``/blank when there is none.
+
+    Returns:
+        A ``host_deny`` error result. With a *jail_message* the reason is
+        ``"Blocked — <jail_message>. " + PATH_JAIL_STEER``: the specific path
+        leads, because the agent reads the first clause as the cause, and
+        "Blocked —" appears once. Without one the reason is
+        :data:`PATH_JAIL_BLOCKED_WHY`.
+    """
     from core.bm_cli.results import error_result
 
-    why = PATH_JAIL_BLOCKED_WHY
     extra = (jail_message or "").strip()
-    if extra and extra not in why:
-        why = f"{why} {extra}"
+    if extra:
+        why = f"Blocked — {extra.rstrip('.')}. {PATH_JAIL_STEER}"
+    else:
+        why = PATH_JAIL_BLOCKED_WHY
     return error_result(
         command,
         why,
