@@ -1200,7 +1200,7 @@ def test_bubbles_are_tinted_and_timestamps_recede() -> None:
     css = _read(CSS / "conversation.css")
 
     listing = css.split(".transcript-list {", 1)[1].split("}", 1)[0]
-    assert "max-width: 760px" in listing
+    assert "max-width" not in listing
     assert "gap: 16px" in listing
     assert "gap: 8px" not in listing
 

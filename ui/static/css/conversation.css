@@ -200,14 +200,15 @@
   background: var(--panel);
 }
 
-/* Bubbles stop being readable long before the window stops being wide.
+/* The turns carry the reading measure (.msg-turn 72%, system 92%), so the
+   list itself fills the transcript and an operator's turn ends at the
+   pane's right edge however wide the window is.
    16px between turns — 8px left the next author's name glued to the
    previous bubble. The air is from one turn's bubble to the next name. */
 .transcript-list {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: 760px;
 }
 
 .transcript-presence {

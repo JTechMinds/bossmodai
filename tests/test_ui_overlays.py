@@ -265,7 +265,8 @@ def test_modal_frame_is_the_chat_chrome() -> None:
     takeover = css.split('.modal-panel[data-size="takeover"] {', 1)[1].split("}", 1)[0]
     assert "width: 95vw" in takeover and "height: 95vh" in takeover
     assert 'data-size="medium"' not in css and 'data-size="wide"' not in css
-    assert ".modal-body :is(p, li) { max-width: 100ch; }" in css
+    assert ":is(p, li) { max-width" not in css
+    assert "li.floor-move-line { max-width: none; }" not in css
     assert "@keyframes modal-panel-in" in css and "@keyframes modal-scrim-in" in css
     base = css.split(".modal-panel {", 1)[1].split("}", 1)[0]
     assert "padding:" not in base, "the head, body and footer own their spacing"

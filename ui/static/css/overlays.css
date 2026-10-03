@@ -240,11 +240,6 @@
   overflow: hidden;
 }
 
-/* A panel is wide now, and a paragraph that runs the full width of 80% of a
-   large monitor is hard to read: prose keeps a measure, while tables, code,
-   grids and lists-of-cards still use the room. */
-.modal-panel[data-size="panel"] .modal-body :is(p, li) { max-width: 100ch; }
-
 /* The dialog's own buttons wear the app's button face, flat — the same fill
    .btn carries, so Cancel in a footer and Try again in a panel are one control
    and not two that nearly agree. */
@@ -1160,12 +1155,6 @@
 .floor-settings,
 .floor-picker,
 .floor-move { width: 100%; max-width: var(--panel-column); margin: 0 auto; }
-
-/* A row is a control, not prose: the panel's 100ch measure on <li>
-   (.modal-body :is(p, li)) would stop it short of the column's edge. Same
-   specificity as that rule, and later, so it wins. */
-.modal-panel .modal-body li.floor-item,
-.modal-panel .modal-body li.floor-move-line { max-width: none; }
 
 /* The name (core/inline-rename.js) reads as the floor's heading inside the
    panel, with the Lobby hint and the reload notice under it. */
