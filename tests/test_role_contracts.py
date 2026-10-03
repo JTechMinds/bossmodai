@@ -308,7 +308,9 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     ).read_text(encoding="utf-8")
     assert 'id="advanced-toggle"' in panel
     assert "Advanced" in panel
-    assert 'name="personality_id"' in panel
+    # The personality dropdown is mounted into this point
+    # (context/agent-form-choices.js), so its place in the form is the mount's.
+    assert 'id="agent-personality-mount"' in panel
     assert "suggestFinishLine" in specialty_js
     assert "A named draft or document exists. Empty done does not count." in specialty_js
     assert panel.index('name="name"') < panel.index('name="role"')
@@ -319,7 +321,7 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert panel.index('name="description"') < panel.index(">Color</legend>")
     assert panel.index(">Color</legend>") < panel.index("Advanced")
     assert panel.index("Advanced") < panel.index('name="done_fail_bar"')
-    assert panel.index('name="done_fail_bar"') < panel.index('name="personality_id"')
+    assert panel.index('name="done_fail_bar"') < panel.index('id="agent-personality-mount"')
     assert panel.index("Advanced") < panel.index("Desk Assignment")
     assert panel.index('name="description"') < panel.index("Desk Assignment")
     assert "nextUnusedAgentColor" in panel
@@ -329,16 +331,22 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert "Runtime core" in panel
     assert 'id="runtime-core-preview"' in panel
     assert 'name="runtime_core"' not in panel
+    assert panel.index('name="done_fail_bar"') < panel.index("${communicationFields()}")
+    assert panel.index("${communicationFields()}") < panel.index("Runtime core")
     # `values`, not `agent`: the same fields are shown for an agent being
-    # edited and for a snapshot being recreated (spec 2026-09-22 §5.3).
-    assert panel.index('name="done_fail_bar"') < panel.index("${communicationFields(values)}")
-    assert panel.index("${communicationFields(values)}") < panel.index("Runtime core")
+    # edited and for a snapshot being recreated (spec 2026-09-22 §5.3). The
+    # dropdowns take their starting values from the mount, so that is where
+    # `values` goes.
+    form_js = Path("ui/static/js/context/agent-form.js").read_text(encoding="utf-8")
+    assert "BossModAgentFormChoices.mount(form, { personalities, roster, values, kept: keptPrompt });" in form_js
     advanced = Path("ui/static/js/context/agent-form-advanced.js").read_text(encoding="utf-8")
-    assert 'name="communication_${field}"' in advanced
+    assert 'id="agent-communication-${field}-mount"' in advanced
+    choices = Path("ui/static/js/context/agent-form-choices.js").read_text(encoding="utf-8")
+    assert "name: `communication_${key}`" in choices
     submit_js = Path("ui/static/js/context/agent-submit.js").read_text(encoding="utf-8")
     for key in ("tone", "density", "jargon", "audience"):
         assert f"communication_{key}" in submit_js
-    assert panel.index("Runtime core") < panel.index('name="personality_id"')
+    assert panel.index("Runtime core") < panel.index('id="agent-personality-mount"')
     agent_status_js = Path("ui/static/js/core/agent-status.js").read_text(encoding="utf-8")
     assert "nextUnusedAgentColor" in agent_status_js
     assert "mergeRosterFromWorld" in agent_status_js

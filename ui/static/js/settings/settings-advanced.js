@@ -181,20 +181,10 @@ const AdvancedSystemSection = (() => {
                         <span class="text-xs text-bm-muted">${currentFolderOpener ? `Current: ${BossModFormat.escapeHtml(currentFolderOpener)}` : 'Current: ask on first use'}</span>
                     </div>
                     <div class="mt-3 space-y-3">
-                        <label class="block text-sm font-medium">
-                            <span class="block mb-1">Detected openers</span>
-                            <select id="desktop-folder-opener-select"
-                                    class="w-full max-w-sm px-3 py-2 text-sm border border-bm-border rounded-lg
-                                           bg-bm-bg">
-                                <option value="">Ask on first use</option>
-                                ${folderOpenerOptions.map(option => `
-                                    <option value="${BossModFormat.escapeAttribute(option.value)}" ${folderOpenerMode === 'preset' && currentFolderOpener === option.value ? 'selected' : ''}>
-                                        ${BossModFormat.escapeHtml(option.label)}
-                                    </option>
-                                `).join('')}
-                                <option value="__custom__" ${folderOpenerMode === 'custom' ? 'selected' : ''}>Custom executable</option>
-                            </select>
-                        </label>
+                        <div class="block text-sm font-medium">
+                            <label class="block mb-1" for="desktop-folder-opener-select">Detected openers</label>
+                            <div id="desktop-folder-opener-mount"></div>
+                        </div>
                         <label class="block text-sm font-medium">
                             <span class="block mb-1">Custom executable</span>
                             <input type="text" id="desktop-folder-opener-custom"
@@ -305,7 +295,6 @@ const AdvancedSystemSection = (() => {
             }
         });
 
-        const openerSelect = document.getElementById('desktop-folder-opener-select');
         const openerCustom = document.getElementById('desktop-folder-opener-custom');
         const openerStatus = document.getElementById('folder-opener-status');
         const setFolderOpenerStatus = (text, isError = false) => {
@@ -314,24 +303,40 @@ const AdvancedSystemSection = (() => {
             openerStatus.classList.toggle('text-bm-muted', !isError);
         };
 
-        openerSelect.addEventListener('change', () => {
-            if (openerSelect.value === '__custom__') {
-                openerCustom.focus();
-                return;
-            }
-            if (openerSelect.value === '') {
-                openerCustom.value = '';
-            }
+        // The app's dropdown, never a native <select>: "Ask on first use",
+        // each detected opener, then "Custom executable".
+        const openerMenu = BossModMenuSelect.create({
+            label: 'Folder opener',
+            id: 'desktop-folder-opener-select',
+            options: [
+                { value: '', label: 'Ask on first use' },
+                ...folderOpenerOptions.map(option => ({ value: option.value, label: option.label })),
+                { value: '__custom__', label: 'Custom executable' },
+            ],
+            value: folderOpenerMode === 'custom' ? '__custom__' : currentFolderOpener,
+            variant: 'field',
+            onChange: (value) => {
+                if (value === '__custom__') {
+                    openerCustom.focus();
+                    return;
+                }
+                if (value === '') {
+                    openerCustom.value = '';
+                }
+            },
         });
+        const openerMount = document.getElementById('desktop-folder-opener-mount');
+        openerMount.append(openerMenu.element);
+        BossModIcons.paint(openerMount, 'settings-advanced');
 
         openerCustom.addEventListener('input', () => {
             if (openerCustom.value.trim()) {
-                openerSelect.value = '__custom__';
+                openerMenu.setValue('__custom__');
             }
         });
 
         document.getElementById('btn-save-folder-opener').addEventListener('click', async () => {
-            const selected = openerSelect.value;
+            const selected = openerMenu.getValue();
             const resolvedValue = selected === '__custom__' ? openerCustom.value.trim() : selected;
             try {
                 await apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`, { method: 'PUT' });
@@ -346,7 +351,7 @@ const AdvancedSystemSection = (() => {
             try {
                 await apiFetchOk('/api/settings/desktop_open_folder_handler?value=&category=advanced', { method: 'PUT' });
                 BossModOperatorInvalidate.notifyLocal(['advanced-system']);
-                openerSelect.value = '';
+                openerMenu.setValue('');
                 openerCustom.value = '';
                 setFolderOpenerStatus('BossMod will ask on first use.');
             } catch {

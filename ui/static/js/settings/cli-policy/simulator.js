@@ -25,6 +25,12 @@ const CliPolicySimulator = (() => {
     let simHistoryIdx = -1;
     let simShellEnabled = false;
     let simDefaultPolicy = 'approval_required';
+    /**
+     * The "Run as" dropdown, rebuilt with every terminal render; null before
+     * the first. Only the terminal's own handlers read it, and they go with
+     * the terminal when a notice replaces it.
+     */
+    let agentMenu = null;
 
     /**
      * @returns {Element|null} The output pane. Resolved at every write, not
@@ -36,8 +42,7 @@ const CliPolicySimulator = (() => {
 
     /** @returns {string} The selected agent's display name, or 'agent'. */
     function selectedAgentName() {
-        const select = document.getElementById('cli-sim-agent');
-        return select?.selectedOptions[0]?.text || 'agent';
+        return agentMenu ? agentMenu.getLabel() : 'agent';
     }
 
     /**
@@ -133,15 +138,24 @@ const CliPolicySimulator = (() => {
             return;
         }
 
-        const agentOptions = agentsCache.map(a =>
-            `<option value="${escAttr(a.id)}">${esc(a.name)}</option>`
-        ).join('');
-
         el.innerHTML = BossModSimulatorShell.terminalMarkup({
-            agentOptions,
             shellEnabled: simShellEnabled,
             defaultPolicy: simDefaultPolicy,
         });
+
+        // "Run as": the toolbar dropdown, beside the row's buttons. A switch
+        // updates the prompt and says so in the terminal.
+        agentMenu = BossModMenuSelect.create({
+            label: 'Run as',
+            id: 'cli-sim-agent',
+            options: agentsCache.map(a => ({ value: String(a.id), label: a.name })),
+            onChange: () => {
+                _updateSimPrompt();
+                output.line(getOutputEl(), 'dim', `Switched to ${selectedAgentName()}.`);
+                output.blank(getOutputEl());
+            },
+        });
+        document.getElementById('cli-sim-agent-mount').append(agentMenu.element);
 
         icons(el);
         simCommandHistory = [];
@@ -158,14 +172,7 @@ const CliPolicySimulator = (() => {
 
         // Focus input when clicking terminal
         document.getElementById('cli-sim-terminal').addEventListener('click', (e) => {
-            if (e.target.tagName !== 'INPUT' && e.target.tagName !== 'SELECT') input.focus();
-        });
-
-        // Agent change updates prompt
-        document.getElementById('cli-sim-agent').addEventListener('change', () => {
-            _updateSimPrompt();
-            output.line(getOutputEl(), 'dim', `Switched to ${selectedAgentName()}.`);
-            output.blank(getOutputEl());
+            if (e.target.tagName !== 'INPUT' && !e.target.closest('.menu-select, .menu')) input.focus();
         });
 
         document.getElementById('btn-sim-execute-real').addEventListener('click', async () => {
@@ -223,10 +230,9 @@ const CliPolicySimulator = (() => {
     }
 
     function _updateSimPrompt() {
-        const select = document.getElementById('cli-sim-agent');
         const prompt = document.getElementById('cli-sim-prompt');
         const title = document.getElementById('cli-sim-title');
-        if (!select || !prompt) return;
+        if (!agentMenu || !prompt) return;
         const name = selectedAgentName();
         prompt.textContent = `${name} $`;
         if (title) title.textContent = `BossMod CLI — ${name}`;
@@ -244,7 +250,7 @@ const CliPolicySimulator = (() => {
         await BossModSimulatorRun.runCommand(cmd, {
             execute,
             getOutputEl,
-            agentId: document.getElementById('cli-sim-agent')?.value,
+            agentId: agentMenu ? agentMenu.getValue() : undefined,
             agentName: selectedAgentName(),
             rules: rulesCache,
         });

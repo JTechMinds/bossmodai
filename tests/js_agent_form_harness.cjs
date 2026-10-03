@@ -17,8 +17,10 @@
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
+const { installIconsStub } = require("./js_icons_stub.cjs");
 
 const documentStub = installDom();
+installIconsStub();
 
 // BossModFormat.escapeHtml round-trips a string through textContent and reads
 // `innerHTML` back off the scratch node. The shared fake element has no such
@@ -42,11 +44,16 @@ documentStub.createElement = (tag) => {
 };
 
 const paths = process.argv.slice(2);
+// The dropdowns are BossModMenuSelects the bindings mount after the markup,
+// so the menu and its panel load too, and the two modules that mount them.
 const NAMES = [
     "BossModDom", "BossModFormat", "BossModAgentStatus", "BossModAvatar",
     "BossModCommunication",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays",
+    "BossModMenu", "BossModMenuSelect",
     "BossModAgentFields", "BossModAgentFormFields", "BossModAgentFormAdvanced",
-    "BossModAgentFormConnections", "BossModAgentSubmit",
+    "BossModAgentFormChoices", "BossModAgentFormConnections", "BossModAgentFormBindings",
+    "BossModAgentSubmit",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -140,10 +147,43 @@ const UNLINKED = {
     id: "a3", name: "Cy", connection_id: null, thinking_social: "default", thinking_work: "default",
 };
 
-/** The value of the hidden input named `name`, or null when there is none. */
-function hiddenValue(markup, name) {
-    const match = new RegExp(`name="${name}"\\s+value="([^"]*)"`).exec(markup);
-    return match ? match[1] : null;
+/**
+ * A form holding an empty node for every mount point `markup` declares, as
+ * the real form does once the markup is in the DOM. The ids come FROM the
+ * markup, so a builder that stopped rendering one leaves its control nowhere
+ * to mount and the binding below throws.
+ */
+function formWithMounts(markup) {
+    const form = documentStub.createElement("form");
+    for (const match of markup.matchAll(/id="([A-Za-z0-9_-]+)"/g)) {
+        if (!/^agent-ai-mount-|-mount$/.test(match[1])) continue;
+        const point = documentStub.createElement("div");
+        point.setAttribute("id", match[1]);
+        form.append(point);
+    }
+    return form;
+}
+
+/**
+ * The AI section for `values`, rendered and then bound the way
+ * context/agent-form.js binds it: the dropdowns mounted, each carrying the
+ * hidden input the submit reads.
+ */
+function boundSection(values, connections) {
+    const form = formWithMounts(CONN.connectionsSection(values, connections));
+    BossModAgentFormBindings.bindAiConnection(form, connections, values);
+    return form;
+}
+
+/** The form value named `name` — a dropdown's hidden input — or null. */
+function formValue(form, name) {
+    const node = form.querySelector(`input[name="${name}"]`);
+    return node ? node.value : null;
+}
+
+/** How many form values are named `name`. */
+function formValueCount(form, name) {
+    return form.querySelectorAll(`input[name="${name}"]`).length;
 }
 
 const labels = (options) => options.map((option) => option.label).join("|");
@@ -157,15 +197,24 @@ async function main() {
     let stale = "";
     let unlinked = "";
     let blank = "";
+    // The same four, bound: what the dropdowns hold once mounted.
+    let bound4 = null;
     try {
         markup = CONN.connectionsSection(AGENT, CONNECTIONS);
         stale = CONN.connectionsSection(STALE, CONNECTIONS);
         unlinked = CONN.connectionsSection(UNLINKED, CONNECTIONS);
         blank = CONN.connectionsSection(null, CONNECTIONS);
+        bound4 = {
+            agent: boundSection(AGENT, CONNECTIONS),
+            stale: boundSection(STALE, CONNECTIONS),
+            unlinked: boundSection(UNLINKED, CONNECTIONS),
+            blank: boundSection(null, CONNECTIONS),
+        };
     } catch (err) {
         sectionError = String((err && err.message) || err);
     }
     const empty = CONN.connectionsSection(AGENT, []);
+    const boundEmpty = boundSection(AGENT, []);
     const picked = await submitting({
         name: "Picked", "agent-color": PALETTE[0],
         connection_id: "c2", thinking_social: "off", thinking_work: "default",
@@ -218,6 +267,14 @@ async function main() {
         BossModAgentFormFields.statusAndRecovery(editAgent),
         BossModAgentFormFields.actionsRow(editAgent),
     ].join("\n");
+    // The edit form once its dropdowns are mounted, as context/agent-form.js
+    // mounts them: the Advanced choices, then the AI section.
+    const editForm = formWithMounts(editMarkup);
+    BossModAgentFormChoices.mount(editForm, {
+        personalities: [{ id: "p1", name: "Terse", prompt_template: "be terse" }],
+        roster: [], values: editAgent, kept: null,
+    });
+    BossModAgentFormBindings.bindAiConnection(editForm, CONNECTIONS, editAgent);
     const hireMarkup = [
         BossModAgentFormFields.nameField(null),
         BossModAgentFormFields.roleContractCard(null, []),
@@ -229,12 +286,12 @@ async function main() {
         role: /<input type="text" name="role"/.test(editMarkup),
         description: /<textarea name="description"/.test(editMarkup),
         color: /name="agent-color"/.test(editMarkup),
-        desk: /<select name="desk"/.test(editMarkup)
+        desk: formValueCount(editForm, "desk") === 1
             && editMarkup.includes("Desk Assignment"),
         // The connection and every routed activation's thinking level, not
         // merely the word "connection".
-        connections: editMarkup.includes('name="connection_id"')
-            && THINKING_MODES.every((mode) => editMarkup.includes(`name="${mode.key}"`)),
+        connections: formValueCount(editForm, "connection_id") === 1
+            && THINKING_MODES.every((mode) => formValueCount(editForm, mode.key) === 1),
         prompt_history: ["prompt_history_last_n", "prompt_history_max_tokens",
             "prompt_history_earliest_ts", "prompt_history_include_notifications"]
             .every((name) => editMarkup.includes(`name="${name}"`)),
@@ -298,24 +355,29 @@ async function main() {
         sectionHasNoNativeSelect: markup.length > 0 && !/<select\b/.test(markup),
         // One connection and one thinking level per ROUTED activation — and
         // nothing per-mode about the model.
-        sectionCoversEveryRoutedMode: (markup.match(/name="connection_id"/g) || []).length === 1
+        sectionCoversEveryRoutedMode: Boolean(bound4)
+            && formValueCount(bound4.agent, "connection_id") === 1
             && THINKING_MODES.length === 2
-            && THINKING_MODES.every((mode) => (
-                markup.match(new RegExp(`name="${mode.key}"`, "g")) || []).length === 1)
-            && !markup.includes('name="model_'),
+            && THINKING_MODES.every((mode) => formValueCount(bound4.agent, mode.key) === 1)
+            && !markup.includes('name="model_')
+            && bound4.agent.querySelectorAll("input").every((node) => !node.getAttribute("name").startsWith("model_")),
         // The stored choice comes back in the inputs the save reads.
-        sectionCarriesTheStoredChoice: hiddenValue(markup, "connection_id") === "c2"
-            && hiddenValue(markup, "thinking_work") === "high"
-            && hiddenValue(markup, "thinking_social") === "default"
+        sectionCarriesTheStoredChoice: Boolean(bound4)
+            && formValue(bound4.agent, "connection_id") === "c2"
+            && formValue(bound4.agent, "thinking_work") === "high"
+            && formValue(bound4.agent, "thinking_social") === "default"
             && !markup.includes('id="agent-connection-missing"'),
         // A level the connection no longer offers cannot be shown, so it falls
         // back to Server default, and the note names what was stored.
-        anUnofferedLevelIsResetAndNamed: hiddenValue(stale, "thinking_social") === "default"
+        anUnofferedLevelIsResetAndNamed: Boolean(bound4)
+            && formValue(bound4.stale, "thinking_social") === "default"
             && stale.includes("Social: thinking “low” — this connection doesn't offer it; pick one."),
-        anUnlinkedAgentIsToldToChoose: hiddenValue(unlinked, "connection_id") === ""
+        anUnlinkedAgentIsToldToChoose: Boolean(bound4)
+            && formValue(bound4.unlinked, "connection_id") === ""
             && unlinked.includes("This agent has no AI connection — choose one."),
         // A blank form has nothing stored, so nothing to report.
-        aBlankFormSaysNothing: hiddenValue(blank, "connection_id") === ""
+        aBlankFormSaysNothing: Boolean(bound4)
+            && formValue(bound4.blank, "connection_id") === ""
             && !blank.includes('id="agent-connection-missing"'),
         // What each control offers.
         thinkingOptionsFollowTheConnection:
@@ -342,7 +404,8 @@ async function main() {
         })(),
         // The empty case still offers the way out rather than a blank section.
         emptySectionLinksToSettings: empty.includes("btn-goto-connections")
-            && !empty.includes('name="connection_id"'),
+            && !empty.includes("agent-ai-mount-connection_id")
+            && formValue(boundEmpty, "connection_id") === null,
         // What the save sends: the id and the levels, nothing a connection owns.
         submitSendsTheConnectionAndLevels: picked.threw === false
             && picked.data.connection_id === "c2"

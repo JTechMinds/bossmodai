@@ -43,6 +43,7 @@ HARNESS_MODULES = [
     CONTEXT / "agent-fields.js",
     JS / "core" / "communication.js",
     CONTEXT / "agent-form-connections.js",
+    CONTEXT / "agent-form-choices.js",
     CONTEXT / "agent-form-bindings.js",
     CONTEXT / "agent-form-hydrate.js",
     CONTEXT / "agent-recovery.js",

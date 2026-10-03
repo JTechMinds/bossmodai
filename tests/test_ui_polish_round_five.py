@@ -127,10 +127,19 @@ AGENT_FORM_MODULES = [
     JS / "core" / "agent-status.js",
     JS / "core" / "avatar.js",
     JS / "core" / "communication.js",
+    # The dropdowns the bindings mount (core/menu-select.js) and their panel.
+    JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
+    JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
+    JS / "core" / "menu-select.js",
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",
+    JS / "context" / "agent-form-choices.js",
     JS / "context" / "agent-form-connections.js",
+    JS / "context" / "agent-form-bindings.js",
     JS / "context" / "agent-submit.js",
 ]
 

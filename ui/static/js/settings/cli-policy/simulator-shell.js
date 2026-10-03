@@ -18,13 +18,14 @@ const BossModSimulatorShell = (() => {
      * Build the terminal shell.
      *
      * @param {object} view
-     * @param {string} view.agentOptions      Pre-escaped <option> markup.
      * @param {boolean} view.shellEnabled
      * @param {string} view.defaultPolicy
-     * @returns {string}
+     * @returns {string} With an empty `#cli-sim-agent-mount` for the "Run as"
+     *   dropdown, which simulator.js builds (a BossModMenuSelect is a DOM
+     *   node, not markup).
      */
     function terminalMarkup(view) {
-        const { agentOptions, shellEnabled, defaultPolicy } = view;
+        const { shellEnabled, defaultPolicy } = view;
         const shellBadge = shellEnabled
             ? '<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/20">SHELL ON</span>'
             : '<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-red-500/15 text-red-400 border border-red-500/20">SHELL OFF</span>';
@@ -39,11 +40,8 @@ const BossModSimulatorShell = (() => {
                 <div class="flex items-center gap-3 mb-3 shrink-0 flex-wrap">
                     <div class="flex items-center gap-2">
                         <i data-lucide="user" class="w-4 h-4 text-bm-muted"></i>
-                        <label class="text-xs font-semibold whitespace-nowrap">Run as</label>
-                        <select id="cli-sim-agent"
-                                class="px-3 py-1.5 bg-bm-bg border border-bm-border rounded-lg text-sm text-bm-text font-medium min-w-[200px]">
-                            ${agentOptions}
-                        </select>
+                        <label class="text-xs font-semibold whitespace-nowrap" for="cli-sim-agent">Run as</label>
+                        <span id="cli-sim-agent-mount"></span>
                     </div>
                     <div class="flex items-center gap-2">
                         ${shellBadge}

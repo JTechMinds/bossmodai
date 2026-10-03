@@ -88,6 +88,7 @@ CONTEXT_MODULES = [
     CONTEXT / "agent-fields.js",
     CONTEXT / "agent-form-fields.js",
     CONTEXT / "agent-form-advanced.js",
+    CONTEXT / "agent-form-choices.js",
     CONTEXT / "agent-form-connections.js",
     CONTEXT / "agent-form-bindings.js",
     CONTEXT / "agent-form-hydrate.js",
@@ -543,7 +544,7 @@ def test_agent_edit_modules_stay_focused() -> None:
         "agent-dialog-slot.js", "agent-edit.js",
         "agent-fields.js",
         "agent-form-advanced.js", "agent-form-bindings.js",
-        "agent-form-connections.js", "agent-form-fields.js",
+        "agent-form-choices.js", "agent-form-connections.js", "agent-form-fields.js",
         "agent-form-hydrate.js", "agent-form-save.js",
         "agent-form-template.js", "agent-form.js", "agent-recovery.js",
         "agent-save-template.js", "agent-submit.js", "agent-template-picker.js",
@@ -979,8 +980,12 @@ def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:
     # The kept option and the value it submits are one vocabulary, not two.
     fields = _read(CONTEXT / "agent-fields.js")
     assert "const KEPT_PERSONALITY = '__kept__';" in fields
+    # The kept OPTION is the personality dropdown's (agent-form-choices.js);
+    # the hidden input carrying its text is the Advanced markup's.
+    choices = _read(CONTEXT / "agent-form-choices.js")
+    assert "const FIELDS = BossModAgentFields;" in choices
+    assert "FIELDS.KEPT_PERSONALITY" in choices
     advanced = _read(CONTEXT / "agent-form-advanced.js")
-    assert "BossModAgentFields.KEPT_PERSONALITY" in advanced
     assert 'name="prompt_template_kept"' in advanced
     submit = _read(CONTEXT / "agent-submit.js")
     assert "if (personalityId === BossModAgentFields.KEPT_PERSONALITY) {" in submit

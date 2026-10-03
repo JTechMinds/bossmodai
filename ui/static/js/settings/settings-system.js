@@ -9,24 +9,32 @@ const SystemSection = (() => {
 
     const INPUT_CLASS = 'setting-input w-full px-3 py-2 text-sm border border-bm-border rounded-lg bg-white';
 
-    function selectControl(setting, meta) {
-        const options = meta.options || [];
-        const known = options.some(opt => opt.value === setting.value);
-        let html = options.map(opt => {
-            const selected = setting.value === opt.value ? ' selected' : '';
-            return `<option value="${BossModFormat.escapeAttribute(opt.value)}"${selected}>${BossModFormat.escapeHtml(opt.label)}</option>`;
-        }).join('');
-        if (setting.value && !known) {
-            html += `<option value="${BossModFormat.escapeAttribute(setting.value)}" selected>${BossModFormat.escapeHtml(setting.value)}</option>`;
+    /**
+     * A select-type setting's options. A stored value no option holds gets
+     * its own row, so the dropdown shows what is stored rather than a choice
+     * that was never made.
+     *
+     * @param {{value: string}} setting
+     * @param {{options?: Array<{value: string, label: string}>}} meta
+     * @returns {Array<{value: string, label: string}>}
+     */
+    function selectOptions(setting, meta) {
+        const options = (meta.options || []).slice();
+        if (setting.value && !options.some(opt => opt.value === setting.value)) {
+            options.push({ value: setting.value, label: setting.value });
         }
-        return `<select data-setting-key="${BossModFormat.escapeAttribute(setting.key)}"
-                        data-setting-category="${BossModFormat.escapeAttribute(setting.category)}"
-                        class="${INPUT_CLASS}">${html}</select>`;
+        return options;
+    }
+
+    /** A BossModMenuSelect is mounted here after the HTML is in the DOM. */
+    function selectControl(setting) {
+        return `<div data-setting-select="${BossModFormat.escapeAttribute(setting.key)}"
+                     data-setting-category="${BossModFormat.escapeAttribute(setting.category)}"></div>`;
     }
 
     function settingControl(setting) {
         const meta = SETTING_META[setting.key] || {};
-        if (meta.control === 'select') return selectControl(setting, meta);
+        if (meta.control === 'select') return selectControl(setting);
         // A BossModSwitch is mounted here after the HTML is in the DOM.
         if (meta.control === 'switch') {
             return `<div data-setting-switch="${BossModFormat.escapeAttribute(setting.key)}"
@@ -60,7 +68,7 @@ const SystemSection = (() => {
      * @param {string} key  Setting key.
      * @param {string} category  The row's stored category; the PUT keeps it.
      * @param {string} value  Raw value to store.
-     * @param {HTMLElement} target  The input, select, or switch element to flash.
+     * @param {HTMLElement} target  The input, dropdown, or switch element to flash.
      * @returns {Promise<boolean>} Whether the server accepted the value.
      */
     async function saveSetting(key, category, value, target) {
@@ -197,6 +205,26 @@ const SystemSection = (() => {
                 },
             });
             mount.append(toggle.element);
+        });
+
+        el.querySelectorAll('[data-setting-select]').forEach(mount => {
+            const key = mount.dataset.settingSelect;
+            const category = mount.dataset.settingCategory;
+            const setting = activeItems.find(item => item.key === key);
+            let saved = setting.value;
+            const menu = BossModMenuSelect.create({
+                label: SETTING_META[key].label,
+                options: selectOptions(setting, SETTING_META[key]),
+                value: setting.value,
+                variant: 'field',
+                onChange: async (value) => {
+                    // Never show a state the server refused.
+                    if (await saveSetting(key, category, value, menu.element)) saved = value;
+                    else menu.setValue(saved);
+                },
+            });
+            mount.append(menu.element);
+            BossModIcons.paint(mount, 'settings-system');
         });
 
         el.querySelectorAll('.setting-input').forEach(input => {

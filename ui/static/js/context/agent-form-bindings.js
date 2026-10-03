@@ -56,7 +56,7 @@ const BossModAgentFormBindings = (() => {
      * @param {HTMLElement} container
      * @param {object|null} values  What the form was built from — the agent
      *   being edited or the snapshot being recreated. Only its stored desk is
-     *   read, and only when the form has no desk select.
+     *   read, and only when the form has no desk control.
      * @returns {void}
      */
     function bindRuntimeCorePreview(container, values) {
@@ -64,7 +64,9 @@ const BossModAgentFormBindings = (() => {
         if (!preview) return;
         const nameInput = container.querySelector('input[name="name"]');
         const roleInput = container.querySelector('input[name="role"]');
-        const deskSelect = container.querySelector('select[name="desk"]');
+        // The desk dropdown's form value (core/menu-select.js `name`): a
+        // pick fires `change` on it, as a native select did.
+        const deskSelect = container.querySelector('input[name="desk"]');
 
         async function refresh() {
             const params = new URLSearchParams();
@@ -153,6 +155,10 @@ const BossModAgentFormBindings = (() => {
      * operator changes one. A template hydrate writes the pack block first;
      * this only replaces values that still match the previous default.
      *
+     * The four are context/agent-form-choices.js's dropdowns, found by their
+     * form value's name and written through the control
+     * (BossModMenuSelect.instanceFor), never through the input.
+     *
      * @param {HTMLElement} container
      * @param {object|null} values  What the form was built from — the agent
      *   being edited or the snapshot being recreated; null for a blank form.
@@ -160,10 +166,11 @@ const BossModAgentFormBindings = (() => {
      */
     function bindCommunicationDefaults(container, values) {
         const specialtyInput = container.querySelector('input[name="role"]');
-        const selects = BossModCommunication.KEYS.map((key) => (
+        const inputs = BossModCommunication.KEYS.map((key) => (
             container.querySelector(`[name="communication_${key}"]`)
         ));
-        if (!specialtyInput || selects.some((node) => !node)) return;
+        if (!specialtyInput || inputs.some((node) => !node)) return;
+        const selects = inputs.map((node) => BossModMenuSelect.instanceFor(node));
 
         let lastDefault = BossModCommunication.defaultFor(
             values ? (values.role || '') : specialtyInput.value,
@@ -173,8 +180,8 @@ const BossModAgentFormBindings = (() => {
             const next = BossModCommunication.defaultFor(specialtyInput.value);
             BossModCommunication.KEYS.forEach((key, index) => {
                 const select = selects[index];
-                if (select.value === lastDefault[key]) {
-                    select.value = next[key];
+                if (select.getValue() === lastDefault[key]) {
+                    select.setValue(next[key]);
                 }
             });
             lastDefault = next;
@@ -186,9 +193,9 @@ const BossModAgentFormBindings = (() => {
      * Mount the AI Connection section's three dropdowns and keep them in step.
      *
      * One BossModMenuSelect for the connection, one per routed activation for
-     * its thinking level, each writing the hidden input
-     * context/agent-form-connections.js rendered beside its mount point — the
-     * inputs are what context/agent-submit.js reads. Picking another
+     * its thinking level, each carrying its own form value
+     * (core/menu-select.js `name`: `connection_id` and the THINKING_MODES
+     * keys) — what context/agent-submit.js reads. Picking another
      * connection re-lists each thinking control with what THAT connection
      * offers; a level it does not offer is reset to Server default in the
      * control itself, so the operator sees the change before saving it.
@@ -199,18 +206,17 @@ const BossModAgentFormBindings = (() => {
      * @param {object|null} values  What the form was built from — the agent
      *   being edited or the snapshot being recreated; null for a blank form.
      *   Read through `startingValues`, the same reading the markup used.
-     * @returns {void} Returns early when the form has no connection input:
-     *   with no connection configured the section is a link to Settings.
-     * @throws {Error} When the input exists but a mount point or a thinking
-     *   input is missing. They are rendered by the same branch, so an absent
-     *   one means the save would read a value no control can change.
+     * @returns {void} Returns early when `connections` renders the
+     *   unavailable shape (BossModAgentFormConnections.shapeFor): with no
+     *   connection configured the section is a link to Settings.
+     * @throws {Error} When the picker shape is missing a mount point. They are
+     *   rendered by the same branch, so an absent one means the save would
+     *   read no value at all.
      */
     function bindAiConnection(form, connections, values) {
         const CONNECTIONS = BossModAgentFormConnections;
-        const connectionInput = form.querySelector('input[name="connection_id"]');
-        if (!connectionInput) return;
+        if (CONNECTIONS.shapeFor(connections) !== CONNECTIONS.PICKER) return;
         const start = CONNECTIONS.startingValues(values, connections);
-        connectionInput.value = start.connectionId;
         const byId = new Map(connections.map((c) => [c.id, c]));
         const mount = (key, select) => {
             const point = form.querySelector(`#${CONNECTIONS.mountId(key)}`);
@@ -220,34 +226,31 @@ const BossModAgentFormBindings = (() => {
         };
 
         const thinking = BossModAgentFields.THINKING_MODES.map((mode) => {
-            const input = form.querySelector(`input[name="${mode.key}"]`);
-            if (!input) throw new Error(`[agent-form-bindings] the AI section has no ${mode.key} input`);
-            input.value = start.thinking[mode.key];
             const select = BossModMenuSelect.create({
                 label: `${mode.label} thinking`,
-                options: CONNECTIONS.thinkingOptions(byId.get(connectionInput.value) || null),
-                value: input.value,
+                name: mode.key,
+                options: CONNECTIONS.thinkingOptions(byId.get(start.connectionId) || null),
+                value: start.thinking[mode.key],
                 variant: 'field',
-                onChange: (value) => { input.value = value; },
             });
             mount(mode.key, select);
-            return { input, select };
+            return select;
         });
 
         const connection = BossModMenuSelect.create({
             label: 'AI connection',
-            options: CONNECTIONS.connectionOptions(connections, connectionInput.value),
-            value: connectionInput.value,
+            name: 'connection_id',
+            options: CONNECTIONS.connectionOptions(connections, start.connectionId),
+            value: start.connectionId,
             variant: 'field',
             onChange: (id) => {
-                connectionInput.value = id;
                 // Once a connection is chosen, "Choose a connection" goes.
                 connection.setOptions(CONNECTIONS.connectionOptions(connections, id), id);
                 const options = CONNECTIONS.thinkingOptions(byId.get(id) || null);
-                thinking.forEach(({ input, select }) => {
-                    const keep = options.some((option) => option.value === input.value) ? input.value : 'default';
+                thinking.forEach((select) => {
+                    const held = select.getValue();
+                    const keep = options.some((option) => option.value === held) ? held : 'default';
                     select.setOptions(options, keep);
-                    input.value = keep;
                 });
             },
         });

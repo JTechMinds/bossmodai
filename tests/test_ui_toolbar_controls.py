@@ -60,6 +60,20 @@ def test_toolbar_controls_harness() -> None:
         "defaultVariantIsTheButton": True,
         "fieldVariantReadsAsAField": True,
         "badVariantAndShortThrow": True,
+        # The form contract (core/menu-select.js `name`, `id`, setValue,
+        # getLabel, getOptions, instanceFor).
+        "namedCarriesItsValue": True,
+        "idLandsOnTheTrigger": True,
+        "aPickWritesThenFiresOneBubblingChange": True,
+        "aSamePickFiresNothing": True,
+        "setValueFollowsSilently": True,
+        "setValueRefusesAStranger": True,
+        "setOptionsMovesTheInput": True,
+        "labelIsTheCurrentChoice": True,
+        "optionsAreACopy": True,
+        "onChangeIsOptionalOnlyWithAName": True,
+        "unnamedHasNoInput": True,
+        "instanceForResolvesAndRefuses": True,
     }
 
 

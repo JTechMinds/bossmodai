@@ -122,16 +122,12 @@ const BossModCliPolicySettings = (() => {
                         </button>
                     </div>`;
             } else if (meta.type === 'select') {
-                const options = meta.options.map(opt =>
-                    `<option value="${escAttr(opt.value)}" ${s.value === opt.value ? 'selected' : ''}>${esc(opt.label)}</option>`
-                ).join('');
+                // A BossModMenuSelect is mounted here after the HTML is in
+                // the DOM (see `mountSelect`).
                 html += `
-                    <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
+                    <label class="block text-sm font-semibold mb-1" for="cli-setting-${escAttr(s.key)}">${esc(meta.label)}</label>
                     <p class="text-xs text-bm-muted mb-2">${esc(meta.description)}</p>
-                    <select data-cli-setting-input="${escAttr(s.key)}"
-                            class="field-select max-w-xs">
-                        ${options}
-                    </select>`;
+                    <div data-cli-setting-select="${escAttr(s.key)}"></div>`;
             } else if (meta.type === 'textarea') {
                 html += `
                     <label class="block text-sm font-semibold mb-1">${esc(meta.label)}</label>
@@ -183,25 +179,57 @@ const BossModCliPolicySettings = (() => {
             });
         });
 
-        // Number/select inputs
-        el.querySelectorAll('[data-cli-setting-input]').forEach(input => {
-            input.addEventListener('change', async (e) => {
-                const key = e.target.dataset.cliSettingInput;
-                const value = e.target.value;
-                const card = el.querySelector(`[data-setting-card="${key}"]`);
-                try {
-                    await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`, {
-                        method: 'PUT',
-                    });
-                    applySettingSaveResult(card, true, '');
-                    // Autosave already wrote the key. Default Policy is the
-                    // one change the operator needs confirmed in a toast;
-                    // timeout and host-root edits keep the card flash only.
-                    if (key === 'cli_default_policy') announceApplied();
-                } catch (err) {
-                    applySettingSaveResult(card, false, err.message || 'Save failed');
-                }
+        /**
+         * PUT one setting and show the outcome on its card.
+         *
+         * @param {string} key
+         * @param {string} value
+         * @returns {Promise<boolean>} Whether the server accepted it.
+         */
+        async function saveCliSetting(key, value) {
+            const card = el.querySelector(`[data-setting-card="${key}"]`);
+            try {
+                await apiFetchOk(`/api/settings/${encodeURIComponent(key)}?value=${encodeURIComponent(value)}&category=cli_policy`, {
+                    method: 'PUT',
+                });
+                applySettingSaveResult(card, true, '');
+                // Autosave already wrote the key. Default Policy is the
+                // one change the operator needs confirmed in a toast;
+                // timeout and host-root edits keep the card flash only.
+                if (key === 'cli_default_policy') announceApplied();
+                return true;
+            } catch (err) {
+                applySettingSaveResult(card, false, err.message || 'Save failed');
+                return false;
+            }
+        }
+
+        // Select settings: the app's dropdown (core/menu-select.js), never a
+        // native select.
+        el.querySelectorAll('[data-cli-setting-select]').forEach(mount => {
+            const key = mount.dataset.cliSettingSelect;
+            const meta = SETTINGS_META[key];
+            const setting = known.find(item => item.key === key);
+            let saved = setting.value;
+            const menu = BossModMenuSelect.create({
+                label: meta.label,
+                id: `cli-setting-${key}`,
+                options: meta.options,
+                value: setting.value,
+                variant: 'field',
+                onChange: async (value) => {
+                    // Never show a state the server refused.
+                    if (await saveCliSetting(key, value)) saved = value;
+                    else menu.setValue(saved);
+                },
             });
+            mount.append(menu.element);
+            icons(mount);
+        });
+
+        // Number and textarea inputs
+        el.querySelectorAll('[data-cli-setting-input]').forEach(input => {
+            input.addEventListener('change', (e) => saveCliSetting(e.target.dataset.cliSettingInput, e.target.value));
         });
 
         const focusKey = takeFocusKey();

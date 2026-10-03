@@ -17,7 +17,8 @@ rows set per call site. Three classes remain:
 
 The single-line inputs and native selects in the same forms followed in a
 second pass: a grey shared textarea under white Tailwind or `.assign-*` inputs
-was two field looks in one form. They wear `field-input` / `field-select`.
+was two field looks in one form. They wear `field-input`; the selects have
+since become BossModMenuSelect dropdowns (tests/test_ui_dropdowns.py).
 """
 
 from __future__ import annotations
@@ -127,8 +128,9 @@ def _sibling_controls() -> list[tuple[str, str, str]]:
 
 def test_sibling_inputs_and_selects_wear_the_shared_field_classes() -> None:
     controls = _sibling_controls()
-    # 26 when this landed; a scanner that stopped matching cannot pass.
-    assert len(controls) >= 26, controls
+    # 26 when this landed, 21 once the five native selects among them became
+    # BossModMenuSelect dropdowns; a scanner that stopped matching cannot pass.
+    assert len(controls) >= 21, controls
     offenders = [
         control for control in controls
         if ("field-select" if control[1] == "select" else "field-input") not in control[2].split()

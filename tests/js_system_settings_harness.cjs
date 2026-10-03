@@ -10,8 +10,10 @@
  */
 const fs = require("fs");
 const { FakeEl, installDom } = require("./js_fake_dom.cjs");
+const { installIconsStub } = require("./js_icons_stub.cjs");
 
 const documentStub = installDom();
+installIconsStub();
 
 const VOID = new Set(["INPUT", "BR", "HR", "IMG"]);
 
@@ -131,38 +133,81 @@ global.SettingsView = { bindRepaint() {} };
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModDom = BossModDom;\n`);
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModSwitch = BossModSwitch;\n`);
+// A select-type setting is the app's dropdown (core/menu-select.js) and its
+// panel (core/menu.js over core/overlays.js), passed after the six above.
+["BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays",
+    "BossModMenu", "BossModMenuSelect"].forEach((name, index) => {
+    eval(`${fs.readFileSync(process.argv[8 + index], "utf8")}\n;global.${name} = ${name};\n`);
+});
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModSystemSettingsMeta = BossModSystemSettingsMeta;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.SystemSection = SystemSection;\n`);
 eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.AdvancedSystemSection = AdvancedSystemSection;\n`);
 
-function snapshot(root) {
-    return root.querySelectorAll(".setting-input").map((control) => {
+/**
+ * A select-type setting's dropdown, read the way an operator reads it: the
+ * rows its panel lists, which one is marked, and the value the control holds.
+ * The panel is opened to read the rows and closed again.
+ */
+async function dropdownState(mount) {
+    const trigger = mount.querySelector(".menu-select-trigger");
+    const menu = BossModMenuSelect.instanceFor(trigger);
+    await trigger.dispatchClick();
+    const rows = mount.querySelector(".menu").querySelectorAll(".menu-select-option");
+    const values = menu.getOptions().map((option) => option.value);
+    const options = rows.map((row, index) => ({
+        value: values[index],
+        label: row.querySelector(".menu-select-label").textContent.trim(),
+        title: row.getAttribute("title"),
+        selected: row.getAttribute("aria-pressed") === "true",
+    }));
+    await trigger.dispatchClick();
+    return { value: menu.getValue(), options };
+}
+
+/** Pick a dropdown's row by its label, as an operator clicks it. */
+async function pickDropdown(mount, label) {
+    await mount.querySelector(".menu-select-trigger").dispatchClick();
+    const row = mount.querySelector(".menu").querySelectorAll(".menu-select-option")
+        .find((node) => node.querySelector(".menu-select-label").textContent.trim() === label);
+    if (!row) throw new Error(`the dropdown offers no "${label}" row`);
+    await row.dispatchClick();
+    await settle();
+}
+
+async function snapshot(root) {
+    const rows = [];
+    for (const control of root.querySelectorAll(".setting-input, [data-setting-select]")) {
         const card = control.parent;
         const paragraphs = card.querySelectorAll("p").map((node) => node.textContent.trim());
         const label = card.querySelector("label");
-        const options = control.tagName === "SELECT"
-            ? control.querySelectorAll("option").map((option) => ({
-                value: option.getAttribute("value"),
-                label: option.textContent.trim(),
-                title: option.getAttribute("title"),
-                selected: option.hasAttribute("selected"),
-            }))
-            : null;
-        return {
+        if (control.dataset.settingSelect) {
+            const state = await dropdownState(control);
+            rows.push({
+                key: control.dataset.settingSelect,
+                category: control.dataset.settingCategory,
+                value: state.value,
+                label: label ? label.textContent.trim() : "",
+                paragraphs,
+                options: state.options,
+            });
+            continue;
+        }
+        rows.push({
             key: control.dataset.settingKey,
             category: control.dataset.settingCategory,
             value: control.value,
             label: label ? label.textContent.trim() : "",
             paragraphs,
-            options,
-        };
-    });
+            options: null,
+        });
+    }
+    return rows;
 }
 
-/** Keys in DOM order across text inputs, selects, and switch mounts. */
+/** Keys in DOM order across text inputs, dropdown mounts, and switch mounts. */
 function orderedKeys(root) {
-    return root.querySelectorAll("[data-setting-key], [data-setting-switch]")
-        .map((node) => node.dataset.settingKey || node.dataset.settingSwitch);
+    return root.querySelectorAll("[data-setting-key], [data-setting-select], [data-setting-switch]")
+        .map((node) => node.dataset.settingKey || node.dataset.settingSelect || node.dataset.settingSwitch);
 }
 
 function errorText(root, key) {
@@ -242,36 +287,35 @@ async function main() {
     ];
     const root = new FakeEl("div");
     await SystemSection.render(root);
-    const openedOnSimulation = snapshot(root).some((row) => row.key === "tick_interval")
-        && snapshot(root).every((row) => row.key !== "system_ai_connection");
+    const openedOnSimulation = (await snapshot(root)).some((row) => row.key === "tick_interval")
+        && (await snapshot(root)).every((row) => row.key !== "system_ai_connection");
     const savesBeforeOpen = saves.length;
 
     await openAiOutput(root);
-    const fresh = snapshot(root);
+    const fresh = await snapshot(root);
     const heading = root.querySelector("h3") ? root.querySelector("h3").textContent.trim() : "";
     const intro = root.querySelectorAll("p").map((node) => node.textContent.trim());
 
-    const mode = root.querySelectorAll(".setting-input")
-        .find((control) => control.dataset.settingKey === "compaction_mode");
-    mode.value = "off";
-    await dispatchChange(mode);
+    const mode = root.querySelectorAll("[data-setting-select]")
+        .find((control) => control.dataset.settingSelect === "compaction_mode");
+    await pickDropdown(mode, "Off");
 
     world.settings = world.settings.map((row) => {
         if (row.key === "compaction_mode") return { ...row, value: "custom_mode" };
         return row;
     });
     await openAiOutput(root);
-    const degraded = snapshot(root);
+    const degraded = await snapshot(root);
 
     await openCategory(root, "context");
-    const context = snapshot(root);
+    const context = await snapshot(root);
     // `saves` in the output is the AI Output / Context story; Threads saves are reported on their own.
     const outputSaves = saves.slice();
 
     await openCategory(root, "threads");
     const threadsHeading = root.querySelector("h3") ? root.querySelector("h3").textContent.trim() : "";
     const threadsOrder = orderedKeys(root);
-    const threadsInputs = snapshot(root);
+    const threadsInputs = await snapshot(root);
     const idleBefore = idleSwitch(root);
     const savesBeforeToggle = saves.length;
     await idleBefore.button.dispatchClick();

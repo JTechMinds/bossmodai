@@ -34,7 +34,7 @@ const BossModAssignForm = (() => {
     }
 
     /**
-     * The label one assignee gets in the select.
+     * The label one assignee gets in the dropdown.
      *
      * @param {object} agent
      * @param {string} title
@@ -48,6 +48,31 @@ const BossModAssignForm = (() => {
         if (status === 'match') label += ' (matches)';
         if (status === 'mismatch') label += ' (mismatch)';
         return label;
+    }
+
+    /** The "nobody yet" choice; `short` is what a field trigger shows. */
+    const BACKLOG = Object.freeze({ value: '', label: 'Unassigned backlog', short: 'Unassigned' });
+
+    /**
+     * The assignee dropdown's options, ranked for the words in a draft. One
+     * shape for both task forms: this dialog and the task detail's Edit mode
+     * (places/tasks/task-edit-mode.js).
+     *
+     * @param {object[]} agents
+     * @param {string} title
+     * @param {string} note  The draft's description.
+     * @returns {Array<{value: string, label: string, short: string,
+     *   avatar?: {name: string, color: string}}>} The backlog first, then the
+     *   ranked roster: each row's `label` is the full "name — role (match)",
+     *   its `short` the name alone, which is all a field trigger has room for.
+     */
+    function rosterOptions(agents, title, note) {
+        return [BACKLOG, ...rankRoster(agents, title, note).map((agent) => ({
+            value: agent.id,
+            label: optionLabel(agent, title, note),
+            short: agent.name || 'Teammate',
+            avatar: { name: agent.name, color: agent.color },
+        }))];
     }
 
     /**
@@ -78,9 +103,13 @@ const BossModAssignForm = (() => {
 
         const state = store.getState();
         let roster = [];
-        let chosen = state.placeParams.agentFilter
+        // The teammate to preselect. It becomes the choice only once the
+        // roster names them: the dropdown cannot show an id it has no row
+        // for, and what it shows is what the submit sends.
+        const preselect = state.placeParams.agentFilter
             || (state.conversationKind === 'agent' ? state.conversationId : '')
             || '';
+        let chosen = BACKLOG.value;
         let submitting = false;
 
         const titleInput = h('input', {
@@ -88,10 +117,15 @@ const BossModAssignForm = (() => {
             placeholder: 'What should they work on?',
             oninput: () => refreshSpecialtyHints(),
         });
-        const agentSelect = h('select', {
-            class: 'field-select', id: 'ct-assign-agent',
-            onchange: (event) => { chosen = event.target.value; refreshSpecialtyHints(); },
+        const agentSelect = BossModMenuSelect.create({
+            label: 'Assignee',
+            options: rosterOptions([], '', ''),
+            value: BACKLOG.value,
+            variant: 'field',
+            id: 'ct-assign-agent',
+            onChange: (value) => { chosen = value; refreshSpecialtyHints(); },
         });
+        BossModIcons.paint(agentSelect.element, 'assign-form');
         const mismatch = h('div', { class: 'assign-mismatch', id: 'ct-assign-mismatch', hidden: true });
         const description = h('textarea', {
             class: 'field-textarea', id: 'ct-assign-description', 'data-size': 'long', 'data-autogrow': true,
@@ -111,7 +145,7 @@ const BossModAssignForm = (() => {
             void send({});
         } },
             field('Title', titleInput),
-            field('Assignee', agentSelect, mismatch),
+            field('Assignee', agentSelect.element, mismatch),
             field('Description (optional)', description),
             h('p', { class: 'assign-hint' }, HINT_COPY),
             result);
@@ -138,12 +172,7 @@ const BossModAssignForm = (() => {
         function refreshSpecialtyHints() {
             const title = titleInput.value;
             const note = description.value;
-            clear(agentSelect);
-            agentSelect.append(h('option', { value: '' }, 'Unassigned backlog'));
-            rankRoster(roster, title, note).forEach((agent) => {
-                agentSelect.append(h('option', { value: agent.id }, optionLabel(agent, title, note)));
-            });
-            agentSelect.value = chosen;
+            agentSelect.setOptions(rosterOptions(roster, title, note), chosen);
 
             clear(mismatch);
             const agent = roster.find((item) => item.id === chosen);
@@ -164,6 +193,7 @@ const BossModAssignForm = (() => {
             show(BossModAssignOutcomes.renderOutcome(body, {
                 onPickAssignee: (agentId) => {
                     chosen = agentId;
+                    agentSelect.setValue(agentId);
                     refreshSpecialtyHints();
                     void send({});
                 },
@@ -234,7 +264,7 @@ const BossModAssignForm = (() => {
         }
 
         /**
-         * Load the roster the select ranks.
+         * Load the roster the dropdown ranks.
          *
          * @returns {Promise<void>} Never rejects. A failure is shown rather than
          *   silently leaving an empty list, which company-tasks.js did and which
@@ -246,6 +276,7 @@ const BossModAssignForm = (() => {
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 const rows = await res.json();
                 roster = Array.isArray(rows) ? rows : [];
+                if (preselect && roster.some((agent) => agent.id === preselect)) chosen = preselect;
                 refreshSpecialtyHints();
             } catch (err) {
                 console.error('[assign-form] could not load the roster', err);
@@ -261,5 +292,5 @@ const BossModAssignForm = (() => {
         return { close: modal.close };
     }
 
-    return { openAssignForm, rankRoster, optionLabel };
+    return { openAssignForm, rankRoster, optionLabel, rosterOptions };
 })();

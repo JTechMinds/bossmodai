@@ -94,10 +94,19 @@ const BossModRuntimeContractActions = (() => {
      * @param {() => void} options.onRefresh  Re-render the whole section. The
      *   editor owns its own render, so Refresh is injected rather than reached
      *   for.
-     * @returns {void} Every control is looked up by id, the way the section it
+     * @param {() => {triggerType: string, contractKind: string}}
+     *   options.getPreviewChoice  What the Preview tab's two dropdowns hold
+     *   when Render is pressed. The editor owns those controls, so the
+     *   reading is injected too.
+     * @returns {void} Every button is looked up by id, the way the section it
      *   came from did — there is nothing to scope to.
+     * @throws {Error} When either callback is missing.
      */
-    function bindActions({ onRefresh }) {
+    function bindActions({ onRefresh, getPreviewChoice }) {
+        if (typeof onRefresh !== 'function') throw new Error('[runtime-contract-actions] onRefresh is required');
+        if (typeof getPreviewChoice !== 'function') {
+            throw new Error('[runtime-contract-actions] getPreviewChoice is required');
+        }
         // ─── Save ───
         document.getElementById('btn-save-runtime-contracts').addEventListener('click', async () => {
             const status = document.getElementById('runtime-contract-save-status');
@@ -156,8 +165,7 @@ const BossModRuntimeContractActions = (() => {
 
         // ─── Preview ───
         document.getElementById('btn-render-preview').addEventListener('click', async () => {
-            const triggerType = document.getElementById('runtime-preview-trigger').value;
-            const contractKind = document.getElementById('runtime-preview-kind').value;
+            const { triggerType, contractKind } = getPreviewChoice();
             const templates = collectTemplateValues();
             const output = document.getElementById('runtime-contract-preview-output');
             output.textContent = 'Rendering full prompt bundle\u2026';

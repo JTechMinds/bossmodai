@@ -44,7 +44,9 @@ const NAMES = [
     "BossModCommunication",
     // The two the fake form leans on rather than reimplementing: the shape
     // vocabulary the refusal reads back, and the per-field bindings.
-    "BossModAgentFormConnections", "BossModAgentFormBindings",
+    // The choice dropdowns are mounted by the real module, as the real form
+    // mounts them.
+    "BossModAgentFormConnections", "BossModAgentFormChoices", "BossModAgentFormBindings",
     "BossModAgentFormHydrate", "BossModAgentRecovery", "BossModAgentFormSave",
     // The picker draws the local library with the marketplace's own card and
     // rail builders, so its dependencies load ahead of it — and filters it
@@ -159,11 +161,11 @@ const TEMPLATES = [
 
 /**
  * The AI Connection section, in whichever of its two shapes
- * agent-form-connections.js would have built: the picker — its mount points
- * and the hidden inputs the submit reads — or, with nothing configured, a link
- * to Settings and no control at all. The dropdowns themselves are
- * tests/js_agent_form_harness.cjs's and tests/js_context_harness.cjs's
- * subject; here the inputs are answered directly, the way a pick writes them.
+ * agent-form-connections.js would have built: the picker — its mount points,
+ * which `buildForm` fills with the real dropdowns
+ * (BossModAgentFormBindings.bindAiConnection), each carrying the hidden input
+ * the submit reads — or, with nothing configured, a link to Settings and no
+ * control at all.
  */
 function buildConnections() {
     if (connectionMode === "none") {
@@ -173,20 +175,13 @@ function buildConnections() {
                 h("button", { type: "button", id: "btn-goto-connections" },
                     "Add one in Settings")));
     }
-    const hidden = (name, value) => {
-        const input = h("input", { type: "hidden", name });
-        input.value = value;
-        return input;
-    };
     return h("section", { class: "form-section" },
         h("h3", { class: "form-section-title" }, "AI Connection"),
         h("div", { class: "field" },
-            h("div", { id: "agent-ai-mount-connection_id" }),
-            hidden("connection_id", "")),
+            h("div", { id: "agent-ai-mount-connection_id" })),
         h("div", { class: "connection-grid" },
             ...global.BossModAgentFields.THINKING_MODES.map((mode) => h("div", { class: "field" },
-                h("div", { id: `agent-ai-mount-${mode.key}` }),
-                hidden(mode.key, "default")))));
+                h("div", { id: `agent-ai-mount-${mode.key}` })))));
 }
 
 function buildForm() {
@@ -197,14 +192,16 @@ function buildForm() {
     colour.checked = true;
     const card = h("div", { id: "role-contract-card" }, role, description, colour);
 
-    const connections = buildConnections();
+    const connectionSection = buildConnections();
 
     const done = h("textarea", { name: "done_fail_bar" });
-    const personality = h("select", { name: "personality_id" });
-    personality.append(h("option", { value: "" }, "No personality"),
-        h("option", { value: "p1" }, "Software Engineer"));
+    // The Advanced dropdowns' mount points, as agent-form-advanced.js renders
+    // them; `buildForm` mounts the real controls into them.
+    const choiceMounts = ["agent-personality-mount", "agent-desk-mount",
+        ...global.BossModCommunication.KEYS.map((key) => `agent-communication-${key}-mount`)]
+        .map((id) => h("span", { id }));
     const advancedContent = h("div", { id: "advanced-content", class: "hidden" },
-        done, personality);
+        done, ...choiceMounts);
     const advancedToggle = h("button", { type: "button", id: "advanced-toggle" }, "Advanced");
     // The real disclosure toggles `.hidden` on click (context/agent-form.js).
     // Reproduced here because section 6 opens and closes it to prove that a
@@ -219,13 +216,18 @@ function buildForm() {
             h("h3", { class: "form-section-title" }, "Identity"),
             h("div", {}, h("label", {}, "Name"), name),
             card),
-        connections, advanced);
+        connectionSection, advanced);
 
+    const connections = connectionMode === "none" ? [] : CONNECTIONS;
     form.setAttribute(
         global.BossModAgentFormConnections.AI_QUESTION,
-        global.BossModAgentFormConnections.shapeFor(
-            connectionMode === "none" ? [] : CONNECTIONS),
+        global.BossModAgentFormConnections.shapeFor(connections),
     );
+    // The real dropdowns, mounted the way context/agent-form.js mounts them.
+    global.BossModAgentFormChoices.mount(form, {
+        personalities: PERSONALITIES, roster: [], values: null, kept: null,
+    });
+    global.BossModAgentFormBindings.bindAiConnection(form, connections, null);
     return form;
 }
 
@@ -270,6 +272,8 @@ const updates = [];
 const CONNECTIONS = [
     { id: "c1", name: "Local (llama)", model: "llama3.1:8b", api_base_url: "http://local/v1" },
 ];
+// What Settings holds: the one personality the template's hint names.
+const PERSONALITIES = [{ id: "p1", name: "Software Engineer", prompt_template: "be precise" }];
 
 function jsonResponse(body, status = 200) {
     return Promise.resolve({
@@ -428,11 +432,16 @@ async function type(input, value) {
  * Every CREATE has to get past it: agent-form-save.js refuses one with no
  * `connection_id` (spec 8.3), so a section whose subject is the footer, the
  * claim or the keyboard has to answer it before it can watch a save happen at
- * all. Written into the hidden input directly, as a pick writes it — this
- * harness stubs `BossModAgentForm`, so no dropdown is mounted.
+ * all. Answered the way an operator answers it: open the connection dropdown
+ * and click c1's row.
  */
 async function answerAi() {
-    find('input[name="connection_id"]').value = "c1";
+    const control = find("#agent-ai-mount-connection_id");
+    await control.querySelector(".menu-select-trigger").dispatchClick();
+    const row = control.querySelector(".menu").querySelectorAll(".menu-select-option")
+        .find((node) => node.querySelector(".menu-select-label").textContent === "Local (llama) (llama3.1:8b)");
+    if (!row) throw new Error("[add-agent-harness] the connection dropdown offers no c1 row");
+    await row.dispatchClick();
 }
 
 async function open(tab = "add") {
@@ -733,7 +742,7 @@ async function main() {
         && field('textarea[name="description"]').value
             === "Reads a diff and reports what is not true. Cites files."
         && field('textarea[name="done_fail_bar"]').value === "A checkable allow/deny exists."
-        && field('select[name="personality_id"]').value === "p1";
+        && field('input[name="personality_id"]').value === "p1";
     // Both hire textareas are the agent's prompt: no length cap in markup.
     verdict.promptFieldsUncapped = !field('textarea[name="description"]').hasAttribute("maxlength")
         && !field('textarea[name="done_fail_bar"]').hasAttribute("maxlength");
@@ -815,7 +824,7 @@ async function main() {
     // ever set: a personality left selected under a cleared form is a template
     // that Remove template did not remove.
     verdict.chipClearsThePersonalityToo =
-        after.querySelector('select[name="personality_id"]').value === "";
+        after.querySelector('input[name="personality_id"]').value === "";
 
     // ─── 9. Blank builds the SAME form, minus the chip ───
     //

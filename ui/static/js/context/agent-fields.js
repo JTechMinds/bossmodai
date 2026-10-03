@@ -3,8 +3,9 @@
  *
  * What fields the form has and what values they accept, with no markup and no
  * DOM. Three modules need it and would otherwise each keep a copy: the field
- * groups render it, the Advanced disclosure renders the desk half of it and
- * the kept-personality option, and context/agent-submit.js reads the same
+ * groups render it, the Advanced disclosure's choices (context/
+ * agent-form-choices.js) build the desk half of it and the kept-personality
+ * option, and context/agent-submit.js reads the same
  * THINKING_MODES, history defaults and kept option back off the submitted
  * form. A second list of activation types is a choice that saves into a field
  * nothing reads.
@@ -82,8 +83,8 @@ const BossModAgentFields = (() => {
 
     /**
      * The personality option a recreated agent's prompt rides in on when no
-     * configured personality carries that text any more. Rendered by
-     * context/agent-form-advanced.js, read back by context/agent-submit.js —
+     * configured personality carries that text any more. Offered by
+     * context/agent-form-choices.js, read back by context/agent-submit.js —
      * one value, so the two cannot disagree about which option means "keep".
      * No personality id can take it: those are server uuids.
      */
@@ -92,12 +93,18 @@ const BossModAgentFields = (() => {
     /**
      * Which desk is offered, and whether any is free.
      *
+     * Data only: context/agent-form-choices.js turns `desks` into the desk
+     * dropdown's options, and context/agent-form-advanced.js reads
+     * `noFreeDesk` for the warning under it.
+     *
      * @param {object|null} agent
      * @param {object[]} roster
-     * @returns {{selectedDesk: object|null, noFreeDesk: boolean, deskOptions: string}}
+     * @returns {{selectedDesk: object|null, noFreeDesk: boolean,
+     *   desks: Array<{value: string, label: string, taken: boolean}>}}
      *   The agent's own desk wins; otherwise the first unoccupied one. When
      *   neither exists the caller says so rather than silently seating them on
-     *   top of a teammate.
+     *   top of a teammate. Each desk's `value` is `"x,y"`, and `taken` says a
+     *   teammate already sits there.
      */
     function deskChoice(agent, roster) {
         const occupiedChairs = new Set(
@@ -110,13 +117,11 @@ const BossModAgentFields = (() => {
             : null;
         const freeDesk = DESK_OPTIONS.find((d) => !occupiedChairs.has(`${d.x},${d.y}`)) || null;
         const selectedDesk = assignedDesk || freeDesk;
-        const deskOptions = DESK_OPTIONS.map(d => {
+        const desks = DESK_OPTIONS.map((d) => {
             const value = `${d.x},${d.y}`;
-            const selected = selectedDesk && selectedDesk.x === d.x && selectedDesk.y === d.y;
-            const taken = occupiedChairs.has(value);
-            return `<option value="${BossModFormat.escapeAttribute(value)}" ${selected ? 'selected' : ''}>${d.label}${taken ? ' (taken)' : ''}</option>`;
-        }).join('');
-        return { selectedDesk, noFreeDesk: !assignedDesk && !freeDesk, deskOptions };
+            return { value, label: d.label, taken: occupiedChairs.has(value) };
+        });
+        return { selectedDesk, noFreeDesk: !assignedDesk && !freeDesk, desks };
     }
 
     return {

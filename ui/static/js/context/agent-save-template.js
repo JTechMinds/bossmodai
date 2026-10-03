@@ -80,16 +80,14 @@ const BossModAgentSaveTemplate = (() => {
      *   a template could ask another machine for.
      */
     function personalityHint(form) {
-        const select = form.querySelector('select[name="personality_id"]');
-        const chosen = select ? String(select.value || '') : '';
+        // The personality control is a BossModMenuSelect
+        // (context/agent-form-choices.js); absent when Settings holds none.
+        const node = form.querySelector('[name="personality_id"]');
+        if (!node) return null;
+        const menu = BossModMenuSelect.instanceFor(node);
+        const chosen = menu.getValue();
         if (!chosen || chosen === FIELDS.KEPT_PERSONALITY) return null;
-        const options = select.options
-            ? Array.from(select.options)
-            : Array.from(select.children || []).filter((node) => node.tagName === 'OPTION');
-        const option = options.find(
-            (node) => (node.value || node.getAttribute('value') || '') === chosen,
-        );
-        return (option && String(option.textContent || '').trim()) || null;
+        return menu.getLabel().trim() || null;
     }
 
     /**

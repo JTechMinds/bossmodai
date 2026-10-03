@@ -105,40 +105,31 @@ const BossModTaskEditMode = (() => {
         /** Grows the description to its text, as the composer grows. */
         const grow = BossModAutoGrow.bind(description);
 
-        /** The backlog choice; `short` is what the field trigger shows. */
-        const BACKLOG = { value: UNASSIGNED, label: 'Unassigned backlog', short: 'Unassigned' };
-
         /**
-         * Assignee options, ranked for the words in the draft right now. Each
-         * row's `label` is the full "name — role (match)"; its `short` is the
-         * name alone, which is all the field trigger has room for.
+         * Assignee options, ranked for the words in the draft right now — the
+         * assign dialog's rows (BossModAssignForm.rosterOptions), plus the
+         * kept assignee and any `extra` agent this task needs offered.
          */
         function assigneeOptions() {
-            const title = titleInput.value;
-            const note = description.value;
-            const options = ASSIGN.rankRoster(agents, title, note).map((agent) => ({
-                value: agent.id,
-                label: ASSIGN.optionLabel(agent, title, note),
-                short: agent.name || 'Teammate',
-                avatar: { name: agent.name, color: agent.color },
-            }));
+            const options = ASSIGN.rosterOptions(agents, titleInput.value, description.value);
             const listed = (id) => options.some((option) => option.value === id);
             // The current assignee stays choosable even when the roster no
             // longer lists them, so entering Edit mode never changes it.
+            // Right after the backlog row, where the roster's rows start.
             if (task.assigned_to && !listed(task.assigned_to)) {
                 const kept = task.assigned_to_name || task.assigned_to;
-                options.unshift({ value: task.assigned_to, label: kept, short: kept });
+                options.splice(1, 0, { value: task.assigned_to, label: kept, short: kept });
             }
             extra.forEach((agent) => {
                 const name = agent.name || agent.id;
                 if (!listed(agent.id)) options.push({ value: agent.id, label: name, short: name });
             });
-            return [BACKLOG, ...options];
+            return options;
         }
 
         const assignee = BossModMenuSelect.create({
             label: 'Assignee',
-            options: [BACKLOG],
+            options: ASSIGN.rosterOptions([], '', ''),
             value: UNASSIGNED,
             variant: 'field',
             // The control owns the choice; it is read back when Save runs.

@@ -10,13 +10,12 @@
  * connection defines it (Settings → Connections → Thinking levels).
  *
  * MARKUP HERE, CONTROLS IN THE BINDINGS. This module renders the section's
- * frame: labels, hints, the hidden inputs the submit reads, and an empty mount
- * point per control. The three dropdowns are BossModMenuSelect (never a native
- * <select>), which are DOM nodes, so context/agent-form-bindings.js
- * (`bindAiConnection`) mounts them once the form exists. The hidden inputs are
- * what context/agent-submit.js reads: `startingValues` decides what they start
- * at — the markup and the bindings both take it from there — and the menus
- * write them on change.
+ * frame: labels, hints, and an empty mount point per control. The three
+ * dropdowns are BossModMenuSelect (never a native <select>), which are DOM
+ * nodes, so context/agent-form-bindings.js (`bindAiConnection`) mounts them
+ * once the form exists. The menus own their form value (core/menu-select.js
+ * `name`), which is what context/agent-submit.js reads; `startingValues`
+ * decides what they start at.
  *
  * TWO SHAPES, AND THIS MODULE NAMES THEM. With a connection configured the
  * section renders the picker; with none it renders a link to Settings and no
@@ -186,15 +185,12 @@ const BossModAgentFormConnections = (() => {
             <div class="field">
                 <span class="field-label">Connection</span>
                 <div id="${BossModFormat.escapeAttribute(mountId('connection_id'))}"></div>
-                <input type="hidden" name="connection_id" value="${BossModFormat.escapeAttribute(start.connectionId)}">
             </div>
             <hr class="form-rule">
             <div class="connection-grid">
                 ${FIELDS.THINKING_MODES.map((mode) => `<div class="field">
                     <span class="field-label field-label-sm">${BossModFormat.escapeHtml(mode.label)} thinking</span>
                     <div id="${BossModFormat.escapeAttribute(mountId(mode.key))}"></div>
-                    <input type="hidden" name="${BossModFormat.escapeAttribute(mode.key)}"
-                           value="${BossModFormat.escapeAttribute(start.thinking[mode.key])}">
                     <p class="field-hint">${BossModFormat.escapeHtml(mode.hint)}</p>
                 </div>`).join('')}
             </div>

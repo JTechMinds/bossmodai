@@ -107,7 +107,7 @@ const NAMES = [
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
     "BossModAgentApi", "BossModAgentTemplatesApi",
     "BossModAgentFields", "BossModAgentFormFields",
-    "BossModAgentFormAdvanced", "BossModAgentFormConnections",
+    "BossModAgentFormAdvanced", "BossModAgentFormChoices", "BossModAgentFormConnections",
     "BossModAgentFormBindings", "BossModAgentFormHydrate",
     "BossModAgentForm",
     "BossModAgentSubmit", "BossModAgentRecovery", "BossModAgentFormSave",
@@ -2417,7 +2417,14 @@ async function main() {
     await drain();
 
     // Every field the snapshot carries, filled — and the connection secrets,
-    // which it never carries, are not in the markup to fill.
+    // which it never carries, are not in the markup to fill. The dropdowns
+    // are BossModMenuSelects mounted after the markup, so what they hold is
+    // read off each one's form value, the input the save reads.
+    const recreateForm = recreate.querySelector("#agent-form");
+    const formValue = (form, name) => {
+        const node = form.querySelector(`input[name="${name}"]`);
+        return node ? node.value : null;
+    };
     const filled = [
         'name="name"', 'value="Ada"',
         'value="Code Auditor"',
@@ -2430,12 +2437,12 @@ async function main() {
         // The colour it had comes back CHECKED, so a save does not recolour it.
         && /value="#1d4ed8"[^>]*\s+checked/.test(formMarkup)
         // The communication block, and the desk it sat at.
-        && /<option value="direct"\s+selected>/.test(formMarkup)
-        && /<option value="compact"\s+selected>/.test(formMarkup)
-        && /<option value="3,4"\s+selected>/.test(formMarkup)
+        && formValue(recreateForm, "communication_tone") === "direct"
+        && formValue(recreateForm, "communication_density") === "compact"
+        && formValue(recreateForm, "desk") === "3,4"
         // The connection it is linked to, by id, and the level it still offers.
-        && formMarkup.includes('name="connection_id" value="c2"')
-        && /name="thinking_social"\s+value="off"/.test(formMarkup)
+        && formValue(recreateForm, "connection_id") === "c2"
+        && formValue(recreateForm, "thinking_social") === "off"
         && !formMarkup.includes("api_key")
         && !formMarkup.includes("api_base_url");
     if (!recreateFillsTheFormFromTheSnapshot) {
@@ -2456,7 +2463,7 @@ async function main() {
     // value it does not hold, and losing the choice in silence is worse.
     const theUnofferedLevelIsNamed = formMarkup.includes('id="agent-connection-missing"')
         && formMarkup.includes("Work: thinking “medium” — this connection doesn't offer it; pick one.")
-        && /name="thinking_work"\s+value="default"/.test(formMarkup)
+        && formValue(recreateForm, "thinking_work") === "default"
         // Only the unoffered one.
         && !formMarkup.includes("Social: thinking");
     if (!theUnofferedLevelIsNamed) {
@@ -2464,17 +2471,23 @@ async function main() {
     }
 
     // The prompt no personality carries any more rides in on its own option,
-    // with the text itself in a hidden input for the save to send.
-    const keptOptionCarriesThePrompt = formMarkup.includes('value="__kept__" selected>Kept from Ada<')
+    // chosen and named on the trigger, with the text itself in a hidden input
+    // for the save to send.
+    const personalityControl = recreateForm.querySelector("#agent-personality-mount");
+    const keptOptionCarriesThePrompt = formValue(recreateForm, "personality_id") === "__kept__"
+        && personalityControl.querySelector(".menu-select-value").textContent === "Kept from Ada"
         && formMarkup.includes('name="prompt_template_kept" '
             + 'value="You are terse, and you cite files."');
     if (!keptOptionCarriesThePrompt) {
         throw new Error("a prompt no personality matches must be kept on the form");
     }
 
-    // ...and the save sends THAT text, as a create.
-    const recreateForm = recreate.querySelector("#agent-form");
-    recreateForm.querySelector('select[name="personality_id"]').value = "__kept__";
+    // ...and the save sends THAT text, as a create. The operator picks the
+    // kept option (the one already chosen) the way they pick any row.
+    await personalityControl.querySelector(".menu-select-trigger").dispatchClick();
+    await personalityControl.querySelector(".menu").querySelectorAll(".menu-select-option")
+        .find((row) => row.querySelector(".menu-select-label").textContent === "Kept from Ada")
+        .dispatchClick();
     recreateForm.querySelector('[name="prompt_template_kept"]').value =
         "You are terse, and you cite files.";
     recreateForm.querySelector('input[name="name"]').value = "Ada II";
@@ -2505,9 +2518,12 @@ async function main() {
     await drain();
     await matched.querySelector("#picker-recent-0").dispatchClick();
     await drain();
+    const matchedForm = matched.querySelector("#agent-form");
     const aMatchedPromptIsJustThatPersonality = !formMarkup.includes("__kept__")
         && !formMarkup.includes("prompt_template_kept")
-        && /<option value="p1"\s+selected>/.test(formMarkup);
+        && formValue(matchedForm, "personality_id") === "p1"
+        && matchedForm.querySelector("#agent-personality-mount")
+            .querySelector(".menu-select-value").textContent === "Terse";
     if (!aMatchedPromptIsJustThatPersonality) {
         throw new Error("a prompt a personality still carries must select that personality");
     }

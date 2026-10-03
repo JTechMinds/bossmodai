@@ -12,9 +12,6 @@
 
 const RuntimeContractsSection = (() => {
     let container = null;
-    const SELECT_CLS = 'px-3 py-2 text-sm border border-bm-border rounded-lg '
-        + 'bg-bm-bg';
-
 
     const { renderPromptHealth } = BossModRuntimeContractActions;
 
@@ -122,13 +119,8 @@ const RuntimeContractsSection = (() => {
                         </div>
                         <div id="rc-tab-preview" class="rc-tab-pane flex-1 flex flex-col min-h-0 hidden">
                             <div class="flex items-center gap-2 mb-3 flex-wrap">
-                                <select id="runtime-preview-trigger" class="${SELECT_CLS}">
-                                    ${previewTriggers.map(t => `<option value="${BossModFormat.escapeAttribute(t)}">${BossModFormat.escapeHtml(t)}</option>`).join('')}
-                                </select>
-                                <select id="runtime-preview-kind" class="${SELECT_CLS}">
-                                    <option value="decision">Decision</option>
-                                    <option value="execution">Execution</option>
-                                </select>
+                                <span id="runtime-preview-trigger-mount"></span>
+                                <span id="runtime-preview-kind-mount"></span>
                                 <button id="btn-render-preview"
                                         class="px-3 py-2 bg-bm-accent text-white rounded-lg
                                                hover:bg-bm-accent-hover transition-colors text-sm font-medium">
@@ -199,7 +191,32 @@ const RuntimeContractsSection = (() => {
             });
         });
 
-        BossModRuntimeContractActions.bindActions({ onRefresh: () => render(container) });
+        // ─── Preview choices ───
+        // Toolbar dropdowns: they sit in a row beside the Render button. Both
+        // are read when Render is pressed (getPreviewChoice below), so a pick
+        // itself has nothing to set off.
+        const readOnRender = () => {};
+        const previewTrigger = BossModMenuSelect.create({
+            label: 'Preview trigger',
+            options: previewTriggers.map(t => ({ value: t, label: t })),
+            onChange: readOnRender,
+        });
+        const previewKind = BossModMenuSelect.create({
+            label: 'Prompt kind',
+            options: [{ value: 'decision', label: 'Decision' }, { value: 'execution', label: 'Execution' }],
+            onChange: readOnRender,
+        });
+        document.getElementById('runtime-preview-trigger-mount').append(previewTrigger.element);
+        document.getElementById('runtime-preview-kind-mount').append(previewKind.element);
+        BossModIcons.paint(document.getElementById('rc-tab-preview'), 'runtime-contracts');
+
+        BossModRuntimeContractActions.bindActions({
+            onRefresh: () => render(container),
+            getPreviewChoice: () => ({
+                triggerType: previewTrigger.getValue(),
+                contractKind: previewKind.getValue(),
+            }),
+        });
     }
 
     return { render };

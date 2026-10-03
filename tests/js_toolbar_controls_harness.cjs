@@ -256,6 +256,111 @@ async function main() {
         }));
     if (!badVariantAndShortThrow) fail("an unknown variant or a bad short label was accepted");
 
+    // ── Menu select: the form contract ─────────────────────────────────
+    // With `name`, the control owns a hidden input carrying its value, so a
+    // form reads it like any field; a pick fires one bubbling `change` on it
+    // after it is written, and a write from code fires nothing.
+    const TIERS = [
+        { value: "never_allowed", label: "Never Allowed" },
+        { value: "always_allowed", label: "Always Allowed" },
+        { value: "approval_required", label: "Approval Required" },
+    ];
+    const log = [];
+    const named = global.BossModMenuSelect.create({
+        label: "Tier", name: "tier", id: "cli-rule-tier", variant: "field",
+        options: TIERS, value: "always_allowed",
+        onChange: (value) => { log.push(`onChange:${value}`); },
+    });
+    host.append(named.element);
+    const namedTrigger = named.element.querySelector(".menu-select-trigger");
+    const formValue = named.element.querySelector('input[name="tier"]');
+    const changeEvents = [];
+    formValue.addEventListener("change", (event) => {
+        changeEvents.push(event);
+        log.push(`change:${formValue.value}`);
+    });
+    const namedCarriesItsValue = Boolean(formValue)
+        && formValue.getAttribute("type") === "hidden"
+        && formValue.value === "always_allowed"
+        && named.element.querySelectorAll("input").length === 1;
+    if (!namedCarriesItsValue) fail("a named control does not carry its value in one hidden input");
+
+    const idLandsOnTheTrigger = namedTrigger.id === "cli-rule-tier"
+        && namedTrigger.getAttribute("aria-label") === "Tier: Always Allowed"
+        && formValue.id !== "cli-rule-tier";
+    if (!idLandsOnTheTrigger) fail("deps.id did not land on the trigger alone");
+
+    // An operator's pick: open, click the row.
+    const pickRow = async (control, label) => {
+        await control.element.querySelector(".menu-select-trigger").dispatchClick();
+        const row = control.element.querySelector(".menu").querySelectorAll(".menu-select-option")
+            .find((node) => node.querySelector(".menu-select-label").textContent === label);
+        await row.dispatchClick();
+    };
+    await pickRow(named, "Approval Required");
+    const aPickWritesThenFiresOneBubblingChange = formValue.value === "approval_required"
+        && named.getValue() === "approval_required"
+        && changeEvents.length === 1
+        && changeEvents[0].type === "change"
+        && changeEvents[0].bubbles === true
+        // Written before the event, and the event before onChange.
+        && log.join("|") === "change:approval_required|onChange:approval_required";
+    if (!aPickWritesThenFiresOneBubblingChange) fail(`a pick reported [${log}] with ${changeEvents.length} events`);
+    await pickRow(named, "Approval Required");
+    const aSamePickFiresNothing = changeEvents.length === 1 && log.length === 2;
+    if (!aSamePickFiresNothing) fail("picking the current choice again fired a change");
+
+    named.setValue("never_allowed");
+    const setValueFollowsSilently = named.getValue() === "never_allowed"
+        && formValue.value === "never_allowed"
+        && namedTrigger.getAttribute("aria-label") === "Tier: Never Allowed"
+        && namedTrigger.querySelector(".menu-select-value").textContent === "Never Allowed"
+        && changeEvents.length === 1 && log.length === 2;
+    if (!setValueFollowsSilently) fail("setValue did not move the input and trigger, or reported it");
+    const setValueRefusesAStranger = threw(() => named.setValue("ghost"))
+        && named.getValue() === "never_allowed" && formValue.value === "never_allowed";
+    if (!setValueRefusesAStranger) fail("setValue accepted a value no option holds, or moved on refusing it");
+
+    named.setOptions([{ value: "glob", label: "Glob" }, { value: "exact", label: "Exact" }], "exact");
+    const setOptionsMovesTheInput = formValue.value === "exact"
+        && named.getLabel() === "Exact" && changeEvents.length === 1 && log.length === 2;
+    if (!setOptionsMovesTheInput) fail("setOptions did not move the hidden input, or reported it");
+
+    const labelIsTheCurrentChoice = named.getLabel() === "Exact"
+        && (named.setValue("glob"), named.getLabel() === "Glob");
+    if (!labelIsTheCurrentChoice) fail("getLabel does not name the current choice");
+
+    const copy = named.getOptions();
+    copy[0].label = "Changed";
+    copy.push({ value: "x", label: "X" });
+    const optionsAreACopy = JSON.stringify(named.getOptions())
+        === JSON.stringify([{ value: "glob", label: "Glob" }, { value: "exact", label: "Exact" }]);
+    if (!optionsAreACopy) fail("getOptions handed out the control's own list");
+
+    // onChange is optional only with a name: without either, a pick goes nowhere.
+    const onChangeIsOptionalOnlyWithAName = !threw(() => global.BossModMenuSelect.create({
+        label: "Desk", name: "desk", options: [{ value: "", label: "Unassigned" }],
+    }))
+        && threw(() => global.BossModMenuSelect.create({ label: "Desk", options: [{ value: "", label: "Unassigned" }] }))
+        && threw(() => global.BossModMenuSelect.create({
+            label: "Desk", name: "", options: [{ value: "", label: "Unassigned" }],
+        }));
+    if (!onChangeIsOptionalOnlyWithAName) fail("onChange is not optional exactly when a name is given");
+
+    // Without a name there is no input, and nothing named is reported.
+    const unnamedHasNoInput = select.element.querySelectorAll("input").length === 0;
+    if (!unnamedHasNoInput) fail("a control without a name grew a form value");
+
+    // A module holding only a node reaches the control through any of its three.
+    const stray = document.createElement("div");
+    const instanceForResolvesAndRefuses = global.BossModMenuSelect.instanceFor(named.element) === named
+        && global.BossModMenuSelect.instanceFor(namedTrigger) === named
+        && global.BossModMenuSelect.instanceFor(formValue) === named
+        && global.BossModMenuSelect.instanceFor(select.element) === select
+        && threw(() => global.BossModMenuSelect.instanceFor(stray))
+        && threw(() => global.BossModMenuSelect.instanceFor(null));
+    if (!instanceForResolvesAndRefuses) fail("instanceFor did not resolve a control's nodes, or resolved a stranger");
+
     process.stdout.write(JSON.stringify({
         ok: true,
         searchIsOneBox,
@@ -276,6 +381,18 @@ async function main() {
         defaultVariantIsTheButton,
         fieldVariantReadsAsAField,
         badVariantAndShortThrow,
+        namedCarriesItsValue,
+        idLandsOnTheTrigger,
+        aPickWritesThenFiresOneBubblingChange,
+        aSamePickFiresNothing,
+        setValueFollowsSilently,
+        setValueRefusesAStranger,
+        setOptionsMovesTheInput,
+        labelIsTheCurrentChoice,
+        optionsAreACopy,
+        onChangeIsOptionalOnlyWithAName,
+        unnamedHasNoInput,
+        instanceForResolvesAndRefuses,
     }));
 }
 

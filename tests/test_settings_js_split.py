@@ -149,7 +149,8 @@ def test_simulator_extracted_from_cli_policy_section() -> None:
     # the only one that declares them.
     chrome = _read("settings/cli-policy/simulator-shell.js")
     assert 'id="cli-sim-output"' in chrome, "the chrome declares the output pane"
-    assert 'id="cli-sim-agent"' in chrome, "the chrome declares the agent selector"
+    # The selector is a BossModMenuSelect the controller mounts here.
+    assert 'id="cli-sim-agent-mount"' in chrome, "the chrome declares the agent selector"
     assert "cli-sim-output" in simulator, "the controller resolves the output pane"
     assert "cli-sim-agent" in simulator, "the controller resolves the agent selector"
     # The chrome is markup only: it binds nothing and runs nothing.

@@ -42,26 +42,27 @@ const BossModAgentFormHydrate = (() => {
         if (role) role.value = fields.role || '';
         if (description) description.value = fields.description || '';
         if (done) done.value = fields.done_fail_bar || '';
+        // The communication and personality controls are BossModMenuSelects
+        // (context/agent-form-choices.js): found by their form value's name,
+        // written through the control so the trigger shows what is saved.
         const comm = BossModCommunication.resolve(fields.communication, fields.role || '');
         BossModCommunication.KEYS.forEach((key) => {
-            const select = formRoot.querySelector(`[name="communication_${key}"]`);
-            if (select) select.value = comm[key];
+            const node = formRoot.querySelector(`[name="communication_${key}"]`);
+            if (node) BossModMenuSelect.instanceFor(node).setValue(comm[key]);
         });
         const hint = fields.personality_hint;
         // Absent entirely when Settings holds no personality — the form renders
         // its own link to Settings there instead of a dropdown.
-        const personality = formRoot.querySelector('select[name="personality_id"]');
-        if (!personality) return;
-        const options = personality.options
-            ? Array.from(personality.options)
-            : Array.from(personality.children || []).filter((node) => node.tagName === 'OPTION');
-        const match = hint ? options.find((option) => (
-            String(option.textContent || '').trim() === String(hint).trim()
+        const node = formRoot.querySelector('[name="personality_id"]');
+        if (!node) return;
+        const menu = BossModMenuSelect.instanceFor(node);
+        const match = hint ? menu.getOptions().find((option) => (
+            option.label.trim() === String(hint).trim()
         )) : null;
         if (hint && !match) {
             console.warn('[hydrate] no personality is configured under the name the template gives:', hint);
         }
-        personality.value = match ? (match.value || match.getAttribute('value') || '') : '';
+        menu.setValue(match ? match.value : '');
     }
 
     return { applyHireFields };

@@ -328,6 +328,10 @@ const BossModAgentForm = (() => {
             }
         }
 
+        // The Advanced dropdowns are built before the bindings below, which
+        // find them by name, and before any template hydrate writes them.
+        BossModAgentFormChoices.mount(form, { personalities, roster, values, kept: keptPrompt });
+
         const BINDINGS = BossModAgentFormBindings;
         BINDINGS.bindFinishLineSuggestion(form, values);
         BINDINGS.bindCommunicationDefaults(form, values);

@@ -103,6 +103,13 @@ def _render_system_settings() -> dict:
             str(JS / "core" / "switch.js"),
             str(JS / "settings" / "settings-system-meta.js"),
             str(JS / "settings" / "settings-advanced.js"),
+            # A select-type setting's dropdown and its panel.
+            str(JS / "core" / "overlay-focus.js"),
+            str(JS / "core" / "modal-trail.js"),
+            str(JS / "core" / "overlay-actions.js"),
+            str(JS / "core" / "overlays.js"),
+            str(JS / "core" / "menu.js"),
+            str(JS / "core" / "menu-select.js"),
         ],
         check=False,
         capture_output=True,

@@ -12,7 +12,67 @@
 const BossModCliPolicyRuleForm = (() => {
     const esc = BossModFormat.escapeHtml;
     const escAttr = BossModFormat.escapeAttribute;
-    const { icons, getAgents, announceApplied } = BossModCliPolicyShared;
+    const { icons, getAgents, agentName, announceApplied } = BossModCliPolicyShared;
+
+    const TIERS = Object.freeze([
+        { value: 'never_allowed', label: 'Never Allowed' },
+        { value: 'always_allowed', label: 'Always Allowed' },
+        { value: 'approval_required', label: 'Approval Required' },
+    ]);
+    const MATCH_MODES = Object.freeze([
+        { value: 'prefix', label: 'Prefix' },
+        { value: 'exact', label: 'Exact' },
+        { value: 'glob', label: 'Glob' },
+    ]);
+
+    /**
+     * Who a rule can apply to: everyone, then each agent on the roster.
+     *
+     * @param {object[]} agents
+     * @param {string|null} current  The rule's `agent_id`. One the roster no
+     *   longer lists stays offered under its raw id (as
+     *   BossModCliPolicyShared.agentName names it), so opening a rule to edit
+     *   never silently widens it to every agent.
+     * @returns {Array<{value: string, label: string}>}
+     */
+    function appliesToOptions(agents, current) {
+        const options = [{ value: '', label: 'All Agents' },
+            ...agents.map((a) => ({ value: String(a.id), label: a.name }))];
+        if (current && !options.some((option) => option.value === current)) {
+            options.push({ value: current, label: agentName(current) });
+        }
+        return options;
+    }
+
+    /**
+     * Build the form's three dropdowns into their mount points. Each carries
+     * its form value (core/menu-select.js `name`), which the submit reads
+     * through FormData like any other field.
+     *
+     * @param {HTMLElement} slot
+     * @param {object|null} rule
+     * @returns {void}
+     * @throws {Error} When a mount point the markup renders is missing.
+     */
+    function mountChoices(slot, rule) {
+        const place = (mountId, deps) => {
+            const point = slot.querySelector(`#${mountId}`);
+            if (!point) throw new Error(`[cli-rule-form] the form has no #${mountId}`);
+            point.append(BossModMenuSelect.create({ ...deps, variant: 'field' }).element);
+        };
+        place('cli-rule-tier-mount', {
+            label: 'Tier', name: 'tier', id: 'cli-rule-tier',
+            options: TIERS, value: rule ? rule.tier : undefined,
+        });
+        place('cli-rule-match-mode-mount', {
+            label: 'Match Mode', name: 'match_mode', id: 'cli-rule-match-mode',
+            options: MATCH_MODES, value: rule ? rule.match_mode : undefined,
+        });
+        place('cli-rule-agent-mount', {
+            label: 'Applies To', name: 'agent_id', id: 'cli-rule-agent',
+            options: appliesToOptions(getAgents(), rule?.agent_id || null), value: rule?.agent_id || '',
+        });
+    }
 
     /**
      * Open the rule form in the Rules tab's slot.
@@ -29,31 +89,17 @@ const BossModCliPolicyRuleForm = (() => {
         const slot = document.getElementById('cli-rule-form-slot');
         if (!slot) return;
 
-        const agentOptions = getAgents().map(a =>
-            `<option value="${escAttr(a.id)}" ${rule?.agent_id === a.id ? 'selected' : ''}>${esc(a.name)}</option>`
-        ).join('');
-
         slot.innerHTML = `
             <div class="border border-bm-accent/30 rounded-xl p-4 bg-bm-accent/5 mb-4">
                 <h3 class="text-sm font-semibold mb-3">${isEdit ? 'Edit Rule' : 'New Rule'}</h3>
                 <form id="cli-rule-form" class="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                        <label class="block text-xs font-medium mb-1">Tier</label>
-                        <select name="tier" required
-                                class="field-select">
-                            <option value="never_allowed" ${rule?.tier === 'never_allowed' ? 'selected' : ''}>Never Allowed</option>
-                            <option value="always_allowed" ${rule?.tier === 'always_allowed' ? 'selected' : ''}>Always Allowed</option>
-                            <option value="approval_required" ${rule?.tier === 'approval_required' ? 'selected' : ''}>Approval Required</option>
-                        </select>
+                        <label class="block text-xs font-medium mb-1" for="cli-rule-tier">Tier</label>
+                        <div id="cli-rule-tier-mount"></div>
                     </div>
                     <div>
-                        <label class="block text-xs font-medium mb-1">Match Mode</label>
-                        <select name="match_mode" required
-                                class="field-select">
-                            <option value="prefix" ${rule?.match_mode === 'prefix' ? 'selected' : ''}>Prefix</option>
-                            <option value="exact" ${rule?.match_mode === 'exact' ? 'selected' : ''}>Exact</option>
-                            <option value="glob" ${rule?.match_mode === 'glob' ? 'selected' : ''}>Glob</option>
-                        </select>
+                        <label class="block text-xs font-medium mb-1" for="cli-rule-match-mode">Match Mode</label>
+                        <div id="cli-rule-match-mode-mount"></div>
                     </div>
                     <div class="md:col-span-2">
                         <label class="block text-xs font-medium mb-1">Pattern</label>
@@ -63,12 +109,8 @@ const BossModCliPolicyRuleForm = (() => {
                                class="field-input field-mono">
                     </div>
                     <div>
-                        <label class="block text-xs font-medium mb-1">Applies To</label>
-                        <select name="agent_id"
-                                class="field-select">
-                            <option value="" ${!rule?.agent_id ? 'selected' : ''}>All Agents</option>
-                            ${agentOptions}
-                        </select>
+                        <label class="block text-xs font-medium mb-1" for="cli-rule-agent">Applies To</label>
+                        <div id="cli-rule-agent-mount"></div>
                     </div>
                     <div>
                         <label class="block text-xs font-medium mb-1">Priority</label>
@@ -140,6 +182,7 @@ const BossModCliPolicyRuleForm = (() => {
                 </form>
             </div>`;
 
+        mountChoices(slot, rule);
         icons(slot);
         slot.querySelectorAll('textarea[data-autogrow]').forEach(BossModAutoGrow.bind);
 

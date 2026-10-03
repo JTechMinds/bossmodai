@@ -481,10 +481,19 @@ AGENT_FORM_MODULES = [
     JS / "core" / "agent-status.js",
     JS / "core" / "avatar.js",
     JS / "core" / "communication.js",
+    # The dropdowns the bindings mount (core/menu-select.js) and their panel.
+    JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
+    JS / "core" / "overlays.js",
+    JS / "core" / "menu.js",
+    JS / "core" / "menu-select.js",
     JS / "context" / "agent-fields.js",
     JS / "context" / "agent-form-fields.js",
     JS / "context" / "agent-form-advanced.js",
+    JS / "context" / "agent-form-choices.js",
     JS / "context" / "agent-form-connections.js",
+    JS / "context" / "agent-form-bindings.js",
     JS / "context" / "agent-submit.js",
 ]
 
@@ -717,7 +726,7 @@ def test_text_fields_step_grey_instead_of_ringing() -> None:
     tokens = _read(CSS / "tokens.css")
     assert "--line-field: var(--line-strong);" in tokens
     fields = (
-        ("controls.css", ".field-input,\n.field-select,\n.field-textarea {"),
+        ("controls.css", ".field-input,\n.field-textarea {"),
         ("controls.css", ".search-field {"),
         ("context.css", ".desk-opener-custom {"),
         ("places.css", ".files-path,\n.files-search {"),

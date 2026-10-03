@@ -327,11 +327,11 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
    proceed, and the copy says so. --amber-ink measures 7.15:1 on --panel. */
 .field-warn { margin: 0; font-size: 12px; color: var(--amber-ink); }
 
-/* One rule, three elements. Split into three selectors rather than one
-   `.field-input` on every tag because a <select> and a <textarea> each need one
-   declaration the others must not have — see the two rules below. */
+/* One rule, two elements. Split into two selectors rather than one
+   `.field-input` on every tag because a <textarea> needs declarations a line
+   must not have — see the rule below. A dropdown is never a native <select>
+   here: it is core/menu-select.js. */
 .field-input,
-.field-select,
 .field-textarea {
   width: 100%;
   min-width: 0;
@@ -388,17 +388,6 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
   resize: none;
 }
 .text-editor[hidden] { display: none !important; }
-
-/* Connection and personality labels are arbitrary operator input and the
-   columns they sit in are narrow, so the visible text can clip. Truncation is
-   acceptable only because it stays RECOVERABLE: the option carries the full
-   label in a `title`, and the native popup is not bounded by the control's
-   width. */
-.field-select {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
 /* Two fields on one row, one below the fold it saves. Collapses whole rather
    than letting a label wrap under its own control — the dialog's width follows

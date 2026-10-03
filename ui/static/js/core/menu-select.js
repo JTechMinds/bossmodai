@@ -8,8 +8,20 @@
  * a grey GTK button with its own arrow and height, so the one control that
  * could not be styled was the one that broke every toolbar row it sat in.
  *
- * It owns the current value and nothing else. The options are handed in, and
- * a change is reported through onChange; the caller never reads the DOM.
+ * It owns the current value. The options are handed in, and a change is
+ * reported through onChange; the caller never reads the trigger.
+ *
+ * THE FORM CONTRACT. Given a `name`, the control also owns a hidden
+ * `<input name>` inside its element, whose value is always the current
+ * choice — written at create time and on every pick, `setValue` and
+ * `setOptions`. So what read a native select keeps working untouched:
+ * `FormData`, `[name=…].value`, and `change` listeners, because a user pick
+ * dispatches one bubbling `change` on that input (after it is updated), as a
+ * native select does; `setValue` dispatches nothing, as assigning
+ * `select.value` does not. READERS use the input; WRITERS go through the
+ * instance — never `input.value = …`, which would leave the trigger naming
+ * another choice. A module that holds only a DOM node reaches the instance
+ * with `BossModMenuSelect.instanceFor(node)`.
  *
  * Two trigger looks, one control: the toolbar's `'button'` (the default), and
  * `'field'`, which reads as an in-place edit field — the task detail's Edit
@@ -20,6 +32,12 @@ const BossModMenuSelect = (() => {
 
     /** The trigger looks `deps.variant` may name; the first is the default. */
     const VARIANTS = Object.freeze(['button', 'field']);
+
+    /**
+     * Each control's API, keyed by its element, its trigger and its hidden
+     * input, so `instanceFor` answers for any of the three without walking.
+     */
+    const INSTANCES = new WeakMap();
 
     /**
      * @param {Array<object>} options
@@ -70,21 +88,37 @@ const BossModMenuSelect = (() => {
      *   chevron. `'field'` has no box: the chosen option's avatar chip (when
      *   it has one), its text, then the chevron, on one line over the edit
      *   hairline (controls.css `.menu-select-field`).
-     * @param {(value: string) => void} deps.onChange  A different option was
+     * @param {(value: string) => void} [deps.onChange]  A different option was
      *   picked. Picking the current one again reports nothing, as a native
-     *   select does not.
+     *   select does not. Optional only with `name`: without either, a pick
+     *   would go nowhere.
+     * @param {string} [deps.name]  Puts a hidden `<input name>` carrying the
+     *   current choice inside `element` (the form contract in the header).
+     *   A user pick updates it, re-names the trigger, dispatches a bubbling
+     *   `change` on it, then calls `onChange`.
+     * @param {string} [deps.id]  Set on the trigger, so an existing
+     *   `<label for>` names and focuses it. The trigger's `aria-label` still
+     *   says "Label: choice".
      * @returns {{element: HTMLElement, getValue: () => string,
+     *   getLabel: () => string, getOptions: () => Array<{value: string,
+     *   label: string}>, setValue: (value: string) => void,
      *   setOptions: (options: object[], value?: string) => void,
      *   close: () => void, destroy: () => void}}
-     * @throws {Error} On a missing label or onChange, an unknown variant, bad
-     *   options, or a value that is not one of them — a trigger naming a
-     *   choice the list does not hold would say one thing while filtering by
-     *   another.
+     * @throws {Error} On a missing label, neither onChange nor name, an
+     *   unknown variant, bad options, or a value that is not one of them — a
+     *   trigger naming a choice the list does not hold would say one thing
+     *   while filtering by another.
      */
     function create(deps) {
-        const { label, options, value, onChange, variant = VARIANTS[0] } = deps || {};
+        const { label, options, value, onChange, name, id, variant = VARIANTS[0] } = deps || {};
         if (!label) throw new Error('[menu-select] deps.label is required');
-        if (typeof onChange !== 'function') throw new Error('[menu-select] deps.onChange is required');
+        if (onChange !== undefined && typeof onChange !== 'function') {
+            throw new Error('[menu-select] deps.onChange must be a function');
+        }
+        if (!onChange && !name) throw new Error('[menu-select] deps.onChange is required without deps.name');
+        if (name !== undefined && (typeof name !== 'string' || !name)) {
+            throw new Error('[menu-select] deps.name must be a non-empty string');
+        }
         if (!VARIANTS.includes(variant)) {
             throw new Error(`[menu-select] unknown variant "${variant}"; expected one of ${VARIANTS.join(', ')}`);
         }
@@ -101,14 +135,17 @@ const BossModMenuSelect = (() => {
         const trigger = h('button', {
             class: field ? 'menu-select-trigger menu-select-field' : 'btn btn-sm menu-select-trigger',
             type: 'button',
+            id,
             'aria-haspopup': 'dialog',
             'aria-expanded': 'false',
             onclick: () => toggle(),
         }, text, h('i', { 'data-lucide': 'chevron-down', 'aria-hidden': 'true' }));
+        /** The form value (see the header), or null without `name`. */
+        const input = name ? h('input', { type: 'hidden', name }) : null;
         // The positioned host the panel hangs off, so it opens under the
         // trigger rather than against whatever toolbar row contains it; the
         // panel must not live inside the button (nested interactive).
-        const element = h('span', { class: field ? 'menu-select menu-select--field' : 'menu-select' }, trigger);
+        const element = h('span', { class: field ? 'menu-select menu-select--field' : 'menu-select' }, trigger, input);
 
         /** @returns {object} The option for `current`. */
         function selected() {
@@ -125,6 +162,7 @@ const BossModMenuSelect = (() => {
          */
         function sync() {
             const option = selected();
+            if (input) input.value = current;
             text.textContent = field && option.short ? option.short : option.label;
             trigger.setAttribute('aria-label', `${label}: ${option.label}`);
             if (!field) return;
@@ -156,8 +194,11 @@ const BossModMenuSelect = (() => {
             close();
             if (next === current) return;
             current = next;
+            // The input is written (in sync) before anyone hears of the
+            // change, so a `change` listener reading it sees the new choice.
             sync();
-            onChange(current);
+            if (input) input.dispatchEvent(new Event('change', { bubbles: true }));
+            if (onChange) onChange(current);
         }
 
         /** @returns {void} */
@@ -200,12 +241,47 @@ const BossModMenuSelect = (() => {
 
         sync();
 
-        return {
+        const api = {
             element,
 
             /** @returns {string} The current choice's value. */
             getValue() {
                 return current;
+            },
+
+            /** @returns {string} The current choice's full label. */
+            getLabel() {
+                return selected().label;
+            },
+
+            /**
+             * The current options, for a caller matching on them (a template
+             * names a personality by its label).
+             * @returns {Array<{value: string, label: string}>} A fresh copy;
+             *   changing it changes nothing here.
+             */
+            getOptions() {
+                return list.map((option) => ({ value: option.value, label: option.label }));
+            },
+
+            /**
+             * Choose an option from code, as assigning a native select's
+             * `.value` does: the trigger and the hidden input follow, and
+             * neither `onChange` nor `change` fires — only a person's pick is
+             * a change to report.
+             *
+             * @param {string} next  One of the current options' values.
+             * @returns {void}
+             * @throws {Error} When no option holds that value; the control is
+             *   left as it was.
+             */
+            setValue(next) {
+                const nextCurrent = String(next);
+                if (!list.some((option) => option.value === nextCurrent)) {
+                    throw new Error(`[menu-select] "${nextCurrent}" is not one of the options`);
+                }
+                current = nextCurrent;
+                sync();
             },
 
             /**
@@ -217,6 +293,8 @@ const BossModMenuSelect = (() => {
              *
              * @param {object[]} next  Same shape as deps.options.
              * @param {string} [nextValue]  Defaults to the current choice.
+             *   The trigger and any hidden input follow it; nothing is
+             *   reported, as with `setValue`.
              * @returns {void}
              * @throws {Error} On bad options, or a choice they do not hold.
              */
@@ -244,7 +322,28 @@ const BossModMenuSelect = (() => {
                 close();
             },
         };
+        INSTANCES.set(element, api);
+        INSTANCES.set(trigger, api);
+        if (input) INSTANCES.set(input, api);
+        return api;
     }
 
-    return { create };
+    /**
+     * The control a node belongs to, for a module that holds only the DOM —
+     * the agent form's bindings find a field by `[name=…]` and must write it
+     * through the control, never the input (the header's form contract).
+     *
+     * @param {Node} node  A control's `element`, its trigger, or its hidden
+     *   input.
+     * @returns {object} The API `create` returned.
+     * @throws {Error} When the node is none of those: a module looking up a
+     *   control that is not there is a bug, not an absent field.
+     */
+    function instanceFor(node) {
+        const found = node ? INSTANCES.get(node) : undefined;
+        if (!found) throw new Error('[menu-select] that node is not part of a menu select');
+        return found;
+    }
+
+    return { create, instanceFor };
 })();
