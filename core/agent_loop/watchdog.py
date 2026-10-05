@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
 
@@ -29,6 +30,9 @@ class TaskWatchdog:
     def __init__(self) -> None:
         self._running = False
         self._task: asyncio.Task[None] | None = None
+        # time.monotonic() of the last history prune; None until the first,
+        # so the first tick after start prunes.
+        self._last_prune_at: float | None = None
 
     def start(self) -> None:
         if self._running:
@@ -57,19 +61,61 @@ class TaskWatchdog:
                 break
             except Exception:
                 logger.exception("Task watchdog loop error")
-            interval = config.get_float("watchdog_check_interval_seconds") or 5.0
+            # Its own guard: a failing task scan must not stop retention, nor
+            # a failing prune the task scan.
+            try:
+                self._prune_history_if_due()
+            except Exception:
+                logger.exception("Task watchdog history prune failed")
+            interval = config.require_float("watchdog_check_interval_seconds")
             await asyncio.sleep(interval)
+
+    def _prune_history_if_due(self) -> None:
+        """Prune old history, at most once per ``history_prune_interval_minutes``.
+
+        Prunes finished triggers, the activity log and diagnostics, per
+        ``trigger_retention_days``, ``activity_log_retention_days`` and
+        ``diagnostics_retention_days``. A missing or non-positive setting
+        raises ``ConfigError`` before anything is deleted. The run is stamped
+        before it starts, so a failing prune is retried (and logged) once per
+        interval, not every tick. The prune runs on the watchdog's own tick,
+        so an interval shorter than ``watchdog_check_interval_seconds``
+        prunes on every tick.
+        """
+        now_mono = time.monotonic()
+        interval_seconds = config.require_positive_int("history_prune_interval_minutes") * 60
+        if self._last_prune_at is not None and now_mono - self._last_prune_at < interval_seconds:
+            return
+        self._last_prune_at = now_mono
+        trigger_days = config.require_positive_int("trigger_retention_days")
+        activity_log_days = config.require_positive_int("activity_log_retention_days")
+        diagnostics_days = config.require_positive_int("diagnostics_retention_days")
+        now = datetime.now(timezone.utc)
+        triggers = db.prune_finished_triggers(now - timedelta(days=trigger_days))
+        log_rows = db.prune_activity_log(now - timedelta(days=activity_log_days))
+        diagnostics = db.prune_diagnostics(now - timedelta(days=diagnostics_days))
+        logger.info(
+            "History prune removed %d finished trigger(s) (> %d days), "
+            "%d activity-log row(s) (> %d days), %d diagnostic(s) (> %d days)",
+            triggers, trigger_days, log_rows, activity_log_days, diagnostics, diagnostics_days,
+        )
 
     async def _check_tasks(self) -> None:
         expired = db.expire_stale_cli_approval_requests()
         if expired:
             logger.info("Expired %d stale CLI approval request(s)", expired)
 
-        soft_minutes = config.get_int("watchdog_soft_ping_minutes") or 15
-        escalation_minutes = config.get_int("watchdog_escalation_minutes") or 15
+        soft_minutes = config.require_int("watchdog_soft_ping_minutes")
+        escalation_minutes = config.require_int("watchdog_escalation_minutes")
 
         now = datetime.now(timezone.utc)
-        watched_tasks = _list_watchdog_tasks()
+        watched_tasks = db.list_tasks_by_statuses(_WATCHDOG_TASK_STATUSES)
+        # One read for every assignee. Taken once per scan, so an escalation
+        # earlier in this scan is not seen by a later task of the same agent
+        # until the next scan; it only gates the "walking" skip below.
+        active_by_agent = db.get_active_activities(
+            [task.assigned_to for task in watched_tasks if task.assigned_to]
+        )
         for task in watched_tasks:
             if not task.assigned_to:
                 continue
@@ -77,7 +123,7 @@ class TaskWatchdog:
             if dispatcher.is_active(task.assigned_to) or db.has_open_trigger(task.assigned_to):
                 continue
 
-            active_activity = activity_runtime.get_active_activity(task.assigned_to)
+            active_activity = active_by_agent.get(task.assigned_to)
             if active_activity and active_activity.kind == "movement":
                 continue
 
@@ -187,19 +233,6 @@ class TaskWatchdog:
                 },
                 task_id=task.id,
             )
-
-
-def _list_watchdog_tasks():
-    """Return assigned in-flight tasks the watchdog should ping."""
-    tasks = []
-    seen: set[str] = set()
-    for status in _WATCHDOG_TASK_STATUSES:
-        for task in db.list_tasks(status=status):
-            if task.id in seen:
-                continue
-            seen.add(task.id)
-            tasks.append(task)
-    return tasks
 
 
 def _agent_name(agent_id: str) -> str | None:

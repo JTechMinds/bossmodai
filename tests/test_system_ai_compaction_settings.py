@@ -828,3 +828,41 @@ def test_system_ai_picker_source_is_under_ai_connections() -> None:
     assert not (JS / "settings" / "settings-system-ai-thinking.js").exists()
     assert "set_setting" not in completion
     assert "never blocks the agent turn" in system
+
+
+def test_retention_limits_save_only_whole_numbers_in_range() -> None:
+    """Settings → Advanced: the four retention limits share one card and one save.
+
+    A value that is not a whole number in the field's range is reported
+    under the field and never sent. A setting the server does not have is
+    shown as not configured, not as a made-up default.
+    """
+    flow = _render_system_settings()["retention"]
+    assert flow["labels"] == [
+        "Diagnostics Retention Limit",
+        "Diagnostics Retention (days)",
+        "Finished Wake-up Retention (days)",
+        "Activity Log Retention (days)",
+    ]
+    assert flow["values"] == ["5000", "7", "7"]
+    for case, message in (
+        ("zeroDays", "Enter a whole number, 1 or more."),
+        ("fraction", "Enter a whole number, 1 or more."),
+        ("text", "Enter a whole number, 1 or more."),
+        ("belowRowMin", "Enter a whole number, 100 to 50000."),
+    ):
+        assert flow[case] == {"saves": [], "error": message, "invalid": "true"}, case
+    assert flow["goodDays"] == {
+        "saves": ["/api/settings/diagnostics_retention_days?value=14&category=advanced"],
+        "error": "",
+        "invalid": "false",
+    }
+    assert flow["goodRows"] == {
+        "saves": ["/api/settings/diagnostics_retention_limit?value=8000&category=advanced"],
+        "error": "",
+        "invalid": "false",
+    }
+    assert flow["missing"] == {
+        "disabled": True,
+        "error": "Not configured. Reset Seed Settings restores it.",
+    }

@@ -43,6 +43,18 @@ function makeEl(tag) {
             this.parentNode = null;
         },
         replaceChildren() { this.children = []; },
+        // The People list is patched by key (BossModDom.createKeyedList), which
+        // moves rows with insertBefore and reads childNodes; a real element
+        // has both. Inserting an attached node MOVES it, as the DOM does.
+        get childNodes() { return this.children; },
+        insertBefore(node, reference) {
+            if (node.parentNode) node.remove();
+            node.parentNode = this;
+            const at = reference ? this.children.indexOf(reference) : -1;
+            if (at === -1) this.children.push(node);
+            else this.children.splice(at, 0, node);
+            return node;
+        },
         addEventListener(n, fn) { (this.listeners[n] = this.listeners[n] || []).push(fn); },
         removeEventListener(n, fn) {
             const l = this.listeners[n] || [];
@@ -375,6 +387,39 @@ function rowFor(el, name) {
     }
     if (input.value !== "la") throw new Error("the search text must survive a re-render");
     fireInput("");
+
+    // ── A repeated world_update publishes nothing; a changed one patches ──
+    //
+    // core/store.js notifies by reference, so mergeRosterFromWorld handing
+    // back the same array for the same data is what keeps an idle tick from
+    // repainting the rail. When one agent does change, only that row is
+    // rebuilt: the others keep their DOM node (and with it focus).
+    let rosterPublishes = 0;
+    const offRosterCount = store.subscribe((s) => s.roster, () => { rosterPublishes += 1; });
+    const rowNode = (name) => rowFor(el, name).parentNode;
+    const lauraRowBefore = rowNode("Laura");
+    const jimRowBefore = rowNode("Jim");
+    bus.publish("world_update", WORLD);
+    await drain();
+    const identicalWorldPublishesNothing = rosterPublishes === 0
+        && rowNode("Laura") === lauraRowBefore && rowNode("Jim") === jimRowBefore;
+    if (!identicalWorldPublishesNothing) {
+        throw new Error(`an identical world_update must not publish the roster, got ${rosterPublishes}`);
+    }
+    bus.publish("world_update", WORLD.map((agent) => (agent.name === "Jim"
+        ? { ...agent, status: "idle", currentActivityKind: null, x: 5 }
+        : agent)));
+    await drain();
+    const changedRowIsRebuiltOthersKept = rosterPublishes === 1
+        && rowNode("Laura") === lauraRowBefore && rowNode("Jim") !== jimRowBefore;
+    if (!changedRowIsRebuiltOthersKept) {
+        throw new Error(`a world_update must patch only the changed row (publishes ${rosterPublishes}, `
+            + `Laura kept ${rowNode("Laura") === lauraRowBefore}, Jim rebuilt ${rowNode("Jim") !== jimRowBefore})`);
+    }
+    // Back to the fixture, for every check below that reads it.
+    bus.publish("world_update", WORLD);
+    await drain();
+    offRosterCount();
 
     // ── Threads and Hire ──
     if (!text(el).includes("Launch plan")) throw new Error("threads must render from GET /api/channels");
@@ -835,6 +880,8 @@ function rowFor(el, name) {
         usesSharedStatusLabel: true,
         searchMatchesNameAndRole: true,
         caretSurvivesRerender: true,
+        identicalWorldPublishesNothing,
+        changedRowIsRebuiltOthersKept,
         selectionClearsAfterCreate,
         rowsAreCleanUntilSelectMode,
         cancelClearsTheSelection,

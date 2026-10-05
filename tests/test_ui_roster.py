@@ -79,6 +79,10 @@ def test_search_filters_on_name_and_role_and_preserves_the_caret() -> None:
     payload = _run_harness()
     assert payload["searchMatchesNameAndRole"] is True
     assert payload["caretSurvivesRerender"] is True
+    # Phase 2 (refresh efficiency): an identical world_update publishes no
+    # roster, and a changed one rebuilds only the changed row.
+    assert payload["identicalWorldPublishesNothing"] is True
+    assert payload["changedRowIsRebuiltOthersKept"] is True
     assert payload["disposersDrain"] is True
 
 

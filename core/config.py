@@ -81,6 +81,30 @@ def refresh_if_changed() -> bool:
         return True
 
 
+def loaded_revision() -> int:
+    """Return the ``settings_revision`` the process cache was loaded at.
+
+    Loads the whole cache first when no full load has happened. For
+    callers that derive their own caches from settings: a value built at
+    revision N is stale once this returns anything else, whichever caller's
+    :func:`refresh_if_changed` did the reload (its True goes to that caller
+    only).
+
+    Raises:
+        ConfigError: The ``settings_revision`` row is missing.
+    """
+    with _lock:
+        rev = _loaded_rev
+    if rev is None:
+        # Nothing loaded yet, or only get_live() warmed single keys.
+        reload()
+        with _lock:
+            rev = _loaded_rev
+    if rev is None:
+        raise ConfigError("settings cache has no revision after a reload")
+    return rev
+
+
 def _read_settings_revision() -> int:
     row = db.query_one("SELECT rev FROM settings_revision WHERE id = 1")
     if row is None:
@@ -167,6 +191,23 @@ def require_int(key: str) -> int:
         return int(val)
     except ValueError as exc:
         raise ConfigError(f"Required setting '{key}' is not an integer: {val!r}") from exc
+
+
+def require_positive_int(key: str) -> int:
+    """Get a required setting as an integer greater than zero.
+
+    For limits where zero or a negative number would be destructive rather
+    than meaningful (a retention of 0 days would delete everything).
+
+    Raises
+    ------
+    ConfigError
+        If the setting is missing, not an integer, or not positive.
+    """
+    value = require_int(key)
+    if value <= 0:
+        raise ConfigError(f"Required setting '{key}' must be a positive integer: {value!r}")
+    return value
 
 
 def get_float(key: str) -> float | None:

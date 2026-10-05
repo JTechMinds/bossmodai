@@ -33,7 +33,7 @@
  * occupied-rooms view rather than to a blank panel.
  */
 const BossModMiniOffice = (() => {
-    const { h, clear } = BossModDom;
+    const { h } = BossModDom;
 
     /** Where the agents db.get_world_state() could not place are shown. */
     const UNPLACED_ROOM = 'Unknown';
@@ -96,6 +96,11 @@ const BossModMiniOffice = (() => {
         let floor = null;
 
         const roomsEl = h('div', { class: 'mini-office-rooms' });
+        // Rooms are patched by name and each room's seats by agent id, so a
+        // world tick that moves one agent touches two seats, not the panel.
+        const roomRows = BossModDom.createKeyedList(roomsEl);
+        /** A room node's own keyed seat list; null for an empty room. */
+        const seatLists = new WeakMap();
         // Empty until there is something to say; `.context-error:empty` keeps
         // an empty alert from painting a bordered box around nothing.
         const mapErrorEl = h('p', { class: 'context-error', role: 'alert' });
@@ -197,37 +202,60 @@ const BossModMiniOffice = (() => {
                     : null);
         }
 
+        /**
+         * One room's box. Its seats are filled by render() through the keyed
+         * list registered here, so a reused room keeps its seat nodes too.
+         *
+         * @param {{name: string, tone: string, agents: object[]}} room
+         * @returns {HTMLElement}
+         */
+        function roomBox(room) {
+            const seats = room.agents.length === 0 ? null : h('div', { class: 'mini-office-seats' });
+            const box = h('div', { class: 'mini-office-room', 'data-tone': room.tone },
+                h('p', { class: 'mini-office-room-name' }, room.name),
+                seats || h('p', { class: 'mini-office-room-empty' }, EMPTY_ROOM_COPY));
+            seatLists.set(box, seats ? BossModDom.createKeyedList(seats) : null);
+            return box;
+        }
+
+        /** A non-room state: the one line replaces every room. */
+        function message(className, text) {
+            roomRows.reset();
+            roomsEl.append(h('p', { class: className }, text));
+        }
+
         function render() {
             const state = store.getState();
             const roster = state.roster;
-            clear(roomsEl);
 
             if (!loaded) {
-                roomsEl.append(h('p', { class: 'context-skeleton' }, 'Loading the floor…'));
+                message('context-skeleton', 'Loading the floor…');
                 return;
             }
             if (roster.length === 0) {
-                roomsEl.append(h('p', { class: 'context-empty' },
-                    'Nobody is on the roster yet. Add an agent from the rail and they will take a desk.'));
+                message('context-empty',
+                    'Nobody is on the roster yet. Add an agent from the rail and they will take a desk.');
                 return;
             }
 
             const needy = new Set(state.needs.map((need) => need.agentId));
-            const rooms = floor ? floorRooms(roster) : byRoom(roster);
+            const rooms = (floor ? floorRooms(roster) : byRoom(roster)).map((room, index) => ({
+                ...room,
+                // The first room is the wide one and takes the panel treatment
+                // from :first-child; the rest start at the top of the ramp and
+                // cycle. Offset by one, so the ramp's first tone is the first
+                // tint an operator actually sees.
+                tone: index === 0 ? 'main' : TONES[(index - 1) % TONES.length],
+            }));
+            // A room is rebuilt only when its tone or its emptiness changes;
+            // who sits in it is the seat list's business.
+            roomRows.sync(rooms, (room) => room.name,
+                (room) => [room.tone, room.agents.length === 0], roomBox);
             rooms.forEach((room, index) => {
-                roomsEl.append(h('div', {
-                    class: 'mini-office-room',
-                    // The first room is the wide one and takes the panel
-                    // treatment from :first-child; the rest start at the top of
-                    // the ramp and cycle. Offset by one, so the ramp's first
-                    // tone is the first tint an operator actually sees.
-                    'data-tone': index === 0 ? 'main' : TONES[(index - 1) % TONES.length],
-                },
-                    h('p', { class: 'mini-office-room-name' }, room.name),
-                    room.agents.length === 0
-                        ? h('p', { class: 'mini-office-room-empty' }, EMPTY_ROOM_COPY)
-                        : h('div', { class: 'mini-office-seats' },
-                            room.agents.map((agent) => seat(agent, needy)))));
+                const seats = seatLists.get(roomsEl.childNodes[index]);
+                if (!seats) return;
+                seats.sync(room.agents, (agent) => agent.id,
+                    (agent) => [agent, needy.has(agent.id)], (agent) => seat(agent, needy));
             });
         }
 

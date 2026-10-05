@@ -98,7 +98,7 @@ def test_live_worker_does_not_steal_an_old_claim() -> None:
         [stale, row.id],
     )
 
-    recovered = db.requeue_stale_triggers(1, force=False, worker_stale_after_seconds=15)
+    recovered = db.requeue_stale_triggers(1, force=False)
     assert recovered == 0
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
@@ -117,7 +117,7 @@ def test_dead_worker_requeues_stale_claim() -> None:
         [stale, row.id],
     )
 
-    recovered = db.requeue_stale_triggers(1, force=False, worker_stale_after_seconds=15)
+    recovered = db.requeue_stale_triggers(1, force=False)
     assert recovered == 1
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
@@ -360,7 +360,7 @@ def test_stale_requeue_leaves_a_blocked_orphan_claimed() -> None:
     stale = datetime.now(timezone.utc) - timedelta(seconds=900)
     db.execute("UPDATE agent_triggers SET claimed_at = $1 WHERE id = $2", [stale, blocked.id])
 
-    assert db.requeue_stale_triggers(1, force=False, worker_stale_after_seconds=15) == 0
+    assert db.requeue_stale_triggers(1, force=False) == 0
     assert db.get_agent_trigger(blocked.id).status == "claimed"
 
 

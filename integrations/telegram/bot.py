@@ -331,7 +331,7 @@ async def cmd_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         [channel.id for channel in channels],
         floor_id=floor.id,
     )
-    members_map = {ch.id: db.list_channel_member_details(ch.id) for ch in channels}
+    members_map = db.list_channel_member_details_for([channel.id for channel in channels])
     text = formatters.format_channels_list(channels, members_map, floor_name=floor.name)
     await update.message.reply_text(text, parse_mode="MarkdownV2")
 

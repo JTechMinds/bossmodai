@@ -35,7 +35,7 @@
  * when it renders.
  */
 const BossModRosterPeople = (() => {
-    const { h, clear } = BossModDom;
+    const { h } = BossModDom;
 
     /**
      * The one-line state under an agent's name.
@@ -131,6 +131,7 @@ const BossModRosterPeople = (() => {
         const selected = new Set();
 
         const list = h('ul', { class: 'roster-people' });
+        const rows = BossModDom.createKeyedList(list);
         // `getContainer` is a thunk for the reason Threads gives: the row the
         // panel hangs off cannot be built until the `⋯` exists to go in it.
         const view = BossModPeopleViewMenu.createPeopleViewMenu({
@@ -246,39 +247,35 @@ const BossModRosterPeople = (() => {
             return li;
         }
 
+        function message(cls, text) { rows.reset(); list.append(h('li', { class: cls }, text)); }
+
+        // Rows are PATCHED by agent id; a row's signature is all personRow reads
+        // (the agent object is stable while its values hold). `selected` is not
+        // in it: setSelected updates its row in place, and exiting changes selectMode.
         function render() {
-            clear(list);
-            if (loadState === 'loading') {
-                list.append(h('li', { class: 'roster-skeleton' }, 'Loading people…'));
-                return;
-            }
-            if (loadState === 'error') {
-                list.append(h('li', { class: 'roster-empty' }, 'Could not load the roster.'));
-                return;
-            }
+            if (loadState === 'loading') return message('roster-skeleton', 'Loading people…');
+            if (loadState === 'error') return message('roster-empty', 'Could not load the roster.');
             const state = store.getState();
             const roster = typeof BossModFloorScope === 'undefined'
                 ? state.roster
                 : BossModFloorScope.filterPeople(state, state.roster);
-            if (state.roster.length === 0) {
-                list.append(h('li', { class: 'roster-empty' }, 'No one is hired yet.'));
-                return;
-            }
-            if (roster.length === 0) { list.append(h('li', { class: 'roster-empty' }, 'No one on this floor.')); return; }
+            if (state.roster.length === 0) return message('roster-empty', 'No one is hired yet.');
+            if (roster.length === 0) return message('roster-empty', 'No one on this floor.');
 
             const query = String(state.rosterQuery).trim().toLowerCase();
             const visible = roster.filter((agent) => matches(agent, query));
-            if (visible.length === 0) {
-                list.append(h('li', { class: 'roster-empty' }, 'No one matches that search.'));
-                return;
-            }
+            if (visible.length === 0) return message('roster-empty', 'No one matches that search.');
 
-            const paused = store.getState().runtimePaused === true;
+            const paused = state.runtimePaused === true;
             const needy = agentsWithNeeds();
             const showRoles = view.showRoles();
-            visible.forEach((agent) => list.append(personRow(agent, paused, needy, showRoles)));
+            const built = rows.sync(visible, (agent) => agent.id,
+                (agent) => [agent, paused, needy.has(agent.id), showRoles, selectMode,
+                    BossModFormat.formatActivityTime(agent.lastMessageAt)],
+                (agent) => personRow(agent, paused, needy, showRoles));
             syncSeatAction();
-            BossModIcons.paintDocument('roster-people');
+            // Only a row built this pass can hold an unpainted placeholder.
+            built.forEach((row) => BossModIcons.paint(row, 'roster-people'));
         }
 
         /**
@@ -379,6 +376,8 @@ const BossModRosterPeople = (() => {
              * @returns {void}
              */
             setLoadState(state) {
+                // Every world_update reports 'ready'; only a change repaints.
+                if (state === loadState) return;
                 loadState = state;
                 render();
             },

@@ -24,8 +24,14 @@ STATIC = ROOT / "ui" / "static"
 # the eleven grammars, under both explicit and auto-detected highlighting.
 # 68KB and eleven requests. Named here so re-adding one is a test failure
 # rather than a judgement call.
+#
+# tailwindcss.js, the Tailwind Play compiler, is the third: a 407KB runtime
+# whose MutationObserver re-scanned the whole DOM on every class or childList
+# change. Its output is now pre-built into css/tailwind.generated.css by
+# scripts/build_tailwind.sh, so the compiler must not return.
 RETIRED_VENDOR = (
     "split.min.js",
+    "tailwindcss.js",
     "hljs-lang-bash.min.js",
     "hljs-lang-css.min.js",
     "hljs-lang-ini.min.js",
@@ -39,9 +45,10 @@ RETIRED_VENDOR = (
     "hljs-lang-yaml.min.js",
 )
 
-# The three the app cannot render without. Split.js was the fourth.
-CHROME_ASSETS = ("tailwindcss.js", "lucide.min.js", "marked.min.js",
-                 "highlight.min.js")
+# The three the app cannot render without. Split.js was the fourth; the
+# Tailwind Play compiler left too, replaced by the pre-built
+# css/tailwind.generated.css, which is app CSS rather than a vendored asset.
+CHROME_ASSETS = ("lucide.min.js", "marked.min.js", "highlight.min.js")
 
 
 def _html() -> str:
@@ -61,7 +68,7 @@ def test_index_does_not_load_cdn_chrome() -> None:
     for cdn in ("cdn.tailwindcss.com", "unpkg.com", "jsdelivr.net",
                 "cdnjs.cloudflare.com", "fonts.googleapis.com"):
         assert cdn not in html, f"index.html reaches for {cdn}"
-    assert "static_url('js/vendor/tailwindcss.js')" in html
+    assert "static_url('css/tailwind.generated.css')" in html
     assert "static_url('js/vendor/lucide.min.js')" in html
     for name in RETIRED_VENDOR:
         assert name not in html, f"{name} is loaded again"
@@ -83,11 +90,12 @@ def test_vendor_chrome_assets_exist() -> None:
     human to measure, and the answer is recorded in RETIRED_VENDOR.
     """
     references = _vendor_references()
-    # Seven: Tailwind, Lucide, marked, highlight.js, the hljs stylesheet, and
-    # Tabulator's script and base stylesheet (core/data-table.js).
+    # Six: Lucide, marked, highlight.js, the hljs stylesheet, and Tabulator's
+    # script and base stylesheet (core/data-table.js). Tailwind was the
+    # seventh until its runtime compiler was replaced by a pre-built sheet.
     # An exact count rather than a floor, because a floor is what let eleven
     # redundant language packs sit here inflating it.
-    assert len(references) == 7, f"{len(references)} vendored references: {references}"
+    assert len(references) == 6, f"{len(references)} vendored references: {references}"
 
     for ref in references:
         path = STATIC / ref
@@ -117,5 +125,9 @@ def test_tauri_csp_is_self_only() -> None:
     csp = config["app"]["security"]["csp"]
     assert "cdn.tailwindcss.com" not in csp
     assert "unpkg.com" not in csp
-    assert "script-src 'self' 'unsafe-eval'" in csp
+    # 'unsafe-eval' was there for the Tailwind Play compiler, which is gone
+    # (css/tailwind.generated.css is pre-built). Nothing left evaluates code
+    # from strings, so the webview must not allow it.
+    assert "'unsafe-eval'" not in csp
+    assert "script-src 'self'" in csp
     assert "style-src 'self' 'unsafe-inline'" in csp

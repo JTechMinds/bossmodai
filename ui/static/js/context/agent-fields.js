@@ -37,18 +37,6 @@ const BossModAgentFields = (() => {
         value,
     }));
 
-    /** Desk assignment options, from the tilemap. */
-    const DESK_OPTIONS = [
-        { id: 'desk_1', x: 3,  y: 4,  label: 'Desk 1 — Main NW' },
-        { id: 'desk_2', x: 7,  y: 4,  label: 'Desk 2 — Main N' },
-        { id: 'desk_3', x: 11, y: 4,  label: 'Desk 3 — Main NE' },
-        { id: 'desk_4', x: 3,  y: 6,  label: 'Desk 4 — Main SW' },
-        { id: 'desk_5', x: 7,  y: 6,  label: 'Desk 5 — Main S' },
-        { id: 'desk_6', x: 3,  y: 15, label: 'Desk 6 — South NW' },
-        { id: 'desk_7', x: 7,  y: 15, label: 'Desk 7 — South N' },
-        { id: 'desk_8', x: 11, y: 15, label: 'Desk 8 — South NE' },
-    ];
-
     /**
      * The two activations the runtime routes (core/agent_loop/turn_context.py
      * `_determine_mode`), each with its own thinking level on the agent's one
@@ -87,36 +75,59 @@ const BossModAgentFields = (() => {
      * dropdown's options, and context/agent-form-advanced.js reads
      * `noFreeDesk` for the warning under it.
      *
-     * @param {object|null} agent
-     * @param {object[]} roster
-     * @returns {{selectedDesk: object|null, noFreeDesk: boolean,
+     * The desks are the map endpoint's (core/world/tilemap.py DEFAULT_DESKS,
+     * loaded by context/agent-form.js), never a copy kept here, so growing
+     * the map cannot desync the form. Occupancy is per floor, as the server
+     * enforces it: each floor draws its own office, so a teammate on another
+     * floor does not take a desk on this one.
+     *
+     * @param {object|null} agent  The agent being edited, the snapshot being
+     *   recreated, or null for a blank form.
+     * @param {object[]} roster  Every agent; only rows on `floorId` count.
+     * @param {Array<{label: string, chair_xy: number[]}>} desks  The map's.
+     * @param {string|null} floorId  The floor the agent works on: its own
+     *   when edited, the hire floor otherwise.
+     * @returns {{selectedDesk: {value: string, label: string}|null,
+     *   noFreeDesk: boolean,
      *   desks: Array<{value: string, label: string, taken: boolean}>}}
-     *   The agent's own desk wins; otherwise the first unoccupied one. When
-     *   neither exists the caller says so rather than silently seating them on
-     *   top of a teammate. Each desk's `value` is `"x,y"`, and `taken` says a
-     *   teammate already sits there.
+     *   The agent's own desk wins unless another agent on `floorId` holds
+     *   it; otherwise the first unoccupied one. A null `floorId` (an agent on
+     *   vacation) marks nothing taken. When neither exists the caller says
+     *   so rather than silently seating them on top of a teammate. Each desk's `value` is `"x,y"` (its chair), and
+     *   `taken` says a teammate on this floor already sits there.
+     * @throws {Error} When `desks` is not a list: the dropdown would offer
+     *   nothing and the form would claim no desk is free.
      */
-    function deskChoice(agent, roster) {
+    function deskChoice(agent, roster, desks, floorId) {
+        if (!Array.isArray(desks)) throw new Error('[agent-fields] deskChoice needs the map\'s desks list');
+        // No floor (an agent on vacation): the server stores its desk as-is
+        // and reconciles it on return, so nothing is shown as taken.
         const occupiedChairs = new Set(
-            (roster || [])
-                .filter((item) => item.id !== agent?.id && item.desk_x != null && item.desk_y != null)
+            floorId == null ? [] : (roster || [])
+                .filter((item) => item.floor_id === floorId && item.id !== agent?.id
+                    && item.desk_x != null && item.desk_y != null)
                 .map((item) => `${item.desk_x},${item.desk_y}`)
         );
-        const assignedDesk = agent?.desk_x != null && agent?.desk_y != null
-            ? DESK_OPTIONS.find((d) => d.x === agent.desk_x && d.y === agent.desk_y)
-            : null;
-        const freeDesk = DESK_OPTIONS.find((d) => !occupiedChairs.has(`${d.x},${d.y}`)) || null;
-        const selectedDesk = assignedDesk || freeDesk;
-        const desks = DESK_OPTIONS.map((d) => {
-            const value = `${d.x},${d.y}`;
-            return { value, label: d.label, taken: occupiedChairs.has(value) };
+        const options = desks.map((desk) => {
+            const value = `${desk.chair_xy[0]},${desk.chair_xy[1]}`;
+            return { value, label: desk.label, taken: occupiedChairs.has(value) };
         });
-        return { selectedDesk, noFreeDesk: !assignedDesk && !freeDesk, desks };
+        const ownValue = agent?.desk_x != null && agent?.desk_y != null
+            ? `${agent.desk_x},${agent.desk_y}`
+            : null;
+        // Its own desk only while nobody else on this floor holds it: a
+        // recreated snapshot's old chair may belong to someone now, and
+        // preselecting it would only earn a 409 on save.
+        const assignedDesk = ownValue
+            ? options.find((d) => d.value === ownValue && !d.taken) || null
+            : null;
+        const freeDesk = options.find((d) => !d.taken) || null;
+        const selectedDesk = assignedDesk || freeDesk;
+        return { selectedDesk, noFreeDesk: !assignedDesk && !freeDesk, desks: options };
     }
 
     return {
         AGENT_COLORS,
-        DESK_OPTIONS,
         THINKING_MODES,
         THINKING_CHOICES,
         DEFAULT_PROMPT_HISTORY_POLICY,

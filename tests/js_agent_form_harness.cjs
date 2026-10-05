@@ -256,6 +256,8 @@ async function main() {
     };
     const advanced = BossModAgentFormAdvanced.advancedSection(editAgent, {
         roster: [],
+        desks: [],
+        floorId: "lobby",
         promptHistoryPolicy: BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY,
     });
     const editMarkup = [
@@ -269,7 +271,7 @@ async function main() {
     // The edit form once its dropdowns are mounted, as context/agent-form.js
     // mounts them: the Advanced choices, then the AI section.
     const editForm = formWithMounts(editMarkup);
-    BossModAgentFormChoices.mount(editForm, { roster: [], values: editAgent });
+    BossModAgentFormChoices.mount(editForm, { roster: [], desks: [], floorId: "lobby", values: editAgent });
     BossModAgentFormBindings.bindAiConnection(editForm, CONNECTIONS, editAgent);
     const hireMarkup = [
         BossModAgentFormFields.nameField(null),
@@ -309,8 +311,40 @@ async function main() {
     const hireFlowOffersNoRemove = !hireMarkup.includes('id="btn-delete-agent"')
         && !hireMarkup.includes('id="agent-form-submit"');
 
+    // ── Desk preselect (core/world/seating.py is the server half) ──
+    // Desks as GET /api/map serves them, trimmed to what the form reads.
+    const DESKS = [
+        { label: "Desk 1 — Main NW", chair_xy: [3, 4] },
+        { label: "Desk 2 — Main N", chair_xy: [7, 4] },
+        { label: "Desk 3 — Main NE", chair_xy: [11, 4] },
+    ];
+    const deskRoster = [
+        { id: "r1", floor_id: "lobby", desk_x: 3, desk_y: 4 },
+        { id: "r2", floor_id: "finance", desk_x: 7, desk_y: 4 },
+    ];
+    // A recreated snapshot whose old chair (3,4) now belongs to r1 on the hire
+    // floor: preselecting it would only earn a 409 on save.
+    const recreated = BossModAgentFields.deskChoice(
+        { id: "gone", desk_x: 3, desk_y: 4 }, deskRoster, DESKS, "lobby");
+    const recreateSkipsATakenOwnDesk = recreated.selectedDesk?.value === "7,4"
+        && recreated.desks.find((d) => d.value === "3,4").taken === true;
+    // ...and one whose old chair is free keeps it.
+    const kept = BossModAgentFields.deskChoice(
+        { id: "gone", desk_x: 11, desk_y: 4 }, deskRoster, DESKS, "lobby");
+    const recreateKeepsAFreeOwnDesk = kept.selectedDesk?.value === "11,4";
+    // A vacationer (no floor): the server does not validate its desk, so the
+    // form marks nothing taken and its own desk stays selected.
+    const away = BossModAgentFields.deskChoice(
+        { id: "v1", floor_id: null, desk_x: 7, desk_y: 4 },
+        [...deskRoster, { id: "v2", floor_id: null, desk_x: 11, desk_y: 4 }], DESKS, null);
+    const vacationerSeesNothingTaken = away.desks.every((d) => d.taken === false)
+        && away.selectedDesk?.value === "7,4";
+
     process.stdout.write(JSON.stringify({
         ok: true,
+        recreateSkipsATakenOwnDesk,
+        recreateKeepsAFreeOwnDesk,
+        vacationerSeesNothingTaken,
         formFields,
         editFlowStillOffersRemove,
         hireFlowOffersNoRemove,

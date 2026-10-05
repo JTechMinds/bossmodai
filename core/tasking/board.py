@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
 from typing import Any
 
 import db
 from core.agent_loop import activity_runtime
 from core.agent_loop.role_contracts import is_auditor_specialty, operator_done_claim_guidance
 from core.bm_cli.filesystem import slugify_name
-from core.models import Task
+from core.models import Agent, Task, TaskEvent
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.resolution import OPEN_TASK_STATUSES
 
@@ -25,18 +26,37 @@ def build_task_board(agent_id: str, *, scope: str) -> dict[str, Any]:
 
 
 def serialize_task_board(board: dict[str, Any]) -> dict[str, Any]:
-    """Convert board objects into JSON-safe dictionaries."""
+    """Convert board objects into JSON-safe dictionaries.
+
+    Reads a fixed number of statements however many tasks the board holds:
+    one batch for every agent the tasks name and one for each task's latest
+    event. A task shown in several sections is serialized once, and the
+    sections share that one dict, so treat the result as read-only.
+
+    Args:
+        board: A :func:`build_task_board` result.
+
+    Returns:
+        The board with every ``Task`` replaced by its serialized row.
+    """
+    sections = board.get("sections") or {}
+    children = board.get("child_tasks_by_parent") or {}
+    serialize = _task_serializer([
+        board.get("current_task"),
+        *(task for rows in sections.values() for task in rows),
+        *(task for rows in children.values() for task in rows),
+    ])
     return {
         "scope": board["scope"],
-        "current_task": _serialize_task(board.get("current_task")),
+        "current_task": serialize(board.get("current_task")),
         "sections": {
-            key: [_serialize_task(item) for item in value]
-            for key, value in (board.get("sections") or {}).items()
+            key: [serialize(item) for item in value]
+            for key, value in sections.items()
         },
         "assignee_rollup": board.get("assignee_rollup") or [],
         "child_tasks_by_parent": {
-            key: [_serialize_task(item) for item in value]
-            for key, value in (board.get("child_tasks_by_parent") or {}).items()
+            key: [serialize(item) for item in value]
+            for key, value in children.items()
         },
     }
 
@@ -44,13 +64,18 @@ def serialize_task_board(board: dict[str, Any]) -> dict[str, Any]:
 def build_project_summary(agent_id: str, *, current_task_id: str | None = None) -> list[dict[str, Any]]:
     """Return a compact project-level rollup for the given agent."""
     relevant = _open_tasks(assigned_to=agent_id)
-    for status in ("complete", "blocked", "delegated", "abandoned"):
-        for task in db.list_tasks(owner_id=agent_id, status=status):
-            if all(existing.id != task.id for existing in relevant):
+    owned_statuses = ("complete", "blocked", "delegated", "abandoned")
+    owned = db.list_tasks_by_statuses(owned_statuses, owner_id=agent_id)
+    # Grouped back into status order: which three tasks a project shows
+    # depends on this order, which was one read per status.
+    for status in owned_statuses:
+        for task in owned:
+            if task.status == status and all(existing.id != task.id for existing in relevant):
                 relevant.append(task)
     for task in _open_tasks(owner_id=agent_id):
         if all(existing.id != task.id for existing in relevant):
             relevant.append(task)
+    agents = _agents_named_by(relevant)
 
     grouped: dict[str, dict[str, Any]] = {}
     for task in relevant:
@@ -70,13 +95,13 @@ def build_project_summary(agent_id: str, *, current_task_id: str | None = None) 
         bucket["counts"][task.status] = bucket["counts"].get(task.status, 0) + 1
         bucket["sort_ts"] = max(bucket["sort_ts"], task.last_activity)
         if len(bucket["latest_tasks"]) < 3 and task.id != current_task_id:
-            latest_row = _serialize_task(task) or {}
+            assignee = agents.get(task.assigned_to) if task.assigned_to else None
             bucket["latest_tasks"].append(
                 {
                     "title": task.title,
                     "status": task.status,
                     "assigned_to": task.assigned_to,
-                    "assignee_name": latest_row.get("assigned_to_name"),
+                    "assignee_name": assignee.name if assignee is not None else None,
                 }
             )
 
@@ -223,18 +248,11 @@ def _later_open_card(
     notification_channel_id: str | None = None,
 ) -> Task | None:
     """First open card strictly after ``task`` in this pool, skipping the author."""
-    rows: list[Task] = []
-    seen: set[str] = set()
-    for status in OPEN_TASK_STATUSES:
-        for item in db.list_tasks(
-            parent_task_id=parent_task_id,
-            notification_channel_id=notification_channel_id,
-            status=status,
-        ):
-            if item.id in seen:
-                continue
-            seen.add(item.id)
-            rows.append(item)
+    rows = db.list_tasks_by_statuses(
+        OPEN_TASK_STATUSES,
+        parent_task_id=parent_task_id,
+        notification_channel_id=notification_channel_id,
+    )
     rows.sort(key=lambda item: (item.created_at, item.id))
     for item in rows:
         if item.id == task.id or item.created_at < task.created_at:
@@ -260,30 +278,19 @@ def _open_tasks(
     requester_id: str | None = None,
     parent_task_id: str | None = None,
 ) -> list[Task]:
-    tasks: list[Task] = []
-    seen: set[str] = set()
-    for status in OPEN_TASK_STATUSES:
-        for task in db.list_tasks(
-            assigned_to=assigned_to,
-            owner_id=owner_id,
-            requester_id=requester_id,
-            parent_task_id=parent_task_id,
-            status=status,
-        ):
-            if task.id in seen:
-                continue
-            seen.add(task.id)
-            tasks.append(task)
+    tasks = db.list_tasks_by_statuses(
+        OPEN_TASK_STATUSES,
+        assigned_to=assigned_to,
+        owner_id=owner_id,
+        requester_id=requester_id,
+        parent_task_id=parent_task_id,
+    )
     tasks.sort(key=lambda item: (item.last_activity, item.created_at), reverse=True)
     return tasks
 
 
 def _tasks_from_ids(task_ids: set[str]) -> list[Task]:
-    tasks: list[Task] = []
-    for task_id in task_ids:
-        task = db.get_task(task_id)
-        if task is not None:
-            tasks.append(task)
+    tasks = list(db.get_tasks_by_ids(list(task_ids)).values())
     tasks.sort(key=lambda item: (item.last_activity, item.created_at), reverse=True)
     return tasks
 
@@ -301,10 +308,11 @@ def _group_children_by_parent(tasks: list[Task]) -> dict[str, list[Task]]:
 
 def _assignee_rollup(tasks: list[Task]) -> list[dict[str, Any]]:
     counts: dict[str, dict[str, Any]] = {}
+    agents = _agents_named_by(tasks)
     for task in tasks:
         if not task.assigned_to:
             continue
-        agent = db.get_agent(task.assigned_to)
+        agent = agents.get(task.assigned_to)
         row = counts.setdefault(
             task.assigned_to,
             {
@@ -320,24 +328,68 @@ def _assignee_rollup(tasks: list[Task]) -> list[dict[str, Any]]:
     return rows
 
 
-def _serialize_task(task: Task | None) -> dict[str, Any] | None:
-    if task is None:
-        return None
-    assigned = db.get_agent(task.assigned_to) if task.assigned_to else None
+def _agents_named_by(tasks: Iterable[Task]) -> dict[str, Agent]:
+    """Every agent a task names as assignee, owner or requester, in one read.
+
+    The human operator's id and ids with no agent row are simply absent,
+    the same answer a per-id ``db.get_agent`` gives.
+    """
+    ids: list[str] = []
+    for task in tasks:
+        for agent_id in (task.assigned_to, task.owner_id, task.requester_id):
+            if agent_id and agent_id != HUMAN_SENDER_ID:
+                ids.append(agent_id)
+    return db.get_agents_by_ids(list(dict.fromkeys(ids)))
+
+
+def _task_serializer(tasks: Iterable[Task | None]) -> Callable[[Task | None], dict[str, Any] | None]:
+    """Prepare :func:`_serialize_task` for ``tasks`` and memoize it per task id.
+
+    Two reads, whatever the count: the agents the tasks name, and each
+    task's newest event. Tasks passed to the returned function must be among
+    ``tasks``; ``None`` serializes to ``None``.
+    """
+    present = [task for task in tasks if task is not None]
+    agents = _agents_named_by(present)
+    task_ids = list(dict.fromkeys(task.id for task in present))
+    newest = db.list_recent_task_events(task_ids, limit_per_task=1)
+    memo: dict[str, dict[str, Any]] = {}
+
+    def serialize(task: Task | None) -> dict[str, Any] | None:
+        if task is None:
+            return None
+        row = memo.get(task.id)
+        if row is None:
+            events = newest.get(task.id) or []
+            row = _serialize_task(task, agents=agents, latest_event=events[-1] if events else None)
+            memo[task.id] = row
+        return row
+
+    return serialize
+
+
+def _serialize_task(task: Task, *, agents: dict[str, Agent], latest_event: TaskEvent | None) -> dict[str, Any]:
+    """Serialize one task from prebuilt lookups; reads nothing itself.
+
+    Args:
+        task: The task.
+        agents: Agent id -> agent, covering the task's assignee, owner and
+            requester (:func:`_agents_named_by`).
+        latest_event: The task's newest event, or ``None`` when it has none.
+    """
+    assigned = agents.get(task.assigned_to) if task.assigned_to else None
     assigned_name = assigned.name if assigned is not None else None
     owner_name = None
     requester_name = None
     if task.owner_id:
-        owner = db.get_agent(task.owner_id)
+        owner = agents.get(task.owner_id)
         owner_name = owner.name if owner is not None else None
     if task.requester_id and task.requester_id != HUMAN_SENDER_ID:
-        requester = db.get_agent(task.requester_id)
+        requester = agents.get(task.requester_id)
         requester_name = requester.name if requester is not None else None
     elif task.requester_id == HUMAN_SENDER_ID:
         requester_name = "Human Operator"
 
-    events = db.list_task_events(task.id, limit=5)
-    latest_event = events[-1] if events else None
     has_files = bool(task.work_contract and task.work_contract.deliverables)
     return {
         **task.model_dump(mode="json"),

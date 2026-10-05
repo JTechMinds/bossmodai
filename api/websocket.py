@@ -27,6 +27,10 @@ class ConnectionManager:
     def __init__(self) -> None:
         self._connections: list[WebSocket] = []
         self._max_log_size = 200
+        # World-state coalescing (see broadcast_world_state): the one pending
+        # send task, and whether a call landed that it has not yet served.
+        self._world_task: asyncio.Task[None] | None = None
+        self._world_requested = False
 
     @property
     def connection_count(self) -> int:
@@ -67,9 +71,54 @@ class ConnectionManager:
                 self._connections.remove(ws)
 
     async def broadcast_world_state(self) -> None:
-        """Fetch current world state from DB and broadcast to all clients."""
-        world = db.get_world_state()
-        await self.broadcast({"type": "world_update", "data": world})
+        """Schedule one coalesced ``world_update`` to all clients.
+
+        Every agent step, movement tick and roster mutation calls this, often
+        several times within a few milliseconds. The first call schedules a
+        send ``world_state_coalesce_ms`` later; calls before that send reads
+        the database are absorbed into it, so one ``db.get_world_state()``
+        serves the whole burst. A call that lands while a send is already
+        reading or sending schedules exactly one more send after it, so the
+        last change before a quiet spell is always delivered, and every send
+        reflects the database as it is when the send reads it.
+
+        Returns as soon as the send is scheduled: the broadcast has NOT
+        happened yet when the await returns. A failed read or send is logged
+        at ERROR by the send task; the next call schedules a fresh one.
+
+        Raises:
+            ConfigError: ``world_state_coalesce_ms`` is missing or not an int.
+        """
+        self._world_requested = True
+        task = self._world_task
+        # A task left behind by a closed event loop (each test gets its own)
+        # can never finish, so only a live task on this loop absorbs the call.
+        if task is not None and not task.done() and task.get_loop() is asyncio.get_running_loop():
+            return
+        window = config.require_int("world_state_coalesce_ms") / 1000
+        self._world_task = asyncio.create_task(self._send_world_state(window))
+
+    async def _send_world_state(self, window: float) -> None:
+        """Send world updates until no call is left unserved; see ``broadcast_world_state``."""
+        try:
+            while True:
+                await asyncio.sleep(window)
+                # Cleared before the read: a call from here on asks for a
+                # newer snapshot than this one and loops once more.
+                self._world_requested = False
+                # Off the event loop: the app's runtime-event reader awaits
+                # this path and must not stall behind a roster query.
+                world = await asyncio.to_thread(db.get_world_state)
+                await self.broadcast({"type": "world_update", "data": world})
+                if not self._world_requested:
+                    return
+        except Exception:
+            # A background task has no caller to raise to; this is the
+            # boundary where the failure is surfaced.
+            logger.exception("World state broadcast failed")
+        finally:
+            if self._world_task is asyncio.current_task():
+                self._world_task = None
 
     async def broadcast_runtime_state(self, payload: dict[str, Any]) -> None:
         """Broadcast the current global runtime state to all clients."""

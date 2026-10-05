@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -225,22 +226,25 @@ def set_channel_floor(channel_id: str, floor_id: str) -> Channel:
 
 
 def list_channels(*, status: str = "active") -> list[Channel]:
-    """Return shared channels ordered by recent activity."""
+    """Return shared channels ordered by recent activity.
+
+    Newest message first, else the channel's own ``updated_at`` /
+    ``created_at``. The newest message per channel comes from one grouped
+    pass over ``channel_messages`` joined in, not a subquery per channel.
+    """
+    columns = ", ".join(f"c.{column.strip()}" for column in _CHANNEL_COLUMNS.split(","))
     return fetch_all(
         f"""
-        SELECT {_CHANNEL_COLUMNS}
-        FROM channels
-        WHERE status = $1
-        ORDER BY COALESCE(
-            (
-                SELECT MAX(cm.created_at)
-                FROM channel_messages cm
-                WHERE cm.channel_id = channels.id
-            ),
-            updated_at,
-            created_at
-        ) DESC,
-        created_at DESC
+        SELECT {columns}
+        FROM channels c
+        LEFT JOIN (
+            SELECT channel_id, MAX(created_at) AS last_message_at
+            FROM channel_messages
+            GROUP BY channel_id
+        ) latest ON latest.channel_id = c.id
+        WHERE c.status = $1
+        ORDER BY COALESCE(latest.last_message_at, c.updated_at, c.created_at) DESC,
+                 c.created_at DESC
         """,
         [status],
         Channel,
@@ -283,6 +287,57 @@ def list_channel_member_details(channel_id: str) -> list[dict[str, Any]]:
         """,
         [channel_id],
     )
+
+
+def list_channel_member_details_for(channel_ids: Sequence[str]) -> dict[str, list[dict[str, Any]]]:
+    """Return :func:`list_channel_member_details` for many channels in two reads.
+
+    One read for every membership row, one (``get_active_activities``) for
+    the members' active activities. Each member appears once per channel,
+    with the kind of their newest active activity (the one
+    ``get_active_activity`` returns), or ``None``.
+
+    Args:
+        channel_ids: The channels; duplicates are fine. Empty reads nothing.
+
+    Returns:
+        Channel id -> its members ordered by name, the same row shape as
+        :func:`list_channel_member_details`. A channel with no members maps
+        to an empty list.
+    """
+    from db.activities import get_active_activities
+
+    unique = list(dict.fromkeys(channel_ids))
+    if not unique:
+        return {}
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(unique)))
+    rows = query(
+        f"""
+        SELECT
+            cm.channel_id,
+            a.id,
+            a.name,
+            a.role,
+            a.color,
+            s.status,
+            s.x,
+            s.y
+        FROM channel_members cm
+        JOIN agents a ON a.id = cm.agent_id
+        LEFT JOIN agent_state s ON s.agent_id = a.id
+        WHERE cm.channel_id IN ({placeholders})
+        ORDER BY a.name
+        """,
+        unique,
+    )
+    active = get_active_activities([str(row["id"]) for row in rows])
+    members: dict[str, list[dict[str, Any]]] = {channel_id: [] for channel_id in unique}
+    for row in rows:
+        channel_id = row.pop("channel_id")
+        activity = active.get(row["id"])
+        row["currentActivityKind"] = activity.kind if activity is not None else None
+        members[channel_id].append(row)
+    return members
 
 
 def add_channel_members(channel_id: str, agent_ids: list[str]) -> int:
@@ -543,6 +598,40 @@ def get_latest_channel_message(channel_id: str) -> ChannelMessage | None:
         [channel_id],
         ChannelMessage,
     )
+
+
+def get_latest_channel_messages(channel_ids: Sequence[str]) -> dict[str, ChannelMessage]:
+    """Return each channel's newest message in one read, keyed by channel id.
+
+    The batch form of :func:`get_latest_channel_message`: per channel, the
+    same row (newest ``created_at``, then highest ``id``). Channels with no
+    messages are absent.
+
+    Args:
+        channel_ids: The channels; duplicates are fine. Empty reads nothing.
+    """
+    unique = list(dict.fromkeys(channel_ids))
+    if not unique:
+        return {}
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(unique)))
+    messages = fetch_all(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}
+        FROM (
+            SELECT {_MESSAGE_COLUMNS},
+                   ROW_NUMBER() OVER (
+                       PARTITION BY channel_id
+                       ORDER BY created_at DESC, id DESC
+                   ) AS newest
+            FROM channel_messages
+            WHERE channel_id IN ({placeholders})
+        )
+        WHERE newest = 1
+        """,
+        unique,
+        ChannelMessage,
+    )
+    return {message.channel_id: message for message in messages}
 
 
 def get_later_human_channel_message(

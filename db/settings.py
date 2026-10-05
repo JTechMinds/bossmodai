@@ -141,6 +141,14 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── Diagnostics ──
     ("diagnostics_enabled", "false", "advanced"),
     ("diagnostics_retention_limit", "5000", "advanced"),
+    # History retention in days, pruned by the task watchdog every
+    # history_prune_interval_minutes. The row limit above still applies on
+    # every insert. Only finished (completed/failed) triggers are pruned.
+    ("diagnostics_retention_days", "7", "advanced"),
+    ("trigger_retention_days", "7", "advanced"),
+    ("activity_log_retention_days", "30", "advanced"),
+    # How often the task watchdog runs the history prune above.
+    ("history_prune_interval_minutes", "60", "advanced"),
     ("desktop_open_folder_handler", "", "advanced"),
 
     # ── Simulation resilience ──
@@ -148,7 +156,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("sim_error_backoff_seconds", "30", "simulation"),
 
     # ── Watchdog ──
-    ("watchdog_check_interval_seconds", "5", "simulation"),
+    # The stall thresholds below are minutes; a 30-second scan is plenty.
+    # Prior factory default was 5; reconcile_factory_watchdog_interval moves
+    # an untouched 5 once.
+    ("watchdog_check_interval_seconds", "30", "simulation"),
     ("watchdog_soft_ping_minutes", "15", "simulation"),
     ("watchdog_escalation_minutes", "15", "simulation"),
     # Frozen work transcript (core/agent_loop/work_snapshot.py). Char
@@ -177,6 +188,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── WebSocket ──
     ("ws_send_timeout_seconds", "5", "advanced"),
+    # A burst of world-state broadcasts (agent steps, movement ticks, roster
+    # edits) within this window is sent as one world_update read once
+    # (api/websocket.py ConnectionManager.broadcast_world_state).
+    ("world_state_coalesce_ms", "150", "advanced"),
     ("trigger_claim_timeout_seconds", "300", "advanced"),
     ("turn_failure_retry_limit", "2", "advanced"),
 
@@ -238,6 +253,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("telegram_enabled", "false", "telegram"),
     ("telegram_bot_token", "", "telegram"),
     ("telegram_allowed_user_ids", "", "telegram"),
+    # Runtime events waiting for the Telegram bridge (core/runtime/services.py).
+    # A full queue drops the newest event with a WARNING rather than stalling
+    # the app's runtime-event reader behind a slow Telegram API.
+    ("telegram_dispatch_queue_size", "200", "advanced"),
 
     # ── Agent packs (catalog browse + import; no store backend) ──
     ("agent_pack_catalog_repo", "JTechMinds/BossMod_AgentMP", "agent_packs"),
@@ -254,6 +273,13 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("runtime_block_communication_snapshot", RUNTIME_BLOCK_COMMUNICATION_SNAPSHOT_TEMPLATE, "advanced"),
     ("runtime_block_trigger_event", RUNTIME_BLOCK_TRIGGER_EVENT_TEMPLATE, "advanced"),
     ("runtime_control_state", RUNTIME_CONTROL_STATE, "advanced"),
+    # The app rings the runtime worker's stdin doorbell after filing a runtime
+    # command; this is how long the worker waits for a ring before reading the
+    # command queue anyway (a lost ring costs at most this much latency).
+    ("runtime_command_fallback_poll_seconds", "5", "advanced"),
+    # How often the runtime worker stamps its heartbeat. Readers treat a
+    # heartbeat older than 3x this as a dead worker (db/runtime_control.py).
+    ("runtime_heartbeat_seconds", "5", "advanced"),
     # Attachments (paste/attach Phase-1)
     ("bossmod.attach.max_size_mb", "10", "advanced"),
     ("bossmod.attach.max_per_message", "5", "advanced"),
@@ -297,6 +323,7 @@ def seed_defaults() -> None:
     reconcile_factory_round_cap()
     reconcile_factory_max_tokens()
     reconcile_factory_cli_default_policy()
+    reconcile_factory_watchdog_interval()
     reconcile_work_commit_prompt_contract()
     reconcile_work_commit_resume_prompt()
     reconcile_extension_event_prompt()
@@ -320,6 +347,13 @@ _DEFAULT_MAX_TOKENS = "16384"
 _FACTORY_CLI_DEFAULT_POLICY = "deny"
 _DEFAULT_CLI_POLICY = "approval_required"
 _CLI_DEFAULT_POLICY_FACTORY_RECONCILED = "cli_default_policy_factory_reconciled"
+
+
+# Prior shipped watchdog_check_interval_seconds. Only this factory value moves
+# to 30, and only once (marker row), so a 5 the operator sets later is kept.
+_FACTORY_WATCHDOG_INTERVAL = "5"
+_DEFAULT_WATCHDOG_INTERVAL = "30"
+_WATCHDOG_INTERVAL_FACTORY_RECONCILED = "watchdog_check_interval_factory_reconciled"
 
 
 def reconcile_factory_round_cap() -> None:
@@ -369,6 +403,28 @@ def reconcile_factory_cli_default_policy() -> None:
     if row is not None and str(row.get("value") or "") == _FACTORY_CLI_DEFAULT_POLICY:
         set_setting("cli_default_policy", _DEFAULT_CLI_POLICY, "cli_policy")
     set_setting(_CLI_DEFAULT_POLICY_FACTORY_RECONCILED, "true", "cli_policy")
+
+
+def reconcile_factory_watchdog_interval() -> None:
+    """Move an untouched factory watchdog interval from 5 to 30 seconds once.
+
+    Same marker-guarded pattern as :func:`reconcile_factory_cli_default_policy`:
+    a stored value other than the prior factory ``5`` is left alone, and after
+    the first pass a saved ``5`` is an operator choice and is not rewritten.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_WATCHDOG_INTERVAL_FACTORY_RECONCILED],
+    )
+    if seen is not None:
+        return
+    row = query_one(
+        "SELECT value FROM settings WHERE key = $1",
+        ["watchdog_check_interval_seconds"],
+    )
+    if row is not None and str(row.get("value") or "") == _FACTORY_WATCHDOG_INTERVAL:
+        set_setting("watchdog_check_interval_seconds", _DEFAULT_WATCHDOG_INTERVAL, "simulation")
+    set_setting(_WATCHDOG_INTERVAL_FACTORY_RECONCILED, "true", "advanced")
 
 
 # The required-``work_commit`` / TURN MODEL contract lives in these two

@@ -216,6 +216,14 @@ const MAP_ROOMS = [
     { id: "hallway_main", name: "Hallway", bounds: [13, 1, 15, 18] },
     { id: "workspace_south", name: "South Workspace", bounds: [1, 12, 12, 18] },
 ];
+// The desks GET /api/map answers with: core/world/tilemap.py's DEFAULT_DESKS,
+// trimmed to what the agent form reads (its only desk list).
+const MAP_DESKS = [
+    [3, 4, "Desk 1 — Main NW"], [7, 4, "Desk 2 — Main N"], [11, 4, "Desk 3 — Main NE"],
+    [3, 6, "Desk 4 — Main SW"], [7, 6, "Desk 5 — Main S"], [11, 6, "Desk 6 — Main SE"],
+    [3, 15, "Desk 7 — South NW"], [7, 15, "Desk 8 — South N"], [11, 15, "Desk 9 — South NE"],
+    [3, 17, "Desk 10 — South SW"], [7, 17, "Desk 11 — South S"], [11, 17, "Desk 12 — South SE"],
+].map(([x, y, label]) => ({ label, chair_xy: [x, y] }));
 // Flipped part-way through, so a later mini-office is built against a floor
 // plan that will not load and the degraded path is exercised for real.
 let mapFails = false;
@@ -523,7 +531,7 @@ function api(url, init) {
     }
     if (url.startsWith("/api/map")) {
         if (mapFails) return jsonResponse({ detail: "unavailable" }, 503);
-        return jsonResponse({ width: 28, height: 20, tiles: [], rooms: MAP_ROOMS, desks: [] });
+        return jsonResponse({ width: 28, height: 20, tiles: [], rooms: MAP_ROOMS, desks: MAP_DESKS });
     }
     const oneAgent = String(url).match(/^\/api\/agents\/([^/]+)$/);
     if (oneAgent) {
@@ -683,6 +691,27 @@ async function main() {
         throw new Error("the ping is decorative; the accessible name must state the fact");
     }
     store.setState({ needs: [] });
+
+    // ─── 1a'. Seats are patched by agent id, not rebuilt ───
+    //
+    // A roster publish that changes one agent rebuilds that agent's seat and
+    // nothing else: the other seats are the same nodes, so focus on one of
+    // them survives a world tick. Jim and Laura share a room; Laura changes.
+    const seatOf = (id) => seats().filter((seat) => seat.getAttribute("data-agent-id") === id)[0];
+    const jimSeat = seatOf("a1");
+    const adaSeat = seatOf("a3");
+    const lauraSeat = seatOf("a2");
+    store.setState({ roster: ROSTER.map((agent) => (agent.id === "a2"
+        ? { ...agent, status: "work_active", currentActivityKind: "work" }
+        : agent)) });
+    await drain();
+    const miniOfficeSeatsArePatched = seatOf("a1") === jimSeat && seatOf("a3") === adaSeat
+        && seatOf("a2") !== lauraSeat && Boolean(seatOf("a2")) && seats().length === 3;
+    if (!miniOfficeSeatsArePatched) {
+        throw new Error("a roster change must rebuild only the changed seat in the office summary");
+    }
+    store.setState({ roster: ROSTER });
+    await drain();
 
     // ─── 1b. A floor plan that will not load degrades, and says so ───
     //
@@ -2691,6 +2720,7 @@ async function main() {
         createOpensTheConversationOnly,
         drainsOnDestroy,
         rendersUnknownRoom,
+        miniOfficeSeatsArePatched,
         drawsEveryMappedRoom,
         emptyRoomsSaySo,
         mapFailureDegradesRatherThanBlanks,

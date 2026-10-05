@@ -11,7 +11,7 @@ import sys
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Callable, Protocol
 
 from core import config
 import db
@@ -23,7 +23,6 @@ _WORKER_READY_TIMEOUT_SECONDS = 10.0
 _WORKER_STOP_TIMEOUT_SECONDS = 2.0
 _COMMAND_WAIT_TIMEOUT_SECONDS = 10.0
 _COMMAND_POLL_INTERVAL_SECONDS = 0.05
-_HEARTBEAT_STALE_SECONDS = 5.0
 _WORKER_NAME = "primary"
 _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
 # Set to "1" in the worker's own environment (see ``_start_unlocked``).
@@ -84,12 +83,50 @@ class RuntimeServices:
         self._reader_task: asyncio.Task[None] | None = None
         self._ready_future: asyncio.Future[None] | None = None
         self._expecting_shutdown = False
-        self._telegram_bridge: Any | None = None
+        self._telegram_queue: asyncio.Queue[tuple[str, dict[str, Any]]] | None = None
+        self._telegram_consumer: asyncio.Task[None] | None = None
         self._event_sink: EventSink | None = None
 
     def set_telegram_bridge(self, bridge: Any) -> None:
-        """Attach the Telegram event bridge for forwarding runtime events."""
-        self._telegram_bridge = bridge
+        """Attach the Telegram event bridge and start its one consumer task.
+
+        Runtime events reach the bridge through a bounded queue drained by a
+        single consumer, so a slow Telegram API never stalls the worker-event
+        reader (and through it every WebSocket broadcast). One consumer keeps
+        the bridge's delivery order the order the events arrived in.
+
+        Call on the app's event loop, once; :meth:`stop` shuts the consumer
+        down and detaches the bridge.
+
+        Args:
+            bridge: Anything with ``async dispatch(kind, data)``
+                (``integrations.telegram.bridge.TelegramEventBridge``).
+
+        Raises:
+            RuntimeError: A bridge is already attached.
+            ConfigError: ``telegram_dispatch_queue_size`` is missing or not an int.
+        """
+        if self._telegram_consumer is not None:
+            raise RuntimeError("A Telegram bridge is already attached")
+        queue: asyncio.Queue[tuple[str, dict[str, Any]]] = asyncio.Queue(
+            maxsize=config.require_int("telegram_dispatch_queue_size")
+        )
+        self._telegram_queue = queue
+        self._telegram_consumer = asyncio.create_task(_drain_telegram(bridge, queue))
+
+    async def _stop_telegram_consumer(self) -> None:
+        """Cancel the Telegram consumer and detach the bridge; events still queued are dropped."""
+        consumer = self._telegram_consumer
+        queue = self._telegram_queue
+        self._telegram_consumer = None
+        self._telegram_queue = None
+        if consumer is None:
+            return
+        consumer.cancel()
+        with suppress(asyncio.CancelledError):
+            await consumer
+        if queue is not None and queue.qsize():
+            logger.info("Telegram bridge stopped with %d undelivered event(s)", queue.qsize())
 
     def set_event_sink(self, sink: EventSink) -> None:
         """Attach the WebSocket (or test) broadcast sink. ``core`` must not import ``api``."""
@@ -102,9 +139,10 @@ class RuntimeServices:
             await self._start_unlocked()
 
     async def stop(self) -> None:
-        """Stop the runtime worker process."""
+        """Stop the runtime worker process and the Telegram consumer, if any."""
         async with self._guard():
             await self._stop_unlocked()
+        await self._stop_telegram_consumer()
 
     async def reseed_application_data(self) -> None:
         """Recreate the application database from the current schema and restart services.
@@ -151,7 +189,8 @@ class RuntimeServices:
         if last_heartbeat is not None:
             heartbeat_age = (datetime.now(timezone.utc) - last_heartbeat).total_seconds()
         if worker is not None and worker.lifecycle_state == "running" and heartbeat_age is not None:
-            healthy = heartbeat_age <= _HEARTBEAT_STALE_SECONDS
+            # The shared threshold: 3x runtime_heartbeat_seconds.
+            healthy = heartbeat_age <= db.heartbeat_stale_after_seconds()
         return {
             "state": state,
             "paused": state == self._PAUSED,
@@ -173,6 +212,7 @@ class RuntimeServices:
             config.reload()
             if self._process_is_running():
                 command = db.create_runtime_command("pause_runtime")
+                self._ring_worker()
                 await self._wait_for_command(command.id)
             return self.status_payload()
 
@@ -182,6 +222,7 @@ class RuntimeServices:
             config.reload()
             await self._start_unlocked()
             command = db.create_runtime_command("resume_runtime")
+            self._ring_worker()
             await self._wait_for_command(command.id)
             return self.status_payload()
 
@@ -219,6 +260,7 @@ class RuntimeServices:
         async with self._guard():
             if self._process_is_running() and not db.has_open_runtime_command(["wake_dispatcher"]):
                 db.create_runtime_command("wake_dispatcher")
+                self._ring_worker()
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         await self.start()
@@ -226,7 +268,56 @@ class RuntimeServices:
             if not self._process_is_running():
                 return
             command = db.create_runtime_command("reset_agent_runtime", {"agent_id": agent_id})
+            self._ring_worker()
             await self._wait_for_command(command.id)
+
+    def _ring_worker(self) -> None:
+        """Ring the worker's doorbell: one newline on its stdin.
+
+        Call right after filing a ``runtime_commands`` row. The row is the
+        command and stays the source of truth; the newline only wakes the
+        worker's command loop so it reads the queue now instead of at its
+        fallback poll (``runtime_command_fallback_poll_seconds``).
+
+        Safe from any thread: off the worker's event loop the write is handed
+        to that loop. Does nothing when this process runs no worker (a
+        starting worker deletes open rows and starts fresh). A closed or
+        broken pipe, or a closed loop, is logged at WARNING and nothing else
+        happens: the row stays queued for the fallback poll.
+        """
+        process = self._process
+        loop = self._process_loop
+        if process is None or loop is None or process.returncode is not None:
+            return
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            # Called from a thread with no running event loop.
+            current = None
+        if current is loop:
+            _write_doorbell(process)
+            return
+        try:
+            loop.call_soon_threadsafe(_write_doorbell, process)
+        except RuntimeError as exc:
+            logger.warning(
+                "Runtime worker doorbell not rung (%s); the command waits for the worker's fallback poll",
+                exc,
+            )
+
+    def extension_config_changed(self) -> None:
+        """Tell the worker an agent's settings for an extension were saved or removed.
+
+        Files an ``extension_config_changed`` runtime command and rings the
+        doorbell, so the wake service drops its cached configs before its
+        next tick. Never de-duplicated: an open command may already have been
+        applied, and settings saves are rare. Does nothing when this process
+        runs no worker; a starting worker reads every config fresh.
+        """
+        if not self._process_is_running():
+            return
+        db.create_runtime_command("extension_config_changed")
+        self._ring_worker()
 
     def _guard(self) -> asyncio.Lock:
         loop = asyncio.get_running_loop()
@@ -266,7 +357,8 @@ class RuntimeServices:
             *worker_cmd,
             cwd=str(Path(__file__).resolve().parents[2]),
             env=env,
-            stdin=asyncio.subprocess.DEVNULL,
+            # The doorbell (see _ring_worker); stdout stays the event channel.
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=None,
         )
@@ -303,6 +395,7 @@ class RuntimeServices:
 
         if process.returncode is None:
             db.create_runtime_command("shutdown_runtime")
+            self._ring_worker()
             try:
                 await asyncio.wait_for(process.wait(), timeout=_WORKER_STOP_TIMEOUT_SECONDS)
             except asyncio.TimeoutError:
@@ -454,11 +547,16 @@ class RuntimeServices:
         kind = envelope.get("kind")
         data = envelope.get("data") or {}
 
-        if self._telegram_bridge is not None:
+        queue = self._telegram_queue
+        if queue is not None:
             try:
-                await self._telegram_bridge.dispatch(kind, data)
-            except Exception:
-                logger.warning("Telegram bridge dispatch failed for %s", kind, exc_info=True)
+                queue.put_nowait((kind, data))
+            except asyncio.QueueFull:
+                logger.warning(
+                    "Telegram dispatch queue is full (%d); dropped one %s event for Telegram",
+                    queue.maxsize,
+                    kind,
+                )
 
         sink = self._event_sink
         if sink is None:
@@ -512,7 +610,76 @@ class RuntimeServices:
         logger.warning("Unknown runtime event kind received: %s", kind)
 
 
+async def _drain_telegram(bridge: Any, queue: asyncio.Queue[tuple[str, dict[str, Any]]]) -> None:
+    """Hand queued runtime events to the Telegram bridge, one at a time, until cancelled.
+
+    A failed dispatch is logged at WARNING and the next event is still
+    delivered: one bad send must not end Telegram forwarding.
+    """
+    while True:
+        kind, data = await queue.get()
+        try:
+            await bridge.dispatch(kind, data)
+        except Exception:
+            logger.warning("Telegram bridge dispatch failed for %s", kind, exc_info=True)
+
+
+def _write_doorbell(process: asyncio.subprocess.Process) -> None:
+    """Write one newline to the worker's stdin; on the worker's event loop only.
+
+    asyncio's pipe transport never raises on a broken pipe: it closes itself
+    and drops the write. So the writer is checked before and after, and
+    either failure is logged at WARNING.
+    """
+    stdin = process.stdin
+    if stdin is None or stdin.is_closing():
+        logger.warning("Runtime worker doorbell is closed; the command waits for the worker's fallback poll")
+        return
+    stdin.write(b"\n")
+    if stdin.is_closing():
+        logger.warning("Runtime worker doorbell pipe broke; the command waits for the worker's fallback poll")
+
+
 runtime_services = RuntimeServices()
+
+
+# The worker's own wake-up for commands filed inside the worker process; set
+# by RuntimeWorker.run (core/runtime/worker.py) while it runs.
+_local_doorbell: Callable[[], None] | None = None
+
+
+def register_local_doorbell(ring: Callable[[], None] | None) -> None:
+    """Worker process only: install (or, with ``None``, remove) the in-process doorbell.
+
+    ``ring`` must be safe to call from any thread and must not raise.
+    """
+    global _local_doorbell
+    _local_doorbell = ring
+
+
+def notify_runtime_command_queued() -> None:
+    """Ring the worker's doorbell after filing a runtime command outside ``RuntimeServices``.
+
+    For code that writes a ``runtime_commands`` row itself
+    (``request_dispatcher_wake``, ``core.scheduling.service.request_reload``).
+    In the app process it rings the worker's stdin, and does nothing when
+    this process runs no worker. In the worker process
+    (``is_runtime_worker()``) it wakes the worker's own command loop
+    directly. A worker with no doorbell registered (not started yet, or
+    exiting) is logged at WARNING and the row waits for the fallback poll.
+    Never raises; a failed stdin ring is logged at WARNING by
+    ``RuntimeServices._ring_worker``.
+    """
+    if is_runtime_worker():
+        ring = _local_doorbell
+        if ring is None:
+            logger.warning(
+                "Runtime command queued in the worker with no doorbell registered; it waits for the fallback poll"
+            )
+            return
+        ring()
+        return
+    runtime_services._ring_worker()
 
 
 def request_dispatcher_wake() -> None:
@@ -543,5 +710,6 @@ def request_dispatcher_wake() -> None:
         if db.has_open_runtime_command(["wake_dispatcher"]):
             return
         db.create_runtime_command("wake_dispatcher")
+        notify_runtime_command_queued()
     except Exception:
         logger.debug("model-call lane release did not wake the worker", exc_info=True)

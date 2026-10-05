@@ -60,20 +60,61 @@ sqlite3.register_converter("BOOLEAN", lambda raw: bool(int(raw.decode())))
 sqlite3.register_converter("TIMESTAMP", _convert_timestamp)
 
 
+# sqlite3 messages that mean the connection itself is unusable, not the
+# statement: a closed handle, or a database file that is corrupt.
+_BROKEN_CONNECTION_MARKERS = ("closed", "database disk image")
+
+
 class SQLiteCompatConnection:
-    """Small compatibility wrapper around sqlite3 for the existing DB layer."""
+    """Small compatibility wrapper around sqlite3 for the existing DB layer.
+
+    Every statement in the process passes through :meth:`execute` (or
+    :meth:`executescript`), so this is where an unusable connection is
+    noticed: there is no liveness probe in :func:`get_connection`.
+    """
 
     def __init__(self, raw: sqlite3.Connection) -> None:
         self._raw = raw
 
     def execute(self, sql: str, params: list[Any] | tuple[Any, ...] | dict[str, Any] | None = None):
+        """Run one statement, translating Postgres-style SQL and ``$n`` params.
+
+        Raises:
+            sqlite3.Error: Whatever the statement raised. When the error
+                says the connection is unusable (closed, or a corrupt file)
+                this connection is discarded first, with one WARNING, so the
+                thread's next ``get_connection()`` opens a fresh one.
+        """
         normalized_sql, normalized_params = _normalize_statement(sql, params)
-        if normalized_params is None:
-            return self._raw.execute(normalized_sql)
-        return self._raw.execute(normalized_sql, normalized_params)
+        try:
+            if normalized_params is None:
+                return self._raw.execute(normalized_sql)
+            return self._raw.execute(normalized_sql, normalized_params)
+        except sqlite3.DatabaseError as exc:
+            self._discard_if_broken(exc)
+            raise
 
     def executescript(self, sql: str):
-        return self._raw.executescript(sql)
+        """Run a multi-statement script; an unusable connection is discarded as in :meth:`execute`."""
+        try:
+            return self._raw.executescript(sql)
+        except sqlite3.DatabaseError as exc:
+            self._discard_if_broken(exc)
+            raise
+
+    def _discard_if_broken(self, exc: sqlite3.DatabaseError) -> None:
+        """Forget and close this connection when ``exc`` means it is unusable."""
+        message = str(exc).lower()
+        if not any(marker in message for marker in _BROKEN_CONNECTION_MARKERS):
+            return
+        logger.warning("SQLite connection is unusable (%s); it will be reopened on next use", exc)
+        with _connection_lock:
+            for ident, con in list(_thread_connections.items()):
+                if con is self:
+                    _thread_connections.pop(ident, None)
+        if getattr(_thread_local, "connection", None) is self:
+            _thread_local.connection = None
+        _close_safely(self)
 
     def interrupt(self) -> None:
         self._raw.interrupt()
@@ -155,16 +196,15 @@ def _create_raw_connection() -> sqlite3.Connection:
 
 
 def get_connection() -> SQLiteCompatConnection:
-    """Return a thread-local SQLite connection wrapper."""
-    con = getattr(_thread_local, "connection", None)
-    if con is not None:
-        try:
-            con.execute("SELECT 1")
-        except Exception:
-            logger.warning("SQLite thread connection health check failed — recreating")
-            close_thread_connection()
-            con = None
+    """Return this thread's SQLite connection wrapper, opening it on first use.
 
+    There is no per-call liveness probe: connections are thread-local and
+    long-lived, so a broken one fails on the real statement instead.
+    :meth:`SQLiteCompatConnection.execute` discards a connection whose
+    statement failed because it is closed or the file is corrupt, and the
+    next call here reconnects.
+    """
+    con = getattr(_thread_local, "connection", None)
     if con is None:
         con = SQLiteCompatConnection(_create_raw_connection())
         with _connection_lock:
@@ -394,6 +434,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _create_model_capabilities_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
     _link_agents_to_connections(con)
+    # After every table rebuild above (a rebuild drops the old table's
+    # indexes) and after tasks.owner_id is added.
+    _create_hot_path_indexes(con)
     # Last, and before init_db backfills missing identities: a backfill
     # allocates from this ledger, so the ledger must already know every key
     # that was issued or it would hand one out again.
@@ -1515,15 +1558,45 @@ def _create_task_events_table_if_missing(con: SQLiteCompatConnection) -> None:
     )
 
 
-def _ensure_runtime_command_types(con: SQLiteCompatConnection) -> None:
-    """Rebuild runtime_commands if its command_type CHECK lacks ``reload_schedules``.
+# (index name, table, columns) for the hot read paths. schema.sql declares
+# the same set (except idx_tasks_owner_status, see there) for new databases.
+_HOT_PATH_INDEXES: tuple[tuple[str, str, str], ...] = (
+    ("idx_activities_agent_status", "activities", "agent_id, status"),
+    ("idx_channel_messages_channel_created", "channel_messages", "channel_id, created_at"),
+    ("idx_tasks_status", "tasks", "status"),
+    ("idx_tasks_assigned_status", "tasks", "assigned_to, status"),
+    ("idx_tasks_owner_status", "tasks", "owner_id, status"),
+    ("idx_task_events_task_created", "task_events", "task_id, created_at"),
+    ("idx_agent_triggers_status_created", "agent_triggers", "status, created_at"),
+    ("idx_activity_log_created", "activity_log", "created_at"),
+    ("idx_notifications_created", "notifications", "created_at"),
+    ("idx_diagnostics_created", "diagnostics", "created_at, id"),
+    ("idx_diagnostic_steps_diagnostic", "diagnostic_steps", "diagnostic_id"),
+)
 
-    The app queues ``reload_schedules`` after every schedule edit
-    (core/runtime/services.py). Rows are copied as they are, and the status
-    index the rebuild drops with the old table is recreated.
+
+def _create_hot_path_indexes(con: SQLiteCompatConnection) -> None:
+    """Create the hot-read-path indexes on an existing database; idempotent.
+
+    ``IF NOT EXISTS`` makes a second start a no-op. Run after the table
+    rebuilds in :func:`_apply_migrations`, which drop the old table's
+    indexes, so a rebuilt table gets its indexes back in the same start.
+    """
+    for name, table, columns in _HOT_PATH_INDEXES:
+        con.execute(f"CREATE INDEX IF NOT EXISTS {name} ON {table} ({columns})")
+
+
+def _ensure_runtime_command_types(con: SQLiteCompatConnection) -> None:
+    """Rebuild runtime_commands if its command_type CHECK lacks the newest type.
+
+    The newest is ``extension_config_changed`` (the app queues it after an
+    extension's per-agent settings are saved or removed); before it,
+    ``reload_schedules`` (after every schedule edit). One rebuild brings any
+    older table up to the full list. Rows are copied as they are, and the
+    status index the rebuild drops with the old table is recreated.
     """
     sql = _table_sql(con, "runtime_commands")
-    if not sql or "'reload_schedules'" in sql:
+    if not sql or "'extension_config_changed'" in sql:
         return
     con.execute("PRAGMA foreign_keys = OFF")
     try:
@@ -1538,7 +1611,8 @@ def _ensure_runtime_command_types(con: SQLiteCompatConnection) -> None:
                                       'resume_runtime',
                                       'reset_agent_runtime',
                                       'shutdown_runtime',
-                                      'reload_schedules'
+                                      'reload_schedules',
+                                      'extension_config_changed'
                                   )),
                 payload        TEXT NOT NULL,
                 status         VARCHAR NOT NULL DEFAULT 'queued'
@@ -1569,7 +1643,7 @@ def _ensure_runtime_command_types(con: SQLiteCompatConnection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_runtime_commands_status_created "
             "ON runtime_commands (status, created_at)"
         )
-        logger.info("Migration: rebuilt runtime_commands to add reload_schedules")
+        logger.info("Migration: rebuilt runtime_commands to add the newest command types")
     finally:
         con.execute("PRAGMA foreign_keys = ON")
 

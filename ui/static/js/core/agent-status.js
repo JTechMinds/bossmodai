@@ -102,22 +102,45 @@ const BossModAgentStatus = (() => {
     }
 
     /**
+     * True when two roster rows hold the same value under every key.
+     *
+     * Every key rather than a chosen few: a row reused while any field moved
+     * would hide that change from every subscriber, so the comparison is as
+     * strict as the merge is wide. Values are compared by reference, so a
+     * non-primitive field that is rebuilt per frame simply never matches —
+     * a wasted repaint, never a missed one.
+     *
+     * @param {object} a
+     * @param {object} b
+     * @returns {boolean}
+     */
+    function sameRow(a, b) {
+        const keys = Object.keys(a);
+        if (keys.length !== Object.keys(b).length) return false;
+        return keys.every(key => Object.prototype.hasOwnProperty.call(b, key) && a[key] === b[key]);
+    }
+
+    /**
      * Fold a fresh world snapshot over the roster already on screen.
+     *
+     * Reference-stable, because core/store.js notifies by reference: a row
+     * whose values did not change is the previous object, and a snapshot that
+     * changed nothing returns `roster` itself, so a world_update repeating
+     * what is on screen publishes nothing and repaints nothing.
      *
      * @param {object[]} roster    What the store holds now.
      * @param {object[]} incoming  Normalised rows from the snapshot.
-     * @returns {object[]} A new array. A non-array `incoming` returns a copy of
-     *   the roster rather than emptying it — a malformed frame must not blank
-     *   the rail.
+     * @returns {object[]} `roster` itself when nothing changed, else a new
+     *   array. A non-array `incoming` leaves the roster as it is rather than
+     *   emptying it — a malformed frame must not blank the rail.
      */
     function mergeRosterFromWorld(roster, incoming) {
-        if (!Array.isArray(incoming)) {
-            return Array.isArray(roster) ? roster.slice() : [];
-        }
-        const prior = new Map((roster || []).filter(item => item && item.id).map(item => [item.id, item]));
-        return incoming.filter(item => item && item.id).map(runtime => {
+        const current = Array.isArray(roster) ? roster : [];
+        if (!Array.isArray(incoming)) return current;
+        const prior = new Map(current.filter(item => item && item.id).map(item => [item.id, item]));
+        const next = incoming.filter(item => item && item.id).map(runtime => {
             const prev = prior.get(runtime.id) || {};
-            return {
+            const merged = {
                 ...prev,
                 ...runtime,
                 id: runtime.id,
@@ -133,7 +156,11 @@ const BossModAgentStatus = (() => {
                 y: runtime.y ?? prev.y ?? 0,
                 location: runtime.location || prev.location || 'Unknown',
             };
+            return prior.has(runtime.id) && sameRow(merged, prev) ? prev : merged;
         });
+        const unchanged = next.length === current.length
+            && next.every((row, index) => row === current[index]);
+        return unchanged ? current : next;
     }
 
     // ─── Status colour mappings ───

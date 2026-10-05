@@ -264,21 +264,24 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
     judged on its own. A woken member who started working, got a trigger, or
     is mid-turn is dropped.
     """
+    # Cheapest gates first: a dormant thread costs one read, an already
+    # checked one two, before any member or in-flight work is looked at.
     latest = db.get_latest_channel_message(channel_id)
     if latest is None:
+        return []
+    quiet_for = now - ensure_utc(latest.created_at)
+    if quiet_for > timedelta(minutes=idle_check_max_age_minutes()):
+        return []
+    if quiet_for < timedelta(seconds=idle_check_delay_seconds()):
+        return []
+    state = idle_db.get_channel_idle_check(channel_id)
+    if state["checked_message_id"] == latest.id:
         return []
     if is_thread_paused(channel_id):
         return []
     members = ordered_channel_members(channel_id, set())
     member_ids = [member["id"] for member in members]
     if _thread_in_flight(channel_id, member_ids):
-        return []
-    if now - ensure_utc(latest.created_at) < timedelta(seconds=idle_check_delay_seconds()):
-        return []
-    if now - ensure_utc(latest.created_at) > timedelta(minutes=idle_check_max_age_minutes()):
-        return []
-    state = idle_db.get_channel_idle_check(channel_id)
-    if state["checked_message_id"] == latest.id:
         return []
     human_id = ""
     for row in reversed(db.list_channel_messages(channel_id, limit=80)):
@@ -441,9 +444,10 @@ def _thread_in_flight(channel_id: str, member_ids: list[str]) -> bool:
         return True
     if db.channel_has_open_trigger(channel_id):
         return True
-    for agent_id in member_ids:
-        activity = activity_runtime.get_active_work_activity(agent_id)
-        if activity is None or not activity.task_id:
+    # One read for every member's newest active activity; only work counts,
+    # as in activity_runtime.get_active_work_activity.
+    for activity in db.get_active_activities(member_ids).values():
+        if activity.kind != "work" or not activity.task_id:
             continue
         task = db.get_task(activity.task_id)
         if task is not None and task.notification_channel_id == channel_id:

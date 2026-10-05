@@ -98,5 +98,79 @@ const BossModDom = (() => {
         return () => root.removeEventListener(eventName, listener);
     }
 
-    return { h, clear, delegate, isNearEdge, STICK_THRESHOLD_PX };
+    /**
+     * Make `parent`'s children exactly `nodes`, in order, moving only what is
+     * out of place. A node already where it belongs is not touched, so a list
+     * that did not change costs no DOM mutation at all.
+     *
+     * @param {HTMLElement} parent
+     * @param {Node[]} nodes  The wanted children; each may already be attached
+     *   anywhere, and is moved here.
+     * @returns {void}
+     */
+    function syncChildren(parent, nodes) {
+        nodes.forEach((node, index) => {
+            const at = parent.childNodes[index];
+            if (at !== node) parent.insertBefore(node, at || null);
+        });
+        while (parent.childNodes.length > nodes.length) {
+            parent.childNodes[parent.childNodes.length - 1].remove();
+        }
+    }
+
+    /**
+     * A list of rows keyed by id that is patched rather than rebuilt.
+     *
+     * A row is reused — the same node, with its listeners and focus — while its
+     * signature holds the same values; otherwise it is built afresh. Rows whose
+     * key is gone are removed. This is what keeps a live update that changes
+     * one agent from replacing every row on screen.
+     *
+     * @param {HTMLElement} parent  The element the rows are children of. The
+     *   list owns its children: anything else in it is removed on `sync`.
+     * @returns {{
+     *   sync: (items: object[], keyOf: (item: object) => string,
+     *          signatureOf: (item: object) => any[],
+     *          build: (item: object) => HTMLElement) => HTMLElement[],
+     *   reset: () => void
+     * }} `sync` returns the rows it BUILT this pass (not the reused ones), so
+     *   the caller can do first-paint work — icons — on those alone. `reset`
+     *   empties the parent and forgets every row, for a non-list state such as
+     *   a skeleton or an empty message.
+     * @throws {Error} From `sync` when two items share a key: two rows for one
+     *   key would make the reuse ambiguous.
+     */
+    function createKeyedList(parent) {
+        let rows = new Map();
+        const same = (a, b) => a.length === b.length && a.every((value, i) => value === b[i]);
+
+        function sync(items, keyOf, signatureOf, build) {
+            const next = new Map();
+            const built = [];
+            const nodes = items.map((item) => {
+                const key = keyOf(item);
+                if (next.has(key)) throw new Error(`[dom] keyed list: duplicate key "${key}"`);
+                const signature = signatureOf(item);
+                const had = rows.get(key);
+                const row = had && same(had.signature, signature)
+                    ? had
+                    : { signature, node: build(item) };
+                if (row !== had) built.push(row.node);
+                next.set(key, row);
+                return row.node;
+            });
+            rows = next;
+            syncChildren(parent, nodes);
+            return built;
+        }
+
+        function reset() {
+            rows = new Map();
+            clear(parent);
+        }
+
+        return { sync, reset };
+    }
+
+    return { h, clear, delegate, isNearEdge, syncChildren, createKeyedList, STICK_THRESHOLD_PX };
 })();

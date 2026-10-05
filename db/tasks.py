@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -168,6 +168,58 @@ def get_task(task_id: str) -> Task | None:
     return _task_from_row(rows[0])
 
 
+def get_tasks_by_ids(task_ids: Sequence[str]) -> dict[str, Task]:
+    """Fetch many tasks in one read, keyed by id; the batch form of :func:`get_task`.
+
+    Args:
+        task_ids: Task ids; duplicates are fine. Empty reads nothing.
+
+    Returns:
+        ``{task_id: Task}``. Ids with no task are absent.
+    """
+    unique = list(dict.fromkeys(task_ids))
+    if not unique:
+        return {}
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(unique)))
+    rows = query(
+        f"""
+        SELECT {_TASK_COLUMNS}
+        FROM tasks t
+        LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
+        WHERE t.id IN ({placeholders})
+        """,
+        unique,
+    )
+    tasks = [_task_from_row(row) for row in rows]
+    return {task.id: task for task in tasks}
+
+
+def _task_filter_conditions(
+    params: list[Any],
+    *,
+    assigned_to: str | None,
+    owner_id: str | None,
+    requester_id: str | None,
+    parent_task_id: str | None,
+    notification_channel_id: str | None,
+) -> list[str]:
+    """SQL conditions for the optional task filters, appending their values to ``params``."""
+    conditions: list[str] = []
+    for column, value in (
+        ("t.assigned_to", assigned_to),
+        ("t.owner_id", owner_id),
+        ("t.requester_id", requester_id),
+        ("t.parent_task_id", parent_task_id),
+        ("tnt.channel_id", notification_channel_id),
+    ):
+        if value is not None:
+            params.append(value)
+            conditions.append(f"{column} = ${len(params)}")
+    return conditions
+
+
 def list_tasks(
     assigned_to: str | None = None,
     owner_id: str | None = None,
@@ -177,24 +229,15 @@ def list_tasks(
     status: str | None = None,
 ) -> list[Task]:
     """Return tasks, optionally filtered by assignee, origin thread, and/or status."""
-    conditions: list[str] = []
     params: list[Any] = []
-
-    if assigned_to is not None:
-        params.append(assigned_to)
-        conditions.append(f"t.assigned_to = ${len(params)}")
-    if owner_id is not None:
-        params.append(owner_id)
-        conditions.append(f"t.owner_id = ${len(params)}")
-    if requester_id is not None:
-        params.append(requester_id)
-        conditions.append(f"t.requester_id = ${len(params)}")
-    if parent_task_id is not None:
-        params.append(parent_task_id)
-        conditions.append(f"t.parent_task_id = ${len(params)}")
-    if notification_channel_id is not None:
-        params.append(notification_channel_id)
-        conditions.append(f"tnt.channel_id = ${len(params)}")
+    conditions = _task_filter_conditions(
+        params,
+        assigned_to=assigned_to,
+        owner_id=owner_id,
+        requester_id=requester_id,
+        parent_task_id=parent_task_id,
+        notification_channel_id=notification_channel_id,
+    )
     if status is not None:
         params.append(status)
         conditions.append(f"t.status = ${len(params)}")
@@ -208,7 +251,66 @@ def list_tasks(
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         {where}
-        ORDER BY t.created_at
+        -- rowid breaks created_at ties (whole seconds) in insertion order.
+        -- Without it the tie order would follow whichever index the planner
+        -- picks (idx_tasks_status / _assigned_status / _owner_status).
+        ORDER BY t.created_at, t.rowid
+        """,
+        params,
+    )
+    return [_task_from_row(row) for row in rows]
+
+
+def list_tasks_by_statuses(
+    statuses: Sequence[str],
+    *,
+    assigned_to: str | None = None,
+    owner_id: str | None = None,
+    requester_id: str | None = None,
+    parent_task_id: str | None = None,
+    notification_channel_id: str | None = None,
+) -> list[Task]:
+    """Return every task whose status is one of ``statuses``, in one query.
+
+    The batch form of calling :func:`list_tasks` once per status. The
+    optional filters are the same as :func:`list_tasks`'s and combine with
+    AND.
+
+    Args:
+        statuses: Task statuses to include; duplicates are fine. Empty reads
+            nothing.
+        assigned_to, owner_id, requester_id, parent_task_id,
+        notification_channel_id: Optional equality filters.
+
+    Returns:
+        Matching tasks, oldest first (``created_at``), like :func:`list_tasks`.
+    """
+    unique = list(dict.fromkeys(statuses))
+    if not unique:
+        return []
+    params: list[Any] = list(unique)
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(unique)))
+    conditions = [f"t.status IN ({placeholders})"]
+    conditions.extend(_task_filter_conditions(
+        params,
+        assigned_to=assigned_to,
+        owner_id=owner_id,
+        requester_id=requester_id,
+        parent_task_id=parent_task_id,
+        notification_channel_id=notification_channel_id,
+    ))
+    rows = query(
+        f"""
+        SELECT {_TASK_COLUMNS}
+        FROM tasks t
+        LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
+        WHERE {' AND '.join(conditions)}
+        -- rowid breaks created_at ties (whole seconds) in insertion order.
+        -- Without it the tie order would follow whichever index the planner
+        -- picks (idx_tasks_status / _assigned_status / _owner_status).
+        ORDER BY t.created_at, t.rowid
         """,
         params,
     )
@@ -306,7 +408,9 @@ def list_recent_tasks(
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         {where}
-        ORDER BY t.last_activity DESC, t.created_at DESC
+        -- rowid makes the order total (both timestamps can tie); newest
+        -- insert first, so whichever index the planner uses, ties read the same.
+        ORDER BY t.last_activity DESC, t.created_at DESC, t.rowid DESC
         LIMIT ${len(params)}
         """,
         params,

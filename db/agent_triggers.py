@@ -193,16 +193,24 @@ def channel_has_open_trigger(channel_id: str) -> bool:
     """Return whether any queued or claimed trigger's payload targets this thread.
 
     Any trigger type counts: a wake, a follow-up, or work bound to the
-    thread all mean something is still in flight for it.
+    thread all mean something is still in flight for it. Filtered in SQL on
+    the payload's ``channel_id``; a payload that is not valid JSON never
+    matches (the ``CASE`` keeps ``json_extract`` from raising on it).
     """
     token = (channel_id or "").strip()
     if not token:
         return False
-    for row in query("SELECT payload FROM agent_triggers WHERE status IN ('queued', 'claimed')"):
-        payload = _trigger_payload(row.get("payload"))
-        if str(payload.get("channel_id") or "").strip() == token:
-            return True
-    return False
+    row = query_one(
+        """
+        SELECT 1 AS found
+        FROM agent_triggers
+        WHERE status IN ('queued', 'claimed')
+          AND TRIM(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.channel_id') END) = $1
+        LIMIT 1
+        """,
+        [token],
+    )
+    return row is not None
 
 
 def list_claimed_agent_ids_for_round(round_id: str) -> set[str]:
@@ -441,7 +449,6 @@ def requeue_stale_triggers(
     claim_timeout_seconds: int,
     *,
     force: bool = False,
-    worker_stale_after_seconds: int = 15,
 ) -> int:
     """Return orphaned claimed triggers to the queue.
 
@@ -459,14 +466,15 @@ def requeue_stale_triggers(
     Args:
         claim_timeout_seconds: Age past which a claim counts as stale
             (non-force path only).
-        force: Treat every unblocked claimed row as an orphan.
-        worker_stale_after_seconds: Heartbeat age after which the worker
-            counts as dead (non-force path only).
+        force: Treat every unblocked claimed row as an orphan. Otherwise
+            nothing is requeued while the worker is live
+            (``is_runtime_worker_live``: its heartbeat is younger than the
+            shared staleness threshold).
 
     Returns:
         How many triggers were returned to ``queued``.
     """
-    if not force and is_runtime_worker_live(stale_after_seconds=worker_stale_after_seconds):
+    if not force and is_runtime_worker_live():
         return 0
 
     if force:
@@ -620,6 +628,54 @@ def fail_agent_trigger(
         [reason, datetime.now(timezone.utc), trigger_id, claim_generation],
         AgentTrigger,
     )
+
+
+def prune_finished_triggers(older_than: datetime) -> int:
+    """Delete finished (``completed`` / ``failed``) triggers older than a cutoff.
+
+    Only finished rows are candidates: ``queued`` and ``claimed`` (leased)
+    rows are never touched. A row is old when both its creation and its
+    finish time are before ``older_than``. Two tables keep a trigger's id as
+    provenance, ``task_events.source_trigger_id`` and
+    ``cli_approval_requests.trigger_id`` (plain columns, no foreign key);
+    a trigger either still names is kept, so no stored id is left pointing
+    at a row that is gone. Nothing cascades.
+
+    ``created_at`` is SQLite's ``current_timestamp`` text (UTC, whole
+    seconds), so the cutoff is written the same way; the finish times are
+    finer-grained ISO text, which that whole-second cutoff orders
+    conservatively (a finish within the cutoff's second is kept).
+
+    Args:
+        older_than: The cutoff, an aware datetime.
+
+    Returns:
+        How many triggers were deleted.
+
+    Raises:
+        ValueError: ``older_than`` is naive, so its zone would be a guess.
+    """
+    if older_than.tzinfo is None:
+        raise ValueError("prune_finished_triggers needs an aware datetime")
+    cutoff = older_than.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    cursor = get_connection().execute(
+        """
+        DELETE FROM agent_triggers
+        WHERE status IN ('completed', 'failed')
+          AND created_at < $1
+          AND COALESCE(completed_at, failed_at, created_at) < $1
+          AND id NOT IN (
+              SELECT source_trigger_id FROM task_events
+              WHERE source_trigger_id IS NOT NULL
+          )
+          AND id NOT IN (
+              SELECT trigger_id FROM cli_approval_requests
+              WHERE trigger_id IS NOT NULL
+          )
+        """,
+        [cutoff],
+    )
+    return cursor.rowcount
 
 
 def find_queued_extension_event(agent_id: str, extension_id: str) -> AgentTrigger | None:

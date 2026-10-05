@@ -72,10 +72,42 @@ def extract_websocket_token(websocket: WebSocket) -> str | None:
     return None
 
 
+def current_local_api_token() -> str:
+    """Return the token requests must carry, from the process settings cache.
+
+    ``BOSSMOD_LOCAL_API_TOKEN`` wins when set, as in
+    :func:`ensure_local_api_token`. Otherwise the cached ``local_api_token``
+    setting: no database read per request. The cache is current because
+    ``SettingsRefreshMiddleware`` refreshes it at the start of every HTTP
+    request and :func:`websocket_authorized` refreshes it before a WebSocket
+    check, so a token written by any process (an application reseed) is the
+    one the next request is checked against.
+
+    Raises:
+        ConfigError: The setting is missing. ``ensure_local_api_token`` creates
+            it at startup, so a missing token is a bug to surface, not an
+            empty token to compare against.
+    """
+    env_token = (os.environ.get(LOCAL_API_TOKEN_ENV) or "").strip()
+    if env_token:
+        return env_token
+    return config.require(LOCAL_API_TOKEN_KEY)
+
+
 def tokens_match(provided: str | None, expected: str | None = None) -> bool:
+    """Return whether ``provided`` is the local API token, in constant time.
+
+    Args:
+        provided: The token the client sent, or ``None``.
+        expected: The token to compare against; ``None`` means
+            :func:`current_local_api_token`.
+
+    Raises:
+        ConfigError: ``expected`` is ``None`` and no token is configured.
+    """
     if not provided:
         return False
-    actual = expected if expected is not None else ensure_local_api_token()
+    actual = expected if expected is not None else current_local_api_token()
     if not actual:
         return False
     if len(provided) != len(actual):
@@ -88,6 +120,13 @@ def request_authorized(request: Request) -> bool:
 
 
 def websocket_authorized(websocket: WebSocket) -> bool:
+    """Return whether a WebSocket upgrade carries the local API token.
+
+    ``SettingsRefreshMiddleware`` passes WebSocket scopes through untouched,
+    so the settings cache is refreshed here (one integer read per connect)
+    before the token is compared.
+    """
+    config.refresh_if_changed()
     return tokens_match(extract_websocket_token(websocket))
 
 

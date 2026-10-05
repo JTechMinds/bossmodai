@@ -16,10 +16,13 @@ import db
 from tests._connections import model_connection
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
+from db.floors import LOBBY_ID, create_floor
 from core import config
 from core.agent_loop import activity_runtime
 from core.runtime import runtime_services
-from core.world.seating import heal_desk_seats
+from core.world.pathfinding import find_path
+from core.world.seating import heal_desk_seats, reconcile_all_desks, reconcile_floor_desks
+from core.world.tilemap import DEFAULT_DESKS
 from core.world.simulation import simulation
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -316,24 +319,6 @@ def test_world_state_includes_created_agent_and_location(
     assert company_row["location"] == row["location"]
 
 
-def test_seat_heal_moves_hallway_desk_agent_to_chair() -> None:
-    spawn_x = config.get_int("default_spawn_x")
-    spawn_y = config.get_int("default_spawn_y")
-    drifted = db.create_agent("Hall Drift")
-    seated = db.update_agent(drifted.id, desk_x=11, desk_y=4)
-    assert seated is not None
-    state = db.get_agent_state(drifted.id)
-    assert state is not None
-    assert (state.x, state.y) == (spawn_x, spawn_y)
-    assert db.get_world_state()  # world build heals desk≠hallway body
-    healed = db.get_agent_state(drifted.id)
-    assert healed is not None
-    assert (healed.x, healed.y) == (11, 4)
-    row = next(item for item in db.get_world_state() if item["id"] == drifted.id)
-    assert (row["x"], row["y"]) == (11, 4)
-    assert row["location"] == "Main Workspace"
-
-
 @pytest.mark.asyncio
 async def test_simulation_start_heals_hallway_desk_agent_to_chair() -> None:
     spawn_x = config.get_int("default_spawn_x")
@@ -371,3 +356,103 @@ def test_seat_heal_skips_in_transit_hallway_and_other_rooms() -> None:
     assert meeting_state is not None
     assert (walker_state.x, walker_state.y) == (14, 9)
     assert (meeting_state.x, meeting_state.y) == (18, 4)
+
+
+def test_world_state_never_moves_a_desk_agent_standing_in_the_hallway() -> None:
+    """The read-time heal teleported a deliberate ``walkTo hallway`` back.
+
+    Hallway is a valid destination; an agent that walked there, stopped, and
+    was read by the next broadcast must still be standing there.
+    """
+    walker = db.create_agent("Hall Walker", desk_x=3, desk_y=4)
+    db.update_agent_state(walker.id, x=14, y=5, status="idle")
+
+    row = next(item for item in db.get_world_state() if item["id"] == walker.id)
+    assert (row["x"], row["y"]) == (14, 5)
+    assert row["location"] == "Hallway"
+    state = db.get_agent_state(walker.id)
+    assert state is not None
+    assert (state.x, state.y) == (14, 5)
+
+
+def test_world_state_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A GET or a broadcast is a read: no agent_state write rides along."""
+    from db.connection import SQLiteCompatConnection
+
+    walker = db.create_agent("Hall Walker", desk_x=3, desk_y=4)
+    db.update_agent_state(walker.id, x=14, y=5, status="idle")
+    statements: list[str] = []
+    original = SQLiteCompatConnection.execute
+
+    def recording(self, sql, params=None):
+        statements.append(" ".join(str(sql).split()))
+        return original(self, sql, params)
+
+    monkeypatch.setattr(SQLiteCompatConnection, "execute", recording)
+    assert db.get_world_state()
+    assert statements, "the recorder saw no statements; it is not wired in"
+    writes = [sql for sql in statements if not sql.upper().startswith("SELECT")]
+    assert writes == []
+    assert not any("agent_state" in sql and "UPDATE" in sql.upper() for sql in statements)
+
+
+def test_reconcile_gives_a_shared_chair_to_the_earlier_hire() -> None:
+    first = db.create_agent("First", desk_x=3, desk_y=4)
+    second = db.create_agent("Second", desk_x=3, desk_y=4)
+
+    assert reconcile_floor_desks(LOBBY_ID) == [second.id]
+    kept = db.get_agent(first.id)
+    moved = db.get_agent(second.id)
+    assert (kept.desk_x, kept.desk_y) == (3, 4)
+    # The next free chair in map order, and the body is seated there.
+    assert (moved.desk_x, moved.desk_y) == (7, 4)
+    state = db.get_agent_state(second.id)
+    assert state is not None
+    assert (state.x, state.y) == (7, 4)
+    # Idempotent: a reconciled floor has nothing left to change.
+    assert reconcile_floor_desks(LOBBY_ID) == []
+
+
+def test_the_same_chair_on_two_floors_is_not_a_collision() -> None:
+    finance = create_floor("Finance")
+    lobby = db.create_agent("Lobby", desk_x=3, desk_y=4)
+    upstairs = db.create_agent("Upstairs", desk_x=3, desk_y=4, floor_id=finance.id)
+
+    assert reconcile_all_desks() == 0
+    assert (db.get_agent(lobby.id).desk_x, db.get_agent(lobby.id).desk_y) == (3, 4)
+    assert (db.get_agent(upstairs.id).desk_x, db.get_agent(upstairs.id).desk_y) == (3, 4)
+
+
+def test_a_full_floor_leaves_the_thirteenth_agent_without_a_desk() -> None:
+    seated = [
+        db.create_agent(f"Seated {index}", desk_x=desk["chair_xy"][0], desk_y=desk["chair_xy"][1])
+        for index, desk in enumerate(DEFAULT_DESKS)
+    ]
+    late = db.create_agent("Late", desk_x=3, desk_y=4)
+
+    assert reconcile_floor_desks(LOBBY_ID) == [late.id]
+    assert db.get_agent(late.id).desk_x is None
+    assert db.get_agent(late.id).desk_y is None
+    assert (db.get_agent(seated[0].id).desk_x, db.get_agent(seated[0].id).desk_y) == (3, 4)
+
+
+def test_reconcile_all_desks_skips_vacationers() -> None:
+    from core.floors import send_home
+
+    working = db.create_agent("Working", desk_x=3, desk_y=4)
+    away = db.create_agent("Away", desk_x=3, desk_y=4)
+    send_home(away.id)
+
+    assert reconcile_all_desks() == 0
+    # Off every floor, so the shared chair is no collision yet; the desk is
+    # kept for bring_back to reconcile.
+    assert (db.get_agent(away.id).desk_x, db.get_agent(away.id).desk_y) == (3, 4)
+    assert (db.get_agent(working.id).desk_x, db.get_agent(working.id).desk_y) == (3, 4)
+
+
+def test_every_chair_is_reachable_from_the_hallway() -> None:
+    spawn = (config.get_int("default_spawn_x"), config.get_int("default_spawn_y"))
+    for desk in DEFAULT_DESKS:
+        chair = desk["chair_xy"]
+        path = find_path(spawn[0], spawn[1], chair[0], chair[1])
+        assert path and path[-1] == chair, desk["id"]

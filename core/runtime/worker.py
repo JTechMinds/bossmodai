@@ -8,8 +8,9 @@ import logging
 import os
 import signal
 import sys
+import threading
 from contextlib import suppress
-from typing import Any
+from typing import Any, Callable
 
 import db
 from core import config
@@ -20,15 +21,132 @@ from core.agent_loop.watchdog import watchdog
 from core.extensions.loader import shutdown_loaded_extensions
 from core.extensions.wake_service import extension_wake_watch
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
+from core.runtime.services import register_local_doorbell
 from core.scheduling.watch import schedule_watch
 from core.world.simulation import simulation
 
 logger = logging.getLogger(__name__)
 
-_COMMAND_POLL_INTERVAL_SECONDS = 0.25
-_HEARTBEAT_INTERVAL_SECONDS = 1.0
+_FALLBACK_POLL_SETTING = "runtime_command_fallback_poll_seconds"
 _PARENT_CHECK_INTERVAL_SECONDS = 1.0
 _WORKER_NAME = "primary"
+
+
+class RuntimeSettingError(Exception):
+    """A runtime worker interval setting is missing, not a number, or not positive."""
+
+
+def fallback_poll_seconds() -> float:
+    """Return how long the command loop waits for the doorbell before polling anyway.
+
+    Seeded in ``db/settings.py``. Read from the settings cache, so call
+    ``config.refresh_if_changed()`` first to see another process's edit.
+
+    Raises:
+        RuntimeSettingError: The setting is missing, not a number, or not
+            greater than 0. There is no fallback value.
+    """
+    try:
+        value = config.require_float(_FALLBACK_POLL_SETTING)
+    except config.ConfigError as exc:
+        raise RuntimeSettingError(str(exc)) from exc
+    if value <= 0:
+        raise RuntimeSettingError(f"setting {_FALLBACK_POLL_SETTING!r} must be greater than 0, got {value}")
+    return value
+
+
+class _LastGoodInterval:
+    """One positive seconds setting, re-read on every use.
+
+    The first read (at worker start) raises, so an unusable value fails the
+    start loudly. Later, an unusable edit keeps the last good value and is
+    logged at ERROR once per distinct problem, so a bad Settings edit cannot
+    kill a loop.
+
+    Args:
+        name: What the value is, for the log lines.
+        read: Returns the current value or raises ``errors``.
+        errors: The exception types that mean "unusable value".
+    """
+
+    def __init__(self, name: str, read: Callable[[], float], errors: tuple[type[Exception], ...]) -> None:
+        self._name = name
+        self._read = read
+        self._errors = errors
+        self._value = read()
+        self._error: str | None = None
+
+    def current(self) -> float:
+        """Return the setting now, or the last good value when it became unusable."""
+        try:
+            value = self._read()
+        except self._errors as exc:
+            if str(exc) != self._error:
+                logger.error("Keeping the last usable %s (%ss): %s", self._name, self._value, exc)
+                self._error = str(exc)
+            return self._value
+        if self._error is not None:
+            logger.info("The %s setting is usable again", self._name)
+            self._error = None
+        self._value = value
+        return value
+
+
+class StdinDoorbell:
+    """Turn bytes on this process's stdin into an ``asyncio.Event`` the command loop awaits.
+
+    The app writes one newline after it files a ``runtime_commands`` row; the
+    row is the command and the newline only says "look now". A daemon thread
+    does the blocking read, so the event loop never waits on stdin, and hands
+    each wake-up to the loop with ``call_soon_threadsafe``. A thread rather
+    than ``loop.connect_read_pipe``: the app also ships on Windows, whose
+    proactor loop cannot read a stdin pipe that way, and a blocking read in
+    its own thread behaves the same everywhere.
+
+    End-of-file or a read error stops the thread with one warning; the
+    command loop's fallback poll keeps every command flowing without it.
+
+    Args:
+        loop: The worker's running event loop.
+        event: Set (on ``loop``) each time bytes arrive.
+    """
+
+    _READ_SIZE = 4096
+
+    def __init__(self, loop: asyncio.AbstractEventLoop, event: asyncio.Event) -> None:
+        self._loop = loop
+        self._event = event
+
+    def start(self) -> None:
+        """Start the reader thread. It is a daemon: it never holds the process open."""
+        threading.Thread(target=self._read, name="runtime-doorbell", daemon=True).start()
+
+    def _read(self) -> None:
+        if sys.stdin is None:
+            logger.warning("Runtime worker has no stdin; commands are picked up by the fallback poll only")
+            return
+        try:
+            fileno = sys.stdin.fileno()
+        except (OSError, ValueError) as exc:
+            logger.warning(
+                "Runtime worker stdin is unusable (%s); commands are picked up by the fallback poll only", exc
+            )
+            return
+        while True:
+            try:
+                # One read can carry several rings; one wake-up covers them all.
+                data = os.read(fileno, self._READ_SIZE)
+            except OSError as exc:
+                logger.warning("Runtime worker doorbell read failed (%s); falling back to polling", exc)
+                return
+            if not data:
+                logger.warning("Runtime worker doorbell closed (stdin end-of-file); falling back to polling")
+                return
+            try:
+                self._loop.call_soon_threadsafe(self._event.set)
+            except RuntimeError:
+                # The loop is closed: the worker is exiting and nothing is waiting.
+                return
 
 
 class RuntimeController:
@@ -60,6 +178,14 @@ class RuntimeController:
         tells the UI.
         """
         schedule_watch.reload()
+
+    async def extension_config_changed(self) -> None:
+        """Make the extension wake service re-read stored per-agent configs.
+
+        The command comes from ``RuntimeServices.extension_config_changed``
+        after the app saved or removed one agent's settings for an extension.
+        """
+        extension_wake_watch.invalidate()
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         await dispatcher.reset_agent(agent_id)
@@ -107,6 +233,12 @@ class RuntimeWorker:
         self._transport = WorkerTransport()
         self._controller = RuntimeController()
         self._stopping = asyncio.Event()
+        # Set by StdinDoorbell when the app files a runtime command, and by
+        # _ring_locally when code in this process files one.
+        self._doorbell = asyncio.Event()
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._fallback_poll: _LastGoodInterval | None = None
+        self._heartbeat: _LastGoodInterval | None = None
         self._background_tasks: list[asyncio.Task[None]] = []
         self._failed = False
         self._parent_pid = _read_parent_pid()
@@ -126,6 +258,16 @@ class RuntimeWorker:
         self._install_stop_signals()
         try:
             db.init_db()
+            # Unusable here fails the start loudly; later bad edits keep the last good value.
+            self._fallback_poll = _LastGoodInterval(
+                "command fallback poll", fallback_poll_seconds, (RuntimeSettingError,)
+            )
+            self._heartbeat = _LastGoodInterval(
+                "heartbeat interval", db.heartbeat_interval_seconds, (config.ConfigError,)
+            )
+            self._loop = asyncio.get_running_loop()
+            StdinDoorbell(self._loop, self._doorbell).start()
+            register_local_doorbell(self._ring_locally)
             await self._controller.boot(paused=self._is_paused())
             db.mark_runtime_worker_running(os.getpid(), worker_name=_WORKER_NAME)
             await self._transport.send_message({"type": "ready"})
@@ -143,6 +285,7 @@ class RuntimeWorker:
             await self._safe_send_fatal(str(exc))
             return 1
         finally:
+            register_local_doorbell(None)
             runtime_events.set_sink(NullRuntimeEventSink())
             for task in self._background_tasks:
                 task.cancel()
@@ -162,12 +305,16 @@ class RuntimeWorker:
 
     async def _command_loop(self) -> None:
         while not self._stopping.is_set():
+            # Cleared before the queue is read: a ring that lands after the
+            # read sets it again, so it is never lost.
+            self._doorbell.clear()
             # Commands start services that read settings; refresh first so a
-            # resume after an app-side change sees it (one integer read per poll).
+            # resume after an app-side change sees it (one integer read per wake).
             config.refresh_if_changed()
             command = self._claim_next_command()
             if command is None:
-                await asyncio.sleep(_COMMAND_POLL_INTERVAL_SECONDS)
+                with suppress(asyncio.TimeoutError):
+                    await asyncio.wait_for(self._doorbell.wait(), timeout=self._interval(self._fallback_poll))
                 continue
             payload = json.loads(command.payload) if command.payload else {}
             try:
@@ -178,10 +325,42 @@ class RuntimeWorker:
             else:
                 db.complete_runtime_command(command.id)
 
+    @staticmethod
+    def _interval(setting: _LastGoodInterval | None) -> float:
+        if setting is None:
+            raise RuntimeError("worker interval read before run() set it up")
+        return setting.current()
+
+    def _ring_locally(self) -> None:
+        """Wake this worker's command loop after code in this process filed a command.
+
+        Registered with ``register_local_doorbell``; safe from any thread. A
+        closed loop (the worker is exiting) is logged at WARNING: the row
+        stays queued, and a starting worker clears open rows anyway.
+        """
+        loop = self._loop
+        if loop is None:
+            raise RuntimeError("local doorbell rung before run() set it up")
+        try:
+            loop.call_soon_threadsafe(self._doorbell.set)
+        except RuntimeError as exc:
+            logger.warning("Runtime worker local doorbell not rung (%s)", exc)
+
     async def _heartbeat_loop(self) -> None:
+        missing = False
         while not self._stopping.is_set():
-            db.record_runtime_worker_heartbeat(pid=os.getpid(), worker_name=_WORKER_NAME)
-            await asyncio.sleep(_HEARTBEAT_INTERVAL_SECONDS)
+            stamped = db.record_runtime_worker_heartbeat(pid=os.getpid(), worker_name=_WORKER_NAME)
+            # A lost row reads as a dead worker to everyone else: say so once
+            # per streak, not once a tick.
+            if stamped is None and not missing:
+                logger.warning(
+                    "Runtime worker heartbeat found no state row for pid %s; readers will see it as stale",
+                    os.getpid(),
+                )
+            elif stamped is not None and missing:
+                logger.info("Runtime worker heartbeat row is back")
+            missing = stamped is None
+            await asyncio.sleep(self._interval(self._heartbeat))
 
     async def _parent_watchdog_loop(self) -> None:
         if self._parent_pid is None:
@@ -212,6 +391,9 @@ class RuntimeWorker:
             return
         if command_type == "reload_schedules":
             await self._controller.reload_schedules()
+            return
+        if command_type == "extension_config_changed":
+            await self._controller.extension_config_changed()
             return
         if command_type == "reset_agent_runtime":
             await self._controller.reset_agent_runtime(payload["agent_id"])

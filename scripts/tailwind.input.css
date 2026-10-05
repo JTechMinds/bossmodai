@@ -1,0 +1,5 @@
+/* Input for scripts/build_tailwind.sh. The same three layers, in the same
+   order, that the Tailwind Play runtime compiled in the browser. */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

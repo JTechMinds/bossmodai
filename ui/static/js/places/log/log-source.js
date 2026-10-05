@@ -15,6 +15,14 @@ const BossModLogSource = (() => {
     const DIAGNOSTIC_LIMIT = 50;
     /** The client-held diagnostic window, matching the dock-era view. */
     const MAX_LIVE_DIAGNOSTICS = 100;
+    /**
+     * The live activity window: the server feed's page size. A Log left open
+     * used to grow by one row per broadcast for as long as it stayed open;
+     * now a live row past the window drops the oldest, which stays reachable
+     * through Load more. Each loaded page widens the window by a page, so
+     * what the operator paged in is never cut away under them.
+     */
+    const LOG_ACTIVITY_LIMIT = PAGE_SIZE;
 
     /**
      * Build the source.
@@ -43,6 +51,7 @@ const BossModLogSource = (() => {
 
         let activityRows = [];
         let diagnosticRows = [];
+        let activityLimit = LOG_ACTIVITY_LIMIT;
         let more = false;
         let lastError = '';
 
@@ -156,6 +165,7 @@ const BossModLogSource = (() => {
             if (!load.isCurrent(loadId)) return;
             lastError = '';
             activityRows = (feed.entries || []).map(SHAPE.fromActivity);
+            activityLimit = LOG_ACTIVITY_LIMIT;
             diagnosticRows = (Array.isArray(diagnostics) ? diagnostics : [])
                 .map(SHAPE.fromDiagnostic);
             more = feed.has_more === true;
@@ -182,15 +192,28 @@ const BossModLogSource = (() => {
             if (!load.isCurrent(loadId)) return;
             lastError = '';
             activityRows = activityRows.concat((feed.entries || []).map(SHAPE.fromActivity));
+            activityLimit += PAGE_SIZE;
             more = feed.has_more === true;
             announce();
         }
 
+        /**
+         * Apply one live activity row: replace it in place, or put it on top.
+         * A new row past the window drops the oldest, and the feed then has
+         * more on the server than on screen, which is what `more` says.
+         *
+         * @param {object} entry  A unified-feed entry from the WebSocket.
+         * @returns {void}
+         */
         function upsertActivity(entry) {
             const row = SHAPE.fromActivity(entry);
             const index = activityRows.findIndex((item) => item.key === row.key);
             if (index === -1) activityRows.unshift(row);
             else activityRows[index] = row;
+            if (activityRows.length > activityLimit) {
+                activityRows.length = activityLimit;
+                more = true;
+            }
             announce();
         }
 
@@ -260,5 +283,5 @@ const BossModLogSource = (() => {
         };
     }
 
-    return { createLogSource, PAGE_SIZE };
+    return { createLogSource, PAGE_SIZE, LOG_ACTIVITY_LIMIT };
 })();

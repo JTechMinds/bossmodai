@@ -233,11 +233,12 @@ def test_the_dock_era_is_gone_from_disk() -> None:
     for name in DELETED_STYLESHEETS:
         assert not (css / name).exists(), f"{name} is still on disk"
 
-    # Only three top-level modules survive: the two the shell cannot start
-    # without and the Tailwind mirror. Everything else lives in a directory
-    # that says what it is for.
+    # Only two top-level modules survive: the two the shell cannot start
+    # without. The Tailwind mirror left with the Play runtime; its theme is
+    # build-time now (scripts/tailwind.config.js). Everything else lives in a
+    # directory that says what it is for.
     top_level = sorted(path.name for path in js.glob("*.js"))
-    assert top_level == ["api-auth.js", "api-client.js", "tailwind-config.js"], top_level
+    assert top_level == ["api-auth.js", "api-client.js"], top_level
 
     # The globals they defined must not survive them anywhere in the tree.
     for path in sorted(js.rglob("*.js")):
@@ -709,3 +710,11 @@ def test_shell_stylesheets_are_linked() -> None:
     for sheet in ("css/tokens.css", "css/base.css", "css/shell.css"):
         assert f"static_url('{sheet}')" in html, f"{sheet} is not linked"
     assert "css/style.css" not in html, "the dock-era stylesheet is retired"
+
+    # The pre-built Tailwind sheet is the LAST stylesheet in <head>: the Play
+    # runtime it replaced appended its <style> there, after every app sheet,
+    # and the cascade the surfaces were tuned against depends on that order.
+    head = html.split("</head>", 1)[0]
+    sheets = re.findall(r"<link rel=\"stylesheet\" href=\"\{\{ static_url\('([^']+)'\) \}\}\">", head)
+    assert sheets, "no stylesheets found in <head>"
+    assert sheets[-1] == "css/tailwind.generated.css", sheets

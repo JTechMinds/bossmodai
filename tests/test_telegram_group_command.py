@@ -269,3 +269,31 @@ async def test_join_fails_closed_without_a_list_or_for_an_unknown_row() -> None:
     await cmd_join(update, _context())
     assert get_session(111) is None
     assert len(db.list_channels()) == 1
+
+
+async def test_channels_reads_members_in_one_batch_however_many_threads() -> None:
+    """``/channels`` reads every thread's members in one batch, not once per thread."""
+    from db.connection import SQLiteCompatConnection
+
+    agents = [db.create_agent(f"Agent {index}", role="Eng") for index in range(3)]
+    counts: list[int] = []
+    for total in (1, 12):
+        while len(db.list_channels()) < total:
+            index = len(db.list_channels())
+            db.create_channel(name=f"Room {index}", member_agent_ids=[agents[index % 3].id, agents[(index + 1) % 3].id])
+        update = _authorized_update()
+        sent: list[str] = []
+        original = SQLiteCompatConnection.execute
+
+        def counting(self, sql, params=None):
+            sent.append(sql)
+            return original(self, sql, params)
+
+        SQLiteCompatConnection.execute = counting
+        try:
+            await cmd_channels(update, _context())
+        finally:
+            SQLiteCompatConnection.execute = original
+        assert "Room 0" in update.message.replies[-1]
+        counts.append(len(sent))
+    assert counts[0] == counts[1], counts

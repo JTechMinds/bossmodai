@@ -84,6 +84,12 @@ const BossModOfficeCanvas = (() => {
         let hoveredId = null;
         let scale = 1;
         let destroyed = false;
+        // The floor — tiles, room labels, desks — never moves, so it is painted
+        // once into an offscreen canvas and copied per frame. Before this, every
+        // walking frame re-issued ~1,100 rect calls for a picture that had not
+        // changed. Keyed on what the picture depends on; a new key rebuilds it.
+        let staticLayer = null;
+        let staticKey = '';
 
         const motion = BossModCanvasMotion.createMotion({
             repaint: () => render(),
@@ -103,15 +109,39 @@ const BossModOfficeCanvas = (() => {
             ctx2d.imageSmoothingEnabled = false;
         }
 
+        /**
+         * The static floor at the canvas's current size and scale, built on
+         * first use and again only when either changes (init, resize). The
+         * palette is read once per controller, so it cannot change under it.
+         *
+         * @param {{tileSize: number, palette: object}} opts
+         * @returns {HTMLCanvasElement} Same pixel size as the visible canvas,
+         *   so copying it is a 1:1 blit with no resampling.
+         */
+        function staticFloor(opts) {
+            const key = `${canvas.width}x${canvas.height}@${scale}`;
+            if (staticLayer && key === staticKey) return staticLayer;
+            const layer = document.createElement('canvas');
+            layer.width = canvas.width;
+            layer.height = canvas.height;
+            const layerCtx = layer.getContext('2d');
+            layerCtx.imageSmoothingEnabled = false;
+            layerCtx.scale(scale, scale);
+            SPRITES.drawTiles(layerCtx, mapData, opts);
+            SPRITES.drawRoomLabels(layerCtx, mapData.rooms, opts);
+            SPRITES.drawDesks(layerCtx, mapData.desks, opts);
+            staticLayer = layer;
+            staticKey = key;
+            return layer;
+        }
+
         function render() {
             if (!mapData || destroyed) return;
             const opts = { tileSize: TILE_SIZE, palette };
             ctx2d.clearRect(0, 0, canvas.width, canvas.height);
+            ctx2d.drawImage(staticFloor(opts), 0, 0);
             ctx2d.save();
             ctx2d.scale(scale, scale);
-            SPRITES.drawTiles(ctx2d, mapData, opts);
-            SPRITES.drawRoomLabels(ctx2d, mapData.rooms, opts);
-            SPRITES.drawDesks(ctx2d, mapData.desks, opts);
             SPRITES.drawAgents(ctx2d, agents, {
                 ...opts, hoveredId, statusColor: BossModAgentStatus.getStatusColor,
             });
@@ -196,6 +226,7 @@ const BossModOfficeCanvas = (() => {
                 const res = await api('/api/map', { cache: 'no-store' });
                 if (!res.ok) throw new Error(`[office-canvas] /api/map failed: HTTP ${res.status}`);
                 mapData = await res.json();
+                staticLayer = null;  // A new map is a new floor.
                 sizeCanvas();
                 render();
                 await loadThoughtDuration();

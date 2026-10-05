@@ -92,6 +92,31 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Thought Bubble Duration (ms)',
             description: 'How long agent thought bubbles display above agents on the canvas. Set to 0 to disable.',
         },
+        // Stored under 'advanced' (db/settings.py); shown with the runtime cadence settings.
+        runtime_command_fallback_poll_seconds: {
+            order: 82,
+            tab: 'simulation',
+            label: 'Runtime Command Fallback Poll (seconds)',
+            description: 'The app signals the runtime the moment it queues a command such as Pause. If that signal is ever lost, the runtime still checks its queue this often. Default 5.',
+        },
+        runtime_heartbeat_seconds: {
+            order: 84,
+            tab: 'simulation',
+            label: 'Runtime Heartbeat Interval (seconds)',
+            description: 'How often the runtime records that it is alive. A runtime silent for more than three intervals is reported as unhealthy. Default 5.',
+        },
+        world_state_coalesce_ms: {
+            order: 86,
+            tab: 'simulation',
+            label: 'Office Update Batching (ms)',
+            description: 'Office and roster changes that land within this window are sent to the screen as one update. Higher values save work on slower computers; lower values show changes sooner. Default 150.',
+        },
+        telegram_dispatch_queue_size: {
+            order: 88,
+            tab: 'simulation',
+            label: 'Telegram Event Queue Size',
+            description: 'How many runtime events may wait to be forwarded to Telegram. When Telegram is slow and the queue is full, new events are skipped for Telegram (and logged) so the app never waits on it. Applies after the app restarts. Default 200.',
+        },
         social_idle_threshold_minutes: {
             order: 10,
             label: 'Idle Threshold (minutes)',

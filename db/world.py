@@ -75,10 +75,12 @@ def get_world_state() -> list[dict[str, Any]]:
     Agents on vacation are left out: they are off every floor and hidden
     from the roster, the office and Telegram until an operator brings them
     back (core/floors.py ``bring_back``).
-    """
-    from core.world.seating import heal_desk_seats
 
-    heal_desk_seats()
+    A pure read: one roster query plus the batched last-chat query, and no
+    writes. Seating is enforced where desks are written (core/world/seating.py),
+    so a read never moves a body — an agent standing in the Hallway on purpose
+    stays there.
+    """
     rows = query(
         """
         SELECT

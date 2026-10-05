@@ -1,10 +1,11 @@
 """BossMod AI — Office tilemap definition.
 
-Defines tile types, room metadata, and the default 30x20 office layout.
+Defines tile types, room metadata, and the default 28x20 office layout.
 The Canvas renderer reads this data (served via API) to draw the office.
 The world simulation uses it for pathfinding and location rules.
 """
 
+from collections.abc import Collection
 from enum import IntEnum
 
 
@@ -66,17 +67,25 @@ DEFAULT_ROOMS = [
 ]
 
 # ─── Desk positions (tile coordinates where agents sit) ───
-# Each desk has a chair tile next to it where the agent stands.
+# Each desk has a chair tile next to it where the agent stands. Agents store
+# the chair (``Agent.desk_x`` / ``desk_y``), never the desk id, so ids may be
+# renumbered as long as every chair keeps its coordinates. Each workspace is a
+# 2x3 grid: desk row, chair row, aisle, chair row, desk row. Every floor draws
+# its own copy of this map, so occupancy is per floor (core/world/seating.py).
 
 DEFAULT_DESKS = [
-    {"id": "desk_1", "desk_xy": (3, 3),  "chair_xy": (3, 4),  "room": "workspace_main"},
-    {"id": "desk_2", "desk_xy": (7, 3),  "chair_xy": (7, 4),  "room": "workspace_main"},
-    {"id": "desk_3", "desk_xy": (11, 3), "chair_xy": (11, 4), "room": "workspace_main"},
-    {"id": "desk_4", "desk_xy": (3, 7),  "chair_xy": (3, 6),  "room": "workspace_main"},
-    {"id": "desk_5", "desk_xy": (7, 7),  "chair_xy": (7, 6),  "room": "workspace_main"},
-    {"id": "desk_6", "desk_xy": (3, 14), "chair_xy": (3, 15), "room": "workspace_south"},
-    {"id": "desk_7", "desk_xy": (7, 14), "chair_xy": (7, 15), "room": "workspace_south"},
-    {"id": "desk_8", "desk_xy": (11, 14),"chair_xy": (11, 15),"room": "workspace_south"},
+    {"id": "desk_1",  "label": "Desk 1 — Main NW",   "desk_xy": (3, 3),   "chair_xy": (3, 4),   "room": "workspace_main"},
+    {"id": "desk_2",  "label": "Desk 2 — Main N",    "desk_xy": (7, 3),   "chair_xy": (7, 4),   "room": "workspace_main"},
+    {"id": "desk_3",  "label": "Desk 3 — Main NE",   "desk_xy": (11, 3),  "chair_xy": (11, 4),  "room": "workspace_main"},
+    {"id": "desk_4",  "label": "Desk 4 — Main SW",   "desk_xy": (3, 7),   "chair_xy": (3, 6),   "room": "workspace_main"},
+    {"id": "desk_5",  "label": "Desk 5 — Main S",    "desk_xy": (7, 7),   "chair_xy": (7, 6),   "room": "workspace_main"},
+    {"id": "desk_6",  "label": "Desk 6 — Main SE",   "desk_xy": (11, 7),  "chair_xy": (11, 6),  "room": "workspace_main"},
+    {"id": "desk_7",  "label": "Desk 7 — South NW",  "desk_xy": (3, 14),  "chair_xy": (3, 15),  "room": "workspace_south"},
+    {"id": "desk_8",  "label": "Desk 8 — South N",   "desk_xy": (7, 14),  "chair_xy": (7, 15),  "room": "workspace_south"},
+    {"id": "desk_9",  "label": "Desk 9 — South NE",  "desk_xy": (11, 14), "chair_xy": (11, 15), "room": "workspace_south"},
+    {"id": "desk_10", "label": "Desk 10 — South SW", "desk_xy": (3, 18),  "chair_xy": (3, 17),  "room": "workspace_south"},
+    {"id": "desk_11", "label": "Desk 11 — South S",  "desk_xy": (7, 18),  "chair_xy": (7, 17),  "room": "workspace_south"},
+    {"id": "desk_12", "label": "Desk 12 — South SE", "desk_xy": (11, 18), "chair_xy": (11, 17), "room": "workspace_south"},
 ]
 
 # Map grid dimensions
@@ -96,8 +105,8 @@ DEFAULT_MAP = [
     [_W,_F,_F,_D,_F,_F,_F,_D,_F,_F,_F,_D,_F,_T,_T,_T,_W,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 3
     [_W,_F,_F,_C,_F,_F,_F,_C,_F,_F,_F,_C,_F,_T,_T,_T,_O,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 4
     [_W,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_T,_T,_T,_W,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 5
-    [_W,_F,_F,_C,_F,_F,_F,_C,_F,_F,_F,_F,_F,_T,_T,_T,_W,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 6
-    [_W,_F,_F,_D,_F,_F,_F,_D,_F,_F,_F,_F,_F,_T,_T,_T,_W,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 7
+    [_W,_F,_F,_C,_F,_F,_F,_C,_F,_F,_F,_C,_F,_T,_T,_T,_W,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 6
+    [_W,_F,_F,_D,_F,_F,_F,_D,_F,_F,_F,_D,_F,_T,_T,_T,_W,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 7
     [_W,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_T,_T,_T,_W,_M,_M,_M,_M,_M,_M,_M,_W,_V,_V,_V],  # 8
     [_W,_W,_W,_W,_W,_W,_O,_W,_W,_W,_W,_W,_W,_T,_T,_T,_W,_W,_W,_W,_O,_W,_W,_W,_W,_V,_V,_V],  # 9
     [_V,_V,_V,_V,_V,_V,_T,_V,_V,_V,_V,_V,_V,_T,_T,_T,_V,_V,_V,_V,_T,_V,_V,_V,_V,_V,_V,_V],  # 10
@@ -107,34 +116,75 @@ DEFAULT_MAP = [
     [_W,_F,_F,_D,_F,_F,_F,_D,_F,_F,_F,_D,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 14
     [_W,_F,_F,_C,_F,_F,_F,_C,_F,_F,_F,_C,_F,_T,_T,_T,_O,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 15
     [_W,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 16
-    [_W,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 17
-    [_W,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 18
+    [_W,_F,_F,_C,_F,_F,_F,_C,_F,_F,_F,_C,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 17
+    [_W,_F,_F,_D,_F,_F,_F,_D,_F,_F,_F,_D,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 18
     [_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_V,_V,_V],  # 19
 ]
 # fmt: on
 
 
-def first_unoccupied_chair(
-    agents: list,
-    *,
-    exclude_agent_id: str | None = None,
-) -> tuple[int, int] | None:
-    """Return the first map chair that no other agent already sits in.
+_CHAIRS: tuple[tuple[int, int], ...] = tuple(desk["chair_xy"] for desk in DEFAULT_DESKS)
 
-    Desk assignment stores ``chair_xy`` as ``Agent.desk_x`` / ``desk_y``.
-    Never returns a chair already claimed by another agent.
+
+def is_chair(xy: tuple[int, int]) -> bool:
+    """Return True when ``xy`` is the chair tile of one of ``DEFAULT_DESKS``."""
+    return tuple(xy) in _CHAIRS
+
+
+def first_free_chair(occupied: Collection[tuple[int, int]]) -> tuple[int, int] | None:
+    """Return the first chair, in ``DEFAULT_DESKS`` order, not in ``occupied``.
+
+    Pure: the caller decides whose chairs count (core/world/seating.py scopes
+    them to one floor).
+
+    Args:
+        occupied: Chair tiles already claimed.
+
+    Returns:
+        The chair tile, or None when every chair is claimed.
     """
-    occupied = {
-        (agent.desk_x, agent.desk_y)
-        for agent in agents
-        if getattr(agent, "id", None) != exclude_agent_id
-        and getattr(agent, "desk_x", None) is not None
-        and getattr(agent, "desk_y", None) is not None
-    }
-    for desk in DEFAULT_DESKS:
-        chair = desk["chair_xy"]
+    for chair in _CHAIRS:
         if chair not in occupied:
             return chair
+    return None
+
+
+def free_tile_in_room(
+    room_id: str,
+    occupied: Collection[tuple[int, int]],
+) -> tuple[int, int] | None:
+    """Return the free walkable tile closest to a room's centre.
+
+    Chair tiles are never offered: walking to a room must not take someone's
+    desk. Candidates are ordered by Manhattan distance from the room's integer
+    centre, ties broken by ``(y, x)``, so the choice is deterministic.
+
+    Args:
+        room_id: A ``DEFAULT_ROOMS`` id.
+        occupied: Tiles already taken (bodies standing there, or the
+            destinations of walks in progress).
+
+    Returns:
+        The tile, or None when every candidate in the room is occupied.
+
+    Raises:
+        KeyError: ``room_id`` is not a room on the map.
+    """
+    room = next((r for r in DEFAULT_ROOMS if r["id"] == room_id), None)
+    if room is None:
+        raise KeyError(room_id)
+    x1, y1, x2, y2 = room["bounds"]
+    cx, cy = (x1 + x2) // 2, (y1 + y2) // 2
+    candidates = [
+        (x, y)
+        for y in range(y1, y2 + 1)
+        for x in range(x1, x2 + 1)
+        if is_walkable(x, y) and (x, y) not in _CHAIRS
+    ]
+    candidates.sort(key=lambda xy: (abs(xy[0] - cx) + abs(xy[1] - cy), xy[1], xy[0]))
+    for tile in candidates:
+        if tile not in occupied:
+            return tile
     return None
 
 

@@ -205,33 +205,34 @@ def test_the_world_carries_the_last_human_chat_time_per_agent() -> None:
 def test_the_last_message_time_is_one_query_not_one_per_agent() -> None:
     """N+1 on the roster is exactly what this exists to avoid.
 
-    Counted through db/world.py's own `query` binding, so the number is the
-    module's, not the whole call stack's: `heal_desk_seats()` runs its own
-    reads and is not the subject.
+    Counted at the db.connection layer, so every statement the whole call
+    issues is in the number — not only the ones db/world.py sends itself.
     """
     import db.messages as messages
-    import db.world as world
+    from db.connection import SQLiteCompatConnection
 
     for index in range(5):
         agent = db.create_agent(f"Agent {index}", role="Eng", desk_x=1 + index, desk_y=1)
         messages.create_message("__human__", agent.id, "hello", message_type="human")
 
     calls: list[str] = []
-    original = world.query
+    original = SQLiteCompatConnection.execute
 
-    def counting(sql, params=None):
+    def counting(self, sql, params=None):
         calls.append(sql)
-        return original(sql, params)
+        return original(self, sql, params)
 
-    world.query = counting
+    SQLiteCompatConnection.execute = counting
     try:
         rows = db.get_world_state()
     finally:
-        world.query = original
+        SQLiteCompatConnection.execute = original
 
     assert len(rows) == 5
     assert all(row["lastMessageAt"] is not None for row in rows)
-    # The roster, and the batch. Not the roster plus one read per agent.
+    # Every statement counts: get_connection() sends no liveness probe.
+    # The roster, and the batch. Not the roster plus one read per agent, and
+    # no seating reads or writes riding along with the read.
     assert len(calls) == 2, calls
 
 

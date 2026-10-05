@@ -11,6 +11,10 @@ from db.connection import get_connection
 from db.crud import execute, fetch_one, insert_returning, query, query_one
 
 _DEFAULT_WORKER_NAME = "primary"
+HEARTBEAT_SETTING = "runtime_heartbeat_seconds"
+# A heartbeat this many intervals old means the worker is gone: one late
+# stamp (a slow tick, a busy disk) must never read as a dead worker.
+HEARTBEAT_STALE_INTERVALS = 3
 
 _COMMAND_COLUMNS = (
     "id, command_type, payload, status, failure_reason, "
@@ -166,14 +170,43 @@ def get_runtime_worker_state(worker_name: str = _DEFAULT_WORKER_NAME) -> Runtime
     )
 
 
-def is_runtime_worker_live(
-    worker_name: str = _DEFAULT_WORKER_NAME,
-    *,
-    stale_after_seconds: int = 15,
-) -> bool:
+def heartbeat_interval_seconds() -> float:
+    """Return how often the worker stamps its heartbeat (``runtime_heartbeat_seconds``).
+
+    Read from the process settings cache.
+
+    Raises:
+        ConfigError: The setting is missing, not a number, or not greater
+            than 0. There is no fallback value.
+    """
+    from core import config
+
+    value = config.require_float(HEARTBEAT_SETTING)
+    if value <= 0:
+        raise config.ConfigError(f"setting {HEARTBEAT_SETTING!r} must be greater than 0, got {value}")
+    return value
+
+
+def heartbeat_stale_after_seconds() -> float:
+    """Return the heartbeat age past which the worker counts as dead.
+
+    The one staleness threshold every reader uses: ``HEARTBEAT_STALE_INTERVALS``
+    times :func:`heartbeat_interval_seconds`.
+
+    Raises:
+        ConfigError: The heartbeat setting is unusable.
+    """
+    return HEARTBEAT_STALE_INTERVALS * heartbeat_interval_seconds()
+
+
+def is_runtime_worker_live(worker_name: str = _DEFAULT_WORKER_NAME) -> bool:
     """Return whether the worker is running with a fresh heartbeat.
 
-    Used by trigger-lease recovery so a healthy long turn is not stolen.
+    Fresh means younger than :func:`heartbeat_stale_after_seconds`. Used by
+    trigger-lease recovery so a healthy long turn is not stolen.
+
+    Raises:
+        ConfigError: The heartbeat setting is unusable.
     """
     state = get_runtime_worker_state(worker_name)
     if state is None or state.lifecycle_state != "running":
@@ -184,7 +217,7 @@ def is_runtime_worker_live(
     if heartbeat.tzinfo is None:
         heartbeat = heartbeat.replace(tzinfo=timezone.utc)
     age = (datetime.now(timezone.utc) - heartbeat).total_seconds()
-    return age < max(1, stale_after_seconds)
+    return age < heartbeat_stale_after_seconds()
 
 
 def mark_runtime_worker_starting(
@@ -287,25 +320,36 @@ def mark_runtime_worker_error(
 
 
 def record_runtime_worker_heartbeat(
-    pid: int | None = None,
+    pid: int,
     *,
     worker_name: str = _DEFAULT_WORKER_NAME,
-) -> RuntimeWorkerState:
-    """Persist a heartbeat for the active worker."""
+) -> RuntimeWorkerState | None:
+    """Stamp a heartbeat on the running worker's row: one UPDATE, nothing else.
+
+    The steady-state write. Lifecycle changes (starting, running, stopping,
+    stopped, error) go through the ``mark_runtime_worker_*`` upserts; this
+    only moves ``last_heartbeat_at`` (and ``updated_at``) on the row that
+    already names this worker and pid, so a stale process can never refresh
+    a newer worker's row.
+
+    Args:
+        pid: The worker process id the row must hold.
+        worker_name: The worker row to stamp.
+
+    Returns:
+        The refreshed row, or ``None`` when no row names this worker and pid
+        (the caller decides how loudly to say so).
+    """
     now = datetime.now(timezone.utc)
-    existing = get_runtime_worker_state(worker_name)
-    lifecycle_state = existing.lifecycle_state if existing is not None else "running"
-    started_at = existing.started_at if existing is not None else now
-    return _upsert_runtime_worker_state(
-        worker_name=worker_name,
-        lifecycle_state=lifecycle_state,
-        pid=pid,
-        heartbeat_at=now,
-        started_at=started_at,
-        stopped_at=None if lifecycle_state != "stopped" else existing.stopped_at if existing else None,
-        last_error=existing.last_error if existing is not None else None,
-        preserve_started_at=False,
-        clear_pid=pid is None and existing is not None and existing.pid is None,
+    return fetch_one(
+        f"""
+        UPDATE runtime_worker_state
+        SET last_heartbeat_at = $1, updated_at = $1
+        WHERE worker_name = $2 AND pid = $3
+        RETURNING {_WORKER_COLUMNS}
+        """,
+        [now, worker_name, pid],
+        RuntimeWorkerState,
     )
 
 

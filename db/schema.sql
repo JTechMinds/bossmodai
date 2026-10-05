@@ -624,7 +624,8 @@ CREATE TABLE IF NOT EXISTS runtime_commands (
                           'resume_runtime',
                           'reset_agent_runtime',
                           'shutdown_runtime',
-                          'reload_schedules'
+                          'reload_schedules',
+                          'extension_config_changed'
                       )),
     payload        TEXT NOT NULL,
     status         VARCHAR NOT NULL DEFAULT 'queued'
@@ -832,6 +833,51 @@ CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_status
 
 CREATE INDEX IF NOT EXISTS idx_cli_approval_requests_agent
     ON cli_approval_requests (agent_id, status);
+
+-- Hot read paths (refresh-efficiency Phase 4). connection.py's
+-- _create_hot_path_indexes creates the same set on existing databases, after
+-- the table rebuilds that drop indexes. idx_tasks_owner_status is created
+-- there only: tasks.owner_id is a migration-added column, so on a database
+-- older than it an index here would fail this script before migrations run.
+
+-- World state, channel members, watchdog: an agent's active activity.
+CREATE INDEX IF NOT EXISTS idx_activities_agent_status
+    ON activities (agent_id, status);
+
+-- Newest message per channel (rail order, idle check) and transcripts.
+CREATE INDEX IF NOT EXISTS idx_channel_messages_channel_created
+    ON channel_messages (channel_id, created_at);
+
+-- Watchdog / board: tasks by status, alone or per assignee.
+CREATE INDEX IF NOT EXISTS idx_tasks_status
+    ON tasks (status);
+
+CREATE INDEX IF NOT EXISTS idx_tasks_assigned_status
+    ON tasks (assigned_to, status);
+
+-- A task's newest events (board, task thread).
+CREATE INDEX IF NOT EXISTS idx_task_events_task_created
+    ON task_events (task_id, created_at);
+
+-- Dispatcher queued scan, and the finished-trigger prune.
+CREATE INDEX IF NOT EXISTS idx_agent_triggers_status_created
+    ON agent_triggers (status, created_at);
+
+-- Unified feed branches (newest first) and the activity-log prune.
+CREATE INDEX IF NOT EXISTS idx_activity_log_created
+    ON activity_log (created_at);
+
+CREATE INDEX IF NOT EXISTS idx_notifications_created
+    ON notifications (created_at);
+
+-- Diagnostics retention: the oldest-first row-limit purge (ORDER BY
+-- created_at, id) and the age prune (created_at < cutoff) find their rows
+-- here; id is in the index so the purge's whole order is read off it.
+CREATE INDEX IF NOT EXISTS idx_diagnostics_created
+    ON diagnostics (created_at, id);
+
+CREATE INDEX IF NOT EXISTS idx_diagnostic_steps_diagnostic
+    ON diagnostic_steps (diagnostic_id);
 
 -- ───────────────────────────────────────────────────────────────────────────
 -- Agent templates — locally-installed, pinned snapshots of agent packs, and

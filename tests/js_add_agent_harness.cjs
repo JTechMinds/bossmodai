@@ -229,7 +229,7 @@ function buildForm() {
         global.BossModAgentFormConnections.shapeFor(connections),
     );
     // The real dropdowns, mounted the way context/agent-form.js mounts them.
-    global.BossModAgentFormChoices.mount(form, { roster: [], values: null });
+    global.BossModAgentFormChoices.mount(form, { roster: [], desks: [], floorId: "lobby", values: null });
     global.BossModAgentFormBindings.bindAiConnection(form, connections, null);
     return form;
 }

@@ -22,6 +22,11 @@ const BossModLogPlace = (() => {
     let filters = null;
     let detail = null;
     let listEl = null;
+    // The rows live in one persistent `.log-list`, patched by row key: a live
+    // row is inserted at the top and the rows already on screen are left
+    // alone, instead of the whole list being rebuilt per broadcast.
+    let rowListEl = null;
+    let rowList = null;
     let scrollEl = null;
     let errorEl = null;
     let summaryEl = null;
@@ -34,6 +39,13 @@ const BossModLogPlace = (() => {
     // another place comes back to the same view.
     let lastView = null; // {agentId, type, search, following}
     const disposers = [];
+
+    /** A non-list state (skeleton, empty): it replaces the rows. */
+    function showState(node) {
+        rowList.reset();
+        clear(listEl);
+        listEl.append(node);
+    }
 
     function setError(message) {
         errorEl.textContent = message || '';
@@ -99,26 +111,29 @@ const BossModLogPlace = (() => {
             ? 'Loading…'
             : `${rows.length} event${rows.length === 1 ? '' : 's'}`;
 
-        clear(listEl);
         if (loading) {
-            listEl.append(ROW.renderSkeleton());
+            showState(ROW.renderSkeleton());
             return;
         }
         if (rows.length === 0) {
             const active = filters.filters();
-            listEl.append(ROW.renderEmpty(
+            showState(ROW.renderEmpty(
                 Boolean(active.agentId || active.type || active.search)));
             return;
         }
-        const list = h('div', { class: 'log-list' });
-        rows.forEach((row) => list.append(ROW.renderRow(row, {
+        // A row's signature is everything renderRow reads. The LogRow object
+        // is not enough on its own: linkActivityRows marks a row expandable
+        // in place when its turn arrives.
+        rowList.sync(rows, (row) => row.key, (row) => {
+            const open = expanded.has(row.key);
+            return [row, open, row.expandable === true, row.diagnosticId, open ? detailFor(row) : null];
+        }, (row) => ROW.renderRow(row, {
             expanded: expanded.has(row.key),
             onToggle: toggleRow,
             detail: expanded.has(row.key) ? detailFor(row) : null,
-        })));
-        listEl.append(list);
+        }));
         moreBtn.hidden = !source.hasMore();
-        listEl.append(moreBtn);
+        BossModDom.syncChildren(listEl, [rowListEl, moreBtn]);
 
         scrollEl.scrollTop = stick ? 0 : previousScroll;
     }
@@ -198,6 +213,8 @@ const BossModLogPlace = (() => {
             summaryEl = h('p', { class: 'place-summary' }, '');
             errorEl = h('p', { class: 'files-error', role: 'alert', hidden: true });
             listEl = h('div', { class: 'log-body' });
+            rowListEl = h('div', { class: 'log-list' });
+            rowList = BossModDom.createKeyedList(rowListEl);
             scrollEl = h('div', { class: 'log-scroll' }, listEl);
             moreBtn = h('button', {
                 class: 'btn log-more', type: 'button', hidden: true,
@@ -260,6 +277,8 @@ const BossModLogPlace = (() => {
             filters = null;
             detail = null;
             listEl = null;
+            rowListEl = null;
+            rowList = null;
             scrollEl = null;
             errorEl = null;
             summaryEl = null;

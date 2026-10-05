@@ -7,10 +7,11 @@ with empty counters.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from db.crud import execute, query_one
+from db.crud import execute, query, query_one
 
 _COLUMNS = "channel_id, paused, pass_streaks, demoted_ids, protected_ids, updated_at"
 
@@ -34,6 +35,26 @@ def get_channel_host_state(channel_id: str) -> dict[str, Any]:
         "demoted_ids": _json_ids(row.get("demoted_ids")),
         "protected_ids": _json_ids(row.get("protected_ids")),
     }
+
+
+def list_paused_channel_ids(channel_ids: Sequence[str]) -> set[str]:
+    """Return which of ``channel_ids`` are in host Paused, in one read.
+
+    The batch form of reading ``get_channel_host_state(id)["paused"]`` per
+    thread; a thread with no row is Talk, so it is never in the result.
+
+    Args:
+        channel_ids: The threads; duplicates are fine. Empty reads nothing.
+    """
+    unique = list(dict.fromkeys(channel_ids))
+    if not unique:
+        return set()
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(unique)))
+    rows = query(
+        f"SELECT channel_id FROM channel_host_state WHERE paused AND channel_id IN ({placeholders})",
+        unique,
+    )
+    return {str(row["channel_id"]) for row in rows}
 
 
 def save_channel_host_state(state: dict[str, Any]) -> dict[str, Any]:

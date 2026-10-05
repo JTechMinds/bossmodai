@@ -715,3 +715,38 @@ def test_activate_answers_409_for_a_vacationer() -> None:
     response = client.post(f"/api/agents/{ada.id}/activate", headers=headers, json={"content": "hi"})
     assert response.status_code == 409
     assert response.json()["detail"] == VACATION_DENY
+
+
+def test_bring_back_moves_a_returner_off_a_chair_taken_on_the_target_floor() -> None:
+    """A vacationer keeps its old desk; on the floor it returns to that chair
+    may belong to someone else, and two bodies on one chair is the stack."""
+    from core.floors import bring_back
+
+    # The returner is the EARLIER hire and still yields: residents keep their
+    # desks, newcomers take the next free one.
+    away = db.create_agent("Away", desk_x=3, desk_y=4)
+    send_home(away.id)
+    finance = create_floor("Finance")
+    sitter = db.create_agent("Sitter", desk_x=3, desk_y=4, floor_id=finance.id)
+
+    returned = bring_back(away.id, finance.id)
+
+    # The response already carries the reconciled desk.
+    assert returned.floor_id == finance.id
+    assert (returned.desk_x, returned.desk_y) == (7, 4)
+    assert (db.get_agent(sitter.id).desk_x, db.get_agent(sitter.id).desk_y) == (3, 4)
+    state = db.get_agent_state(away.id)
+    assert state is not None
+    assert (state.x, state.y) == (7, 4)
+
+
+def test_bring_back_keeps_a_desk_that_is_free_on_the_target_floor() -> None:
+    from core.floors import bring_back
+
+    away = db.create_agent("Away", desk_x=11, desk_y=4)
+    send_home(away.id)
+    finance = create_floor("Finance")
+    db.create_agent("Sitter", desk_x=3, desk_y=4, floor_id=finance.id)
+
+    returned = bring_back(away.id, finance.id)
+    assert (returned.desk_x, returned.desk_y) == (11, 4)

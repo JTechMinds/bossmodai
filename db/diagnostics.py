@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core import config
+from db.connection import transaction
 from db.crud import execute, insert_returning_dict, query, query_one
 
 # Summary columns returned by list queries (excludes large blobs)
@@ -248,7 +249,7 @@ def _create_diagnostic_steps(
 
 def _auto_purge() -> None:
     """Delete oldest rows if count exceeds retention limit."""
-    limit = config.get_int("diagnostics_retention_limit") or 5000
+    limit = config.require_int("diagnostics_retention_limit")
     count_row = query_one("SELECT COUNT(*) AS cnt FROM diagnostics")
     if count_row and count_row["cnt"] > limit:
         excess = count_row["cnt"] - limit
@@ -269,3 +270,34 @@ def _auto_purge() -> None:
             ")",
             [excess],
         )
+
+
+def prune_diagnostics(older_than: datetime) -> int:
+    """Delete diagnostics created before a cutoff, with their steps.
+
+    ``created_at`` is written by :func:`create_diagnostic` as an aware UTC
+    datetime, which the connection stores as ISO text with ``+00:00``;
+    ``older_than`` goes through the same adapter, so the text comparison
+    orders the two correctly. Steps go first (they reference their
+    diagnostic), in one transaction with the diagnostics.
+
+    Args:
+        older_than: The cutoff, an aware UTC datetime.
+
+    Returns:
+        How many diagnostics were deleted (their steps are not counted).
+
+    Raises:
+        ValueError: ``older_than`` is naive, so its zone would be a guess.
+    """
+    if older_than.tzinfo is None:
+        raise ValueError("prune_diagnostics needs an aware datetime")
+    cutoff = older_than.astimezone(timezone.utc)
+    with transaction() as con:
+        con.execute(
+            "DELETE FROM diagnostic_steps WHERE diagnostic_id IN ("
+            "  SELECT id FROM diagnostics WHERE created_at < $1"
+            ")",
+            [cutoff],
+        )
+        return con.execute("DELETE FROM diagnostics WHERE created_at < $1", [cutoff]).rowcount

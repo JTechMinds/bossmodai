@@ -353,7 +353,9 @@ _SAVE_OK_SITES = {
     ],
     "settings/settings-advanced.js": [
         "apiFetchOk(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`",
-        "apiFetchOk(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`",
+        # The four retention limits (diagnostics_retention_limit among them)
+        # share one save.
+        "apiFetchOk(`/api/settings/${encodeURIComponent(field.key)}?value=${encodeURIComponent(value)}&category=advanced`",
         "apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`",
         "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`",
     ],

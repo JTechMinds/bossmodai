@@ -78,9 +78,13 @@ class MeetingWatchdog:
     async def _loop(self) -> None:
         while self._running:
             try:
-                # Pick up settings another process wrote (one integer read per tick).
-                config.refresh_if_changed()
-                await self._check_meetings()
+                # Meetings are rare: an idle tick is this one query. The
+                # settings refresh and the full scan run only while one is
+                # assembling (the interval below still sees other loops'
+                # refreshes of the shared settings cache).
+                if _any_meeting_assembling():
+                    config.refresh_if_changed()
+                    await self._check_meetings()
             except asyncio.CancelledError:
                 break
             except Exception:
@@ -186,6 +190,21 @@ class MeetingWatchdog:
                     source_channel=req["source_channel"],
                     payload=req["payload"],
                 )
+
+
+def _any_meeting_assembling() -> bool:
+    """Whether any active meeting is still assembling (one ``EXISTS`` query)."""
+    row = db.query_one(
+        """
+        SELECT EXISTS (
+            SELECT 1
+            FROM meeting_session_meta m
+            JOIN meeting_sessions s ON s.id = m.session_id
+            WHERE s.status = 'active' AND m.phase = 'assembling'
+        ) AS assembling
+        """
+    )
+    return bool(row and row["assembling"])
 
 
 meeting_watchdog = MeetingWatchdog()

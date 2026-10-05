@@ -40,7 +40,8 @@ CALL_SITES = {
     "shell/roster.js": "BossModIcons.paintDocument('roster')",
     "shell/header.js": "BossModIcons.paintDocument('header')",
     "shell/thread-create.js": "BossModIcons.paintDocument('thread-create')",
-    "shell/roster-people.js": "BossModIcons.paintDocument('roster-people')",
+    # The People half paints only the rows it built this pass (patched by key).
+    "shell/roster-people.js": "BossModIcons.paint(row, 'roster-people')",
     "shell/roster-header-menu.js": "BossModIcons.paint(menu.element, 'roster-header-menu')",
 }
 

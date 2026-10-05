@@ -355,6 +355,9 @@ async function main() {
     world.advanced = [
         setting("diagnostics_enabled", "false", "advanced"),
         setting("diagnostics_retention_limit", "5000", "advanced"),
+        setting("diagnostics_retention_days", "7", "advanced"),
+        setting("trigger_retention_days", "7", "advanced"),
+        // activity_log_retention_days left out: its field must say so.
         setting("cli_max_read_lines", "200", "advanced"),
         setting("desktop_open_folder_handler", "", "advanced"),
         setting("cli_auto_approve_global", "false", "advanced"),
@@ -391,6 +394,40 @@ async function main() {
     const refused = await globalStep(true);
     refused.error = errorText(advancedRoot, "cli_auto_approve_global");
 
+    // ─── Advanced: Retention ───
+    // Each entry is typed into its field and committed; only a whole number
+    // in the field's range is saved, anything else is reported under it.
+    const retentionStep = async (id, typed) => {
+        const input = documentStub.getElementById(id);
+        const saved = saves.length;
+        input.value = typed;
+        await dispatchChange(input);
+        await settle();
+        return {
+            saves: saves.slice(saved).map((save) => save.url),
+            error: documentStub.getElementById(`${id}-error`).textContent.trim(),
+            invalid: input.getAttribute("aria-invalid"),
+        };
+    };
+    const retentionLabels = advancedRoot.querySelectorAll("label")
+        .map((label) => label.textContent.trim())
+        .filter((text) => /Retention/.test(text));
+    const retention = {
+        labels: retentionLabels,
+        values: ["diag-retention-limit", "diag-retention-days", "trigger-retention-days"]
+            .map((id) => documentStub.getElementById(id).value),
+        zeroDays: await retentionStep("diag-retention-days", "0"),
+        fraction: await retentionStep("trigger-retention-days", "1.5"),
+        text: await retentionStep("trigger-retention-days", "abc"),
+        belowRowMin: await retentionStep("diag-retention-limit", "50"),
+        goodDays: await retentionStep("diag-retention-days", "14"),
+        goodRows: await retentionStep("diag-retention-limit", "8000"),
+        missing: {
+            disabled: documentStub.getElementById("activity-log-retention-days").disabled,
+            error: documentStub.getElementById("activity-log-retention-days-error").textContent.trim(),
+        },
+    };
+
     process.stdout.write(JSON.stringify({
         ok: true,
         openedOnSimulation,
@@ -419,6 +456,7 @@ async function main() {
         delayErrorAfterFix,
         invalidations: systemInvalidations,
         globalAutoApprove: { before: globalBefore, declined, accepted, turnedOff, refused },
+        retention,
     }));
 }
 

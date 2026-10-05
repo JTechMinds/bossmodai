@@ -31,19 +31,30 @@ class WorldSimulation:
         self._task: asyncio.Task[None] | None = None
         self._agent_paths: dict[str, list[tuple[int, int]]] = {}
         self._agent_progress: dict[str, float] = {}
+        # Set while any agent has a path; the loop sleeps on it at idle.
+        # Made in start(): an Event binds to the loop that first waits on it,
+        # and this singleton outlives loops (worker restarts, tests).
+        self._has_work: asyncio.Event | None = None
 
     @property
     def is_running(self) -> bool:
         return self._running
 
     def start(self) -> None:
-        """Start the simulation loop as a background task."""
+        """Start the simulation loop as a background task.
+
+        Repairs seating once first: desks are reconciled per floor (so no two
+        agents on a floor share a chair), then bodies stranded away from their
+        desk by a worker stop are seated.
+        """
         if self._running:
             return
         self._running = True
-        from core.world.seating import heal_desk_seats
+        from core.world.seating import heal_desk_seats, reconcile_all_desks
 
+        reconcile_all_desks()
         heal_desk_seats()
+        self._has_work = asyncio.Event()
         self._recover_active_movements()
         self._task = asyncio.create_task(self._loop())
         logger.info("World simulation started")
@@ -60,6 +71,7 @@ class WorldSimulation:
 
         self._agent_paths.clear()
         self._agent_progress.clear()
+        self._has_work = None
 
         logger.info("World simulation stopped")
 
@@ -70,15 +82,24 @@ class WorldSimulation:
     ) -> None:
         """Set a pathfinding route for an agent to follow.
 
-        Skips the first element (current position).
+        Skips the first element (current position). Wakes the loop when the
+        simulation is running.
         """
         self._agent_paths[agent_id] = path[1:] if path else []
         self._agent_progress[agent_id] = 0.0
+        if self._has_work is not None:
+            self._has_work.set()
 
     def clear_agent_path(self, agent_id: str) -> None:
         """Stop any in-progress movement for an agent."""
         self._agent_paths.pop(agent_id, None)
         self._agent_progress.pop(agent_id, None)
+        self._sleep_if_idle()
+
+    def _sleep_if_idle(self) -> None:
+        """Let the loop sleep once no agent has a path left."""
+        if not self._agent_paths and self._has_work is not None:
+            self._has_work.clear()
 
     # ─── Main loop ───
 
@@ -86,11 +107,20 @@ class WorldSimulation:
         consecutive_errors = 0
         last_tick_at = time.monotonic()
         while self._running:
+            has_work = self._has_work
+            if has_work is None:
+                raise RuntimeError("simulation loop running without start()")
+            if not has_work.is_set():
+                # Idle: no tick, no settings read, until someone has a path.
+                await has_work.wait()
+                # Time asleep is not walking time.
+                last_tick_at = time.monotonic()
             tick_started_at = time.monotonic()
             elapsed = max(tick_started_at - last_tick_at, 0.0)
             last_tick_at = tick_started_at
             try:
-                # Pick up settings another process wrote (one integer read per tick).
+                # Pick up settings another process wrote (one integer read per
+                # working tick; an idle loop does not tick).
                 config.refresh_if_changed()
                 await self._tick(elapsed)
                 consecutive_errors = 0
@@ -98,10 +128,10 @@ class WorldSimulation:
                 break
             except Exception:
                 consecutive_errors += 1
-                threshold = config.get_int("sim_error_threshold") or 10
+                threshold = config.require_int("sim_error_threshold")
                 logger.exception("Simulation tick error (%d consecutive)", consecutive_errors)
                 if consecutive_errors >= threshold:
-                    backoff = config.get_int("sim_error_backoff_seconds") or 30
+                    backoff = config.require_int("sim_error_backoff_seconds")
                     logger.critical(
                         "%d consecutive tick failures — pausing for %ds",
                         threshold, backoff,
@@ -109,7 +139,7 @@ class WorldSimulation:
                     await asyncio.sleep(backoff)
                     consecutive_errors = 0
 
-            interval = config.get_float("tick_interval") or 3.0
+            interval = config.require_float("tick_interval")
             await asyncio.sleep(interval)
 
     async def _tick(self, elapsed: float) -> None:
@@ -121,7 +151,7 @@ class WorldSimulation:
 
     async def _advance_movement(self, elapsed: float = 0.0) -> None:
         """Move in-transit agents along their paths."""
-        movement_speed = config.get_float("movement_tiles_per_second") or 4.0
+        movement_speed = config.require_float("movement_tiles_per_second")
         completed: list[str] = []
         moved_any = False
 
@@ -161,6 +191,8 @@ class WorldSimulation:
                 from core.agent_loop.dispatcher import dispatcher
 
                 await dispatcher.handle_arrival(agent_id, room_name)
+        # After the arrivals: one of them may have set a new path.
+        self._sleep_if_idle()
 
         if moved_any:
             await manager.broadcast_world_state()

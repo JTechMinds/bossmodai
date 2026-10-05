@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -111,6 +112,49 @@ def get_active_activity(agent_id: str) -> Activity | None:
         **rows[0],
         "metadata": json.loads(rows[0]["metadata"]) if rows[0].get("metadata") else {},
     })
+
+
+def get_active_activities(agent_ids: Sequence[str]) -> dict[str, Activity]:
+    """Return each agent's active activity in one query, keyed by agent id.
+
+    The batch form of :func:`get_active_activity`: per agent, the same row
+    that function returns (newest ``updated_at``, then ``created_at``).
+    Agents with no active activity are absent from the result.
+
+    Args:
+        agent_ids: The agents to look up; duplicates are fine. Empty reads
+            nothing.
+
+    Returns:
+        ``{agent_id: Activity}``.
+    """
+    unique = list(dict.fromkeys(agent_ids))
+    if not unique:
+        return {}
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(unique)))
+    rows = query(
+        f"""
+        SELECT {_ACTIVITY_COLUMNS}
+        FROM (
+            SELECT {_ACTIVITY_COLUMNS},
+                   ROW_NUMBER() OVER (
+                       PARTITION BY agent_id
+                       ORDER BY updated_at DESC, created_at DESC
+                   ) AS newest
+            FROM activities
+            WHERE status = 'active' AND agent_id IN ({placeholders})
+        )
+        WHERE newest = 1
+        """,
+        unique,
+    )
+    return {
+        row["agent_id"]: Activity.model_validate({
+            **row,
+            "metadata": json.loads(row["metadata"]) if row.get("metadata") else {},
+        })
+        for row in rows
+    }
 
 
 def get_resumable_work_activity(agent_id: str, task_id: str | None = None) -> Activity | None:

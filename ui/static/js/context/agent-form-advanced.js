@@ -27,14 +27,17 @@ const BossModAgentFormAdvanced = (() => {
      *   edited, or the snapshot being recreated. null for a blank form.
      * @param {object} view
      * @param {object[]} view.roster                 Peers, for desk occupancy.
+     * @param {object[]} view.desks                  The map's `desks`.
+     * @param {string|null} view.floorId             The floor whose desk
+     *   occupancy counts: the agent's own, or the hire floor.
      * @param {object} view.promptHistoryPolicy      Merged over the defaults by
      *   the caller, so every field here has a value to show.
      * @returns {string}
      */
     function advancedSection(values, view) {
-        const { roster, promptHistoryPolicy } = view;
+        const { roster, desks, floorId, promptHistoryPolicy } = view;
         const DEFAULT_PROMPT_HISTORY_POLICY = BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY;
-        const { noFreeDesk } = BossModAgentFields.deskChoice(values, roster);
+        const { noFreeDesk } = BossModAgentFields.deskChoice(values, roster, desks, floorId);
         const earliestAllowedValue = promptHistoryPolicy.earliest_ts_allowed
             ? new Date(promptHistoryPolicy.earliest_ts_allowed).toISOString().slice(0, 16)
             : '';

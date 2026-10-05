@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+import pytest
+
+import db
+from core import config
 from core.agent_loop import actions
 from core.agent_loop.actions import (
     TERMINAL_ACTIONS,
@@ -116,3 +123,59 @@ def test_actions_module_stays_parse_and_dispatch() -> None:
     assert "async def _handle_complete" not in text
     assert "async def execute_action" in text
     assert "def parse_action" in text
+
+
+# ─── walkTo: no shared tile, no fallback desk ───
+
+
+@pytest.fixture
+def _fresh_db():
+    """A clean temp database (conftest points BOSSMOD_DB_PATH at a temp file)."""
+    db.close_connection()
+    db_path = Path(os.environ["BOSSMOD_DB_PATH"])
+    for suffix in ("", "-wal", "-shm"):
+        candidate = Path(f"{db_path}{suffix}")
+        if candidate.exists():
+            candidate.unlink()
+    db.init_db()
+    config.reload()
+    yield
+    db.close_connection()
+
+
+async def test_a_deskless_walk_to_desk_is_told_so_and_does_not_move(_fresh_db) -> None:
+    from core.agent_loop import activity_runtime, actions_work
+
+    agent = db.create_agent("Deskless")
+    assert agent.desk_x is None
+    state = db.get_agent_state(agent.id)
+
+    result = await actions_work._handle_walk_to(agent, state, {"destination": "desk"})
+
+    assert result["event"] == "world_feedback"
+    assert result["detail"] == "You have no desk assigned; this floor's desks are all taken."
+    assert "path" not in result
+    assert activity_runtime.get_active_activity(agent.id) is None
+
+
+async def test_two_agents_walking_to_one_room_get_different_tiles(_fresh_db) -> None:
+    from core.agent_loop import actions_work
+    from core.world.tilemap import get_room_at, is_chair
+
+    first = db.create_agent("First")
+    second = db.create_agent("Second")
+
+    walked = []
+    for agent in (first, second):
+        result = await actions_work._handle_walk_to(
+            agent, db.get_agent_state(agent.id), {"destination": "meetingRoom"},
+        )
+        assert result["event"] == "agent_moved", result
+        walked.append(result["path"][-1])
+
+    # The first walk is still in progress, so its destination is already
+    # taken when the second agent picks a tile.
+    assert walked[0] != walked[1]
+    for tile in walked:
+        assert get_room_at(*tile)["id"] == "meeting_room"
+        assert not is_chair(tile)

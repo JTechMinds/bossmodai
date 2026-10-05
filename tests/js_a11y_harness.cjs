@@ -35,8 +35,25 @@ function makeEl(tag) {
                 this.children.push(k);
             });
         },
-        remove() {},
+        remove() {
+            if (!this.parentNode) return;
+            const i = this.parentNode.children.indexOf(this);
+            if (i !== -1) this.parentNode.children.splice(i, 1);
+            this.parentNode = null;
+        },
         replaceChildren() { this.children = []; },
+        // The People list is patched by key (BossModDom.createKeyedList), which
+        // moves rows with insertBefore and reads childNodes; a real element
+        // has both. Inserting an attached node MOVES it, as the DOM does.
+        get childNodes() { return this.children; },
+        insertBefore(node, reference) {
+            if (node.parentNode) node.remove();
+            node.parentNode = this;
+            const at = reference ? this.children.indexOf(reference) : -1;
+            if (at === -1) this.children.push(node);
+            else this.children.splice(at, 0, node);
+            return node;
+        },
         addEventListener(n, fn) { (this.listeners[n] = this.listeners[n] || []).push(fn); },
         removeEventListener() {},
         focus() {},

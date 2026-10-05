@@ -11,12 +11,6 @@
          anything loaded ahead of it would be unauthenticated. -->
     <script src="{{ static_url('js/api-auth.js') }}"></script>
 
-    <!-- Tailwind CSS (vendored Play CDN compiler — HA-OPS-P1-02).
-         Retained for the Settings sections and the re-hosted panes, whose
-         utilities resolve to the same tokens as the shell. -->
-    <script src="{{ static_url('js/vendor/tailwindcss.js') }}"></script>
-    <script src="{{ static_url('js/tailwind-config.js') }}"></script>
-
     <!-- Lucide Icons (vendored UMD 0.469.0) -->
     <script src="{{ static_url('js/vendor/lucide.min.js') }}"></script>
 
@@ -68,6 +62,12 @@
     <link rel="stylesheet" href="{{ static_url('css/extensions.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/data-table.css') }}">
     <link rel="stylesheet" href="{{ static_url('css/places.css') }}">
+    <!-- Tailwind utilities for the Settings sections and the panes still
+         written in them, pre-built by scripts/build_tailwind.sh — no compiler
+         runs in the page. LAST on purpose: the Play runtime it replaced
+         appended its <style> at the end of <head>, and every surface was
+         tuned against that cascade. -->
+    <link rel="stylesheet" href="{{ static_url('css/tailwind.generated.css') }}">
 </head>
 <body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden" data-view="app">
 

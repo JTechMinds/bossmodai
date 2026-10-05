@@ -1,6 +1,7 @@
 /**
  * Node harness: footer status transitions across a reconnect, the uptime
- * interval's teardown, and the two banners toggling from store state.
+ * tick (minute resolution, paused while the window is hidden, cleared on
+ * teardown), and the two banners toggling from store state.
  *
  * Invoked by tests/test_ui_footer.py. Not a browser bundle.
  */
@@ -39,29 +40,40 @@ function makeEl(tag) {
     return el;
 }
 
+const docListeners = {};
 global.document = {
     createElement: makeEl,
     createTextNode: (t) => ({ nodeType: 3, textContent: String(t) }),
     body: makeEl("body"),
+    hidden: false,
     getElementById() { return null; },
-    addEventListener() {},
-    removeEventListener() {},
+    addEventListener(n, fn) { (docListeners[n] = docListeners[n] || []).push(fn); },
+    removeEventListener(n, fn) {
+        docListeners[n] = (docListeners[n] || []).filter((f) => f !== fn);
+    },
 };
+function setHidden(hidden) {
+    global.document.hidden = hidden;
+    (docListeners.visibilitychange || []).slice().forEach((fn) => fn());
+}
 global.window = { document: global.document };
 global.lucide = { createIcons() {} };
 
-// Spy on timers so the uptime interval's teardown is observable.
-const liveTimers = new Set();
-const realSetInterval = global.setInterval;
-const realClearInterval = global.clearInterval;
-global.setInterval = (fn, ms) => {
-    const id = realSetInterval(fn, ms);
-    liveTimers.add(id);
+// Spy on timers so the uptime tick is observable: how many are pending, and
+// at what delay. A fired timeout leaves the set, as a real one would.
+const liveTimers = new Map();
+const realSetTimeout = global.setTimeout;
+const realClearTimeout = global.clearTimeout;
+let intervalsStarted = 0;
+global.setInterval = () => { intervalsStarted += 1; return 0; };
+global.setTimeout = (fn, ms) => {
+    const id = realSetTimeout(() => { liveTimers.delete(id); fn(); }, ms);
+    liveTimers.set(id, ms);
     return id;
 };
-global.clearInterval = (id) => {
+global.clearTimeout = (id) => {
     liveTimers.delete(id);
-    realClearInterval(id);
+    realClearTimeout(id);
 };
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModDom;\n`);
@@ -73,6 +85,8 @@ eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModBanners = Boss
 function text(node) {
     if (!node) return "";
     if (node.nodeType === 3) return node.textContent;
+    // An element whose text was set in place (`el.textContent = ...`).
+    if (typeof node.textContent === "string") return node.textContent;
     return (node.children || []).map(text).join(" ");
 }
 
@@ -140,7 +154,25 @@ function apiFetch(url) {
         if (!/\b1 agent\b/.test(text(el))) throw new Error(`agent count must be singular: ${text(el)}`);
     }
 
-    if (liveTimers.size !== 1) throw new Error(`footer must run exactly one uptime interval, got ${liveTimers.size}`);
+    // No start time yet: nothing to count, so nothing ticks.
+    if (liveTimers.size !== 0) throw new Error(`no uptime tick before the start time is known, got ${liveTimers.size}`);
+    if (intervalsStarted !== 0) throw new Error("the footer must not run a fixed interval");
+
+    // A start time 90.5 s ago reads at minute resolution, written in place,
+    // and the one pending tick lands on the next minute boundary (~29.5 s).
+    const uptimeEl = find(el, hasClass("footer-uptime"), [])[0];
+    bus.publish("runtime_state", { paused: false, started_at: new Date(Date.now() - 90500).toISOString() });
+    if (uptimeEl.textContent !== "1m") throw new Error(`uptime must read 1m, got "${uptimeEl.textContent}"`);
+    if (uptimeEl.children.length !== 0) throw new Error("uptime must be set in place, not appended");
+    if (liveTimers.size !== 1) throw new Error(`exactly one pending uptime tick, got ${liveTimers.size}`);
+    const delay = [...liveTimers.values()][0];
+    if (!(delay > 28000 && delay <= 30000)) throw new Error(`tick must align to the next minute, got ${delay}ms`);
+
+    // Hidden: the tick stops. Visible again: exactly one, realigned.
+    setHidden(true);
+    if (liveTimers.size !== 0) throw new Error(`the uptime tick must stop while hidden, got ${liveTimers.size}`);
+    setHidden(false);
+    if (liveTimers.size !== 1) throw new Error(`visible again must resume one tick, got ${liveTimers.size}`);
 
     // ── Banners ──
     const pauseBanner = makeEl("div");
@@ -177,7 +209,10 @@ function apiFetch(url) {
     // ── Teardown ──
     disposeFooter();
     disposeBanners();
-    if (liveTimers.size !== 0) throw new Error("the uptime interval must be cleared on teardown");
+    if (liveTimers.size !== 0) throw new Error("the uptime tick must be cleared on teardown");
+    if ((docListeners.visibilitychange || []).length !== 0) {
+        throw new Error("the visibility listener must be removed on teardown");
+    }
     if (store.subscriberCount() !== storeBaseline) {
         throw new Error(`store leak: baseline ${storeBaseline}, now ${store.subscriberCount()}`);
     }
@@ -190,6 +225,7 @@ function apiFetch(url) {
         resyncAnnouncesThenClears: true,
         agentCountFollowsRoster: true,
         uptimeIntervalClearedOnTeardown: true,
+        uptimeTickStopsWhenHidden: true,
         bannersToggleFromState: true,
         disposersDrain: true,
     }));

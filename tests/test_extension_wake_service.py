@@ -235,6 +235,72 @@ async def test_only_due_agents_are_polled(env) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_tick_with_nothing_due_reads_nothing(env) -> None:
+    from db.connection import SQLiteCompatConnection
+
+    agent = _agent("Iris", every="30")
+    await env.watch.run_once()
+    env.clock.now += 10
+    sent: list[str] = []
+    original = SQLiteCompatConnection.execute
+
+    def counting(self, sql, params=None):
+        sent.append(sql)
+        return original(self, sql, params)
+
+    SQLiteCompatConnection.execute = counting
+    try:
+        await env.watch.run_once()
+    finally:
+        SQLiteCompatConnection.execute = original
+    assert sent == []
+    assert env.ext.calls == [("poll", agent.id)], "polled once, on the first tick only"
+
+
+@pytest.mark.asyncio
+async def test_a_saved_config_is_seen_after_invalidate(env) -> None:
+    agent = _agent("Iris", every="3600")
+    await env.watch.run_once()
+    env.ext.calls.clear()
+    db.set_extension_agent_config(EXT, agent.id, {"address": "iris@contoso.com", "every": "30"})
+    newcomer = _agent("Vera", every="30")
+    env.clock.now += 30
+    await env.watch.run_once()
+    assert env.ext.calls == [], "the cached hour-long interval still governs until invalidated"
+    env.watch.invalidate()
+    await env.watch.run_once()
+    assert sorted(call[1] for call in env.ext.calls) == sorted([agent.id, newcomer.id])
+
+
+@pytest.mark.asyncio
+async def test_a_settings_change_rebuilds_the_cached_pairs(env) -> None:
+    agent = _agent("Iris", every="30")
+    await env.watch.run_once()
+    env.ext.calls.clear()
+    env.enabled["ids"] = frozenset()
+    db.set_setting("extension_wake_tick_seconds", "5", "extensions")  # any settings write moves the revision
+    config.refresh_if_changed()
+    env.clock.now += 30
+    await env.watch.run_once()
+    assert env.ext.calls == []
+    env.enabled["ids"] = frozenset({EXT})
+    db.set_setting("extension_wake_tick_seconds", "5", "extensions")
+    config.refresh_if_changed()
+    await env.watch.run_once()
+    assert env.ext.calls == [("poll", agent.id)]
+
+
+@pytest.mark.asyncio
+async def test_the_worker_command_invalidates_the_cache(monkeypatch) -> None:
+    from core.runtime import worker
+
+    invalidated: list[bool] = []
+    monkeypatch.setattr(worker.extension_wake_watch, "invalidate", lambda: invalidated.append(True))
+    await worker.RuntimeWorker()._execute("extension_config_changed", {})
+    assert invalidated == [True]
+
+
+@pytest.mark.asyncio
 async def test_a_vacationer_is_skipped_not_polled_and_unconfigured_agents_are_ignored(env) -> None:
     away = _agent("Iris")
     db.create_agent("Nobody", role="Writer")  # no stored config

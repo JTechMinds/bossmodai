@@ -30,21 +30,26 @@ const BossModAgentFormChoices = (() => {
      * @param {object|null} values  The agent being edited or the snapshot
      *   being recreated; null for a blank form.
      * @param {object[]} roster  Peers, for desk occupancy.
+     * @param {object[]} desks  The map's `desks` (context/agent-form.js loads
+     *   them), the only desk list.
+     * @param {string|null} floorId  The floor whose occupancy counts.
      * @returns {{options: Array<{value: string, label: string}>, value: string,
-     *   noFreeDesk: boolean}} "Unassigned" first, then every desk, an occupied
-     *   one marked " (taken)". The value is BossModAgentFields.deskChoice's
-     *   pick, or "Unassigned" when there is none.
+     *   noFreeDesk: boolean}} "Unassigned" first, then every desk, one occupied
+     *   on `floorId` marked " (taken)". The value is
+     *   BossModAgentFields.deskChoice's pick, or "Unassigned" when there is none.
+     * @throws {Error} As BossModAgentFields.deskChoice, on a missing desks list.
      */
-    function deskOptions(values, roster) {
-        const { selectedDesk, noFreeDesk, desks } = FIELDS.deskChoice(values, roster);
+    function deskOptions(values, roster, desks, floorId) {
+        const choice = FIELDS.deskChoice(values, roster, desks, floorId);
+        const { selectedDesk, noFreeDesk } = choice;
         const options = [
             UNASSIGNED_DESK,
-            ...desks.map((desk) => ({
+            ...choice.desks.map((desk) => ({
                 value: desk.value,
                 label: desk.taken ? `${desk.label} (taken)` : desk.label,
             })),
         ];
-        const value = selectedDesk ? `${selectedDesk.x},${selectedDesk.y}` : UNASSIGNED_DESK.value;
+        const value = selectedDesk ? selectedDesk.value : UNASSIGNED_DESK.value;
         return { options, value, noFreeDesk };
     }
 
@@ -77,16 +82,22 @@ const BossModAgentFormChoices = (() => {
      * @param {HTMLElement} form  The `<form>` itself (see context/agent-form.js).
      * @param {object} view
      * @param {object[]} view.roster
+     * @param {object[]} view.desks  The map's `desks`.
+     * @param {string|null} view.floorId  The floor whose desk occupancy counts.
      * @param {object|null} view.values
      * @returns {void}
      * @throws {Error} When a mount point the markup should have rendered is
-     *   missing: the save would read a value no control can change.
+     *   missing: the save would read a value no control can change. Also on a
+     *   missing roster or desks list.
      */
     function mount(form, view) {
-        const { roster, values } = view || {};
+        const { roster, desks, floorId, values } = view || {};
         if (!form) throw new Error('[agent-form-choices] mount needs the form');
         if (!Array.isArray(roster)) {
             throw new Error('[agent-form-choices] mount needs the roster list');
+        }
+        if (!Array.isArray(desks)) {
+            throw new Error('[agent-form-choices] mount needs the desks list');
         }
         const place = (pointId, menu) => {
             const point = form.querySelector(`#${pointId}`);
@@ -100,7 +111,7 @@ const BossModAgentFormChoices = (() => {
 
         build('agent-desk-mount', {
             label: 'Desk assignment', name: 'desk', id: 'agent-desk',
-        }, deskOptions(values, roster));
+        }, deskOptions(values, roster, desks, floorId));
         COMM.KEYS.forEach((key) => {
             build(`agent-communication-${key}-mount`, {
                 label: COMM.LABELS[key], name: `communication_${key}`, id: `agent-communication-${key}`,

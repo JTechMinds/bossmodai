@@ -15,7 +15,11 @@ the agent with one ``extension_event`` trigger:
   arrives meanwhile never wakes it;
 - health: every real check is recorded (``db.record_wake_check``) for the
   desk; a failure is logged at warning only when its sentence changes, and
-  at info when it clears.
+  at info when it clears;
+- cheap at idle: the configured pairs (decrypted config and interval) are
+  cached per settings revision and rebuilt after ``invalidate()`` (the
+  ``extension_config_changed`` runtime command), so a tick with nothing due
+  reads nothing from the database.
 
 The extension knows only its data source; scheduling, vacation and the
 trigger stay here.
@@ -28,6 +32,7 @@ import json
 import logging
 import time
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import Any, Callable
 
 import db
@@ -111,6 +116,21 @@ def _queued_lines(raw: str, trigger_id: str) -> list[str]:
     return lines
 
 
+@dataclass(frozen=True, slots=True)
+class _WakePair:
+    """One configured (extension, agent) pair as of the last cache build.
+
+    Exactly one of ``interval`` / ``error`` is set: a stored config that is
+    corrupt or has an unreadable interval is kept as its error sentence, so
+    it is reported (once per change) instead of silently dropped.
+    """
+
+    entry: ExtensionEntry
+    agent_id: str
+    interval: int | None
+    error: str | None
+
+
 class ExtensionWakeWatch:
     """Polls enabled ``wake`` extensions for configured agents and wakes them.
 
@@ -133,6 +153,10 @@ class ExtensionWakeWatch:
         # The last usable tick, and the setting problem logged (once per message).
         self._tick: float | None = None
         self._tick_error: str | None = None
+        # The configured pairs and the settings revision they were built at;
+        # None until the first tick and after invalidate().
+        self._pairs: list[_WakePair] | None = None
+        self._pairs_rev: int | None = None
 
     def start(self) -> None:
         """Start the tick loop. A second call while running does nothing.
@@ -148,6 +172,8 @@ class ExtensionWakeWatch:
             logger.error("Extension wake watch not started: %s", exc)
             return
         self._tick_error = None
+        # Anything may have changed while stopped (Pause): build afresh.
+        self.invalidate()
         self._running = True
         self._task = asyncio.create_task(self._loop())
         logger.info("Extension wake watch started")
@@ -189,16 +215,41 @@ class ExtensionWakeWatch:
             self._tick_error = None
         self._tick = tick
 
+    def invalidate(self) -> None:
+        """Drop the cached pairs; the next tick re-reads enabled ids and every stored config.
+
+        Called for the ``extension_config_changed`` runtime command (an
+        agent's settings for an extension were saved or removed in the app)
+        and on start. Settings edits (enabling an extension) need no call:
+        the cache is keyed by the settings revision.
+        """
+        self._pairs = None
+        self._pairs_rev = None
+
     async def run_once(self) -> None:
         """Check every due (extension, agent) pair once.
+
+        The due check runs on the cached pairs before any database read, so
+        a tick with nothing due costs no query.
 
         Raises:
             ExtensionSettingError: ``extensions_enabled`` is unreadable.
         """
-        enabled = enabled_ids()
-        for entry in get_discovery().valid_entries():
-            if entry.manifest.wake is None or entry.id not in enabled:
+        now = self._clock()
+        due_by_entry: dict[str, list[_WakePair]] = {}
+        for pair in self._configured_pairs():
+            key = (pair.entry.id, pair.agent_id)
+            if pair.error is not None:
+                # One agent's bad config must not stop the others; the detail
+                # is logged when it changes.
+                self._note_host_error(key, pair.error)
                 continue
+            last = self._last_polled.get(key)
+            if last is not None and pair.interval is not None and now - last < pair.interval:
+                continue
+            due_by_entry.setdefault(pair.entry.id, []).append(pair)
+        for pairs in due_by_entry.values():
+            entry = pairs[0].entry
             try:
                 instance = await asyncio.to_thread(load_extension, entry)
             except ExtensionLoadError as exc:
@@ -209,39 +260,63 @@ class ExtensionWakeWatch:
                 # load_extension refuses this; kept so the type is narrowed honestly.
                 self._note_host_error((entry.id, ""), "the extension has no poll_wake() method")
                 continue
-            for agent_id in sorted(db.configured_agent_ids(entry.id)):
-                key = (entry.id, agent_id)
+            for pair in pairs:
+                key = (entry.id, pair.agent_id)
                 try:
-                    await self._check(entry, instance, agent_id)
+                    await self._check(entry, instance, pair.agent_id, now)
                 except Exception as exc:
-                    # One agent's bad config or a delivery bug must not stop
-                    # the others; the detail is logged when it changes.
+                    # A delivery bug for one agent must not stop the others;
+                    # the detail is logged when it changes.
                     self._note_host_error(key, f"{type(exc).__name__}: {exc}")
                 else:
                     self._clear_host_error(key)
 
-    async def _check(self, entry: ExtensionEntry, instance: SupportsWake, agent_id: str) -> None:
-        """Poll (or skip) one pair when its interval is due, deliver, then commit.
+    def _configured_pairs(self) -> list[_WakePair]:
+        """The cached pairs, rebuilt when invalidated or when settings moved on.
+
+        A rebuild reads the enabled ids, then each enabled wake extension's
+        configured agents and their stored configs (decrypting each once).
 
         Raises:
-            ValueError: The stored config or its interval is unreadable, or
-                the batch names another agent.
-            KeyError: The interval field is missing with no default.
+            ExtensionSettingError: ``extensions_enabled`` is unreadable.
         """
+        rev = config.loaded_revision()
+        if self._pairs is not None and self._pairs_rev == rev:
+            return self._pairs
+        enabled = enabled_ids()
+        pairs: list[_WakePair] = []
+        for entry in get_discovery().valid_entries():
+            wake = entry.manifest.wake
+            spec = entry.manifest.agent_config
+            if wake is None or spec is None or entry.id not in enabled:
+                continue
+            for agent_id in sorted(db.configured_agent_ids(entry.id)):
+                try:
+                    stored = db.get_extension_agent_config(entry.id, agent_id)
+                    if stored is None:
+                        continue
+                    interval = int(agent_config_value(spec, stored, wake.interval_field))
+                except (ValueError, KeyError) as exc:
+                    pairs.append(_WakePair(entry, agent_id, None, f"{type(exc).__name__}: {exc}"))
+                    continue
+                pairs.append(_WakePair(entry, agent_id, interval, None))
+        self._pairs = pairs
+        self._pairs_rev = rev
+        return pairs
+
+    async def _check(self, entry: ExtensionEntry, instance: SupportsWake, agent_id: str, now: float) -> None:
+        """Poll (or skip) one due pair, deliver, then commit.
+
+        The caller has already found the pair due at ``now``; that poll time
+        is recorded first, so a missing agent is not re-read every tick.
+
+        Raises:
+            ValueError: The batch names another agent.
+        """
+        self._last_polled[(entry.id, agent_id)] = now
         agent = db.get_agent(agent_id)
         if agent is None:
             return
-        spec = entry.manifest.agent_config
-        stored = db.get_extension_agent_config(entry.id, agent_id)
-        if spec is None or stored is None:
-            return
-        interval = int(agent_config_value(spec, stored, entry.manifest.wake.interval_field))
-        key = (entry.id, agent_id)
-        now = self._clock()
-        last = self._last_polled.get(key)
-        if last is not None and now - last < interval:
-            return
-        self._last_polled[key] = now
 
         if is_on_vacation(agent):
             # Nothing is recorded: the desk keeps showing the last real check.

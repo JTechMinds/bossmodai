@@ -336,7 +336,7 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     # dropdowns take their starting values from the mount, so that is where
     # `values` goes.
     form_js = Path("ui/static/js/context/agent-form.js").read_text(encoding="utf-8")
-    assert "BossModAgentFormChoices.mount(form, { roster, values });" in form_js
+    assert "BossModAgentFormChoices.mount(form, { roster, desks, floorId, values });" in form_js
     advanced = Path("ui/static/js/context/agent-form-advanced.js").read_text(encoding="utf-8")
     assert 'id="agent-communication-${field}-mount"' in advanced
     choices = Path("ui/static/js/context/agent-form-choices.js").read_text(encoding="utf-8")
@@ -483,6 +483,8 @@ def test_create_agent_api_leaves_desk_unassigned_when_all_taken(
 
     client = _api_client(monkeypatch)
     conn_id = model_connection("test/mock")
+    # 6 Main + 6 South: the office the operator asked for.
+    assert len(DEFAULT_DESKS) == 12
     for index, desk in enumerate(DEFAULT_DESKS):
         chair = desk["chair_xy"]
         created = client.post(
@@ -495,6 +497,72 @@ def test_create_agent_api_leaves_desk_unassigned_when_all_taken(
     assert extra.status_code == 201
     assert extra.json()["desk_x"] is None
     assert extra.json()["desk_y"] is None
+
+    # An explicit pick is validated, never swapped: a taken chair is a 409
+    # naming who sits there, and a tile that is no chair is a 400.
+    taken = client.post(
+        "/api/agents", headers=_headers(),
+        json={"name": "Squatter", "desk_x": 3, "desk_y": 4, "connection_id": conn_id},
+    )
+    assert taken.status_code == 409
+    assert "Seated 0" in taken.json()["detail"]
+    not_a_chair = client.post(
+        "/api/agents", headers=_headers(),
+        json={"name": "Floor Sitter", "desk_x": 1, "desk_y": 1, "connection_id": conn_id},
+    )
+    assert not_a_chair.status_code == 400
+    moved = client.patch(
+        f"/api/agents/{extra.json()['id']}", headers=_headers(), json={"desk_x": 7, "desk_y": 4},
+    )
+    assert moved.status_code == 409
+    assert db.get_agent(extra.json()["id"]).desk_x is None
+    assert {agent.name for agent in db.list_agents()} == (
+        {f"Seated {index}" for index in range(12)} | {"Standing"}
+    )
+
+
+def test_a_name_only_patch_never_fails_on_the_stored_desk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _api_client(monkeypatch)
+    db.create_agent("Holder", desk_x=3, desk_y=4)
+    # A collision written straight to the DB, as data from before the boot
+    # reconcile would hold it.
+    twin = db.create_agent("Twin", desk_x=3, desk_y=4)
+
+    renamed = client.patch(f"/api/agents/{twin.id}", headers=_headers(), json={"name": "Twin Renamed"})
+
+    assert renamed.status_code == 200
+    assert renamed.json()["name"] == "Twin Renamed"
+    assert (renamed.json()["desk_x"], renamed.json()["desk_y"]) == (3, 4)
+    # Changing the desk is still validated.
+    moved = client.patch(f"/api/agents/{twin.id}", headers=_headers(), json={"desk_x": 1, "desk_y": 1})
+    assert moved.status_code == 400
+
+
+def test_an_explicit_desk_is_only_taken_on_its_own_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from db.floors import create_floor
+
+    client = _api_client(monkeypatch)
+    conn_id = model_connection("test/mock")
+    lobby = client.post(
+        "/api/agents", headers=_headers(),
+        json={"name": "Lobby Desk", "desk_x": 3, "desk_y": 4, "connection_id": conn_id},
+    )
+    assert lobby.status_code == 201
+    finance = create_floor("Finance")
+    # Each floor draws its own office: the same chair upstairs is free.
+    upstairs = client.post(
+        "/api/agents", headers=_headers(),
+        json={
+            "name": "Finance Desk", "desk_x": 3, "desk_y": 4,
+            "floor_id": finance.id, "connection_id": conn_id,
+        },
+    )
+    assert upstairs.status_code == 201
+    assert (upstairs.json()["desk_x"], upstairs.json()["desk_y"]) == (3, 4)
 
 
 def test_suggest_finish_line_uses_specialty_then_description() -> None:

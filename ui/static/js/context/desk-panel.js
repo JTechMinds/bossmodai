@@ -322,12 +322,13 @@ const BossModDeskPanel = (() => {
             renderProfile();
         }));
         // The pack line re-reads when this agent was updated, or the catalog
-        // moved: a local read, and never on the roster's every tick.
+        // moved: a local read, and never on the roster's every tick. Matched
+        // by id: after a rename the roster still holds the old name when the
+        // activity lands (world updates are coalesced and arrive later).
         disposers.push(bus.subscribe('activity', (entry) => {
             const event = String((entry && entry.event) || '');
-            const who = agent();
             if (event === 'agent_packs_updated'
-                || (event === 'agent_updated' && who && entry.agent_name === who.name)) {
+                || (event === 'agent_updated' && entry.agent_id === agentId)) {
                 void pack.refresh();
             }
         }));

@@ -28,6 +28,11 @@ _ACTIVITY_LOG_TASK_EVENTS = frozenset({
     "task_created", "task_updated", "task_stalled", "task_cancelled", "world_feedback",
 })
 _ACTIVITY_LOG_ERROR_PATTERNS = ("error", "invalid")
+_ACTIVITY_TASK_KINDS = frozenset({"work", "assignment"})
+_ACTIVITY_AGENT_KINDS = frozenset({"meeting", "conversation", "social"})
+_NOTIFICATION_TASK_KINDS = frozenset({"completion", "handoff"})
+_NOTIFICATION_ERROR_KINDS = frozenset({"blocked", "abandoned"})
+_NOTIFICATION_SYSTEM_KINDS = frozenset({"host_path_consent", "cli_approval"})
 
 
 def classify_category(source: str, event: str) -> str:
@@ -45,18 +50,18 @@ def classify_category(source: str, event: str) -> str:
         return "system"
 
     if source == "activity":
-        if event in ("work", "assignment"):
+        if event in _ACTIVITY_TASK_KINDS:
             return "task"
-        if event in ("meeting", "conversation", "social"):
+        if event in _ACTIVITY_AGENT_KINDS:
             return "agent"
         return "system"  # movement, break
 
     if source == "notification":
-        if event in ("completion", "handoff"):
+        if event in _NOTIFICATION_TASK_KINDS:
             return "task"
-        if event in ("blocked", "abandoned"):
+        if event in _NOTIFICATION_ERROR_KINDS:
             return "error"
-        if event in ("host_path_consent", "cli_approval"):
+        if event in _NOTIFICATION_SYSTEM_KINDS:
             return "system"
         return "agent"  # receipt
 
@@ -161,36 +166,116 @@ def normalize_notification_entry(
 # Unified feed query
 # ---------------------------------------------------------------------------
 
-_UNION_SQL = """
-WITH unified AS (
-    SELECT id, 'activity_log' AS source, event, detail AS title,
-           NULL AS detail_text, agent_name, NULL AS task_id,
-           NULL AS metadata, created_at AS ts, FALSE AS is_active
-    FROM activity_log
+def _sql_in(values: frozenset[str]) -> str:
+    """A SQL ``IN`` list of these module constants (literals, never user input)."""
+    return ", ".join(f"'{value}'" for value in sorted(values))
 
+
+def _category_sql(column: str, source: str) -> str:
+    """:func:`classify_category` as a SQL CASE over ``column``, for one source.
+
+    Built from the same constants, so the SQL filter and the Python label
+    cannot drift; ``instr`` is case-sensitive like Python's ``in``.
+    """
+    if source == "activity_log":
+        errors = " OR ".join(f"instr({column}, '{pattern}') > 0" for pattern in _ACTIVITY_LOG_ERROR_PATTERNS)
+        return (
+            f"CASE WHEN {column} IN ({_sql_in(_ACTIVITY_LOG_AGENT_EVENTS)}) THEN 'agent' "
+            f"WHEN {column} IN ({_sql_in(_ACTIVITY_LOG_TASK_EVENTS)}) THEN 'task' "
+            f"WHEN {errors} THEN 'error' ELSE 'system' END"
+        )
+    if source == "activity":
+        return (
+            f"CASE WHEN {column} IN ({_sql_in(_ACTIVITY_TASK_KINDS)}) THEN 'task' "
+            f"WHEN {column} IN ({_sql_in(_ACTIVITY_AGENT_KINDS)}) THEN 'agent' ELSE 'system' END"
+        )
+    if source == "notification":
+        return (
+            f"CASE WHEN {column} IN ({_sql_in(_NOTIFICATION_TASK_KINDS)}) THEN 'task' "
+            f"WHEN {column} IN ({_sql_in(_NOTIFICATION_ERROR_KINDS)}) THEN 'error' "
+            f"WHEN {column} IN ({_sql_in(_NOTIFICATION_SYSTEM_KINDS)}) THEN 'system' ELSE 'agent' END"
+        )
+    raise ValueError(f"Unknown feed source: {source}")
+
+
+# One source's rows in the feed's common columns, filtered ($1 search on the
+# title, $2 agent name, $6 category) and capped at its newest $5 in the page's
+# sort order. The category is filtered here, before the cap, so a category
+# page is a true page of that category: paging it neither repeats nor skips.
+# A page is the first ``limit + 1`` merged rows after ``offset``, so no source
+# can contribute more than ``offset + limit + 1`` of them: capping each source
+# there leaves every page unchanged, while each source reads only its newest
+# rows (by its own timestamp column) instead of the whole table. In the two
+# sources whose is_active is constantly FALSE the sort key is just the
+# timestamp column itself, which a (created_at) index can serve.
+#
+# Timestamps tie (activity_log and notifications store whole seconds), so the
+# order is made total: after the timestamp, the source name, then the row's
+# rowid (``seq``), newest insert first. Each branch sorts by the same key
+# restricted to itself (its source is constant), so its capped rows are
+# exactly its rows of the merged page, and paging never repeats or skips a
+# row. rowid, not the uuid id: a (created_at) index already ends in rowid,
+# so it serves the whole branch order, and same-second rows read newest first.
+_TITLE_FILTER = "($1 IS NULL OR LOWER({title}) LIKE '%' || LOWER($1) || '%')"
+_AGENT_FILTER = "($2 IS NULL OR {agent_name} = $2)"
+_CATEGORY_FILTER = "($6 IS NULL OR {category} = $6)"
+
+_ACTIVITY_LOG_BRANCH = f"""
+    SELECT * FROM (
+        SELECT id, 'activity_log' AS source, event, detail AS title,
+               NULL AS detail_text, agent_name, NULL AS task_id,
+               NULL AS metadata, created_at AS ts, FALSE AS is_active,
+               rowid AS seq
+        FROM activity_log
+        WHERE {_TITLE_FILTER.format(title="detail")}
+          AND {_AGENT_FILTER.format(agent_name="agent_name")}
+          AND {_CATEGORY_FILTER.format(category=_category_sql("event", "activity_log"))}
+        ORDER BY created_at DESC, rowid DESC
+        LIMIT $5
+    )"""
+
+_ACTIVITY_BRANCH = f"""
+    SELECT * FROM (
+        SELECT a.id, 'activity' AS source, a.kind AS event,
+               COALESCE(a.title, a.kind || ' (' || a.status || ')') AS title,
+               a.detail AS detail_text, ag.name AS agent_name, a.task_id,
+               a.metadata, COALESCE(a.updated_at, a.created_at) AS ts,
+               (a.status IN ('active', 'paused')) AS is_active,
+               a.rowid AS seq
+        FROM activities a
+        LEFT JOIN agents ag ON ag.id = a.agent_id
+        WHERE {_TITLE_FILTER.format(title="COALESCE(a.title, a.kind || ' (' || a.status || ')')")}
+          AND {_AGENT_FILTER.format(agent_name="ag.name")}
+          AND {_CATEGORY_FILTER.format(category=_category_sql("a.kind", "activity"))}
+        ORDER BY is_active DESC, ts DESC, a.rowid DESC
+        LIMIT $5
+    )"""
+
+_NOTIFICATION_BRANCH = f"""
+    SELECT * FROM (
+        SELECT n.id, 'notification' AS source, n.kind AS event,
+               n.content AS title, NULL AS detail_text,
+               ag.name AS agent_name, n.task_id,
+               NULL AS metadata, n.created_at AS ts, FALSE AS is_active,
+               n.rowid AS seq
+        FROM notifications n
+        LEFT JOIN agents ag ON ag.id = n.agent_id
+        WHERE {_TITLE_FILTER.format(title="n.content")}
+          AND {_AGENT_FILTER.format(agent_name="ag.name")}
+          AND {_CATEGORY_FILTER.format(category=_category_sql("n.kind", "notification"))}
+        ORDER BY n.created_at DESC, n.rowid DESC
+        LIMIT $5
+    )"""
+
+_UNION_SQL = f"""
+SELECT * FROM (
+    {_ACTIVITY_LOG_BRANCH}
     UNION ALL
-
-    SELECT a.id, 'activity' AS source, a.kind AS event,
-           COALESCE(a.title, a.kind || ' (' || a.status || ')') AS title,
-           a.detail AS detail_text, ag.name AS agent_name, a.task_id,
-           a.metadata, COALESCE(a.updated_at, a.created_at) AS ts,
-           (a.status IN ('active', 'paused')) AS is_active
-    FROM activities a
-    LEFT JOIN agents ag ON ag.id = a.agent_id
-
+    {_ACTIVITY_BRANCH}
     UNION ALL
-
-    SELECT n.id, 'notification' AS source, n.kind AS event,
-           n.content AS title, NULL AS detail_text,
-           ag.name AS agent_name, n.task_id,
-           NULL AS metadata, n.created_at AS ts, FALSE AS is_active
-    FROM notifications n
-    LEFT JOIN agents ag ON ag.id = n.agent_id
+    {_NOTIFICATION_BRANCH}
 )
-SELECT * FROM unified
-WHERE ($1 IS NULL OR LOWER(title) LIKE '%' || LOWER($1) || '%')
-  AND ($2 IS NULL OR agent_name = $2)
-ORDER BY is_active DESC, ts DESC
+ORDER BY is_active DESC, ts DESC, source, seq DESC
 LIMIT $3 OFFSET $4
 """
 
@@ -206,11 +291,14 @@ def get_unified_feed(
     """Return a unified feed page from all three activity sources.
 
     Returns ``{"entries": [...], "has_more": bool}``.
-    Category filtering is applied in Python (the mapping is non-trivial).
+    Every filter, the category included, is applied in SQL before the page
+    is cut, so ``offset`` counts rows of the filtered feed.
     Uses the ``limit + 1`` trick to determine ``has_more`` without a count query.
     """
     fetch_limit = limit + 1
-    rows = query(_UNION_SQL, [search, agent_name, fetch_limit, offset])
+    # SQLite reads a negative OFFSET as 0, so the per-source cap does too.
+    per_source_limit = fetch_limit + max(offset, 0)
+    rows = query(_UNION_SQL, [search, agent_name, fetch_limit, offset, per_source_limit, category])
 
     # The UNION query returns pre-aliased columns (title, detail_text, ts,
     # is_active, source, event, agent_name, task_id, metadata).  Build
@@ -258,10 +346,6 @@ def get_unified_feed(
             if entry["source"] == "notification" and entry["id"] in links:
                 link = links[entry["id"]]
                 entry["metadata"]["target_path"] = link.target_path
-
-    # Apply category filter in Python
-    if category:
-        entries = [e for e in entries if e["category"] == category]
 
     has_more = len(entries) > limit
     return {"entries": entries[:limit], "has_more": has_more}

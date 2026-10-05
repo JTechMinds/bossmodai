@@ -139,6 +139,26 @@ def test_agent_actions_harness() -> None:
     }
 
 
+def test_office_canvas_paints_its_static_floor_once() -> None:
+    """Tiles, labels and desks are one offscreen layer, blitted per frame.
+
+    A walking agent drives the canvas at 60 fps, and every frame used to
+    re-issue ~1,100 rect calls for a floor that had not changed. The harness
+    records the 2D calls: N frames build one layer and blit it N times, the
+    visible canvas never strokes a tile, and a resize builds a fresh layer.
+    """
+    harness = Path(__file__).resolve().parent / "js_office_canvas_harness.cjs"
+    result = subprocess.run(
+        ["node", str(harness)] + [str(OFFICE / name) for name in (
+            "canvas-sprites.js", "canvas-motion.js",
+        )] + [str(JS / "core" / "agent-status.js"), str(OFFICE / "office-canvas.js")],
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {"ok": True, "staticLayerDrawnOnce": True, "resizeRebuildsTheLayer": True}
+
+
 def test_canvas_motion_harness() -> None:
     """Phase 3A's flagged gap, closed: the motion layer, driven by a clock.
 
@@ -167,6 +187,8 @@ def test_canvas_motion_harness() -> None:
         "walkAdvancesAndStops": True,
         "secondWalkReplacesFirst": True,
         "bubbleExpiresOnItsOwnClock": True,
+        "restingBubbleSleepsUntilItsFade": True,
+        "expiredThoughtWithoutMapStopsTheClock": True,
         "rejectsBadInput": True,
         "destroyStopsTheClock": True,
     }

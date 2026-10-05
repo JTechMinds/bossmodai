@@ -9,7 +9,9 @@ from typing import NamedTuple
 ROOT = Path(__file__).resolve().parent.parent
 CSS = ROOT / "ui" / "static" / "css"
 TOKENS = CSS / "tokens.css"
-TW_CONFIG = ROOT / "ui" / "static" / "js" / "tailwind-config.js"
+# Build-time only: scripts/build_tailwind.sh compiles it into
+# ui/static/css/tailwind.generated.css; the page never loads it.
+TW_CONFIG = ROOT / "scripts" / "tailwind.config.js"
 
 # Tokens used for text. Each must clear 4.5:1 on BOTH surfaces.
 TEXT_TOKENS = ("ink", "muted", "hint", "accent", "alert", "ok")
@@ -320,5 +322,5 @@ def test_tailwind_config_mirrors_tokens() -> None:
         expected = tokens[token_name]
         pattern = rf"['\"]?{tw_name}['\"]?\s*:\s*['\"]{expected}['\"]"
         assert re.search(pattern, tw, re.IGNORECASE), (
-            f"tailwind-config.js {tw_name} must be {expected} (from --{token_name})"
+            f"scripts/tailwind.config.js {tw_name} must be {expected} (from --{token_name})"
         )

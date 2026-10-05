@@ -15,6 +15,7 @@ RuntimeCommandType = Literal[
     "reset_agent_runtime",
     "shutdown_runtime",
     "reload_schedules",
+    "extension_config_changed",
 ]
 
 RuntimeCommandStatus = Literal["queued", "claimed", "completed", "failed"]

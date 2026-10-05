@@ -33,7 +33,7 @@ from core.models import (
 )
 from core.models.agent_template import AgentTemplate
 from core.models.message import HUMAN_SENDER_ID
-from core.agent_loop.channel_host import is_thread_paused, pause_thread, resume_thread
+from core.agent_loop.channel_host import is_thread_paused, pause_thread, paused_thread_ids, resume_thread
 from core.channel_archive import archive_thread_as_operator, reopen_thread_as_operator
 from core.channel_members import ThreadSeatError, seat_agent_in_thread
 from core.tasking.service import list_open_origin_tasks_for_channel
@@ -41,27 +41,43 @@ from core.tasking.transitions import IllegalTaskTransition
 from core.runtime import runtime_services
 from core.agent_loop.task_origin_mirrors import mirror_origin_status
 from core.tasking.transitions import transition_task
-from core.world.seating import place_agent_at_desk
-from core.world.tilemap import first_unoccupied_chair, get_room_at
+from core.world.seating import DeskNotAChair, DeskTaken, choose_desk, place_agent_at_desk
+from core.world.tilemap import get_room_at
 import db
 from core.attachments import company_path
 from core.bm_cli.floor_roots import company_root
 from db.attachments import AttachmentLinkError, get_attachments_for_messages
+from db.floors import LOBBY_ID
 
 
-def _auto_assign_desk(
-    desk_x: int | None,
-    desk_y: int | None,
+def _requested_desk(desk_x: int | None, desk_y: int | None) -> tuple[int, int] | None:
+    """The chair a body asks for, or None when it names no complete desk."""
+    if desk_x is None or desk_y is None:
+        return None
+    return (desk_x, desk_y)
+
+
+def _checked_desk(
+    floor_id: str,
+    requested: tuple[int, int] | None,
     *,
     exclude_agent_id: str | None = None,
 ) -> tuple[int | None, int | None]:
-    """Fill an empty desk assignment with the next unoccupied map chair."""
-    if desk_x is not None and desk_y is not None:
-        return desk_x, desk_y
-    picked = first_unoccupied_chair(db.list_agents(), exclude_agent_id=exclude_agent_id)
-    if picked is None:
+    """Resolve the desk a create or patch writes, as HTTP errors.
+
+    Raises:
+        HTTPException: 400 when ``requested`` is not a desk chair, 409 when
+            another agent on ``floor_id`` already holds it.
+    """
+    try:
+        desk = choose_desk(floor_id, requested, exclude_agent_id=exclude_agent_id)
+    except DeskNotAChair as exc:
+        raise HTTPException(400, str(exc)) from exc
+    except DeskTaken as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if desk is None:
         return None, None
-    return picked
+    return desk
 
 
 router = APIRouter()
@@ -206,12 +222,26 @@ async def list_channels(status: str = "active") -> list[dict[str, object]]:
     wanted = (status or "active").strip().lower()
     if wanted not in {"active", "archived"}:
         raise HTTPException(400, "status must be active or archived")
-    items = []
-    for channel in db.list_channels(status=wanted):
-        members = db.list_channel_member_details(channel.id)
-        latest = db.get_latest_channel_message(channel.id)
-        items.append(_serialize_channel_summary(channel, members=members, latest_message=latest))
-    return items
+    channels = db.list_channels(status=wanted)
+    if not channels:
+        return []
+    channel_ids = [channel.id for channel in channels]
+    # A fixed number of reads however many threads there are: each lookup
+    # below is one batch for every channel, and the global flag is read once.
+    members = db.list_channel_member_details_for(channel_ids)
+    latest = db.get_latest_channel_messages(channel_ids)
+    paused = paused_thread_ids(channel_ids)
+    auto_approve_global = global_auto_approve_enabled()
+    return [
+        _serialize_channel_summary(
+            channel,
+            members=members[channel.id],
+            latest_message=latest.get(channel.id),
+            conversation_paused=channel.id in paused,
+            auto_approve_global=auto_approve_global,
+        )
+        for channel in channels
+    ]
 
 
 @router.post("/channels")
@@ -725,7 +755,10 @@ def _pack_link_for_hire(template_id: str | None) -> dict[str, Any] | None:
 async def create_agent(body: AgentCreate) -> Agent:
     _validate_ai_choice(body.connection_id, body.thinking_social, body.thinking_work)
     pack_link = _pack_link_for_hire(body.template_id)
-    desk_x, desk_y = _auto_assign_desk(body.desk_x, body.desk_y)
+    # The same home-floor rule db.create_agent applies, so the desk is checked
+    # against the floor the agent will actually be written onto.
+    floor_id = (body.floor_id or "").strip() or LOBBY_ID
+    desk_x, desk_y = _checked_desk(floor_id, _requested_desk(body.desk_x, body.desk_y))
     try:
         agent = agent_repository.create(
             name=body.name,
@@ -796,14 +829,21 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
         )
     next_desk_x = fields["desk_x"] if "desk_x" in fields else current.desk_x
     next_desk_y = fields["desk_y"] if "desk_y" in fields else current.desk_y
-    assigned_x, assigned_y = _auto_assign_desk(
-        next_desk_x,
-        next_desk_y,
-        exclude_agent_id=agent_id,
-    )
-    if assigned_x != next_desk_x or assigned_y != next_desk_y:
-        fields["desk_x"] = assigned_x
-        fields["desk_y"] = assigned_y
+    # Checked only when the patch changes the desk, or the agent has none to
+    # auto-assign: a name-only edit must never fail on the stored desk. A
+    # vacationer is on no floor, so there is nothing to check its desk
+    # against yet: the patch is stored as-is and bring_back reconciles it.
+    desk_patched = "desk_x" in fields or "desk_y" in fields
+    unassigned = current.desk_x is None or current.desk_y is None
+    if current.floor_id is not None and (desk_patched or unassigned):
+        assigned_x, assigned_y = _checked_desk(
+            current.floor_id,
+            _requested_desk(next_desk_x, next_desk_y),
+            exclude_agent_id=agent_id,
+        )
+        if assigned_x != next_desk_x or assigned_y != next_desk_y:
+            fields["desk_x"] = assigned_x
+            fields["desk_y"] = assigned_y
     agent = db.update_agent(agent_id, **fields)
     if not agent:
         raise HTTPException(404, "Agent not found")
@@ -817,6 +857,9 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
         event="agent_updated",
         detail=f"Agent \"{agent.name}\" updated",
         agent_name=agent.name,
+        # The id, not the name: a rename makes the name stale for any client
+        # whose roster has not caught up yet (world updates are coalesced).
+        extra={"agent_id": agent.id},
     )
     return agent
 
@@ -929,6 +972,7 @@ async def update_agent_from_pack(agent_id: str, body: AgentPackUpdateBody) -> Ag
         event="agent_updated",
         detail=f"Agent \"{updated.name}\" updated from pack {template.title}",
         agent_name=updated.name,
+        extra={"agent_id": updated.id},
     )
     return updated
 
@@ -1349,8 +1393,33 @@ def _iso_or_none(value: object) -> object:
     return value.isoformat() if hasattr(value, "isoformat") else value
 
 
-def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | None = None, latest_message=None) -> dict[str, object]:
-    """Serialize one shared channel summary for list and realtime updates."""
+def _serialize_channel_summary(
+    channel,
+    *,
+    members: list[dict[str, object]] | None = None,
+    latest_message=None,
+    conversation_paused: bool | None = None,
+    auto_approve_global: bool | None = None,
+) -> dict[str, object]:
+    """Serialize one shared channel summary for list and realtime updates.
+
+    Args:
+        channel: The channel.
+        members: Its member rows (``list_channel_member_details`` shape).
+        latest_message: Its newest message, or ``None``.
+        conversation_paused: Whether the thread is in host Paused. ``None``
+            reads it now; a list passes it from one batch read.
+        auto_approve_global: Settings' global auto-approve. ``None`` reads it
+            now; a list reads it once and passes it to every row.
+
+    Raises:
+        ConfigError: ``auto_approve_global`` is ``None`` and the setting is
+            missing or invalid (``global_auto_approve_enabled``).
+    """
+    if conversation_paused is None:
+        conversation_paused = is_thread_paused(channel.id)
+    if auto_approve_global is None:
+        auto_approve_global = global_auto_approve_enabled()
     latest = None
     if latest_message is not None:
         latest = {
@@ -1366,10 +1435,10 @@ def _serialize_channel_summary(channel, *, members: list[dict[str, object]] | No
         "created_at": channel.created_at.isoformat() if channel.created_at else None,
         "updated_at": channel.updated_at.isoformat() if channel.updated_at else None,
         "archived_at": channel.archived_at.isoformat() if getattr(channel, "archived_at", None) else None,
-        "conversation_paused": is_thread_paused(channel.id),
+        "conversation_paused": conversation_paused,
         "cli_auto_approve": bool(getattr(channel, "cli_auto_approve", False)),
         # Global on overrides the thread flag; the header greys its switch.
-        "cli_auto_approve_global": global_auto_approve_enabled(),
+        "cli_auto_approve_global": auto_approve_global,
         "floor_id": getattr(channel, "floor_id", None),
         "member_count": len(members or []),
         "members": members or [],

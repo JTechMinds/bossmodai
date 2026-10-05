@@ -379,12 +379,18 @@ async def apply_move(
     Otherwise a stale ``/projects/x`` would resolve to the new floor's
     same-named project.
 
+    After the transaction commits, the target floor's desks are reconciled
+    (core/world/seating.py ``reconcile_floor_desks``) with the movers as
+    newcomers: a mover keeps its desk when that chair is free on the target
+    floor, and otherwise takes the next free one; residents never yield.
+
     Raises:
         MovePlanChanged: The recomputed plan's fingerprint differs.
         LookupError, AgentOnVacation, MoveRefused: As ``plan_move``.
     """
     import db
     from core.bm_cli.floor_roots import floor_root
+    from core.world.seating import reconcile_floor_desks
     from db.connection import transaction
 
     plan = plan_move(
@@ -439,6 +445,9 @@ async def apply_move(
                     real_root=source_roots[agent_id],
                     why=f"which is on the floor it left for {target}",
                 )
+    # After the commit: seating writes agent_state and resolves movement,
+    # which must not roll back with (or hold open) the move's transaction.
+    reconcile_floor_desks(target, newcomers=mover_ids)
 
     result = MoveResult(
         moved_agents=mover_ids,

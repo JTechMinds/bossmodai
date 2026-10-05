@@ -207,7 +207,8 @@ def request_reload() -> None:
     """Ask the runtime worker to sync its schedule timetable with the database.
 
     Writes a ``reload_schedules`` runtime command, whatever process calls
-    it; the worker's command loop applies it within its poll. It is
+    it, and rings the worker's doorbell when called in the app; the worker's
+    command loop applies it on that ring or at its fallback poll. It is
     de-duplicated: while one is still open, another request adds nothing
     (a burst of edits is one sync). It only syncs; telling the UI about a
     change is the caller's job (the API route's broadcast, or an agent
@@ -217,6 +218,11 @@ def request_reload() -> None:
     """
     if not db.has_open_runtime_command([RELOAD_COMMAND]):
         db.create_runtime_command(RELOAD_COMMAND)
+        # Local: a module-level import is circular (core.runtime.services's own
+        # imports reach this module through the CLI runtime).
+        from core.runtime.services import notify_runtime_command_queued
+
+        notify_runtime_command_queued()
 
 
 def to_view(schedule: AgentSchedule, *, now: datetime) -> ScheduleView:

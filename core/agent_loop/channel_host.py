@@ -8,6 +8,7 @@ rules do not cancel off-thread work wakes.
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -75,6 +76,14 @@ def is_ack_phrase(text: str | None) -> bool:
 def is_thread_paused(channel_id: str) -> bool:
     """Return whether the thread is in host Paused."""
     return bool(host_db.get_channel_host_state(channel_id)["paused"])
+
+
+def paused_thread_ids(channel_ids: Sequence[str]) -> set[str]:
+    """Return which of ``channel_ids`` are in host Paused, in one read.
+
+    The batch form of :func:`is_thread_paused`, for list views.
+    """
+    return host_db.list_paused_channel_ids(channel_ids)
 
 
 def prepare_human_channel_message(channel_id: str, content: str) -> PreparedHumanTurn:

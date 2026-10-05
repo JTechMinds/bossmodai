@@ -79,7 +79,6 @@ const AdvancedSystemSection = (() => {
         }
 
         const diagEnabled = settings.find(s => s.key === 'diagnostics_enabled');
-        const diagLimit = settings.find(s => s.key === 'diagnostics_retention_limit');
         const cliReadLimit = settings.find(s => s.key === 'cli_max_read_lines');
         const globalAutoApprove = settings.find(s => s.key === GLOBAL_AUTO_APPROVE_KEY);
         const folderOpenerSetting = settings.find(s => s.key === 'desktop_open_folder_handler');
@@ -154,15 +153,7 @@ const AdvancedSystemSection = (() => {
                     <div data-setting-switch="${BossModFormat.escapeAttribute(GLOBAL_AUTO_APPROVE_KEY)}"></div>
                     <p role="alert" class="text-xs text-red-600 mt-1" data-setting-error="${BossModFormat.escapeAttribute(GLOBAL_AUTO_APPROVE_KEY)}"></p>
                 </div>
-                <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
-                    <label class="block text-sm font-medium mb-1">Diagnostics Retention Limit</label>
-                    <p class="text-xs text-bm-muted mb-1.5">Maximum diagnostic entries before auto-purge. Oldest entries are deleted first.</p>
-                    <input type="number" id="diag-retention-limit"
-                           value="${BossModFormat.escapeAttribute(diagLimit?.value || '5000')}"
-                           min="100" max="50000" step="100"
-                           class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
-                                  bg-bm-bg">
-                </div>
+                ${BossModRetentionSettings.html(settings)}
                 <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
                     <label class="block text-sm font-medium mb-1">CLI Read Range Limit (lines)</label>
                     <p class="text-xs text-bm-muted mb-1.5">Maximum number of lines one <code>read-range</code> command may return before the runtime requires smaller targeted reads.</p>
@@ -268,19 +259,7 @@ const AdvancedSystemSection = (() => {
             btn.querySelector('span').classList.toggle('translate-x-1', nowEnabled);
         });
 
-        // Retention limit handler
-        document.getElementById('diag-retention-limit').addEventListener('change', async (e) => {
-            const value = e.target.value;
-            try {
-                await apiFetchOk(`/api/settings/diagnostics_retention_limit?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
-                BossModOperatorInvalidate.notifyLocal(['advanced-system']);
-                e.target.classList.add('border-emerald-400');
-                setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
-            } catch {
-                e.target.classList.add('border-red-400');
-                setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
-            }
-        });
+        BossModRetentionSettings.mount(settings);
 
         document.getElementById('cli-read-range-limit').addEventListener('change', async (e) => {
             const value = e.target.value;

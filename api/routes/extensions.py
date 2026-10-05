@@ -40,6 +40,7 @@ from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery, set_enabled
 from core.extensions.setup_runner import SetupAlreadyRunning, entry_setup_status, start_setup
 from core.llm.routing import agent_model
+from core.runtime.services import runtime_services
 from db.model_capabilities import supports_images
 
 router = APIRouter()
@@ -511,6 +512,7 @@ async def put_agent_config(ext_id: str, agent_id: str, body: AgentConfigBody) ->
     except AgentConfigError as exc:
         raise _invalid("CONFIG_VERIFY_FAILED", str(exc)) from exc
     db.set_extension_agent_config(entry.id, agent_id, values)
+    runtime_services.extension_config_changed()
     return {**_config_payload(entry, spec, agent_id), "verified": verified}
 
 
@@ -527,6 +529,7 @@ async def delete_agent_config(ext_id: str, agent_id: str) -> Response:
     _agent_or_404(agent_id)
     if not db.delete_extension_agent_config(entry.id, agent_id):
         raise HTTPException(404, "No settings are stored for that agent")
+    runtime_services.extension_config_changed()
     return Response(status_code=204)
 
 

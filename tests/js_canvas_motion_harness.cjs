@@ -182,6 +182,44 @@ function main() {
     if (repaints !== quiet) fail("an expired bubble must stop the clock");
     const bubbleExpiresOnItsOwnClock = true;
 
+    // ─── 3b. A bubble that is not fading costs nothing ───
+    // Nothing about a bubble changes until its fade begins, so the layer
+    // sleeps on ONE timer until then rather than repainting at 10 Hz for the
+    // bubble's whole life. A 4000ms bubble fades from 3500ms.
+    motion.setThoughtDuration(4000);
+    motion.showThought("a1", "a long thought");
+    if (timers.size !== 1) fail(`one pending timer for a resting bubble, got ${timers.size}`);
+    const resting = repaints;
+    advance(3400, 34);
+    if (repaints !== resting) fail(`a bubble that is not fading must not repaint, got ${repaints - resting}`);
+    advance(300, 3);
+    if (repaints <= resting) fail("a fading bubble must repaint");
+    advance(1000, 10);
+    if (motion.bubbles().length !== 0) fail("the long bubble must expire on its own clock");
+    const restingBubbleSleepsUntilItsFade = true;
+
+    // ─── 3c. A repaint that draws nothing cannot spin the clock ───
+    // Before the map loads, office-canvas.js's render() returns early and
+    // never calls bubbles(). The expired thought must still be dropped by the
+    // clock itself, leaving no timer — not one rescheduled at 0ms forever.
+    let blindRepaints = 0;
+    const blind = BossModCanvasMotion.createMotion({
+        repaint: () => { blindRepaints += 1; },  // draws nothing, like render() with no map
+        getAgents: () => agents,
+    });
+    blind.setThoughtDuration(1000);
+    const timersBefore = timers.size;
+    blind.showThought("a1", "before the map");
+    advance(1000, 10);
+    advance(1000, 50);
+    if (timers.size !== timersBefore) {
+        fail(`an expired thought with no map must leave no timer, got ${timers.size - timersBefore}`);
+    }
+    // Fade ticks at 500..1000ms (6), then nothing: a 0ms loop would be ~50 more.
+    if (blindRepaints > 7) fail(`an undrawn expired thought kept the clock running: ${blindRepaints} repaints`);
+    blind.destroy();
+    const expiredThoughtWithoutMapStopsTheClock = true;
+
     // ─── 4. Bad input is refused, not absorbed ───
 
     let shortPathThrew = false;
@@ -222,6 +260,8 @@ function main() {
         walkAdvancesAndStops,
         secondWalkReplacesFirst,
         bubbleExpiresOnItsOwnClock,
+        restingBubbleSleepsUntilItsFade,
+        expiredThoughtWithoutMapStopsTheClock,
         rejectsBadInput,
         destroyStopsTheClock,
     }));

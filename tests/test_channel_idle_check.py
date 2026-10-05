@@ -263,6 +263,63 @@ def test_dormant_thread_is_not_judged(monkeypatch: pytest.MonkeyPatch) -> None:
     assert row is None
 
 
+def _statements_during(call) -> list[str]:
+    """Run ``call`` and return every SQL statement it sent, in order."""
+    from db.connection import SQLiteCompatConnection
+
+    sent: list[str] = []
+    original = SQLiteCompatConnection.execute
+
+    def counting(self, sql, params=None):
+        sent.append(sql)
+        return original(self, sql, params)
+
+    SQLiteCompatConnection.execute = counting
+    try:
+        call()
+    finally:
+        SQLiteCompatConnection.execute = original
+    return sent
+
+
+def test_a_dormant_thread_costs_one_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The age gates run on the newest line alone, before members or in-flight work."""
+    harley, charles, _brian, channel = _team()
+    _no_judge(monkeypatch)
+    latest = _charles_case(channel, harley, charles)
+    dormant = ensure_utc(latest.created_at) + timedelta(minutes=31)
+    sent = _statements_during(lambda: check_channel(channel.id, now=dormant))
+    assert len(sent) == 1, sent
+
+
+def test_an_already_checked_thread_costs_two_reads(monkeypatch: pytest.MonkeyPatch) -> None:
+    harley, charles, _brian, channel = _team()
+    _no_judge(monkeypatch)
+    latest = _charles_case(channel, harley, charles)
+    idle_db.save_channel_idle_check({"channel_id": channel.id, "checked_message_id": latest.id})
+    sent = _statements_during(lambda: check_channel(channel.id, now=_later()))
+    assert len(sent) == 2, sent
+
+
+def test_a_trigger_payload_that_is_not_json_does_not_hide_or_break_the_thread_check() -> None:
+    harley, _charles, _brian, channel = _team()
+    trigger = db.create_agent_trigger(
+        agent_id=harley.id,
+        trigger_type="channel_message",
+        source_channel="channel",
+        payload={"channel_id": "elsewhere"},
+    )
+    db.execute("UPDATE agent_triggers SET payload = $1 WHERE id = $2", ["not json", trigger.id])
+    assert not db.channel_has_open_trigger(channel.id)
+    db.create_agent_trigger(
+        agent_id=harley.id,
+        trigger_type="channel_message",
+        source_channel="channel",
+        payload={"channel_id": f"  {channel.id} "},
+    )
+    assert db.channel_has_open_trigger(channel.id)
+
+
 def test_active_round_does_not_judge(monkeypatch: pytest.MonkeyPatch) -> None:
     harley, charles, _brian, channel = _team()
     _enable_system_ai()

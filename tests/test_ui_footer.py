@@ -28,6 +28,7 @@ def test_resync_shows_reconnected_then_returns_to_connected() -> None:
         "resyncAnnouncesThenClears": True,
         "agentCountFollowsRoster": True,
         "uptimeIntervalClearedOnTeardown": True,
+        "uptimeTickStopsWhenHidden": True,
         "bannersToggleFromState": True,
         "disposersDrain": True,
     }

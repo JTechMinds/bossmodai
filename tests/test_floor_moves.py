@@ -461,3 +461,40 @@ def test_project_move_refuses_a_taken_name_same_floor_and_bad_names() -> None:
         json={"project": "ghost", "from_floor_id": finance.id},
     )
     assert missing.status_code == 404
+
+
+async def test_a_mover_whose_chair_is_taken_on_the_target_gets_the_next_free_one() -> None:
+    finance = create_floor("Finance")
+    sitter = db.create_agent("Sitter", role="Eng", desk_x=3, desk_y=4, floor_id=finance.id)
+    keeper = db.create_agent("Keeper", role="Eng", desk_x=11, desk_y=4)
+    mover = db.create_agent("Mover", role="Eng", desk_x=3, desk_y=4)
+    plan = plan_move(finance.id, agent_ids=[mover.id, keeper.id], channel_ids=[])
+
+    await apply_move(
+        finance.id, agent_ids=[mover.id, keeper.id], channel_ids=[],
+        fingerprint=plan.fingerprint, services=_Services(),
+    )
+
+    # The earlier resident keeps the chair; the mover takes the next free one
+    # and is seated there. A mover whose chair is free keeps it.
+    assert (db.get_agent(sitter.id).desk_x, db.get_agent(sitter.id).desk_y) == (3, 4)
+    assert (db.get_agent(mover.id).desk_x, db.get_agent(mover.id).desk_y) == (7, 4)
+    assert (db.get_agent(keeper.id).desk_x, db.get_agent(keeper.id).desk_y) == (11, 4)
+    state = db.get_agent_state(mover.id)
+    assert state is not None
+    assert (state.x, state.y) == (7, 4)
+
+
+async def test_a_mover_hired_before_the_resident_still_yields_the_chair() -> None:
+    mover = db.create_agent("Mover", role="Eng", desk_x=3, desk_y=4)
+    finance = create_floor("Finance")
+    sitter = db.create_agent("Sitter", role="Eng", desk_x=3, desk_y=4, floor_id=finance.id)
+    plan = plan_move(finance.id, agent_ids=[mover.id], channel_ids=[])
+
+    await apply_move(
+        finance.id, agent_ids=[mover.id], channel_ids=[],
+        fingerprint=plan.fingerprint, services=_Services(),
+    )
+
+    assert (db.get_agent(sitter.id).desk_x, db.get_agent(sitter.id).desk_y) == (3, 4)
+    assert (db.get_agent(mover.id).desk_x, db.get_agent(mover.id).desk_y) == (7, 4)

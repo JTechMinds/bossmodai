@@ -43,6 +43,7 @@ const BossModAgentForm = (() => {
     const DEPENDENCY_NAMES = Object.freeze({
         '/api/connections': 'your AI connections',
         '/api/agents': 'the rest of your roster',
+        '/api/map': 'the office desk map',
         [POLICY]: 'this agent’s AI history settings',
     });
 
@@ -74,6 +75,24 @@ const BossModAgentForm = (() => {
     }
 
     /**
+     * Read the desks out of GET /api/map, which answers the floor plan as an
+     * object rather than a list.
+     *
+     * @param {Response} res
+     * @param {string} what  The path, named in the error as `readList` does.
+     * @returns {Promise<object[]>} core/world/tilemap.py's DEFAULT_DESKS.
+     * @throws {Error} On a non-2xx, or a body with no `desks` list.
+     */
+    async function readMapDesks(res, what) {
+        if (!res.ok) throw new Error(`GET ${what} answered ${res.status}`);
+        const body = await res.json();
+        if (!body || !Array.isArray(body.desks)) {
+            throw new Error(`GET ${what} carried no desks list`);
+        }
+        return body.desks;
+    }
+
+    /**
      * One dependency's outcome, degraded ON ITS OWN.
      *
      * `Promise.all` used to carry them all, so a single REJECTED request — a
@@ -85,18 +104,21 @@ const BossModAgentForm = (() => {
      *
      * @param {PromiseSettledResult<Response>} outcome  From Promise.allSettled.
      * @param {string} what  The path, named in the console line and collected
-     *   in `failed`: three reads share this and "which one" is the first thing
+     *   in `failed`: four reads share this and "which one" is the first thing
      *   either the log or the operator needs.
      * @param {string[]} failed  Appended to when this read fails.
+     * @param {function(Response, string): Promise<object[]>} [read]  How the
+     *   list is read off the response: `readList` for a list body,
+     *   `readMapDesks` for the map's desks.
      * @returns {Promise<object[]|null>} null when it failed, which is NOT the
      *   empty list: empty means "you have none configured" and the form's own
      *   empty states say exactly that, which is a different and checkable
      *   fact. `failed` is what keeps the two apart.
      */
-    async function settledList(outcome, what, failed) {
+    async function settledList(outcome, what, failed, read = readList) {
         try {
             if (outcome.status === 'rejected') throw outcome.reason;
-            return await readList(outcome.value, what);
+            return await read(outcome.value, what);
         } catch (err) {
             console.error(`[agent-form] ${what} could not be read:`, err);
             failed.push(what);
@@ -105,11 +127,13 @@ const BossModAgentForm = (() => {
     }
 
     /**
-     * Load the connections, roster, and history policy the form renders from.
+     * Load the connections, roster, desks, and history policy the form
+     * renders from.
      *
      * @param {object|null} agent
      * @returns {Promise<{connections: object[], roster: object[],
-     *                    promptHistoryPolicy: object, failed: string[]}>}
+     *                    desks: object[], promptHistoryPolicy: object,
+     *                    failed: string[]}>}
      *   Every read degrades alone, and a failed one leaves its list empty so
      *   the form still renders with its "no connections configured" link to
      *   Settings rather than not rendering at all. `failed` names the reads that did not land, because an empty
@@ -123,13 +147,15 @@ const BossModAgentForm = (() => {
         const requests = [
             apiFetch('/api/connections'),
             apiFetch('/api/agents'),
+            apiFetch('/api/map'),
         ];
         if (agent?.id) {
             requests.push(BossModAgentApi.fetchPromptHistoryPolicy(agent.id));
         }
-        const [connRes, rosterRes, policyRes] = await Promise.allSettled(requests);
+        const [connRes, rosterRes, mapRes, policyRes] = await Promise.allSettled(requests);
         const connections = await settledList(connRes, '/api/connections', failed);
         const roster = await settledList(rosterRes, '/api/agents', failed);
+        const desks = await settledList(mapRes, '/api/map', failed, readMapDesks);
         let promptHistoryPolicy = { ...DEFAULTS };
         if (policyRes && policyRes.status === 'fulfilled' && policyRes.value) {
             promptHistoryPolicy = { ...DEFAULTS, ...policyRes.value };
@@ -143,6 +169,7 @@ const BossModAgentForm = (() => {
         return {
             connections: connections || [],
             roster: roster || [],
+            desks: desks || [],
             promptHistoryPolicy,
             failed,
         };
@@ -207,9 +234,12 @@ const BossModAgentForm = (() => {
         }
         const values = agent || prefill;
         const {
-            connections, roster, promptHistoryPolicy: loadedPolicy, failed,
+            connections, roster, desks, promptHistoryPolicy: loadedPolicy, failed,
         } = await loadFormData(agent);
         const promptHistoryPolicy = prefill ? prefillPolicy(prefill) : loadedPolicy;
+        // Desk occupancy is per floor: an edit counts the agent's own floor,
+        // and a hire or a recreate (both create) counts the floor it lands on.
+        const floorId = agent ? agent.floor_id : BossModFloorScope.hireFloorId();
 
         // TWO COLUMNS, ONE FORM, and the same one whichever door was used.
         // Identity on the left, what the agent thinks with on the right, the
@@ -236,7 +266,7 @@ const BossModAgentForm = (() => {
                 ${BossModAgentFormConnections.connectionsSection(values, connections)}
                 <div class="agent-form-wide">
                     ${BossModAgentFormAdvanced.advancedSection(values, {
-                        roster, promptHistoryPolicy,
+                        roster, desks, floorId, promptHistoryPolicy,
                     })}
                     ${BossModAgentFormFields.statusAndRecovery(agent)}
                     ${BossModAgentFormFields.actionsRow(agent)}
@@ -301,7 +331,7 @@ const BossModAgentForm = (() => {
 
         // The Advanced dropdowns are built before the bindings below, which
         // find them by name, and before any template hydrate writes them.
-        BossModAgentFormChoices.mount(form, { roster, values });
+        BossModAgentFormChoices.mount(form, { roster, desks, floorId, values });
 
         const BINDINGS = BossModAgentFormBindings;
         BINDINGS.bindFinishLineSuggestion(form, values);

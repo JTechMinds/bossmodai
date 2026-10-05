@@ -16,8 +16,12 @@ const BossModCanvasMotion = (() => {
     const DEFAULT_TILES_PER_SECOND = 4;
     /** Fade window, in ms, at the end of a bubble's life. */
     const FADE_MS = 500;
-    /** Longest a bubble-expiry repaint may sleep, in ms. */
-    const EXPIRY_TICK_MS = 100;
+    /**
+     * Step between repaints while a bubble is fading, in ms. Outside a fade
+     * nothing about a bubble changes, so the layer sleeps until the earliest
+     * fade begins instead of ticking at this rate for the bubble's whole life.
+     */
+    const FADE_TICK_MS = 100;
 
     /**
      * Build a motion layer.
@@ -99,17 +103,30 @@ const BossModCanvasMotion = (() => {
                 if (frameId === null) frameId = requestAnimationFrame(frame);
                 return;  // The frame loop already repaints; no expiry timer needed.
             }
-            if (expiryTimer !== null || thoughts.size === 0) return;
+            if (expiryTimer !== null) return;
             const now = Date.now();
-            let soonest = Infinity;
-            for (const thought of thoughts.values()) {
-                soonest = Math.min(soonest, (thought.at + thoughtDurationMs) - now);
+            let wait = Infinity;
+            for (const [agentId, thought] of [...thoughts.entries()]) {
+                const expiresIn = (thought.at + thoughtDurationMs) - now;
+                // Pruned HERE as well as in bubbles(): a repaint that draws
+                // nothing (no map loaded yet) never calls bubbles(), and an
+                // expired thought left in the map would reschedule this timer
+                // at 0ms forever. Pruning first keeps every wait positive.
+                if (expiresIn <= 0) {
+                    thoughts.delete(agentId);
+                    continue;
+                }
+                const fadesIn = expiresIn - FADE_MS;
+                // Asleep until this bubble starts to fade; once it is fading,
+                // step the fade until it expires.
+                wait = Math.min(wait, fadesIn > 0 ? fadesIn : Math.min(expiresIn, FADE_TICK_MS));
             }
+            if (wait === Infinity) return;  // Every thought had expired: nothing to time.
             expiryTimer = setTimeout(() => {
                 expiryTimer = null;
                 repaint();
                 pump();
-            }, Math.max(0, Math.min(soonest, EXPIRY_TICK_MS)));
+            }, wait);
         }
 
         return {
@@ -185,7 +202,8 @@ const BossModCanvasMotion = (() => {
 
             /**
              * Drawable bubbles for this instant, positioned on their agent.
-             * Expired ones are dropped here — the only place they are removed.
+             * Expired ones are dropped here, and by the expiry clock (pump) for
+             * a repaint that never asks for bubbles.
              *
              * @returns {Array<{x: number, y: number, text: string, opacity: number}>}
              */

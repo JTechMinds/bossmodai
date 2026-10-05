@@ -29,7 +29,8 @@ from core.models import Agent, AgentState
 from core.tasking.service import list_open_child_tasks
 from core.tasking.transitions import transition_task
 from core.world.pathfinding import find_path
-from core.world.tilemap import DEFAULT_DESKS, DEFAULT_ROOMS, MAP_HEIGHT, MAP_WIDTH, get_room_at
+from core.world.seating import occupied_tiles_on_floor
+from core.world.tilemap import DEFAULT_ROOMS, MAP_HEIGHT, MAP_WIDTH, free_tile_in_room, get_room_at
 import db
 
 
@@ -280,24 +281,25 @@ async def _handle_walk_to(
 
     # Resolve destination to coordinates
     if destination == "desk":
-        # Use agent's assigned desk
-        if agent.desk_x is not None and agent.desk_y is not None:
-            dest_x, dest_y = agent.desk_x, agent.desk_y
-        else:
-            # Find first unassigned desk chair
-            desk = next((d for d in DEFAULT_DESKS), None)
-            if desk:
-                dest_x, dest_y = desk["chair_xy"]
-            else:
-                return {"event": "world_feedback", "detail": "No desk available", "agent_name": agent.name}
+        if agent.desk_x is None or agent.desk_y is None:
+            # No fallback chair: every deskless agent used to be sent to
+            # Desk 1, stacking them on one tile while each believed it was at
+            # its own desk.
+            return {
+                "event": "world_feedback",
+                "detail": "You have no desk assigned; this floor's desks are all taken.",
+                "agent_name": agent.name,
+            }
+        dest_x, dest_y = agent.desk_x, agent.desk_y
     else:
         room_id = _DESTINATIONS[destination]
         room = next((r for r in DEFAULT_ROOMS if r["id"] == room_id), None)
         if not room:
             return {"event": "world_feedback", "detail": f"Room not found: {room_id}", "agent_name": agent.name}
-        bounds = room["bounds"]
-        dest_x = (bounds[0] + bounds[2]) // 2
-        dest_y = (bounds[1] + bounds[3]) // 2
+        tile = free_tile_in_room(room_id, occupied_tiles_on_floor(agent.floor_id, exclude_agent_id=agent.id))
+        if tile is None:
+            return {"event": "world_feedback", "detail": f"{room['name']} is full.", "agent_name": agent.name}
+        dest_x, dest_y = tile
 
     if not (0 <= dest_x < MAP_WIDTH and 0 <= dest_y < MAP_HEIGHT):
         return {"event": "world_feedback", "detail": f"Destination out of bounds", "agent_name": agent.name}

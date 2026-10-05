@@ -275,11 +275,16 @@ def send_home(agent_id: str) -> Any:
 def bring_back(agent_id: str, floor_id: str) -> Any:
     """End one agent's vacation onto ``floor_id``.
 
+    The agent keeps its desk when that chair is free on ``floor_id`` and
+    otherwise takes the next free one, never bumping a resident (core/world/seating.py
+    ``reconcile_floor_desks``); the returned agent carries the reconciled desk.
+
     Raises:
         LookupError: The agent or the floor does not exist.
         ValueError: The agent is not on vacation.
     """
     import db
+    from core.world.seating import reconcile_floor_desks
     from db.floors import get_floor
 
     agent = db.get_agent(agent_id)
@@ -290,10 +295,13 @@ def bring_back(agent_id: str, floor_id: str) -> Any:
         raise LookupError("Floor not found")
     if not is_on_vacation(agent):
         raise ValueError("Agent is not on vacation")
-    updated = db.update_agent(agent.id, floor_id=floor.id, vacation_since=None)
-    if updated is None:
+    if db.update_agent(agent.id, floor_id=floor.id, vacation_since=None) is None:
         raise LookupError("Agent not found")
-    return updated
+    reconcile_floor_desks(floor.id, newcomers=[agent.id])
+    returned = db.get_agent(agent.id)
+    if returned is None:
+        raise LookupError("Agent not found")
+    return returned
 
 
 async def delete_floor(

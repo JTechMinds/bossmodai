@@ -1831,6 +1831,13 @@ def test_no_hex_outside_tokens() -> None:
     for path in sorted(CSS.glob("*.css")):
         if path.name == "tokens.css":
             continue
+        # Build output, not an authored sheet: scripts/build_tailwind.sh writes
+        # Tailwind's own palette into it, exactly the CSS the Play runtime used
+        # to inject at runtime where this guard never saw it. Its `bm` colours
+        # are held to tokens.css by test_tailwind_config_mirrors_tokens, and no
+        # hand edit survives a rebuild, so there is nothing here to guard.
+        if path.name == "tailwind.generated.css":
+            continue
         found = re.search(r"#[0-9a-fA-F]{3,8}\b", _read(path))
         assert not found, f"{path.name}: {found.group(0) if found else ''}"
 
@@ -1923,3 +1930,16 @@ def test_the_collapse_cannot_follow_the_rail_into_the_mobile_drawer() -> None:
     js = _read(JS / "shell/responsive.js")
     assert "layoutEl.insertBefore(column, placeEl)" in js, "the node is returned, not rebuilt"
     assert "BossModOverlays.createModal({" in js
+
+
+def test_the_desk_preselect_never_offers_a_chair_the_server_would_refuse() -> None:
+    """Desk preselect matches the server's per-floor validation.
+
+    A recreated snapshot's old chair is preselected only while nobody on the
+    hire floor holds it (otherwise the save answers 409), and an agent on
+    vacation (no floor, desk stored as-is) sees no desk marked taken.
+    """
+    payload = _agent_form_payload()
+    assert payload["recreateSkipsATakenOwnDesk"] is True
+    assert payload["recreateKeepsAFreeOwnDesk"] is True
+    assert payload["vacationerSeesNothingTaken"] is True

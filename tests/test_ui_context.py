@@ -205,6 +205,8 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
     """
     payload = _harness()
     assert payload["rendersUnknownRoom"] is True
+    # Phase 2 (refresh efficiency): one agent's change rebuilds one seat.
+    assert payload["miniOfficeSeatsArePatched"] is True
     assert payload["seatOpensDesk"] is True
 
     source = _read(CONTEXT / "mini-office.js")
@@ -559,9 +561,13 @@ def test_agent_edit_modules_stay_focused() -> None:
     # another in the submit path is a level the operator sets and the agent
     # never receives.
     for name in ("THINKING_MODES = [", "THINKING_CHOICES = [",
-                 "DEFAULT_PROMPT_HISTORY_POLICY = {", "DESK_OPTIONS = ["):
+                 "DEFAULT_PROMPT_HISTORY_POLICY = {"):
         owners = [path.name for path in modules if name in _read(path)]
         assert owners == ["agent-fields.js"], f"{name} is declared in {owners}"
+    # The desks have no copy in the UI at all: GET /api/map serves
+    # core/world/tilemap.py's DEFAULT_DESKS, so growing the map cannot desync
+    # the form.
+    assert [path.name for path in modules if "DESK_OPTIONS" in _read(path)] == []
     for name in ("THINKING_MODES", "DEFAULT_PROMPT_HISTORY_POLICY"):
         assert f"BossModAgentFields.{name}" in _read(CONTEXT / "agent-submit.js")
 

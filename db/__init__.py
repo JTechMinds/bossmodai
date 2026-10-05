@@ -149,8 +149,10 @@ from db.channels import (
     get_channel,
     get_formatted_channel_messages,
     get_latest_channel_message,
+    get_latest_channel_messages,
     is_channel_archived,
     list_channel_member_details,
+    list_channel_member_details_for,
     list_channel_members,
     list_channel_messages,
     list_channels,
@@ -265,6 +267,7 @@ from db.agent_triggers import (
     mark_trigger_retry_blocked,
     release_trigger,
     retry_agent_trigger,
+    prune_finished_triggers,
     requeue_stale_triggers,
     update_queued_trigger_payload,
 )
@@ -277,6 +280,8 @@ from db.runtime_control import (
     get_runtime_command,
     get_runtime_worker_state,
     has_open_runtime_command,
+    heartbeat_interval_seconds,
+    heartbeat_stale_after_seconds,
     is_runtime_worker_live,
     list_queued_runtime_commands,
     mark_runtime_worker_error,
@@ -291,9 +296,11 @@ from db.runtime_control import (
 from db.tasks import (
     create_task,
     get_task,
+    get_tasks_by_ids,
     list_open_task_ids_owned_by_missing_agents,
     list_recent_tasks,
     list_tasks,
+    list_tasks_by_statuses,
     update_task,
 )
 from db.task_events import create_task_event, list_recent_task_events, list_task_events
@@ -315,7 +322,11 @@ from db.settings import (
 )
 
 # Activity log
-from db.activity_log import create_activity_log_entry, get_recent_activity_log_entries
+from db.activity_log import (
+    create_activity_log_entry,
+    get_recent_activity_log_entries,
+    prune_activity_log,
+)
 from db.unified_feed import (
     classify_category,
     get_unified_feed,
@@ -327,6 +338,7 @@ from db.activities import (
     cancel_open_activities,
     create_activity as create_runtime_activity,
     get_active_activity,
+    get_active_activities,
     get_activity,
     get_resumable_work_activity,
     list_activities,
@@ -385,6 +397,7 @@ from db.diagnostics import (
     get_diagnostic,
     get_diagnostic_steps,
     get_diagnostics,
+    prune_diagnostics,
 )
 
 # World state + spatial
@@ -479,8 +492,10 @@ __all__ = [
     "get_channel",
     "get_formatted_channel_messages",
     "get_latest_channel_message",
+    "get_latest_channel_messages",
     "is_channel_archived",
     "list_channel_member_details",
+    "list_channel_member_details_for",
     "list_channel_members",
     "list_channel_messages",
     "list_channels",
@@ -570,6 +585,7 @@ __all__ = [
     "mark_trigger_retry_blocked",
     "release_trigger",
     "retry_agent_trigger",
+    "prune_finished_triggers",
     "requeue_stale_triggers",
     "update_queued_trigger_payload",
     "claim_runtime_command",
@@ -580,6 +596,8 @@ __all__ = [
     "get_runtime_command",
     "get_runtime_worker_state",
     "has_open_runtime_command",
+    "heartbeat_interval_seconds",
+    "heartbeat_stale_after_seconds",
     "is_runtime_worker_live",
     "list_queued_runtime_commands",
     "mark_runtime_worker_error",
@@ -592,8 +610,10 @@ __all__ = [
     "create_task",
     "create_task_event",
     "get_task",
+    "get_tasks_by_ids",
     "list_open_task_ids_owned_by_missing_agents",
     "list_tasks",
+    "list_tasks_by_statuses",
     "list_recent_task_events",
     "list_task_events",
     "update_task",
@@ -614,6 +634,7 @@ __all__ = [
     "create_runtime_activity",
     "cancel_open_activities",
     "get_active_activity",
+    "get_active_activities",
     "get_activity",
     "get_resumable_work_activity",
     "list_activities",
@@ -627,6 +648,7 @@ __all__ = [
     "save_work_snapshot",
     "set_work_snapshot_checkpoints",
     "get_recent_activity_log_entries",
+    "prune_activity_log",
     "classify_category",
     "get_unified_feed",
     "normalize_activity_entry",
@@ -662,6 +684,7 @@ __all__ = [
     "update_schedule",
     # Diagnostics
     "create_diagnostic",
+    "prune_diagnostics",
     "extract_reply",
     "get_diagnostic",
     "get_diagnostic_steps",
