@@ -36,6 +36,19 @@ from core.agent_pack.service import (
     list_catalog,
     pack_content_hash,
 )
+from core.agent_pack.updates import (
+    AgentUpdate,
+    SkippedPack,
+    TemplateUpdate,
+    UpdatePlan,
+    agent_is_edited,
+    apply_template_to_agent,
+    apply_updates,
+    check_updates,
+    contract_hash,
+    plan_updates,
+    template_contract_hash,
+)
 
 __all__ = [
     "ALLOWLIST_SETTING",
@@ -61,6 +74,17 @@ __all__ = [
     "PackLocation",
     "PackSource",
     "WithheldPack",
+    "AgentUpdate",
+    "SkippedPack",
+    "TemplateUpdate",
+    "UpdatePlan",
+    "agent_is_edited",
+    "apply_template_to_agent",
+    "apply_updates",
+    "check_updates",
+    "contract_hash",
+    "plan_updates",
+    "template_contract_hash",
     "confirm_token_for",
     "describe_pack",
     "export_pack",

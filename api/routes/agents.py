@@ -13,16 +13,15 @@ from api.routes._shared import (
     _IMAGE_MIME_TYPES,
     _available_folder_opener_options,
     _launch_file_explorer,
-    _validate_authored_prompt_template,
 )
 from api.websocket import manager
 from core import config
 from core.agent_loop import activity_runtime
+from core.agent_pack import agent_is_edited, apply_template_to_agent, template_contract_hash
 from core.agent_repository import agent_repository
 from core.bm_cli.approval_gate import global_auto_approve_enabled
 from core.bm_cli.fs_commands import write_virtual_text
 from core.bm_cli.virtual_fs import resolve_cli_path
-from core.llm.template_engine import TemplateError
 from core.llm.thinking import unoffered
 from core.messaging import route_human_channel_message, route_human_dm
 from core.models import (
@@ -32,6 +31,7 @@ from core.models import (
     AgentPromptHistoryPolicyUpdate,
     AgentUpdate,
 )
+from core.models.agent_template import AgentTemplate
 from core.models.message import HUMAN_SENDER_ID
 from core.agent_loop.channel_host import is_thread_paused, pause_thread, resume_thread
 from core.channel_archive import archive_thread_as_operator, reopen_thread_as_operator
@@ -691,14 +691,39 @@ async def open_agent_desk_folder(agent_id: str, path: str = "/me"):
     return {"status": "ok", "path": str(target)}
 
 
+def _pack_link_for_hire(template_id: str | None) -> dict[str, str | None] | None:
+    """Return the pack link a hire from ``template_id`` records, or ``None``.
+
+    A ``catalog`` or ``url`` template links the new agent to its pack, keyed
+    the way the template is (``pack_id`` / ``source_url``) so the link
+    survives an uninstall and reinstall. The stored contract hash is the
+    TEMPLATE's, not the submitted fields', so text edited in the form before
+    hiring correctly reads as "edited" later. A ``local`` template has no pack
+    to update from and links nothing.
+
+    Raises:
+        HTTPException: 400 ``Template not found`` for an unknown id.
+    """
+    if template_id is None:
+        return None
+    template = db.get_agent_template(template_id)
+    if template is None:
+        raise HTTPException(400, "Template not found")
+    if template.source not in ("catalog", "url"):
+        return None
+    return {
+        "pack_id": template.pack_id,
+        "pack_source_url": template.source_url,
+        "commit_sha": template.commit_sha,
+        "content_hash": template.content_hash,
+        "contract_hash": template_contract_hash(template),
+    }
+
+
 @router.post("/agents", status_code=201)
 async def create_agent(body: AgentCreate) -> Agent:
-    if body.prompt_template is not None:
-        try:
-            _validate_authored_prompt_template(body.prompt_template)
-        except TemplateError as exc:
-            raise HTTPException(400, str(exc)) from exc
     _validate_ai_choice(body.connection_id, body.thinking_social, body.thinking_work)
+    pack_link = _pack_link_for_hire(body.template_id)
     desk_x, desk_y = _auto_assign_desk(body.desk_x, body.desk_y)
     try:
         agent = agent_repository.create(
@@ -707,7 +732,6 @@ async def create_agent(body: AgentCreate) -> Agent:
             description=body.description,
             done_fail_bar=body.done_fail_bar,
             communication=body.communication,
-            prompt_template=body.prompt_template,
             color=body.color,
             desk_x=desk_x,
             desk_y=desk_y,
@@ -715,6 +739,7 @@ async def create_agent(body: AgentCreate) -> Agent:
             thinking_social=body.thinking_social,
             thinking_work=body.thinking_work,
             floor_id=body.floor_id,
+            pack_link=pack_link,
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -778,12 +803,6 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     if assigned_x != next_desk_x or assigned_y != next_desk_y:
         fields["desk_x"] = assigned_x
         fields["desk_y"] = assigned_y
-    prompt_template = fields.get("prompt_template")
-    if isinstance(prompt_template, str):
-        try:
-            _validate_authored_prompt_template(prompt_template)
-        except TemplateError as exc:
-            raise HTTPException(400, str(exc)) from exc
     agent = db.update_agent(agent_id, **fields)
     if not agent:
         raise HTTPException(404, "Agent not found")
@@ -799,6 +818,112 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
         agent_name=agent.name,
     )
     return agent
+
+
+def _linked_template(agent: Agent) -> AgentTemplate | None:
+    """Return the installed template an agent's pack link names, or ``None``."""
+    return db.find_agent_template(pack_id=agent.pack_id, source_url=agent.pack_source_url)
+
+
+@router.get("/agents/{agent_id}/pack-status")
+async def get_agent_pack_status(agent_id: str) -> dict[str, object]:
+    """Whether an agent hired from a pack is behind its installed template.
+
+    A local read only: the agent's pack link is compared with the template
+    installed under the same natural key. No catalog fetch — the marketplace
+    is where the catalog moves; the desk only says whether this agent has
+    caught up with what is installed.
+
+    Returns:
+        ``{linked, pack_id, template_id, template_title, installed,
+        current_short, available_short, available_content_hash,
+        update_available, edited}``. ``linked`` is false (and everything else
+        empty) for an agent not hired from a pack. ``available_content_hash``
+        is what ``POST …/pack-update`` must send back as
+        ``expected_content_hash``; it and ``available_short`` are ``None``
+        unless ``update_available``.
+
+    Raises:
+        HTTPException: 404 when the agent does not exist.
+    """
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+    if not (agent.pack_id or agent.pack_source_url):
+        return {
+            "linked": False,
+            "pack_id": None,
+            "template_id": None,
+            "template_title": None,
+            "installed": False,
+            "current_short": None,
+            "available_short": None,
+            "available_content_hash": None,
+            "update_available": False,
+            "edited": False,
+        }
+    template = _linked_template(agent)
+    update_available = template is not None and template.content_hash != agent.pack_content_hash
+    return {
+        "linked": True,
+        "pack_id": agent.pack_id,
+        "template_id": template.id if template is not None else None,
+        "template_title": template.title if template is not None else None,
+        "installed": template is not None,
+        "current_short": agent.pack_commit_sha[:7] if agent.pack_commit_sha else None,
+        "available_short": template.commit_sha[:7] if update_available and template.commit_sha else None,
+        "available_content_hash": template.content_hash if update_available else None,
+        "update_available": update_available,
+        "edited": agent_is_edited(agent),
+    }
+
+
+class AgentPackUpdateBody(BaseModel):
+    """The template version the operator reviewed on the desk."""
+
+    expected_content_hash: str
+
+
+@router.post("/agents/{agent_id}/pack-update")
+async def update_agent_from_pack(agent_id: str, body: AgentPackUpdateBody) -> Agent:
+    """Rewrite one agent's contract from its installed pack template.
+
+    Overwrites description, done bar and communication only, and records the
+    new pack version, in one transaction. Broadcasts like ``PATCH``.
+
+    Failure modes: 404 when the agent does not exist; 409
+    ``{"code": "not_linked"}`` for an agent not hired from a pack, 409
+    ``template_not_installed`` when its pack's template is not installed, and
+    409 ``stale_template`` when the installed template is no longer the
+    version the operator saw (``expected_content_hash``) — re-read the status.
+    """
+    agent = db.get_agent(agent_id)
+    if agent is None:
+        raise HTTPException(404, "Agent not found")
+    if not (agent.pack_id or agent.pack_source_url):
+        raise HTTPException(
+            409, {"code": "not_linked", "message": "This agent was not hired from a pack."},
+        )
+    template = _linked_template(agent)
+    if template is None:
+        raise HTTPException(
+            409,
+            {"code": "template_not_installed", "message": "The pack this agent came from is not installed."},
+        )
+    if template.content_hash != body.expected_content_hash:
+        raise HTTPException(
+            409,
+            {"code": "stale_template", "message": "The installed pack changed since you looked. Review it again."},
+        )
+    with db.transaction():
+        updated = apply_template_to_agent(agent, template)
+    await manager.broadcast_world_state()
+    await manager.broadcast_activity(
+        event="agent_updated",
+        detail=f"Agent \"{updated.name}\" updated from pack {template.title}",
+        agent_name=updated.name,
+    )
+    return updated
 
 
 @router.patch("/agents/{agent_id}/cli-auto-approve")

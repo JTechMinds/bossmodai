@@ -241,20 +241,14 @@ def _render_paused_work(turn: TurnContext) -> str | None:
     return render_paused_work_view(snapshot, task_title=title)
 
 
-def _default_role_prompt(agent: Agent) -> str:
-    """Generate a default system prompt for agents without a custom template."""
-    return load_default_role_prompt()
-
-
 def _render_system_prompt(
     turn: TurnContext,
     render_context: dict[str, Any],
     template_overrides: dict[str, str] | None = None,
 ) -> str:
     """Render the base authored system prompt once for any turn flavor."""
-    personality_template = turn.agent.prompt_template or _default_role_prompt(turn.agent)
     rendered_personality = render_template(
-        personality_template,
+        load_default_role_prompt(),
         render_context,
         allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )

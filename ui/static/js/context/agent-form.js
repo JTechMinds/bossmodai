@@ -4,7 +4,7 @@
  * The composition half of what `buildFormHTML` used to be: it fetches what the
  * form needs, asks each field group for its section in reading order, and
  * binds the controls that only make sense once the whole form exists — the
- * two Settings links and the Advanced disclosure. The per-field behaviours,
+ * Settings link and the Advanced disclosure. The per-field behaviours,
  * the AI Connection dropdowns among them, are context/agent-form-bindings.js.
  *
  * BOUND TO THE FORM, NEVER TO THE HOST. `container` is scaffolding:
@@ -42,7 +42,6 @@ const BossModAgentForm = (() => {
 
     const DEPENDENCY_NAMES = Object.freeze({
         '/api/connections': 'your AI connections',
-        '/api/personalities': 'your personalities',
         '/api/agents': 'the rest of your roster',
         [POLICY]: 'this agent’s AI history settings',
     });
@@ -51,7 +50,7 @@ const BossModAgentForm = (() => {
      * Read one of the form's list dependencies.
      *
      * @param {Response} res
-     * @param {string} what  The path, named in the error: four reads share
+     * @param {string} what  The path, named in the error: three reads share
      *   this shape, and "which one" is the first thing a reader of the failure
      *   needs. `settledList` below is what catches it.
      * @returns {Promise<object[]>}
@@ -77,16 +76,16 @@ const BossModAgentForm = (() => {
     /**
      * One dependency's outcome, degraded ON ITS OWN.
      *
-     * `Promise.all` used to carry all four, so a single REJECTED request — a
+     * `Promise.all` used to carry them all, so a single REJECTED request — a
      * network error, an abort — rejected the batch and the one catch below
      * left every list empty. An operator with two connections configured was
      * then shown "No connections configured. Add one in Settings", no matrix
-     * to choose from, and a live primary, because `/api/personalities` was
-     * down. A failing read must cost its own list and nothing else.
+     * to choose from, and a live primary, because another read was down. A
+     * failing read must cost its own list and nothing else.
      *
      * @param {PromiseSettledResult<Response>} outcome  From Promise.allSettled.
      * @param {string} what  The path, named in the console line and collected
-     *   in `failed`: four reads share this and "which one" is the first thing
+     *   in `failed`: three reads share this and "which one" is the first thing
      *   either the log or the operator needs.
      * @param {string[]} failed  Appended to when this read fails.
      * @returns {Promise<object[]|null>} null when it failed, which is NOT the
@@ -106,17 +105,14 @@ const BossModAgentForm = (() => {
     }
 
     /**
-     * Load the connections, personalities, roster, and history policy the form
-     * renders from.
+     * Load the connections, roster, and history policy the form renders from.
      *
      * @param {object|null} agent
-     * @returns {Promise<{connections: object[], personalities: object[],
-     *                    roster: object[], promptHistoryPolicy: object,
-     *                    failed: string[]}>}
+     * @returns {Promise<{connections: object[], roster: object[],
+     *                    promptHistoryPolicy: object, failed: string[]}>}
      *   Every read degrades alone, and a failed one leaves its list empty so
-     *   the form still renders with its "no connections configured" and "no
-     *   personalities configured" links to Settings rather than not rendering
-     *   at all. `failed` names the reads that did not land, because an empty
+     *   the form still renders with its "no connections configured" link to
+     *   Settings rather than not rendering at all. `failed` names the reads that did not land, because an empty
      *   list the operator is shown as fact and an empty list standing in for a
      *   read that never returned are different things — and the empty states
      *   above cannot tell them apart on their own.
@@ -126,15 +122,13 @@ const BossModAgentForm = (() => {
         const failed = [];
         const requests = [
             apiFetch('/api/connections'),
-            apiFetch('/api/personalities'),
             apiFetch('/api/agents'),
         ];
         if (agent?.id) {
             requests.push(BossModAgentApi.fetchPromptHistoryPolicy(agent.id));
         }
-        const [connRes, persRes, rosterRes, policyRes] = await Promise.allSettled(requests);
+        const [connRes, rosterRes, policyRes] = await Promise.allSettled(requests);
         const connections = await settledList(connRes, '/api/connections', failed);
-        const personalities = await settledList(persRes, '/api/personalities', failed);
         const roster = await settledList(rosterRes, '/api/agents', failed);
         let promptHistoryPolicy = { ...DEFAULTS };
         if (policyRes && policyRes.status === 'fulfilled' && policyRes.value) {
@@ -148,7 +142,6 @@ const BossModAgentForm = (() => {
         // reaching the operator as a statement about their configuration.
         return {
             connections: connections || [],
-            personalities: personalities || [],
             roster: roster || [],
             promptHistoryPolicy,
             failed,
@@ -195,25 +188,6 @@ const BossModAgentForm = (() => {
     }
 
     /**
-     * The `Kept from <name>` option a recreate needs, or null.
-     *
-     * @param {object} prefill  An `AgentSnapshot`.
-     * @param {object[]} personalities
-     * @returns {{label: string, text: string}|null} null when the snapshot has
-     *   no prompt, or a personality still carries that exact text — the
-     *   dropdown selects that one, as it does for an edit. A personalities
-     *   read that FAILED leaves this list empty, and the option is offered:
-     *   carrying the prompt is the safe direction to be wrong in, and the
-     *   degraded notice above the form says the list could not be read.
-     */
-    function keptPromptFor(prefill, personalities) {
-        const text = prefill.prompt_template;
-        if (!text) return null;
-        if (personalities.some((p) => p.prompt_template === text)) return null;
-        return { label: `Kept from ${prefill.name}`, text };
-    }
-
-    /**
      * Render the form into a container and bind everything inside it.
      *
      * @param {HTMLElement} container
@@ -233,10 +207,9 @@ const BossModAgentForm = (() => {
         }
         const values = agent || prefill;
         const {
-            connections, personalities, roster, promptHistoryPolicy: loadedPolicy, failed,
+            connections, roster, promptHistoryPolicy: loadedPolicy, failed,
         } = await loadFormData(agent);
         const promptHistoryPolicy = prefill ? prefillPolicy(prefill) : loadedPolicy;
-        const keptPrompt = prefill ? keptPromptFor(prefill, personalities) : null;
 
         // TWO COLUMNS, ONE FORM, and the same one whichever door was used.
         // Identity on the left, what the agent thinks with on the right, the
@@ -263,7 +236,7 @@ const BossModAgentForm = (() => {
                 ${BossModAgentFormConnections.connectionsSection(values, connections)}
                 <div class="agent-form-wide">
                     ${BossModAgentFormAdvanced.advancedSection(values, {
-                        personalities, roster, promptHistoryPolicy, keptPrompt,
+                        roster, promptHistoryPolicy,
                     })}
                     ${BossModAgentFormFields.statusAndRecovery(agent)}
                     ${BossModAgentFormFields.actionsRow(agent)}
@@ -292,8 +265,6 @@ const BossModAgentForm = (() => {
         };
         const gotoConn = form.querySelector('#btn-goto-connections');
         if (gotoConn) gotoConn.addEventListener('click', gotoSettings);
-        const gotoPers = form.querySelector('#btn-goto-personalities');
-        if (gotoPers) gotoPers.addEventListener('click', gotoSettings);
 
         // WHICH SHAPE the connections section just rendered, written onto the
         // form for context/agent-form-save.js's refusal to read back. Set from
@@ -330,7 +301,7 @@ const BossModAgentForm = (() => {
 
         // The Advanced dropdowns are built before the bindings below, which
         // find them by name, and before any template hydrate writes them.
-        BossModAgentFormChoices.mount(form, { personalities, roster, values, kept: keptPrompt });
+        BossModAgentFormChoices.mount(form, { roster, values });
 
         const BINDINGS = BossModAgentFormBindings;
         BINDINGS.bindFinishLineSuggestion(form, values);

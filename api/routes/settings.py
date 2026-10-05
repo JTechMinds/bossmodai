@@ -1,4 +1,4 @@
-"""Settings, AI connections, connection test, and personalities."""
+"""Settings, AI connections, and connection test."""
 
 import httpx
 from fastapi import APIRouter, HTTPException
@@ -24,9 +24,6 @@ from core.models import (
     AIConnection,
     AIConnectionCreate,
     AIConnectionUpdate,
-    AIPersonality,
-    AIPersonalityCreate,
-    AIPersonalityUpdate,
 )
 from core.runtime import runtime_services
 from integrations.telegram.auth import parse_allowed_user_ids
@@ -653,52 +650,3 @@ async def _local_capacity_note(base: str, headers: dict[str, str]) -> str | None
         return None
     return local_capacity_warning(slots_from_payload(payload))
 
-
-# ─── AI Personalities CRUD ───
-
-@router.get("/personalities")
-async def list_personalities() -> list[AIPersonality]:
-    return db.list_personalities()
-
-
-@router.get("/personalities/{personality_id}")
-async def get_personality(personality_id: str) -> AIPersonality:
-    p = db.get_personality(personality_id)
-    if not p:
-        raise HTTPException(404, "Personality not found")
-    return p
-
-
-@router.post("/personalities", status_code=201)
-async def create_personality(body: AIPersonalityCreate) -> AIPersonality:
-    try:
-        _validate_authored_prompt_template(body.prompt_template)
-    except TemplateError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    return db.create_personality(
-        name=body.name,
-        prompt_template=body.prompt_template,
-    )
-
-
-@router.patch("/personalities/{personality_id}")
-async def update_personality(personality_id: str, body: AIPersonalityUpdate) -> AIPersonality:
-    fields = body.model_dump(exclude_none=True)
-    if not fields:
-        raise HTTPException(400, "No fields to update")
-    prompt_template = fields.get("prompt_template")
-    if isinstance(prompt_template, str):
-        try:
-            _validate_authored_prompt_template(prompt_template)
-        except TemplateError as exc:
-            raise HTTPException(400, str(exc)) from exc
-    p = db.update_personality(personality_id, **fields)
-    if not p:
-        raise HTTPException(404, "Personality not found")
-    return p
-
-
-@router.delete("/personalities/{personality_id}", status_code=204)
-async def delete_personality(personality_id: str):
-    if not db.delete_personality(personality_id):
-        raise HTTPException(404, "Personality not found")

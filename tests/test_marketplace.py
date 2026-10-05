@@ -37,6 +37,7 @@ HARNESS_MODULES = [
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
     JS / "core" / "search-field.js",
+    JS / "core" / "gates.js",
     JS / "context" / "agent-api.js",
     JS / "context" / "agent-templates-api.js",
     JS / "marketplace" / "marketplace-withheld.js",
@@ -46,6 +47,7 @@ HARNESS_MODULES = [
     JS / "marketplace" / "marketplace-sections.js",
     JS / "marketplace" / "marketplace-detail.js",
     JS / "marketplace" / "marketplace-view.js",
+    JS / "marketplace" / "marketplace-updates.js",
     JS / "marketplace" / "marketplace.js",
 ]
 
@@ -63,6 +65,7 @@ MARKETPLACE_MODULES = [
     JS / "marketplace" / "marketplace-sections.js",
     JS / "marketplace" / "marketplace-detail.js",
     JS / "marketplace" / "marketplace-view.js",
+    JS / "marketplace" / "marketplace-updates.js",
 ]
 
 # The three files that put one pack's own text on screen. None of them may
@@ -78,6 +81,7 @@ INDEX_MODULES = (
     "js/marketplace/marketplace-sections.js",
     "js/marketplace/marketplace-detail.js",
     "js/marketplace/marketplace-view.js",
+    "js/marketplace/marketplace-updates.js",
     "js/marketplace/marketplace.js",
 )
 
@@ -782,9 +786,11 @@ def test_an_installed_pack_that_went_bad_is_not_one_that_left_the_repo() -> None
     # Every call site passes it: a stale index would mislabel the very row this
     # exists to label.
     state = _read(JS / "marketplace" / "marketplace.js")
-    # Four call sites now: the load, the install, the uninstall, and the
-    # re-read the Add agent tab asks for when it saves a template.
-    assert state.count("state.templates, state.categories, state.withheld,") == 4
+    # One index call, through `reindex`, and four call sites of it: the load,
+    # the install, the uninstall, and the re-read the Add agent tab asks for
+    # when it saves a template.
+    assert state.count("ITEMS.indexInstalled(state.templates, state.categories, state.withheld)") == 1
+    assert state.count("reindex();") == 4
     # Said in both views, from ONE wording, so they cannot drift apart.
     withheld = _code(JS / "marketplace" / "marketplace-withheld.js")
     assert "function installedNote(catalogStatus)" in withheld
@@ -1109,6 +1115,9 @@ def test_every_marketplace_module_stays_a_module() -> None:
         "marketplace.js", "marketplace-items.js", "marketplace-withheld.js",
         "marketplace-sections.js", "marketplace-detail.js", "marketplace-view.js",
         "pack-card.js", "filter-rail.js",
+        # The catalog-update banner and its review layer: a separate surface
+        # with its own request and state, over the grid.
+        "marketplace-updates.js",
     }, sizes
     assert all(size < 400 for size in sizes.values()), sizes
     # The projection is pure: no DOM, no fetch, no state mutation.
@@ -1516,3 +1525,22 @@ def test_a_template_saved_on_this_machine_is_told_apart_from_an_install() -> Non
     detail = _code(JS / "marketplace" / "marketplace-detail.js")
     assert "item.local ? COPY.deleteLocal : COPY.uninstall" in detail
     assert "text: item.local ? COPY.deleteLocalAsk : COPY.uninstallAsk," in detail
+
+
+def test_catalog_updates_banner_review_and_quiet_advance() -> None:
+    """The update banner over the grid, both review layers, the quiet advance.
+
+    Nothing is written until the operator confirms a review that lists every
+    pack, every agent — the edited one flagged — and every skipped pack with
+    its reason; Confirm sends back the exact target that was reviewed. When
+    only the pin moved, it advances with no banner at all. A failed check is
+    an alert with a retry, never a banner built from nothing.
+    """
+    payload = _harness()
+    for key in (
+        "updateBannerSummarises", "packsOnlyReviewNamesTheDeskUpdates", "cancelWritesNothing",
+        "agentsReviewFlagsTheEditedAgent", "reviewNeverHidesASkippedPack",
+        "confirmAppliesExactlyWhatWasReviewed", "anApplyReportsAndReReads",
+        "onlyThePinMovingAdvancesQuietly", "aFailedCheckIsSaidAndRetried",
+    ):
+        assert payload[key] is True, key

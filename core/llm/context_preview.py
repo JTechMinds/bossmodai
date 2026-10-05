@@ -15,10 +15,10 @@ from core.llm.context_builder import (
     AUTHORED_PROMPT_ALLOWED_PATHS,
     TurnContext,
     _build_prompt_render_context,
-    _default_role_prompt,
     _render_turn_contract,
     build_context,
 )
+from core.default_prompts import load_default_role_prompt
 from core.llm.template_engine import render_template
 from core.models import Agent, AgentState
 
@@ -134,10 +134,9 @@ def preview_runtime_contract(
     turn = _build_preview_turn_context(contract_kind, trigger_type)
     if trigger_overrides:
         turn.trigger = {**turn.trigger, **trigger_overrides}
-    agent = turn.agent
     render_context = _build_prompt_render_context(turn)
     render_context["personality"] = render_template(
-        agent.prompt_template or _default_role_prompt(agent),
+        load_default_role_prompt(),
         render_context,
         allowed_paths=AUTHORED_PROMPT_ALLOWED_PATHS,
     )
@@ -168,7 +167,6 @@ def _build_preview_turn_context(contract_kind: str, trigger_type: str) -> TurnCo
         role="Operations Analyst",
         description="Keeps operational answers short and checkable.",
         done_fail_bar="Good: a named artifact or tests evidence. Fail: empty done.",
-        prompt_template="You are {{agent_name}}, keep answers concise and operational.",
         created_at=now,
     )
     state = AgentState(

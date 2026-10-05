@@ -40,7 +40,6 @@ class Agent(BaseModel):
     description: str | None = None
     done_fail_bar: str | None = None
     communication: dict[str, str] | None = None
-    prompt_template: str | None = None
     color: str = "#3b82f6"
 
     # The one AI connection every activation uses, read live each turn
@@ -69,6 +68,18 @@ class Agent(BaseModel):
     # System AI auto-approve for this agent's DM, and for its work with no
     # origin thread. Set only through PATCH /api/agents/{id}/cli-auto-approve.
     cli_auto_approve_dm: bool = False
+
+    # Provenance: the pack this agent was hired from, all None for an agent
+    # not hired from a pack. ``pack_id`` (catalog) or ``pack_source_url``
+    # (URL pack) matches the template's natural key; ``pack_commit_sha`` and
+    # ``pack_content_hash`` are the pack version its contract was last written
+    # from; ``pack_contract_hash`` is ``contract_hash`` of what was written,
+    # so a later operator edit is detectable. Read-only through the API.
+    pack_id: str | None = None
+    pack_source_url: str | None = None
+    pack_commit_sha: str | None = None
+    pack_content_hash: str | None = None
+    pack_contract_hash: str | None = None
 
     created_at: datetime
 
@@ -156,7 +167,6 @@ class AgentCreate(BaseModel):
     description: str | None = None
     done_fail_bar: str | None = None
     communication: dict[str, str] | None = None
-    prompt_template: str | None = None
     color: str = "#3b82f6"
     desk_x: int | None = None
     desk_y: int | None = None
@@ -165,6 +175,9 @@ class AgentCreate(BaseModel):
     thinking_social: ThinkingChoice = "default"
     thinking_work: ThinkingChoice = "default"
     floor_id: str | None = None
+    # The installed template the hire form was filled from. A pack template
+    # links the new agent to its pack; a local one links nothing.
+    template_id: str | None = None
 
     @field_validator("role")
     @classmethod
@@ -198,7 +211,6 @@ class AgentUpdate(BaseModel):
     description: str | None = None
     done_fail_bar: str | None = None
     communication: dict[str, str] | None = None
-    prompt_template: str | None = None
     color: str | None = None
 
     connection_id: str | None = None

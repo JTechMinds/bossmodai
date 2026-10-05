@@ -17,7 +17,9 @@
  * nothing is hidden, and no rule is relaxed:
  *
  *   the fields    `templateFields` -> context/agent-form-hydrate.js
- *   the source    the provenance chip, and the tools line under it
+ *   the source    the provenance chip, the tools line under it, and a hidden
+ *                 `template_id` the submit sends so the hire is linked to
+ *                 its pack (context/agent-submit.js)
  *   the way out   `Remove template`, which clears exactly what was written
  *
  * The connection guard is not this module's business any more, in either
@@ -65,15 +67,13 @@ const BossModAgentFormTemplate = (() => {
      *
      * @param {object} template  An `AgentTemplate` row.
      * @returns {{role: string, description: string, done_fail_bar: string,
-     *   personality_hint: string|null, communication: object|null}} In
-     *   `applyHireFields`' shape.
+     *   communication: object|null}} In `applyHireFields`' shape.
      */
     function templateFields(template) {
         return {
             role: template.specialty || '',
             description: template.description || '',
             done_fail_bar: template.what_done_looks_like || '',
-            personality_hint: template.personality_hint || null,
             communication: template.communication || null,
         };
     }
@@ -81,8 +81,7 @@ const BossModAgentFormTemplate = (() => {
     /**
      * The same mapping, emptied: what `applyHireFields` writes to UNDO a
      * template. DERIVED, because a hand-written clear goes stale the moment the
-     * mapping gains a field — which is what happened to the personality hint,
-     * leaving it selected after Remove template.
+     * mapping gains a field and leaves that field filled after Remove template.
      *
      * @returns {object} Every field `templateFields` can name, empty.
      */
@@ -136,8 +135,9 @@ const BossModAgentFormTemplate = (() => {
     /**
      * Mark an already-built create form as filled from a template.
      *
-     * ADDITIVE ONLY: it prepends the chip and the tools line and points the
-     * name placeholder at the template's title. It moves no field, hides no
+     * ADDITIVE ONLY: it prepends the chip and the tools line, adds the hidden
+     * `template_id` input, and points the name placeholder at the template's
+     * title. It moves no field, hides no
      * section and changes no control's validity — which is the difference
      * between this and the `applyQuickLayout` it replaces.
      *
@@ -167,6 +167,10 @@ const BossModAgentFormTemplate = (() => {
         BossModAgentFormBindings.growHireText(formRoot);
 
         const tools = toolsLine(template);
+        // Which template the hire came from, so the server can link the new
+        // agent to its pack. Removed with the chip: a form the template no
+        // longer fills must not claim it.
+        const templateInput = h('input', { type: 'hidden', name: 'template_id', value: template.id });
         const chip = provenanceChip(template, () => {
             // Drop to blank: every field the template wrote is cleared, the
             // chip and its tools line go, and the name placeholder returns to
@@ -177,6 +181,7 @@ const BossModAgentFormTemplate = (() => {
             BossModAgentFormBindings.growHireText(formRoot);
             chip.remove();
             if (tools) tools.remove();
+            templateInput.remove();
             if (nameInput && wasPlaceholder !== null) {
                 nameInput.setAttribute('placeholder', wasPlaceholder);
             }
@@ -185,6 +190,7 @@ const BossModAgentFormTemplate = (() => {
         // Prepended in reverse, so the chip ends up above its own tools line.
         if (tools) form.prepend(tools);
         form.prepend(chip);
+        form.append(templateInput);
     }
 
     /**

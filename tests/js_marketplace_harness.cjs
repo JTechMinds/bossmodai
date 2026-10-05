@@ -34,6 +34,8 @@ const NAMES = [
     "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu",
     // The browse head's filter is the app's toolbar search.
     "BossModSearchField",
+    // The update banner drops a stale check with a load generation.
+    "BossModGates",
     "BossModAgentApi", "BossModAgentTemplatesApi",
     "BossModMarketplaceWithheld", "BossModMarketplaceItems",
     // The card anatomy and the filter rail the takeover shares with the Add
@@ -41,7 +43,7 @@ const NAMES = [
     // after it and before the two views that spend them.
     "BossModPackCard", "BossModFilterRail",
     "BossModMarketplaceSections", "BossModMarketplaceDetail",
-    "BossModMarketplaceView", "BossModMarketplace",
+    "BossModMarketplaceView", "BossModMarketplaceUpdates", "BossModMarketplace",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -275,7 +277,7 @@ function template(overrides) {
         id: "t", source: "catalog", pack_id: null, source_url: null,
         category: "engineering", title: "T", specialty: "S", description: "D",
         what_done_looks_like: "A checkable allow/deny exists.",
-        personality_hint: null, tools_hint: [], author_name: null, author_url: null,
+        tools_hint: [], author_name: null, author_url: null,
         commit_sha: PIN, content_hash: "h",
         installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
     }, overrides);
@@ -307,6 +309,41 @@ let failWrites = false;
 // a verdict can read the detail view while that write is still in flight.
 // Spent by the write it holds.
 let holdWrite = null;
+// What GET /api/agent-packs/updates answers. NO_UPDATES — the pin is HEAD
+// and nothing is behind — for every section but the ones about the banner.
+const TARGET = "9d2352eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
+const NO_UPDATES = {
+    repo: "JTechMinds/BossMod_AgentMP", pinned_sha: PIN, target_sha: PIN,
+    pinned_short: "aa11bb2", target_short: "aa11bb2", pin_moves: false,
+    templates: [], agents: [], skipped: [], needs_review: false,
+};
+// One changed pack, two agents behind it — one edited since the pack last
+// wrote it — and one installed pack the catalog dropped at the target.
+const REVIEW_PLAN = {
+    ...NO_UPDATES, target_sha: TARGET, target_short: "9d2352e", pin_moves: true,
+    templates: [{
+        template_id: "t-auditor", pack_id: "code-auditor", title: "Code Auditor",
+        from_short: "aa11bb2", to_short: "9d2352e",
+    }],
+    agents: [
+        { agent_id: "a1", name: "Ada", pack_id: "code-auditor", template_title: "Code Auditor",
+            from_short: "aa11bb2", to_short: "9d2352e", edited: false },
+        { agent_id: "a2", name: "Bea", pack_id: "code-auditor", template_title: "Code Auditor",
+            from_short: "aa11bb2", to_short: "9d2352e", edited: true },
+    ],
+    skipped: [{
+        pack_id: "feature-planner", title: "Feature Planner", kind: "removed",
+        code: "pack_removed", message: "The catalog at 9d2352e no longer lists this pack.",
+    }],
+    needs_review: true,
+};
+// HEAD moved, a pack nobody installed was added, nothing installed changed.
+const PIN_ONLY_PLAN = { ...NO_UPDATES, target_sha: TARGET, target_short: "9d2352e", pin_moves: true };
+let updatesPlan = NO_UPDATES;
+let updatesFail = false;
+// Every POST /api/agent-packs/updates/apply body, in order.
+const applyCalls = [];
+
 // What the pane handed the dialog across its two wires.
 const used = [];
 let libraryChanges = 0;
@@ -339,6 +376,9 @@ function resetServer() {
     holdCatalog = null;
     failWrites = false;
     holdWrite = null;
+    updatesPlan = NO_UPDATES;
+    updatesFail = false;
+    applyCalls.length = 0;
 }
 
 function jsonResponse(body, status = 200) {
@@ -361,6 +401,17 @@ function packCard(id) {
 global.apiFetch = (url, init) => {
     const method = (init && init.method) || "GET";
     const path = String(url);
+    if (path === "/api/agent-packs/updates/apply" && method === "POST") {
+        const body = JSON.parse(init.body);
+        applyCalls.push(body);
+        return jsonResponse({ ...updatesPlan, agents: body.include_agents ? updatesPlan.agents : [] });
+    }
+    if (path === "/api/agent-packs/updates") {
+        if (updatesFail) {
+            return jsonResponse({ detail: { code: "fetch_failed", message: "GitHub ref lookup failed." } }, 502);
+        }
+        return jsonResponse(updatesPlan);
+    }
     if (path.startsWith("/api/agent-packs")) {
         catalogReads += 1;
         if (catalogMode === "fail") {
@@ -1531,6 +1582,93 @@ async function main() {
         && libraryReads === 2
         && catalogReads === catalogReadsBefore
         && texts(".market-card-title").includes("Saved From The Form");
+    handle.close();
+
+    // ── Catalog updates: the banner, both review layers, the quiet advance.
+    const panelsNow = () => global.document.body.querySelectorAll(".modal-panel");
+    const topLayer = () => panelsNow()[panelsNow().length - 1];
+    resetServer();
+    updatesPlan = REVIEW_PLAN;
+    catalogReads = 0;
+    libraryChanges = 0;
+    handle = showMarket();
+    await drain();
+    const banner = host().querySelector(".market-updates-banner");
+    verdict.updateBannerSummarises = Boolean(banner)
+        && !host().querySelector("#market-updates").hidden
+        && banner.getAttribute("data-tone") === "info"
+        && banner.textContent.includes("Catalog update aa11bb2 → 9d2352e · 1 pack · 2 agents")
+        && host().querySelector("#market-updates-packs").textContent === "Update all packs"
+        && host().querySelector("#market-updates-all").textContent === "Update all packs + agents"
+        && applyCalls.length === 0;
+
+    // Packs only: no agent rows, a line saying the agents will show it on
+    // their desks, and Cancel writes nothing.
+    await click(host().querySelector("#market-updates-packs"));
+    let review = topLayer();
+    verdict.packsOnlyReviewNamesTheDeskUpdates = panelsNow().length === 2
+        && review.textContent.includes("2 agents will show an update on their desk.")
+        && review.querySelectorAll(".market-review-chip").length === 0
+        && !review.textContent.includes("Bea");
+    await click(review.querySelector("#market-updates-cancel"));
+    verdict.cancelWritesNothing = applyCalls.length === 0 && panelsNow().length === 1
+        && Boolean(host().querySelector(".market-updates-banner"));
+
+    // Packs + agents: every agent, the edited one flagged, the skipped pack
+    // with its reason, and nothing written until Update.
+    await click(host().querySelector("#market-updates-all"));
+    review = topLayer();
+    const reviewRows = review.querySelectorAll(".market-review-row").map((row) => row.textContent);
+    verdict.agentsReviewFlagsTheEditedAgent = reviewRows.some((text) => text.startsWith("Ada")
+            && text.includes("Code Auditor · aa11bb2 → 9d2352e") && !text.includes("edited"))
+        && reviewRows.some((text) => text.startsWith("Bea") && text.includes("edited — will be overwritten"))
+        && review.querySelectorAll(".market-review-chip").length === 1;
+    verdict.reviewNeverHidesASkippedPack = reviewRows.some((text) => text.includes("Feature Planner")
+        && text.includes("No longer in the catalog")
+        && text.includes("The catalog at 9d2352e no longer lists this pack."));
+    const writesBeforeConfirm = applyCalls.length;
+    await click(review.querySelector("#market-updates-confirm"));
+    verdict.confirmAppliesExactlyWhatWasReviewed = writesBeforeConfirm === 0
+        && applyCalls.length === 1
+        && applyCalls[0].target_sha === TARGET
+        && applyCalls[0].include_agents === true
+        && panelsNow().length === 1;
+    verdict.anApplyReportsAndReReads = host().querySelector("#market-updates")
+            .querySelector(".market-notice").textContent === "Updated 1 pack, 2 agents."
+        && !host().querySelector(".market-updates-banner")
+        && catalogReads === 2
+        && libraryChanges === 1;
+    handle.close();
+
+    // Only the pin moved: advanced without a banner or a review.
+    resetServer();
+    updatesPlan = PIN_ONLY_PLAN;
+    catalogReads = 0;
+    handle = showMarket();
+    await drain();
+    verdict.onlyThePinMovingAdvancesQuietly = applyCalls.length === 1
+        && applyCalls[0].target_sha === TARGET
+        && applyCalls[0].include_agents === false
+        && host().querySelector("#market-updates").hidden === true
+        && !host().querySelector(".market-updates-banner")
+        && catalogReads === 2;
+    handle.close();
+
+    // A check that fails says so, with a retry, and never shows a banner.
+    resetServer();
+    updatesFail = true;
+    handle = showMarket();
+    await drain();
+    const failure = host().querySelector("#market-updates").querySelector(".callout");
+    const failedSays = Boolean(failure) && failure.getAttribute("role") === "alert"
+        && failure.textContent.includes("GitHub ref lookup failed.")
+        && !host().querySelector(".market-updates-banner");
+    updatesFail = false;
+    updatesPlan = REVIEW_PLAN;
+    await click(host().querySelector("#market-updates-retry"));
+    verdict.aFailedCheckIsSaidAndRetried = failedSays
+        && Boolean(host().querySelector(".market-updates-banner"))
+        && applyCalls.length === 0;
     handle.close();
 
     verdict.ok = true;

@@ -263,6 +263,24 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     # column by name, `communication` included, and a library older than that
     # column would otherwise fail the copy.
     _ensure_agent_template_local_source(con)
+    # AI Personalities are retired: agent templates replaced them. After the
+    # rebuild above, which no longer copies personality_hint, so a library
+    # that was just rebuilt has nothing left to drop and an already-current
+    # one drops it here.
+    con.execute("DROP TABLE IF EXISTS ai_personalities")
+    _drop_column_if_present(con, "agent_templates", "personality_hint")
+    _drop_column_if_present(con, "agents", "prompt_template")
+    _drop_column_if_present(con, "agent_snapshots", "prompt_template")
+    # The pack an agent was hired from. NULL for every existing agent: links
+    # are made at hire time only, never inferred.
+    for column, definition in (
+        ("pack_id", "VARCHAR"),
+        ("pack_source_url", "TEXT"),
+        ("pack_commit_sha", "VARCHAR"),
+        ("pack_content_hash", "VARCHAR"),
+        ("pack_contract_hash", "VARCHAR"),
+    ):
+        _add_column_if_missing(con, "agents", column, definition)
     _add_column_if_missing(
         con, "agents", "description", "TEXT",
     )
@@ -1416,7 +1434,6 @@ def _ensure_agent_template_local_source(con: SQLiteCompatConnection) -> None:
                     specialty            TEXT NOT NULL,
                     description          TEXT NOT NULL,
                     what_done_looks_like TEXT NOT NULL,
-                    personality_hint     VARCHAR,
                     tools_hint           TEXT NOT NULL DEFAULT '[]',
                     communication        TEXT,
                     author_name          VARCHAR,
@@ -1435,13 +1452,13 @@ def _ensure_agent_template_local_source(con: SQLiteCompatConnection) -> None:
                 """
                 INSERT INTO agent_templates__new (
                     id, source, pack_id, source_url, category, title, specialty,
-                    description, what_done_looks_like, personality_hint, tools_hint,
+                    description, what_done_looks_like, tools_hint,
                     communication, author_name, author_url, commit_sha, content_hash,
                     installed_at, updated_at
                 )
                 SELECT
                     id, source, pack_id, source_url, category, title, specialty,
-                    description, what_done_looks_like, personality_hint, tools_hint,
+                    description, what_done_looks_like, tools_hint,
                     communication, author_name, author_url, commit_sha, content_hash,
                     installed_at, updated_at
                 FROM agent_templates
@@ -1695,9 +1712,6 @@ def init_db() -> None:
     from db.settings import prune_obsolete_settings, seed_defaults
     seed_defaults()
     prune_obsolete_settings()
-
-    from db.ai_personalities import seed_default_personalities
-    seed_default_personalities()
 
     from db.cli_policy_rules import reconcile_hardened_seed_rules, seed_default_rules
     seed_default_rules()

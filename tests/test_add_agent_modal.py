@@ -497,16 +497,16 @@ def test_the_picker_retry_places_focus_after_the_repaint() -> None:
     assert _harness()["retryPlacesFocus"] is True
 
 
-def test_remove_template_undoes_the_personality_too() -> None:
-    """`applyHireFields`' documented contract, made true.
+def test_remove_template_undoes_the_template_link_too() -> None:
+    """`applyHireFields`' documented contract, made true, and the link with it.
 
-    It says that called with empty strings it clears exactly the fields a
-    template can write. It wrote four and cleared three: the personality was
-    only ever SET, so Remove template left the template's personality selected
-    on an otherwise emptied form. The cleared shape is now derived from the
-    same mapping that writes it, so a field added to one cannot be missed here.
+    Called with empty strings it clears exactly the fields a template can
+    write: the cleared shape is derived from the same mapping that writes it,
+    so a field added to one cannot be missed here. Remove template also drops
+    the hidden `template_id`, so a form the template no longer fills cannot
+    hire an agent linked to that template's pack.
     """
-    assert _harness()["chipClearsThePersonalityToo"] is True
+    assert _harness()["chipClearsTheTemplateLink"] is True
     template = _read(CONTEXT / "agent-form-template.js")
     assert "function clearedFields()" in template
     assert "return templateFields({});" in template
@@ -791,7 +791,8 @@ def test_a_template_can_never_write_name_colour_or_a_connection() -> None:
     assert "template.specialty" in mapping
     assert "template.description" in mapping
     assert "template.what_done_looks_like" in mapping
-    assert "template.personality_hint" in mapping
+    assert "template.communication" in mapping
+    assert "personality" not in mapping
     for forbidden in ("name", "color", "colour", "connection", "thinking"):
         assert forbidden not in mapping, forbidden
 

@@ -268,9 +268,13 @@ const BossModMarketplaceView = (() => {
      *   onRetry, onToggleUrl, onUrlChange, onInstallUrl,
      *   onInstall, onUseTemplate, onUninstall, onUninstallConfirm,
      *   onUninstallCancel, onTrustConfirm, onTrustCancel.
+     * @param {HTMLElement} [banner]  The catalog-update banner
+     *   (marketplace-updates.js). It keeps its own state, so the same node is
+     *   moved into each rebuilt browse view, above the grid, and is not shown
+     *   over the detail.
      * @returns {void}
      */
-    function render(host, state, handlers) {
+    function render(host, state, handlers, banner) {
         const active = document.activeElement;
         const keep = active && active.id && host.contains(active) ? active.id : '';
         const caret = keep && typeof active.selectionStart === 'number'
@@ -287,6 +291,7 @@ const BossModMarketplaceView = (() => {
             host.append(head(state, handlers));
             const said = messages(state, handlers);
             if (said) host.append(said);
+            if (banner) host.append(banner);
             host.append(browse(state, handlers));
         }
         const scroller = host.querySelector('.market-body');

@@ -1,6 +1,6 @@
 """BossMod AI — Settings-related Pydantic models.
 
-AI Connections, AI Personalities, and API input models.
+AI Connections and API input models.
 """
 
 from __future__ import annotations
@@ -87,31 +87,3 @@ class AIConnectionUpdate(BaseModel):
             return {}
         return levels
 
-
-# ---------------------------------------------------------------------------
-# AI Personalities
-# ---------------------------------------------------------------------------
-
-class AIPersonality(BaseModel):
-    """A reusable prompt template for agent roles."""
-
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    name: str
-    prompt_template: str
-    created_at: datetime
-
-
-class AIPersonalityCreate(BaseModel):
-    """Payload for creating a new AI personality."""
-
-    name: str
-    prompt_template: str
-
-
-class AIPersonalityUpdate(BaseModel):
-    """Partial update for an AI personality."""
-
-    name: str | None = None
-    prompt_template: str | None = None

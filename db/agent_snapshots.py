@@ -23,7 +23,7 @@ from db.crud import fetch_all, insert_returning, query
 
 _SNAPSHOT_COLUMNS = (
     "id, agent_id, name, role, description, done_fail_bar, communication, "
-    "prompt_template, color, connection_id, thinking_social, thinking_work, "
+    "color, connection_id, thinking_social, thinking_work, "
     "desk_x, desk_y, prompt_history_policy, "
     "captured_at, deleted_at"
 )
@@ -84,16 +84,15 @@ def capture_agent_snapshot(
         f"""
         INSERT INTO agent_snapshots (
             agent_id, name, role, description, done_fail_bar, communication,
-            prompt_template, color, connection_id, thinking_social, thinking_work,
+            color, connection_id, thinking_social, thinking_work,
             desk_x, desk_y, prompt_history_policy, captured_at, deleted_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (agent_id) DO UPDATE SET
             name = excluded.name,
             role = excluded.role,
             description = excluded.description,
             done_fail_bar = excluded.done_fail_bar,
             communication = excluded.communication,
-            prompt_template = excluded.prompt_template,
             color = excluded.color,
             connection_id = excluded.connection_id,
             thinking_social = excluded.thinking_social,
@@ -112,7 +111,6 @@ def capture_agent_snapshot(
             agent.description,
             agent.done_fail_bar,
             dump_communication_json(agent.communication, specialty=agent.role),
-            agent.prompt_template,
             agent.color,
             agent.connection_id,
             agent.thinking_social,

@@ -21,7 +21,7 @@ from db.crud import build_update_returning, execute, fetch_all, fetch_one, inser
 
 _TEMPLATE_COLUMNS = (
     "id, source, pack_id, source_url, category, title, specialty, description, "
-    "what_done_looks_like, personality_hint, tools_hint, communication, "
+    "what_done_looks_like, tools_hint, communication, "
     "author_name, author_url, "
     "commit_sha, content_hash, installed_at, updated_at"
 )
@@ -33,7 +33,6 @@ _MUTABLE_COLUMNS = {
     "specialty",
     "description",
     "what_done_looks_like",
-    "personality_hint",
     "tools_hint",
     "communication",
     "author_name",
@@ -52,7 +51,6 @@ _LOCAL_MUTABLE_COLUMNS = {
     "specialty",
     "description",
     "what_done_looks_like",
-    "personality_hint",
     "communication",
     "updated_at",
 }
@@ -134,7 +132,6 @@ def upsert_agent_template(
     specialty: str,
     description: str,
     what_done_looks_like: str,
-    personality_hint: str | None,
     tools_hint: list[str],
     communication: dict[str, str] | None = None,
     author_name: str | None,
@@ -190,7 +187,6 @@ def upsert_agent_template(
                 "specialty": specialty,
                 "description": description,
                 "what_done_looks_like": what_done_looks_like,
-                "personality_hint": personality_hint,
                 "tools_hint": encoded_tools,
                 "communication": encoded_communication,
                 "author_name": author_name,
@@ -213,10 +209,10 @@ def upsert_agent_template(
         f"""
         INSERT INTO agent_templates (
             source, pack_id, source_url, category, title, specialty,
-            description, what_done_looks_like, personality_hint, tools_hint,
+            description, what_done_looks_like, tools_hint,
             communication, author_name, author_url, commit_sha, content_hash,
             installed_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
         RETURNING {_TEMPLATE_COLUMNS}
         """,
         [
@@ -228,7 +224,6 @@ def upsert_agent_template(
             specialty,
             description,
             what_done_looks_like,
-            personality_hint,
             encoded_tools,
             encoded_communication,
             author_name,
@@ -249,7 +244,6 @@ def save_local_template(
     specialty: str,
     description: str,
     what_done_looks_like: str,
-    personality_hint: str | None,
     communication: dict[str, str] | None,
     replace: bool,
 ) -> AgentTemplate:
@@ -272,7 +266,6 @@ def save_local_template(
         specialty: The role. Required: a template fills it.
         description: Required for the same reason.
         what_done_looks_like: May be empty.
-        personality_hint: The visible name of a personality, or ``None``.
         communication: The four closed enums, or ``None``.
         replace: Whether an existing local template of this title is replaced.
 
@@ -305,7 +298,6 @@ def save_local_template(
                     "specialty": specialty,
                     "description": description,
                     "what_done_looks_like": what_done_looks_like,
-                    "personality_hint": personality_hint,
                     "communication": encoded_communication,
                     "updated_at": now,
                 },
@@ -322,11 +314,11 @@ def save_local_template(
             f"""
             INSERT INTO agent_templates (
                 source, pack_id, source_url, category, title, specialty,
-                description, what_done_looks_like, personality_hint, tools_hint,
+                description, what_done_looks_like, tools_hint,
                 communication, author_name, author_url, commit_sha, content_hash,
                 installed_at, updated_at
-            ) VALUES ('local', NULL, NULL, $1, $2, $3, $4, $5, $6, '[]', $7,
-                      NULL, NULL, NULL, NULL, $8, $9)
+            ) VALUES ('local', NULL, NULL, $1, $2, $3, $4, $5, '[]', $6,
+                      NULL, NULL, NULL, NULL, $7, $8)
             RETURNING {_TEMPLATE_COLUMNS}
             """,
             [
@@ -335,7 +327,6 @@ def save_local_template(
                 specialty,
                 description,
                 what_done_looks_like,
-                personality_hint,
                 encoded_communication,
                 now,
                 now,

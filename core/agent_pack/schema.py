@@ -2,7 +2,7 @@
 
 YAML is parsed with SafeLoader and treated as a mapping of hire-contract
 fields. Unknown keys are recorded and ignored, and so is optional metadata
-(personality hint, pack author) that is over its cap or invalid: it is left
+(pack author) that is over its cap or invalid: it is left
 out and listed in ``ignored_keys``, never cut short. Dangerous keys (shell,
 credentials, code execution) are rejected. Nothing in a pack is executed.
 """
@@ -41,7 +41,6 @@ PACK_KIND_AGENT = "agent"
 # Reserved for later pack types. v1 implements agent packs only.
 RESERVED_PACK_KINDS = frozenset({"agent", "skill", "workflow"})
 MAX_PACK_BYTES = 65_536
-PERSONALITY_HINT_MAX_LEN = HIRE_ROLE_MAX_LEN
 TOOLS_HINT_MAX_ITEMS = 24
 TOOLS_HINT_ITEM_MAX_LEN = 40
 PACK_AUTHOR_NAME_MAX_LEN = 80
@@ -55,7 +54,6 @@ _CANONICAL_KEYS = (
     "specialty",
     "description",
     "what_done_looks_like",
-    "personality_hint",
     "tools_hint",
     "communication",
     "mission",
@@ -69,7 +67,6 @@ _FIELD_ALIASES = {
     "role": "specialty",
     "done_fail_bar": "what_done_looks_like",
     "what-done-looks-like": "what_done_looks_like",
-    "personality": "personality_hint",
     "tools": "tools_hint",
     "in-scope": "in_scope",
     "out-of-scope": "out_of_scope",
@@ -154,7 +151,6 @@ class AgentPack:
     specialty: str
     description: str
     what_done_looks_like: str
-    personality_hint: str | None = None
     tools_hint: tuple[str, ...] = ()
     communication: CommunicationContract = field(default_factory=lambda: parse_communication(None))
     pack_author: PackAuthor | None = None
@@ -171,8 +167,6 @@ class AgentPack:
             "description": self.description,
             "done_fail_bar": self.what_done_looks_like,
         }
-        if self.personality_hint:
-            fields["personality_hint"] = self.personality_hint
         if self.tools_hint:
             fields["tools_hint"] = list(self.tools_hint)
         fields["communication"] = self.communication.as_dict()
@@ -189,8 +183,6 @@ class AgentPack:
         data["specialty"] = self.specialty
         data["description"] = self.description
         data["what_done_looks_like"] = self.what_done_looks_like
-        if self.personality_hint:
-            data["personality_hint"] = self.personality_hint
         if self.tools_hint:
             data["tools_hint"] = list(self.tools_hint)
         data["communication"] = self.communication.as_dict()
@@ -245,7 +237,6 @@ def parse_pack_yaml(raw: str | bytes) -> AgentPack:
 def export_agent_pack(
     agent: Agent,
     *,
-    personality_hint: str | None = None,
     pack_author: PackAuthor | None = None,
     dropped: Sequence[str] = (),
 ) -> AgentPack:
@@ -253,11 +244,9 @@ def export_agent_pack(
 
     Description and done bar are exported whole. A specialty over the label
     cap is refused rather than shortened, so a round trip never loses text.
-    A personality hint over its cap is left out and reported instead.
 
     Args:
         agent: The agent whose profile is exported.
-        personality_hint: Optional personality name to carry as a hint.
         pack_author: Optional authorship, already built by the caller.
         dropped: Metadata keys the caller already left out (e.g. from
             ``pack_author_from_company``); carried into ``ignored_keys``.
@@ -285,23 +274,15 @@ def export_agent_pack(
     done = normalize_hire_text(agent.done_fail_bar)
     if not done:
         done = suggest_finish_line(specialty, description)
-    hint_dropped: list[str] = []
-    hint = _optional_metadata(
-        personality_hint,
-        max_len=PERSONALITY_HINT_MAX_LEN,
-        field_name="personality_hint",
-        dropped=hint_dropped,
-    )
     return AgentPack(
         schema=SCHEMA_ID,
         kind=PACK_KIND_AGENT,
         specialty=specialty,
         description=description,
         what_done_looks_like=done,
-        personality_hint=hint,
         communication=communication_from_agent(agent),
         pack_author=pack_author,
-        ignored_keys=tuple(dropped) + tuple(hint_dropped),
+        ignored_keys=tuple(dropped),
     )
 
 
@@ -375,12 +356,6 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
     # Prompt prose: unbounded here; MAX_PACK_BYTES is the only size guard.
     description = _required_text(normalized, "description", None)
     done = _required_text(normalized, "what_done_looks_like", None)
-    personality_hint = _optional_metadata(
-        normalized.get("personality_hint"),
-        max_len=PERSONALITY_HINT_MAX_LEN,
-        field_name="personality_hint",
-        dropped=ignored,
-    )
     tools_hint = _optional_tools_hint(normalized.get("tools_hint"))
     communication = _optional_communication(
         normalized.get("communication"),
@@ -403,7 +378,6 @@ def _pack_from_mapping(loaded: dict[Any, Any]) -> AgentPack:
         specialty=specialty,
         description=description,
         what_done_looks_like=done,
-        personality_hint=personality_hint,
         tools_hint=tools_hint,
         communication=communication,
         pack_author=pack_author,
@@ -481,7 +455,7 @@ def _optional_metadata(
 ) -> str | None:
     """Read optional pack metadata; omit and report it rather than fail.
 
-    Metadata (personality hint, author name) never decides whether a pack is
+    Metadata (author name) never decides whether a pack is
     valid, so an unusable value is left out, never cut short and never fatal.
 
     Args:

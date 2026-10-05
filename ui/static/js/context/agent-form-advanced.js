@@ -3,20 +3,11 @@
  *
  * The sixth field group, split from context/agent-form-fields.js because on
  * its own it is 120 lines of markup: what "done" looks like, the runtime-core
- * preview, personality, desk assignment, and the AI-history policy. Everything
- * here is optional — the disclosure is collapsed by default, which is the
- * point of the section.
+ * preview, desk assignment, and the AI-history policy. Everything here is
+ * optional — the disclosure is collapsed by default, which is the point of the
+ * section.
  *
- * A RECREATED AGENT'S PROMPT MAY MATCH NO PERSONALITY. The dropdown is matched
- * by `prompt_template` text, and a snapshot can carry a prompt no configured
- * personality holds any more — edited, deleted, or never one of them. Shown as
- * "No personality" it would be dropped on save, so it gets one extra, selected
- * option, `Kept from <name>` (context/agent-form-choices.js), and a hidden
- * input carrying the text itself, which context/agent-submit.js sends.
- * Recreate only: an edit that saves no personality leaves the agent's prompt
- * as it was.
- *
- * The dropdowns — personality, desk, communication — are rendered here only
+ * The dropdowns — desk, communication — are rendered here only
  * as empty mount points; context/agent-form-choices.js builds them.
  *
  * It no longer imports a pack from a URL. That box could fill these fields and
@@ -35,26 +26,15 @@ const BossModAgentFormAdvanced = (() => {
      * @param {object|null} values  What the fields show: the agent being
      *   edited, or the snapshot being recreated. null for a blank form.
      * @param {object} view
-     * @param {object[]} view.personalities
      * @param {object[]} view.roster                 Peers, for desk occupancy.
      * @param {object} view.promptHistoryPolicy      Merged over the defaults by
      *   the caller, so every field here has a value to show.
-     * @param {{label: string, text: string}|null} [view.keptPrompt]  A
-     *   recreated prompt no personality matches: offered as the selected
-     *   `Kept from <name>` option (context/agent-form-choices.js) plus the
-     *   hidden `prompt_template_kept` input rendered here. Offered even when Settings holds no personality at all, since
-     *   the prompt would otherwise have nowhere on the form to live.
      * @returns {string}
      */
     function advancedSection(values, view) {
-        const { personalities, roster, promptHistoryPolicy } = view;
-        const kept = view.keptPrompt || null;
+        const { roster, promptHistoryPolicy } = view;
         const DEFAULT_PROMPT_HISTORY_POLICY = BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY;
         const { noFreeDesk } = BossModAgentFields.deskChoice(values, roster);
-        const keptInput = kept
-            ? `<input type="hidden" name="prompt_template_kept" value="${BossModFormat.escapeAttribute(kept.text)}">`
-            : '';
-        const noPersonalities = personalities.length === 0 && !kept;
         const earliestAllowedValue = promptHistoryPolicy.earliest_ts_allowed
             ? new Date(promptHistoryPolicy.earliest_ts_allowed).toISOString().slice(0, 16)
             : '';
@@ -64,7 +44,7 @@ const BossModAgentFormAdvanced = (() => {
                 <span>
                     <span class="advanced-title">Advanced</span>
                     <span class="field-hint">
-                        Optional: what done looks like, runtime core, prompt template, and desk.
+                        Optional: what done looks like, runtime core, and desk.
                     </span>
                 </span>
                 <i data-lucide="chevron-right" class="advanced-chevron" id="advanced-chevron"></i>
@@ -91,16 +71,6 @@ const BossModAgentFormAdvanced = (() => {
                     <p class="field-hint">
                         Shared every turn. Not a hire novel — specialty quality bars stay in Description.
                     </p>
-                </div>
-                <div class="field">
-                    <label class="field-label" for="agent-personality">Personality</label>
-                    ${noPersonalities
-                        ? `<p class="field-hint">No personalities configured.
-                             <button type="button" id="btn-goto-personalities" class="btn-link">Add one in Settings</button></p>`
-                        : `<p class="field-hint">Optional. Copies a prompt template into this agent; leave empty to keep the default.</p>
-                           <span id="agent-personality-mount"></span>
-                           ${keptInput}`
-                    }
                 </div>
                 <div class="field">
                     <label class="field-label" for="agent-desk">Desk Assignment</label>

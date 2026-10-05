@@ -763,8 +763,7 @@ def test_awoken_channel_turn_has_a_soft_pass_line() -> None:
     assert trigger_event.count("Choose speak or pass. Pass uses observe and does not post to the channel.") == 2
     assert decision.count("If you need someone specific to act next, @ them by name. Do not invent @everyone.") == 2
     assert _ECHO_PASS not in Path("prompts/system_prompt.md").read_text(encoding="utf-8")
-    for path in Path("prompts/personalities").glob("*.md"):
-        assert _ECHO_PASS not in path.read_text(encoding="utf-8")
+    assert _ECHO_PASS not in Path("prompts/default_role.md").read_text(encoding="utf-8")
 
 
 def test_trigger_event_prompt_names_no_extension_commands() -> None:

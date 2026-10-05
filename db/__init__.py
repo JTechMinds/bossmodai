@@ -32,6 +32,7 @@ from db.agents import (
     list_vacationing_agents,
     purge_orphan_agent_rows,
     set_agent_cli_auto_approve_dm,
+    set_agent_pack_link,
     update_agent,
     update_agent_state,
 )
@@ -377,16 +378,6 @@ from db.agent_schedules import (
     update_schedule,
 )
 
-# AI Personalities
-from db.ai_personalities import (
-    create_personality,
-    delete_personality,
-    force_reseed_personalities,
-    get_personality,
-    list_personalities,
-    update_personality,
-)
-
 # Diagnostics
 from db.diagnostics import (
     create_diagnostic,
@@ -429,6 +420,7 @@ __all__ = [
     "list_vacationing_agents",
     "purge_orphan_agent_rows",
     "set_agent_cli_auto_approve_dm",
+    "set_agent_pack_link",
     "update_agent",
     "update_agent_state",
     "normalize_agent_personal_storage_roots",
@@ -668,13 +660,6 @@ __all__ = [
     "list_schedules_for_agent",
     "record_outcome",
     "update_schedule",
-    # AI Personalities
-    "create_personality",
-    "delete_personality",
-    "force_reseed_personalities",
-    "get_personality",
-    "list_personalities",
-    "update_personality",
     # Diagnostics
     "create_diagnostic",
     "extract_reply",

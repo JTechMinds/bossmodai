@@ -80,7 +80,6 @@ def test_create_captures_the_setup_and_its_policy() -> None:
         done_fail_bar="A checkable allow/deny exists.",
         communication={"tone": "direct", "density": "compact", "jargon": "light",
                        "audience": "operator"},
-        prompt_template="You are terse.",
         color="#1d4ed8",
         connection_id=conn_id,
         thinking_work="high",
@@ -95,7 +94,6 @@ def test_create_captures_the_setup_and_its_policy() -> None:
     assert snap.communication == agent.communication == {
         "tone": "direct", "density": "compact", "jargon": "light", "audience": "operator",
     }
-    assert snap.prompt_template == "You are terse."
     assert snap.color == "#1d4ed8"
     assert (snap.connection_id, snap.thinking_social, snap.thinking_work) == (
         conn_id, "default", "high",

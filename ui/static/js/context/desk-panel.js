@@ -17,7 +17,8 @@
  * cannot drift one module at a time.
  *
  * TWO COLUMNS: the work (Tasks, Schedules, Files) in the main column, and who the agent
- * is (About, Details, Notes, Extensions) in the aside. The actions on the
+ * is (About, Details, Notes, Extensions) in the aside. About carries the pack
+ * the agent was hired from, and its per-agent update (context/desk-pack.js). The actions on the
  * agent are the HEAD's, as in every other modal: Chat and Edit role as icon
  * tools, and Diagnostics, Reset runtime and Remove behind the `⋯`
  * (places/tasks/task-detail.js's pattern). Destructive actions belong behind
@@ -134,6 +135,8 @@ const BossModDeskPanel = (() => {
         // tick: a <details> replaced on every world_update would snap shut
         // under an operator who had just opened it.
         const contractEl = h('div', { class: 'callout-body desk-bar' });
+        // Hidden for an agent not hired from a pack.
+        const pack = BossModDeskPack.createDeskPack({ api, agentId });
 
         const tasks = BossModDeskTasks.createDeskTasks({
             api, agentId, onOpenTask: (taskId) => { void taskOpener.open(taskId); },
@@ -197,7 +200,7 @@ const BossModDeskPanel = (() => {
                     section('Files', null, files.element)),
                 h('aside', { class: 'desk-aside', 'aria-label': 'About this agent' },
                     section('About', null, h('div', { class: 'desk-about-block' },
-                        roleEl, pillEl, aboutEl,
+                        roleEl, pillEl, pack.element, aboutEl,
                         h('details', { class: 'desk-contract' },
                             h('summary', {},
                                 h('i', { 'data-lucide': 'scroll-text', 'aria-hidden': 'true' }),
@@ -294,6 +297,8 @@ const BossModDeskPanel = (() => {
             if (destroyed) return;
             renderProfile();
             void actions.refresh();
+            // A role edit can make the contract "edited" against its pack.
+            void pack.refresh();
             // A role edit can rewrite the workspace; re-read it.
             void notes.refresh();
         }
@@ -315,6 +320,16 @@ const BossModDeskPanel = (() => {
                 }
             }
             renderProfile();
+        }));
+        // The pack line re-reads when this agent was updated, or the catalog
+        // moved: a local read, and never on the roster's every tick.
+        disposers.push(bus.subscribe('activity', (entry) => {
+            const event = String((entry && entry.event) || '');
+            const who = agent();
+            if (event === 'agent_packs_updated'
+                || (event === 'agent_updated' && who && entry.agent_name === who.name)) {
+                void pack.refresh();
+            }
         }));
         disposers.push(bus.subscribe('agent_presence', (data) => {
             if (!data || data.agent_id !== agentId) return;
@@ -359,6 +374,7 @@ const BossModDeskPanel = (() => {
                 files.destroy();
                 notes.destroy();
                 deskExtensions.destroy();
+                pack.destroy();
             },
         };
     }

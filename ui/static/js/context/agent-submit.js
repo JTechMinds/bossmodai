@@ -9,11 +9,12 @@
  *
  * The AI connection is sent as its id, with the two thinking levels: the
  * server checks that the connection exists, has a model and offers the
- * levels, and the runtime reads the connection live. One resolution still
- * happens here, because the form offers a friendlier thing than the agent
- * stores: a personality is a prompt template to copy. The one personality that
- * is not a personality — a recreated agent's prompt kept because nothing
- * configured matches it — sends the kept text itself.
+ * levels, and the runtime reads the connection live.
+ *
+ * `template_id` is the installed template the hire form was filled from
+ * (context/agent-form-template.js adds it as a hidden input). The server links
+ * a hire from a pack template to its pack so the agent can be updated later;
+ * the edit form never carries the input, so an edit sends null.
  *
  * The colour is validated the same way, and for the same reason: an agent whose
  * seed is too light is drawn on the office floor as a sprite nobody can pick
@@ -32,8 +33,7 @@ const BossModAgentSubmit = (() => {
      * @returns {Promise<{agentData: object, promptHistoryPolicy: object}>}
      *   `agentData.connection_id` is null while no connection is chosen.
      * @throws {Error} When the chosen colour is too light to render as a
-     *   visible agent, or when the kept personality is chosen and its text is
-     *   not on the form. Refused rather than darkened: silently saving a
+     *   visible agent. Refused rather than darkened: silently saving a
      *   different colour than the operator picked is the behaviour this
      *   codebase forbids.
      */
@@ -66,26 +66,7 @@ const BossModAgentSubmit = (() => {
             desk_x,
             desk_y,
         };
-
-        // Resolve personality → copy prompt_template
-        const personalityId = formData.get('personality_id');
-        if (personalityId === BossModAgentFields.KEPT_PERSONALITY) {
-            // A recreated agent's own prompt, which no personality holds now
-            // (context/agent-form-advanced.js): the text rides in the form.
-            const kept = formData.get('prompt_template_kept');
-            if (kept === null) {
-                throw new Error('The kept prompt template is missing from the form.');
-            }
-            agentData.prompt_template = kept;
-        } else if (personalityId) {
-            try {
-                const res = await apiFetch(`/api/personalities/${personalityId}`);
-                if (res.ok) {
-                    const personality = await res.json();
-                    agentData.prompt_template = personality.prompt_template;
-                }
-            } catch { /* use null */ }
-        }
+        agentData.template_id = formData.get('template_id') || null;
 
         // The connection's id and the thinking levels, as the section's hidden
         // inputs hold them (context/agent-form-connections.js). The server

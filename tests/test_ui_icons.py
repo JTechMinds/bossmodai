@@ -25,7 +25,6 @@ HARNESS = Path(__file__).resolve().parent / "js_icons_harness.cjs"
 # are built by modules that do not paint their own (conversation/composer.js
 # builds two and paints none).
 CALL_SITES = {
-    "settings/settings-personalities.js": "BossModIcons.paint(container, 'settings-personalities')",
     "settings/settings-view.js": "BossModIcons.paint(nav, 'settings-view.renderNav')",
     "settings/settings-connections.js": "BossModIcons.paint(container, 'settings-connections')",
     "settings/settings-telegram.js": "BossModIcons.paint(el, 'settings-telegram')",

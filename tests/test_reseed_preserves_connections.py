@@ -2,7 +2,7 @@
 
 A base URL and an API key are the one thing an operator cannot regenerate from
 inside the app, so the reseed restores them. Everything else — agents, tasks,
-chat history, personalities — is what the reseed is for, so these tests pin the
+chat history — is what the reseed is for, so these tests pin the
 destruction as hard as they pin the survival.
 
 The round trip runs a *real* ``reset_database()``: a double would not catch a
@@ -105,17 +105,12 @@ def test_restored_key_is_still_encrypted_at_rest() -> None:
 
 
 def test_reseed_still_destroys_everything_else() -> None:
-    personality = db.create_personality(
-        name="Reseed Victim",
-        prompt_template="You do not survive the reseed.",
-    )
     agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
 
     preserved = db.list_connections()
     db.reset_database()
     db.restore_connections(preserved)
 
-    assert db.get_personality(personality.id) is None
     assert db.get_agent(agent.id) is None
 
 

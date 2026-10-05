@@ -1,8 +1,8 @@
 /**
  * BossMod AI — Settings form chrome shared across sections.
  *
- * Primary Save / Create actions use the same accent button as AI Connections
- * and Personalities forms (`settings-connections-form.js`, etc.).
+ * Primary Save / Create actions use the same accent button as the AI
+ * Connections form (`settings-connections-form.js`, etc.).
  */
 const BossModSettingsChrome = (() => {
     const PRIMARY_ACTION = (

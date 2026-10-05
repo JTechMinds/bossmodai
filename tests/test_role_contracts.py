@@ -308,9 +308,8 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     ).read_text(encoding="utf-8")
     assert 'id="advanced-toggle"' in panel
     assert "Advanced" in panel
-    # The personality dropdown is mounted into this point
-    # (context/agent-form-choices.js), so its place in the form is the mount's.
-    assert 'id="agent-personality-mount"' in panel
+    # AI Personalities are retired: the form has no personality control.
+    assert 'id="agent-personality-mount"' not in panel
     assert "suggestFinishLine" in specialty_js
     assert "A named draft or document exists. Empty done does not count." in specialty_js
     assert panel.index('name="name"') < panel.index('name="role"')
@@ -321,12 +320,12 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     assert panel.index('name="description"') < panel.index(">Color</legend>")
     assert panel.index(">Color</legend>") < panel.index("Advanced")
     assert panel.index("Advanced") < panel.index('name="done_fail_bar"')
-    assert panel.index('name="done_fail_bar"') < panel.index('id="agent-personality-mount"')
+    assert panel.index('name="done_fail_bar"') < panel.index("Desk Assignment")
     assert panel.index("Advanced") < panel.index("Desk Assignment")
     assert panel.index('name="description"') < panel.index("Desk Assignment")
     assert "nextUnusedAgentColor" in panel
-    assert "prompt template, and desk" in panel or "runtime core, prompt template, and desk" in panel
-    assert "runtime core, prompt template, and desk" in panel
+    assert "runtime core, and desk" in panel
+    assert "prompt template" not in panel
     assert "prompt template, color, and desk" not in panel
     assert "Runtime core" in panel
     assert 'id="runtime-core-preview"' in panel
@@ -338,7 +337,7 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     # dropdowns take their starting values from the mount, so that is where
     # `values` goes.
     form_js = Path("ui/static/js/context/agent-form.js").read_text(encoding="utf-8")
-    assert "BossModAgentFormChoices.mount(form, { personalities, roster, values, kept: keptPrompt });" in form_js
+    assert "BossModAgentFormChoices.mount(form, { roster, values });" in form_js
     advanced = Path("ui/static/js/context/agent-form-advanced.js").read_text(encoding="utf-8")
     assert 'id="agent-communication-${field}-mount"' in advanced
     choices = Path("ui/static/js/context/agent-form-choices.js").read_text(encoding="utf-8")
@@ -346,7 +345,7 @@ def test_hire_form_keeps_casual_fields_and_moves_finish_line_to_advanced() -> No
     submit_js = Path("ui/static/js/context/agent-submit.js").read_text(encoding="utf-8")
     for key in ("tone", "density", "jargon", "audience"):
         assert f"communication_{key}" in submit_js
-    assert panel.index("Runtime core") < panel.index('id="agent-personality-mount"')
+    assert panel.index("Runtime core") < panel.index("Desk Assignment")
     agent_status_js = Path("ui/static/js/core/agent-status.js").read_text(encoding="utf-8")
     assert "nextUnusedAgentColor" in agent_status_js
     assert "mergeRosterFromWorld" in agent_status_js

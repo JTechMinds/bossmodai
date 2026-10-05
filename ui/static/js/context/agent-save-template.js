@@ -8,8 +8,8 @@
  * form into the same library the picker reads, as a LOCAL template
  * (`source: 'local'`) — no pack, no URL, no pin, nothing fetched.
  *
- * THE ROLE CONTRACT, AND NOTHING ELSE. Specialty, description, what-done, the
- * personality by name, and the four communication enums: the fields a template
+ * THE ROLE CONTRACT, AND NOTHING ELSE. Specialty, description, what-done and
+ * the four communication enums: the fields a template
  * is allowed to fill (context/agent-form-template.js's `templateFields` is the
  * same list, read the other way). Never the name, the colour or a connection —
  * a template that could write those would overwrite the next operator's draft
@@ -30,7 +30,6 @@ const BossModAgentSaveTemplate = (() => {
     // The inline confirm strip both marketplace views ask with. A save that
     // would overwrite is the same kind of question as an uninstall.
     const DETAIL = BossModMarketplaceDetail;
-    const FIELDS = BossModAgentFields;
 
     /**
      * The shelf a template with no other home goes on. A slug, because the
@@ -72,25 +71,6 @@ const BossModAgentSaveTemplate = (() => {
     const opening = BossModGates.createInFlightGate();
 
     /**
-     * The personality a form has chosen, by the name the library stores.
-     *
-     * @param {HTMLFormElement} form
-     * @returns {string|null} null for "No personality" and for the kept
-     *   option, which is one agent's own prompt text and names no personality
-     *   a template could ask another machine for.
-     */
-    function personalityHint(form) {
-        // The personality control is a BossModMenuSelect
-        // (context/agent-form-choices.js); absent when Settings holds none.
-        const node = form.querySelector('[name="personality_id"]');
-        if (!node) return null;
-        const menu = BossModMenuSelect.instanceFor(node);
-        const chosen = menu.getValue();
-        if (!chosen || chosen === FIELDS.KEPT_PERSONALITY) return null;
-        return menu.getLabel().trim() || null;
-    }
-
-    /**
      * The role contract a form is carrying right now.
      *
      * PURE, and read at the moment it is asked for: what gets saved is what is
@@ -98,8 +78,7 @@ const BossModAgentSaveTemplate = (() => {
      *
      * @param {HTMLFormElement} form
      * @returns {{specialty: string, description: string,
-     *   what_done_looks_like: string, personality_hint: string|null,
-     *   communication: object}} Trimmed strings, and the four closed enums
+     *   what_done_looks_like: string, communication: object}} Trimmed strings, and the four closed enums
      *   resolved the way context/agent-submit.js resolves them for the agent
      *   itself, so a template and an agent made from one form agree.
      */
@@ -113,7 +92,6 @@ const BossModAgentSaveTemplate = (() => {
             specialty,
             description: text('textarea[name="description"]'),
             what_done_looks_like: text('[name="done_fail_bar"]'),
-            personality_hint: personalityHint(form),
             communication: BossModCommunication.resolve({
                 tone: text('[name="communication_tone"]'),
                 density: text('[name="communication_density"]'),

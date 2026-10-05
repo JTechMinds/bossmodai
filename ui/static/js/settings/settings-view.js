@@ -14,7 +14,6 @@ const SettingsView = (() => {
 
     const NAV_ITEMS = [
         { id: 'connections',   label: 'AI Connections',  icon: 'plug' },
-        { id: 'personalities', label: 'AI Personalities', icon: 'brain' },
         { id: 'system',       label: 'System Settings',  icon: 'sliders' },
         { id: 'cli-policy',   label: 'CLI Policy',       icon: 'terminal' },
         { id: 'nest-git',     label: 'Nest git',         icon: 'git-branch' },
@@ -167,9 +166,6 @@ const SettingsView = (() => {
         switch (sectionId) {
             case 'connections':
                 ConnectionsSection.render(content);
-                break;
-            case 'personalities':
-                PersonalitiesSection.render(content);
                 break;
             case 'system':
                 SystemSection.render(content);

@@ -18,7 +18,7 @@
  * exists for escaping safety and its priority follows the data (spec 6.7):
  * task titles, file names and agent OUTPUT flow through places/, while every
  * value interpolated here is operator-entered configuration — an agent name, a
- * specialty, a connection or personality the operator created in Settings —
+ * specialty, a connection the operator created in Settings —
  * and each one already passes through BossModFormat.escapeHtml. Converting
  * ~380 lines of working, heavily asserted form markup for a data class the
  * rule was not written for would be scope creep with real regression risk, and

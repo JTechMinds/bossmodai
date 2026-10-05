@@ -75,7 +75,6 @@ SETTINGS_SCRIPTS = [
     "js/settings/settings-connections-form.js",
     "js/settings/settings-system-ai.js",
     "js/settings/settings-connections.js",
-    "js/settings/settings-personalities.js",
     "js/settings/settings-system-meta.js",
     "js/settings/settings-system.js",
     "js/settings/settings-prompt-template.js",
@@ -267,7 +266,7 @@ def test_the_dock_era_is_gone_from_disk() -> None:
 # The two `context/agent-form-*` modules are Phase 4's decision on the same
 # question, made explicitly rather than left ambiguous (Task 4 Step 2). Every
 # value they interpolate is operator-entered configuration — an agent name, a
-# specialty, a connection or a personality created in Settings — and each one
+# specialty or a connection created in Settings — and each one
 # already goes through BossModFormat.escapeHtml. They are named INDIVIDUALLY,
 # not by a `context/agent-*` prefix: agent-api.js, agent-edit.js,
 # agent-fields.js, agent-form-bindings.js, agent-recovery.js and

@@ -47,6 +47,8 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/agents/{agent_id}/desk/open-folder", "open_agent_desk_folder"),
     (("POST",), "/api/agents", "create_agent"),
     (("PATCH",), "/api/agents/{agent_id}", "update_agent"),
+    (("GET",), "/api/agents/{agent_id}/pack-status", "get_agent_pack_status"),
+    (("POST",), "/api/agents/{agent_id}/pack-update", "update_agent_from_pack"),
     (("PATCH",), "/api/agents/{agent_id}/cli-auto-approve", "set_agent_cli_auto_approve"),
     (("PATCH",), "/api/agents/{agent_id}/prompt-history-policy", "update_agent_prompt_history_policy"),
     (("DELETE",), "/api/agents", "delete_all_agents"),
@@ -54,6 +56,8 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/agents/{agent_id}/pack", "export_agent_pack"),
     (("GET",), "/api/agent-packs", "list_agent_packs"),
     (("POST",), "/api/agent-packs/import", "import_agent_pack"),
+    (("GET",), "/api/agent-packs/updates", "check_agent_pack_updates"),
+    (("POST",), "/api/agent-packs/updates/apply", "apply_agent_pack_updates"),
     (("GET",), "/api/agent-templates", "list_agent_templates"),
     (("POST",), "/api/agent-templates", "install_agent_template"),
     (("DELETE",), "/api/agent-templates/{template_id}", "uninstall_agent_template"),
@@ -146,11 +150,6 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/connections/{connection_id}/duplicate", "duplicate_connection"),
     (("DELETE",), "/api/connections/{connection_id}", "delete_connection"),
     (("POST",), "/api/connections/test", "test_connection"),
-    (("GET",), "/api/personalities", "list_personalities"),
-    (("GET",), "/api/personalities/{personality_id}", "get_personality"),
-    (("POST",), "/api/personalities", "create_personality"),
-    (("PATCH",), "/api/personalities/{personality_id}", "update_personality"),
-    (("DELETE",), "/api/personalities/{personality_id}", "delete_personality"),
     (("POST",), "/api/attachments/upload", "upload_attachment"),
     (("GET",), "/api/attachments/limits", "attachment_limits"),
     (("DELETE",), "/api/attachments/{attachment_id}", "delete_attachment"),
@@ -181,7 +180,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 157
+    assert len(got) == 156
 
 
 def test_from_api_routes_import_router_still_works() -> None:

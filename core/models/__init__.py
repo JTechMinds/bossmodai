@@ -2,7 +2,7 @@
 
 Re-exports every model for convenient top-level imports::
 
-    from core.models import Agent, AgentState, AIConnection, AIPersonality
+    from core.models import Agent, AgentState, AIConnection
 """
 
 from __future__ import annotations
@@ -56,9 +56,6 @@ from core.models.settings import (
     AIConnection,
     AIConnectionCreate,
     AIConnectionUpdate,
-    AIPersonality,
-    AIPersonalityCreate,
-    AIPersonalityUpdate,
 )
 from core.models.task import (
     AssigneeSuggestion,
@@ -152,8 +149,4 @@ __all__ = [
     "AIConnection",
     "AIConnectionCreate",
     "AIConnectionUpdate",
-    # AI Personalities
-    "AIPersonality",
-    "AIPersonalityCreate",
-    "AIPersonalityUpdate",
 ]

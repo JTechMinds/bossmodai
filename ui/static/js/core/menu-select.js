@@ -255,8 +255,7 @@ const BossModMenuSelect = (() => {
             },
 
             /**
-             * The current options, for a caller matching on them (a template
-             * names a personality by its label).
+             * The current options, for a caller matching on them by label.
              * @returns {Array<{value: string, label: string}>} A fresh copy;
              *   changing it changes nothing here.
              */

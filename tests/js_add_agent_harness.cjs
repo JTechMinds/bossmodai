@@ -101,7 +101,7 @@ function template(overrides) {
         specialty: "Reviews claims",
         description: "Reads a diff and reports what is not true. Cites files.",
         what_done_looks_like: "A checkable allow/deny exists.",
-        personality_hint: "Software Engineer", tools_hint: ["work"],
+        tools_hint: ["work"],
         author_name: "JTech Minds", author_url: "https://github.com/JTechMinds",
         commit_sha: PIN, content_hash: "hash-1",
         installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
@@ -152,7 +152,7 @@ const TEMPLATES = [
     template({
         id: "t2", pack_id: "feature-planner", category: "product-design",
         title: "Feature Planner", specialty: "Plans features",
-        description: "Breaks a goal into steps.", personality_hint: null,
+        description: "Breaks a goal into steps.",
         author_name: null, author_url: null,
     }),
 ];
@@ -197,7 +197,7 @@ function buildForm() {
     const done = h("textarea", { name: "done_fail_bar" });
     // The Advanced dropdowns' mount points, as agent-form-advanced.js renders
     // them; `buildForm` mounts the real controls into them.
-    const choiceMounts = ["agent-personality-mount", "agent-desk-mount",
+    const choiceMounts = ["agent-desk-mount",
         ...global.BossModCommunication.KEYS.map((key) => `agent-communication-${key}-mount`)]
         .map((id) => h("span", { id }));
     const advancedContent = h("div", { id: "advanced-content", class: "hidden" },
@@ -224,9 +224,7 @@ function buildForm() {
         global.BossModAgentFormConnections.shapeFor(connections),
     );
     // The real dropdowns, mounted the way context/agent-form.js mounts them.
-    global.BossModAgentFormChoices.mount(form, {
-        personalities: PERSONALITIES, roster: [], values: null, kept: null,
-    });
+    global.BossModAgentFormChoices.mount(form, { roster: [], values: null });
     global.BossModAgentFormBindings.bindAiConnection(form, connections, null);
     return form;
 }
@@ -272,8 +270,6 @@ const updates = [];
 const CONNECTIONS = [
     { id: "c1", name: "Local (llama)", model: "llama3.1:8b", api_base_url: "http://local/v1" },
 ];
-// What Settings holds: the one personality the template's hint names.
-const PERSONALITIES = [{ id: "p1", name: "Software Engineer", prompt_template: "be precise" }];
 
 function jsonResponse(body, status = 200) {
     return Promise.resolve({
@@ -304,7 +300,7 @@ global.apiFetch = (url, init) => {
             category: body.category, title: body.title, specialty: body.specialty,
             description: body.description,
             what_done_looks_like: body.what_done_looks_like,
-            personality_hint: body.personality_hint, tools_hint: [],
+            tools_hint: [],
             author_name: null, author_url: null, commit_sha: null, content_hash: null,
         }), 201);
     }
@@ -742,7 +738,9 @@ async function main() {
         && field('textarea[name="description"]').value
             === "Reads a diff and reports what is not true. Cites files."
         && field('textarea[name="done_fail_bar"]').value === "A checkable allow/deny exists."
-        && field('input[name="personality_id"]').value === "p1";
+        // Which template filled it rides in the form, for the hire's pack link.
+        && field('input[name="template_id"]').getAttribute("value") === "t1"
+        && field('input[name="personality_id"]') === null;
     // Both hire textareas are the agent's prompt: no length cap in markup.
     verdict.promptFieldsUncapped = !field('textarea[name="description"]').hasAttribute("maxlength")
         && !field('textarea[name="done_fail_bar"]').hasAttribute("maxlength");
@@ -820,11 +818,10 @@ async function main() {
         // Remove template answers nothing about the AI connection: the
         // question is still open, and the save-time refusal still stands.
         && after.querySelector('input[name="connection_id"]').value === "";
-    // Every field the template wrote, including the one applyHireFields only
-    // ever set: a personality left selected under a cleared form is a template
-    // that Remove template did not remove.
-    verdict.chipClearsThePersonalityToo =
-        after.querySelector('input[name="personality_id"]').value === "";
+    // ...and the template link goes with it: a form the template no longer
+    // fills must not hire an agent linked to that template's pack.
+    verdict.chipClearsTheTemplateLink =
+        after.querySelector('input[name="template_id"]') === null;
 
     // ─── 9. Blank builds the SAME form, minus the chip ───
     //
@@ -1600,6 +1597,7 @@ async function main() {
         && sent.description === "Turns merged PRs into notes."
         && sent.category === "engineering"
         && typeof sent.communication === "object"
+        && !("personality_hint" in sent)
         && !("name" in sent) && !("color" in sent) && !("connection_id" in sent);
     // It landed: the layer says where it went and offers one way out, and the
     // dialog's other views are told to re-read.

@@ -111,11 +111,19 @@ const BossModMarketplace = (() => {
             focusRequest: null,
         };
 
+        /** Re-derive every row's installed state from the library and the catalog. */
+        const reindex = () => Object.assign(state,
+            ITEMS.indexInstalled(state.templates, state.categories, state.withheld));
+        // The catalog-update banner over the grid; an apply re-reads catalog and library.
+        const updates = BossModMarketplaceUpdates.create({
+            api: API, onApplied: () => { void load(); deps.onLibraryChanged(); },
+        });
+
         function rerender() {
             state.visible = ITEMS.visible(state);
             state.selected = ITEMS.allItems(state)
                 .find((item) => item.key === state.selectedId) || null;
-            VIEW.render(host, state, handlers);
+            VIEW.render(host, state, handlers, updates.element);
             state.focusRequest = null;
             deps.onStepsChange();
         }
@@ -158,9 +166,7 @@ const BossModMarketplace = (() => {
             state.withheld = Array.isArray(catalog.withheld) ? catalog.withheld : [];
             state.pin = catalog.commit_sha || '';
             state.templates = Array.isArray(templates) ? templates : [];
-            Object.assign(state, ITEMS.indexInstalled(
-                state.templates, state.categories, state.withheld,
-            ));
+            reindex();
             const cards = state.categories.reduce((n, group) => n + (group.packs || []).length, 0);
             state.status = cards || state.installedExtras.length ? 'ready' : 'empty';
             rerender();
@@ -179,9 +185,7 @@ const BossModMarketplace = (() => {
                 const template = await API.installTemplate(body);
                 state.templates = await API.listTemplates();
                 changed = true;
-                Object.assign(state, ITEMS.indexInstalled(
-                    state.templates, state.categories, state.withheld,
-                ));
+                reindex();
                 const extra = state.installedExtras.some((row) => row.id === template.id);
                 // A URL install has no catalog card, so Installed is the only
                 // rail row it appears under. Land the operator where its row is,
@@ -227,9 +231,7 @@ const BossModMarketplace = (() => {
                 await API.uninstallTemplate(templateId);
                 state.templates = await API.listTemplates();
                 changed = true;
-                Object.assign(state, ITEMS.indexInstalled(
-                    state.templates, state.categories, state.withheld,
-                ));
+                reindex();
                 if (state.selectedId === `tpl:${templateId}`) state.selectedId = null;
                 state.notice = COPY.removed;
             } catch (err) {
@@ -373,9 +375,7 @@ const BossModMarketplace = (() => {
                 rerender();
                 return;
             }
-            Object.assign(state, ITEMS.indexInstalled(
-                state.templates, state.categories, state.withheld,
-            ));
+            reindex();
             rerender();
         }
 
@@ -388,7 +388,7 @@ const BossModMarketplace = (() => {
             activate() {
                 active = true;
                 deps.onStepsChange();
-                if (!started) { started = true; void load(); }
+                if (!started) { started = true; void load(); void updates.refresh(); }
             },
             deactivate() { active = false; deps.onStepsChange(); },
             refreshLibrary,

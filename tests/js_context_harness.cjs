@@ -125,6 +125,8 @@ const NAMES = [
     // The desk's Schedules section: the recurrence editor, its layer, the section.
     "BossModScheduleApi", "BossModScheduleView",
     "BossModScheduleFields", "BossModSchedulePreview", "BossModScheduleLayer", "BossModDeskSchedules",
+    // The desk's pack line, mounted in About.
+    "BossModDeskPack",
     "BossModDeskPanel",
     // The desk's task rows wear the Tasks place's status labels and open the
     // task as a layer over the desk through the Tasks place's own loader,
@@ -253,16 +255,13 @@ const NOTES = {
 // The installed template library GET /api/agent-templates answers with. ONE
 // row: what the QUICK layout does to the form is the subject here, not the
 // picker's grouping or its filter, which tests/js_add_agent_harness.cjs owns.
-// No personality hint — this harness answers /api/personalities with an empty
-// list, and a hint no personality matches is a note about the fixture rather
-// than anything under test.
 const TEMPLATES = [{
     id: "t1", source: "catalog", pack_id: "code-auditor", source_url: null,
     category: "engineering", title: "Code Auditor",
     specialty: "Reviews claims",
     description: "Reads a diff and reports what is not true.",
     what_done_looks_like: "A checkable allow/deny exists.",
-    personality_hint: null, tools_hint: ["work"],
+    tools_hint: ["work"],
     author_name: "JTech Minds", author_url: "https://github.com/JTechMinds",
     commit_sha: "aa11bb2ccccccccccccccccccccccccccccccccc", content_hash: "hash-1",
     installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
@@ -293,15 +292,20 @@ const CONNECTIONS = [
 // whose body is an OBJECT and not a list — the shape that used to be assigned
 // straight through and then iterated by the matrix.
 let connectionsFail = false;
-// Flipped by the section that opens the editor while a SIBLING read REJECTS.
-// A rejection, not a 500: `Promise.all` answered one of those by rejecting the
-// whole batch, which erased three healthy reads — a 500 did not, because the
-// assignment it broke happened after the ones before it had already landed.
-let personalitiesFail = false;
-// What /api/personalities answers when it answers at all. Empty for most of
-// this file — the form then renders its link to Settings — and filled by the
-// recreate section, which is about matching a stored prompt against them.
-let personalities = [];
+// Flipped by the section that opens the editor while a SIBLING read — the
+// roster — REJECTS. A rejection, not a 500: `Promise.all` answered one of
+// those by rejecting the whole batch, which erased the healthy reads — a 500
+// did not, because the assignment it broke happened after the ones before it
+// had already landed.
+let rosterFail = false;
+// What GET /api/agents/{id}/pack-status answers, and every pack-update POST.
+const UNLINKED_PACK = Object.freeze({
+    linked: false, pack_id: null, template_id: null, template_title: null,
+    installed: false, current_short: null, available_short: null,
+    available_content_hash: null, update_available: false, edited: false,
+});
+let packStatus = UNLINKED_PACK;
+const packUpdates = [];
 // The agent snapshots Add agent's Recent lists. Filled by the recreate
 // section; empty everywhere else, so no other section grows a rail row.
 let snapshots = [];
@@ -391,6 +395,12 @@ global.FormData = class {
             if (!name || el.disabled) continue;
             const type = String(el.getAttribute("type") || "").toLowerCase();
             if ((type === "checkbox" || type === "radio") && !el.checked) continue;
+            // A hidden input is in the browser's "default" value mode: its
+            // value IS its `value` attribute, which is how h() writes one.
+            if (type === "hidden") {
+                this.values.set(name, String(el.getAttribute("value") ?? el.value ?? ""));
+                continue;
+            }
             const value = type === "checkbox" && !el.value ? "on" : el.value;
             this.values.set(name, String(value == null ? "" : value));
         }
@@ -418,17 +428,21 @@ function api(url, init) {
         if (connectionsFail) return jsonResponse({ detail: "boom" }, 500);
         return jsonResponse(connectionsEmpty ? [] : CONNECTIONS);
     }
-    if (String(url) === "/api/personalities") {
-        if (personalitiesFail) return Promise.reject(new Error("network is down"));
-        return jsonResponse(personalities);
+    if (String(url) === "/api/agents" && (!init || !init.method) && rosterFail) {
+        return Promise.reject(new Error("network is down"));
     }
     if (String(url).startsWith("/api/agent-snapshots")) {
         return jsonResponse(snapshots);
     }
-    const personality = String(url).match(/^\/api\/personalities\/([^/]+)$/);
-    if (personality) {
-        const row = personalities.find((item) => item.id === personality[1]);
-        return row ? jsonResponse(row) : jsonResponse({ detail: "no such personality" }, 404);
+    // The desk's pack line (context/desk-pack.js): unlinked, so hidden,
+    // except in the section about the line itself.
+    if (/^\/api\/agents\/[^/]+\/pack-status$/.test(String(url))) {
+        return jsonResponse(packStatus);
+    }
+    const packUpdate = String(url).match(/^\/api\/agents\/([^/]+)\/pack-update$/);
+    if (packUpdate && init && init.method === "POST") {
+        packUpdates.push({ agentId: packUpdate[1], body: JSON.parse(init.body) });
+        return jsonResponse({ id: packUpdate[1] });
     }
     if (String(url) === "/api/agents" && init && init.method === "POST") {
         creates.push(JSON.parse(init.body));
@@ -1045,6 +1059,62 @@ async function main() {
     if (!aRenameRetitlesTheDesk || !anAgentGoneFromTheRosterClosesTheDesk) {
         throw new Error(`the desk must follow the roster: renamed ${aRenameRetitlesTheDesk}, `
             + `closed on removal ${anAgentGoneFromTheRosterClosesTheDesk}`);
+    }
+
+    // ─── The desk's pack line, and its per-agent update ───
+    //
+    // An agent hired from a pack says which, at which catalog commit; when
+    // the installed template is newer it offers the update behind a confirm
+    // that names what is replaced and warns about edits it would overwrite.
+    packStatus = {
+        linked: true, pack_id: "code-auditor", template_id: "t1", template_title: "Code Auditor",
+        installed: true, current_short: "8a0d68a", available_short: "9d2352e",
+        available_content_hash: "hash-2", update_available: true, edited: true,
+    };
+    desk.open("a1");
+    await drain();
+    const packLine = inDesk(".desk-pack");
+    const thePackLineNamesThePackAndTheUpdate = Boolean(packLine) && packLine.hidden === false
+        && packLine.querySelector(".desk-pack-line").textContent.includes("Code Auditor · 8a0d68a")
+        && packLine.textContent.includes("Update available 8a0d68a → 9d2352e")
+        && Boolean(inDesk("#desk-pack-update"))
+        // Under the status pill, in About.
+        && inDesk(".desk-about-block").children.indexOf(packLine)
+            > inDesk(".desk-about-block").children.indexOf(
+                inDesk(".desk-about-block").querySelector(".status-pill"));
+    await inDesk("#desk-pack-update").dispatchClick();
+    await drain();
+    const packConfirm = modals()[modals().length - 1];
+    const thePackConfirmWarnsAboutEdits = packConfirm !== deskModal()
+        && packConfirm.textContent.includes("Those edits will be overwritten.")
+        && packConfirm.textContent.includes("Name, specialty, colour, AI connection and desk are kept.")
+        && packConfirm.querySelector(".callout").getAttribute("data-tone") === "warn"
+        && packUpdates.length === 0;
+    packStatus = {
+        ...packStatus, current_short: "9d2352e", available_short: null,
+        available_content_hash: null, update_available: false, edited: false,
+    };
+    await packConfirm.querySelector("#desk-pack-confirm").dispatchClick();
+    await drain();
+    const thePackUpdateSendsTheHashItShowed = packUpdates.length === 1
+        && packUpdates[0].agentId === "a1"
+        && packUpdates[0].body.expected_content_hash === "hash-2"
+        && !inDesk("#desk-pack-update")
+        && inDesk(".desk-pack").textContent.includes("Code Auditor · 9d2352e");
+    desk.close();
+    await drain();
+    packStatus = UNLINKED_PACK;
+    desk.open("a1");
+    await drain();
+    const anUnlinkedAgentHasNoPackLine = inDesk(".desk-pack").hidden === true
+        && inDesk(".desk-pack").children.length === 0;
+    desk.close();
+    await drain();
+    if (!thePackLineNamesThePackAndTheUpdate || !thePackConfirmWarnsAboutEdits
+        || !thePackUpdateSendsTheHashItShowed || !anUnlinkedAgentHasNoPackLine) {
+        throw new Error(`the desk pack line: line ${thePackLineNamesThePackAndTheUpdate} `
+            + `confirm ${thePackConfirmWarnsAboutEdits} update ${thePackUpdateSendsTheHashItShowed} `
+            + `unlinked ${anUnlinkedAgentHasNoPackLine}`);
     }
 
     // ─── Chat, from the head ───
@@ -2018,9 +2088,9 @@ async function main() {
 
     // ─── 3e². A read that REJECTS costs its OWN list and nothing else ───
     //
-    // The four dependency reads shared one `Promise.all` and one catch, so a
-    // rejected request — a network error, an abort — took the three that had
-    // answered down with it. `/api/personalities` failing therefore emptied
+    // The dependency reads shared one `Promise.all` and one catch, so a
+    // rejected request — a network error, an abort — took the ones that had
+    // answered down with it. The roster read failing therefore emptied
     // `connections`, and an operator with two configured was shown "No
     // connections configured. Add one in Settings", no matrix to choose from,
     // and a LIVE primary: `readConnections` is a separate, healthy call, so
@@ -2031,7 +2101,7 @@ async function main() {
     //
     // Real builder, real publish, real submit: what the operator is told has
     // to be read off the form they were actually given.
-    personalitiesFail = true;
+    rosterFail = true;
     createSucceeds = true;
     creates.length = 0;
     openAddAgent();
@@ -2048,10 +2118,10 @@ async function main() {
         Boolean(aiTrigger(siblingForm, "connection_id"))
         && sibling.querySelector("#btn-goto-connections") === null
         && siblingPrimary.disabled === false
-        // ...and the read that DID fail is named, so the empty personality
-        // list is not left standing as a statement about their configuration.
+        // ...and the read that DID fail is named, so the empty roster is not
+        // left standing as a statement about their configuration.
         && Boolean(siblingNotice)
-        && siblingNotice.textContent.includes("your personalities")
+        && siblingNotice.textContent.includes("the rest of your roster")
         && siblingNotice.textContent.includes("not because you have none")
         && !siblingNotice.textContent.includes("your AI connections");
     if (!aRejectedSiblingKeepsTheOtherReads) {
@@ -2074,7 +2144,7 @@ async function main() {
         throw new Error(`the degraded form must still save, got ${creates.length} `
             + `creates ${JSON.stringify(creates[0] || {})}`);
     }
-    personalitiesFail = false;
+    rosterFail = false;
     createSucceeds = false;
 
     // ─── 3f. A template's form asks the same AI question, on screen ───
@@ -2166,8 +2236,10 @@ async function main() {
         && quickWritten.thinking_social === "off"
         && quickWritten.thinking_work === "default"
         && quickWritten.name === "Quick"
-        // The template's own fields travelled with it.
-        && quickWritten.role === "Reviews claims";
+        // The template's own fields travelled with it, and so did WHICH
+        // template it was, so the server can link the hire to its pack.
+        && quickWritten.role === "Reviews claims"
+        && quickWritten.template_id === "t1";
     if (!theQuickCreateSavesTheConnection) {
         throw new Error(`the quick create must carry the picked connection, got `
             + `${creates.length} creates ${JSON.stringify(quickWritten)}`);
@@ -2381,9 +2453,6 @@ async function main() {
     // duplicate-name self-exclusion, whether the save creates) keeps reading
     // the one that means IDENTITY. This drives the real builders and reads
     // the markup they wrote, because that is where a filled field lives.
-    personalities = [
-        { id: "p1", name: "Terse", prompt_template: "Be terse." },
-    ];
     snapshots = [{
         id: "s1", agent_id: "gone-1", name: "Ada", role: "Code Auditor",
         description: "Reads a diff and reports what is not true.",
@@ -2391,8 +2460,6 @@ async function main() {
         communication: {
             tone: "direct", density: "compact", jargon: "light", audience: "operator",
         },
-        // Matches no personality: the dropdown gets the kept option.
-        prompt_template: "You are terse, and you cite files.",
         color: "#1d4ed8",
         // Cloud offers Off but not Medium any more.
         connection_id: "c2", thinking_social: "off", thinking_work: "medium",
@@ -2470,67 +2537,34 @@ async function main() {
         throw new Error(`the unoffered thinking level must be named under the section`);
     }
 
-    // The prompt no personality carries any more rides in on its own option,
-    // chosen and named on the trigger, with the text itself in a hidden input
-    // for the save to send.
-    const personalityControl = recreateForm.querySelector("#agent-personality-mount");
-    const keptOptionCarriesThePrompt = formValue(recreateForm, "personality_id") === "__kept__"
-        && personalityControl.querySelector(".menu-select-value").textContent === "Kept from Ada"
-        && formMarkup.includes('name="prompt_template_kept" '
-            + 'value="You are terse, and you cite files."');
-    if (!keptOptionCarriesThePrompt) {
-        throw new Error("a prompt no personality matches must be kept on the form");
+    // AI Personalities are retired: a recreate carries no personality control
+    // and no kept prompt, and links nothing — a snapshot is not a template.
+    const recreateCarriesNoPersonality = !recreateForm.querySelector("#agent-personality-mount")
+        && formValue(recreateForm, "personality_id") === null
+        && !formMarkup.includes("prompt_template_kept")
+        && formValue(recreateForm, "template_id") === null;
+    if (!recreateCarriesNoPersonality) {
+        throw new Error("a recreate must carry no personality control and no template link");
     }
 
-    // ...and the save sends THAT text, as a create. The operator picks the
-    // kept option (the one already chosen) the way they pick any row.
-    await personalityControl.querySelector(".menu-select-trigger").dispatchClick();
-    await personalityControl.querySelector(".menu").querySelectorAll(".menu-select-option")
-        .find((row) => row.querySelector(".menu-select-label").textContent === "Kept from Ada")
-        .dispatchClick();
-    recreateForm.querySelector('[name="prompt_template_kept"]').value =
-        "You are terse, and you cite files.";
+    // ...and the save is a create with the snapshot's AI choices.
     recreateForm.querySelector('input[name="name"]').value = "Ada II";
     await documentStub.querySelector("#agent-form-submit").dispatchClick();
     await drain();
-    const recreateSavesAsACreateWithTheKeptPrompt = creates.length === 1
+    const recreateSavesAsACreate = creates.length === 1
         && updates.length === 0
         && creates[0].name === "Ada II"
-        && creates[0].prompt_template === "You are terse, and you cite files."
+        && !("prompt_template" in creates[0])
+        && creates[0].template_id === null
         && creates[0].connection_id === "c2"
         && creates[0].thinking_social === "off"
         && creates[0].thinking_work === "default";
-    if (!recreateSavesAsACreateWithTheKeptPrompt) {
-        throw new Error(`a recreate must POST a new agent carrying the kept prompt, got `
+    if (!recreateSavesAsACreate) {
+        throw new Error(`a recreate must POST a new agent, got `
             + `${creates.length} creates ${JSON.stringify(creates[0] || {})}`);
     }
     if (modals().length !== 0) throw new Error("a successful create must close the dialog");
-
-    // A prompt a personality DOES still carry is that personality, not a kept
-    // option: the dropdown matches by text, exactly as it does for an edit.
-    snapshots = [{ ...snapshots[0], id: "s2", prompt_template: "Be terse." }];
-    openAddAgent();
-    await drain();
-    const matched = agentsModal();
-    await matched.querySelectorAll(".market-rail-item")
-        .find((node) => node.querySelector(".market-rail-label").textContent === "Recent")
-        .dispatchClick();
-    await drain();
-    await matched.querySelector("#picker-recent-0").dispatchClick();
-    await drain();
-    const matchedForm = matched.querySelector("#agent-form");
-    const aMatchedPromptIsJustThatPersonality = !formMarkup.includes("__kept__")
-        && !formMarkup.includes("prompt_template_kept")
-        && formValue(matchedForm, "personality_id") === "p1"
-        && matchedForm.querySelector("#agent-personality-mount")
-            .querySelector(".menu-select-value").textContent === "Terse";
-    if (!aMatchedPromptIsJustThatPersonality) {
-        throw new Error("a prompt a personality still carries must select that personality");
-    }
-    await closeByX(matched);
-    await drain();
     createSucceeds = false;
-    personalities = [];
     snapshots = [];
 
     // ─── 4. Navigating away from Chat takes the column with it ───
@@ -2563,9 +2597,12 @@ async function main() {
         recreateFillsTheFormFromTheSnapshot,
         recreateIsACreateNotAnEdit,
         theUnofferedLevelIsNamed,
-        keptOptionCarriesThePrompt,
-        recreateSavesAsACreateWithTheKeptPrompt,
-        aMatchedPromptIsJustThatPersonality,
+        recreateCarriesNoPersonality,
+        recreateSavesAsACreate,
+        thePackLineNamesThePackAndTheUpdate,
+        thePackConfirmWarnsAboutEdits,
+        thePackUpdateSendsTheHashItShowed,
+        anUnlinkedAgentHasNoPackLine,
         columnHoldsOnlyTheOffice,
         oneDeskAtATime,
         deskDrainsOnClose,

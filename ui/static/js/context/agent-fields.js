@@ -4,9 +4,8 @@
  * What fields the form has and what values they accept, with no markup and no
  * DOM. Three modules need it and would otherwise each keep a copy: the field
  * groups render it, the Advanced disclosure's choices (context/
- * agent-form-choices.js) build the desk half of it and the kept-personality
- * option, and context/agent-submit.js reads the same
- * THINKING_MODES, history defaults and kept option back off the submitted
+ * agent-form-choices.js) build the desk half of it, and context/agent-submit.js
+ * reads the same THINKING_MODES and history defaults back off the submitted
  * form. A second list of activation types is a choice that saves into a field
  * nothing reads.
  */
@@ -82,15 +81,6 @@ const BossModAgentFields = (() => {
     };
 
     /**
-     * The personality option a recreated agent's prompt rides in on when no
-     * configured personality carries that text any more. Offered by
-     * context/agent-form-choices.js, read back by context/agent-submit.js —
-     * one value, so the two cannot disagree about which option means "keep".
-     * No personality id can take it: those are server uuids.
-     */
-    const KEPT_PERSONALITY = '__kept__';
-
-    /**
      * Which desk is offered, and whether any is free.
      *
      * Data only: context/agent-form-choices.js turns `desks` into the desk
@@ -130,7 +120,6 @@ const BossModAgentFields = (() => {
         THINKING_MODES,
         THINKING_CHOICES,
         DEFAULT_PROMPT_HISTORY_POLICY,
-        KEPT_PERSONALITY,
         deskChoice,
     };
 })();

@@ -122,6 +122,48 @@
    scrolled away from is one they cannot give. */
 .market-messages { flex: 0 0 auto; display: flex; flex-direction: column; gap: 8px; }
 
+/* The catalog-update banner (marketplace-updates.js): the shared .callout and
+   .market-action, outside the scroller like the messages above it, so the
+   question stays in view over a long grid. */
+.market-updates { flex: 0 0 auto; }
+/* One line: what moved on the left, the two answers against the right edge,
+   wrapping under it only when the window is too narrow for both. */
+.market-updates-banner { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.market-updates-banner .callout-actions { margin: 0 0 0 auto; }
+.market-updates .callout-title { margin: 0; font-size: 12px; font-weight: 500; color: var(--ink); }
+.market-updates .market-notice { margin: 0; }
+.market-updates-status { margin: 0; font-size: 12px; color: var(--muted); }
+
+/* The review layer behind the banner's two buttons: what will change, listed
+   before anything is written. */
+.market-review { display: flex; flex-direction: column; gap: 12px; font-size: 12px; color: var(--ink); }
+.market-review-group { display: flex; flex-direction: column; gap: 6px; }
+.market-review-head { margin: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.market-review-note { margin: 0; color: var(--muted); }
+.market-review-list { display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.market-review-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+}
+.market-review-name { font-weight: 600; }
+.market-review-meta { color: var(--muted); font-variant-numeric: tabular-nums; }
+/* The one warning a row can carry: amber, the app's "about to lose something"
+   tone, as the confirm strips use it. */
+.market-review-chip {
+  padding: 0 6px;
+  border-radius: var(--r);
+  background: var(--amber);
+  color: var(--amber-ink);
+  font-weight: 500;
+}
+.market-review-message { flex: 1 1 100%; color: var(--muted); }
+
 /* ─── Browse: the rail and the grid ─── */
 
 .market-body {

@@ -24,7 +24,6 @@ from core.agent_pack import (
     GitHubPackSource,
     PackImportRequest,
     import_pack,
-    pack_content_hash,
 )
 from core.agent_loop.communication_contract import (
     CommunicationContractError,
@@ -75,8 +74,7 @@ class LocalTemplateBody(BaseModel):
     ``title`` names it in the library and is its key among local templates
     (1–120 characters once stripped). ``category`` is a slug. ``specialty``
     and ``description`` are required, because they are what a template fills;
-    ``what_done_looks_like`` may be empty. ``personality_hint`` is the visible
-    name of a personality, matched when the template is used. ``communication``
+    ``what_done_looks_like`` may be empty. ``communication``
     is the four closed enums, checked by the communication contract.
     ``replace`` answers the 409 a taken title gets.
     """
@@ -86,7 +84,6 @@ class LocalTemplateBody(BaseModel):
     specialty: str = Field(min_length=1)
     description: str = Field(min_length=1)
     what_done_looks_like: str = ""
-    personality_hint: str | None = None
     communication: dict[str, str] | None = None
     replace: bool = False
 
@@ -96,13 +93,6 @@ class LocalTemplateBody(BaseModel):
     def _strip(cls, value: Any) -> Any:
         """Strip before the length checks run, so whitespace is not a title."""
         return value.strip() if isinstance(value, str) else value
-
-    @field_validator("personality_hint", mode="before")
-    @classmethod
-    def _blank_hint_is_none(cls, value: Any) -> Any:
-        if isinstance(value, str):
-            return value.strip() or None
-        return value
 
     @field_validator("communication", mode="before")
     @classmethod
@@ -139,8 +129,8 @@ def list_agent_templates() -> list[AgentTemplate]:
 def install_agent_template(body: AgentTemplateInstallBody) -> AgentTemplate:
     """Install (or re-install) one pack into the local template library.
 
-    Fetches the pack at its pinned commit through ``import_pack``, hashes its
-    canonical YAML, and upserts one row keyed by catalog ``pack_id`` or by the
+    Fetches the pack at its pinned commit through ``import_pack``, stores the
+    hash of the fetched file bytes, and upserts one row keyed by catalog ``pack_id`` or by the
     ref-free source URL. Re-installing updates that row — including
     ``content_hash`` and ``updated_at`` — instead of duplicating it. Returns
     the stored ``AgentTemplate``.
@@ -218,13 +208,12 @@ def install_agent_template(body: AgentTemplateInstallBody) -> AgentTemplate:
         specialty=pack.specialty,
         description=pack.description,
         what_done_looks_like=pack.what_done_looks_like,
-        personality_hint=pack.personality_hint,
         tools_hint=list(pack.tools_hint),
         communication=pack.communication.as_dict(),
         author_name=author.name if author else None,
         author_url=author.url if author else None,
         commit_sha=commit_sha,
-        content_hash=pack_content_hash(pack),
+        content_hash=result.content_hash,
     )
 
 
@@ -251,7 +240,6 @@ def save_local_agent_template(body: LocalTemplateBody) -> AgentTemplate:
             specialty=body.specialty,
             description=body.description,
             what_done_looks_like=body.what_done_looks_like,
-            personality_hint=body.personality_hint,
             communication=body.communication,
             replace=body.replace,
         )

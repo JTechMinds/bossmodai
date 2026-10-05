@@ -11,7 +11,6 @@ HTML = ROOT / "ui" / "templates" / "index.html"
 
 SECTION_FILES = {
     "settings/settings-connections.js": "ConnectionsSection",
-    "settings/settings-personalities.js": "PersonalitiesSection",
     "settings/settings-system.js": "SystemSection",
     "settings/settings-prompt-template.js": "PromptTemplateSection",
     "settings/settings-advanced.js": "AdvancedSystemSection",
@@ -58,7 +57,6 @@ REQUIRED_SCRIPTS = [
     "js/settings/settings-connections-form.js",
     "js/settings/settings-system-ai.js",
     "js/settings/settings-connections.js",
-    "js/settings/settings-personalities.js",
     "js/settings/settings-system-meta.js",
     "js/settings/settings-system.js",
     "js/settings/settings-prompt-template.js",
@@ -211,7 +209,7 @@ def test_settings_loads_surface_failures() -> None:
     # silently do nothing otherwise — the operator clicked and the app sat
     # there with no explanation.
     assert "function showRowError(" in _read("settings/settings-shared.js")
-    for name in ("settings/settings-connections.js", "settings/settings-personalities.js"):
+    for name in ("settings/settings-connections.js",):
         source = _read(name)
         assert "showRowError(container," in source, name
         assert "if (res.ok) openForm" not in source, name

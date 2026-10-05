@@ -85,10 +85,10 @@ const renderCalls = [];
 function section(name) {
     return { render: (el, options) => { renderCalls.push({ name, el, options }); } };
 }
-// Every global settings-view.js switches on. The spec counts seven — those are
-// the seven section FILES; CliPolicySection is the eighth name in the switch
+// Every global settings-view.js switches on. The spec counts six — those are
+// the six section FILES; CliPolicySection is the seventh name in the switch
 // and is the one this harness hands options to, so it is stubbed alongside them.
-for (const name of ["ConnectionsSection", "PersonalitiesSection", "SystemSection",
+for (const name of ["ConnectionsSection", "SystemSection",
     "CliPolicySection", "NestGitSection", "TelegramSection", "AdvancedSystemSection",
     "PromptTemplateSection", "RuntimeContractsSection"]) {
     global[name] = section(name);

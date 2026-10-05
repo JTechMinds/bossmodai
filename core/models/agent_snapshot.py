@@ -47,7 +47,6 @@ class AgentSnapshot(BaseModel):
     description: str | None = None
     done_fail_bar: str | None = None
     communication: dict[str, str] | None = None
-    prompt_template: str | None = None
     color: str | None = None
     connection_id: str | None = None
     thinking_social: ThinkingChoice = "default"

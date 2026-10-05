@@ -2,17 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from api.routes.agent_pack_support import catalog_pin, catalog_settings, http_error
+from api.websocket import manager
 from core import config
 from core.agent_pack import (
     GitHubPackSource,
     CatalogListResult,
     PackImportRequest,
+    UpdatePlan,
+    apply_updates,
+    check_updates,
     describe_pack,
     export_pack,
     import_pack,
@@ -232,7 +237,6 @@ def export_agent_pack(agent_id: str) -> dict[str, Any]:
     try:
         pack = export_pack(
             agent,
-            personalities=db.list_personalities(),
             company_name=config.get("company_name"),
             company_url=config.get("company_url"),
         )
@@ -245,3 +249,149 @@ def export_agent_pack(agent_id: str) -> dict[str, Any]:
         "ignored_keys": list(pack.ignored_keys),
         "agent_id": agent.id,
     }
+
+
+class AgentPackUpdatesApplyBody(BaseModel):
+    """Apply a reviewed catalog update.
+
+    ``target_sha`` is the 40-character commit the preview was computed for,
+    sent back so the apply recomputes against it and never a newer HEAD.
+    ``include_agents`` also rewrites the linked agents' contracts.
+    """
+
+    target_sha: str
+    include_agents: bool = False
+
+
+def _short(sha: str | None) -> str | None:
+    return sha[:7] if sha else None
+
+
+def _update_plan_payload(plan: UpdatePlan) -> dict[str, Any]:
+    """Serialize an ``UpdatePlan`` for the marketplace banner and review layer.
+
+    ``*_short`` values are catalog commits (the pin a row was last written at,
+    and the target), not the commit where that one pack file changed.
+    ``needs_review`` is true when anything of the operator's would change or
+    is being left behind; when it is false and ``pin_moves`` is true the
+    client advances the pin without asking.
+    """
+    templates = [
+        {
+            "template_id": row.template_id,
+            "pack_id": row.pack_id,
+            "title": row.title,
+            "from_short": _short(row.from_sha),
+            "to_short": _short(row.to_sha),
+        }
+        for row in plan.templates
+    ]
+    agents = [
+        {
+            "agent_id": row.agent_id,
+            "name": row.name,
+            "pack_id": row.pack_id,
+            "template_title": row.template_title,
+            "from_short": _short(row.from_sha),
+            "to_short": _short(row.to_sha),
+            "edited": row.edited,
+        }
+        for row in plan.agents
+    ]
+    skipped = [
+        {
+            "pack_id": row.pack_id,
+            "title": row.title,
+            "kind": row.kind,
+            "code": row.code,
+            "message": row.message,
+        }
+        for row in plan.skipped
+    ]
+    return {
+        "repo": plan.repo,
+        "pinned_sha": plan.pinned_sha,
+        "target_sha": plan.target_sha,
+        "pinned_short": _short(plan.pinned_sha),
+        "target_short": _short(plan.target_sha),
+        "pin_moves": plan.pinned_sha != plan.target_sha,
+        "templates": templates,
+        "agents": agents,
+        "skipped": skipped,
+        "needs_review": bool(templates or agents or skipped),
+    }
+
+
+@router.get("/agent-packs/updates")
+def check_agent_pack_updates() -> dict[str, Any]:
+    """Preview a move of the catalog pin to the catalog repo's HEAD. Read-only.
+
+    Resolves the configured pin and HEAD, lists the catalog at HEAD, and
+    compares it with the installed catalog templates and the agents hired
+    from them. Nothing is written, not even the pin.
+
+    Returns:
+        ``{repo, pinned_sha, target_sha, pinned_short, target_short,
+        pin_moves, templates, agents, skipped, needs_review}`` — see
+        ``_update_plan_payload``.
+
+    Failure modes: ``AgentPackError`` translated with its code intact —
+    ``pin_unresolved`` / ``fetch_failed`` when GitHub cannot resolve the pin
+    or HEAD or serve the index, ``catalog_unconfigured`` (409) without a repo.
+    """
+    catalog_repo, _catalog_path, _extra, _secret = catalog_settings()
+    try:
+        plan = check_updates(source=_SOURCE, catalog_repo=catalog_repo, pinned_ref=catalog_pin())
+    except AgentPackError as exc:
+        raise http_error(exc) from exc
+    return _update_plan_payload(plan)
+
+
+@router.post("/agent-packs/updates/apply")
+async def apply_agent_pack_updates(body: AgentPackUpdatesApplyBody) -> dict[str, Any]:
+    """Apply a reviewed catalog update in one transaction.
+
+    Re-reads the catalog at ``target_sha``, then re-installs every changed
+    catalog template, moves the pin to ``target_sha`` and, with
+    ``include_agents``, rewrites each behind agent's description, done bar and
+    communication. All writes commit together or not at all. Broadcasts the
+    world state, one ``agent_packs_updated`` activity and one
+    ``agent_updated`` per rewritten agent.
+
+    Returns:
+        The applied plan in the GET shape; its ``pinned_sha`` is the new pin
+        and ``agents`` is empty without ``include_agents``.
+
+    Failure modes: ``invalid_source`` (400) for a ``target_sha`` that is not
+    a full SHA, and any fetch error — both before any write. A database error
+    rolls the whole apply back and surfaces as a 500.
+    """
+    catalog_repo, _catalog_path, _extra, _secret = catalog_settings()
+    try:
+        # Off the event loop: the apply blocks on GitHub before it writes.
+        plan = await asyncio.to_thread(
+            apply_updates,
+            source=_SOURCE,
+            catalog_repo=catalog_repo,
+            target_sha=body.target_sha,
+            include_agents=body.include_agents,
+        )
+    except AgentPackError as exc:
+        raise http_error(exc) from exc
+    # The pin is a setting this process just wrote; reload like every other
+    # settings writer here so the next catalog read uses it.
+    config.reload()
+    short = _short(plan.target_sha)
+    if plan.templates or plan.agents:
+        detail = f"Updated {len(plan.templates)} packs, {len(plan.agents)} agents to {short}"
+    else:
+        detail = f"Catalog pin advanced to {short}"
+    await manager.broadcast_world_state()
+    await manager.broadcast_activity(event="agent_packs_updated", detail=detail)
+    for row in plan.agents:
+        await manager.broadcast_activity(
+            event="agent_updated",
+            detail=f"Agent \"{row.name}\" updated from pack {row.template_title}",
+            agent_name=row.name,
+        )
+    return _update_plan_payload(plan)

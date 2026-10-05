@@ -34,22 +34,28 @@ from db.agent_storage_identities import (
 _AGENT_COLUMNS = (
     "agents.id, agent_storage_identities.storage_key, agents.name, agents.role, "
     "agents.description, agents.done_fail_bar, agents.communication, "
-    "agents.prompt_template, agents.color, "
+    "agents.color, "
     "agents.connection_id, agents.thinking_social, agents.thinking_work, "
     "agents.desk_x, agents.desk_y, "
     "agents.guardian_token_limit, agents.guardian_velocity_limit, "
     "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
-    "agents.floor_id, agents.vacation_since, agents.cli_auto_approve_dm, agents.created_at"
+    "agents.floor_id, agents.vacation_since, agents.cli_auto_approve_dm, "
+    "agents.pack_id, agents.pack_source_url, agents.pack_commit_sha, "
+    "agents.pack_content_hash, agents.pack_contract_hash, agents.created_at"
 )
 
 _AGENT_VALID_COLUMNS = {
     "name", "role", "description", "done_fail_bar", "communication",
-    "prompt_template", "color",
+    "color",
     "connection_id", "thinking_social", "thinking_work", "desk_x", "desk_y",
     "guardian_token_limit", "guardian_velocity_limit",
     "guardian_repetition_threshold", "guardian_no_progress_threshold",
     "floor_id", "vacation_since",
 }
+# The pack link (pack_id … pack_contract_hash) is deliberately NOT in the set
+# above: only a hire from a template and ``set_agent_pack_link`` write it, so a
+# PATCH cannot forge which pack an agent came from.
+_PACK_LINK_KEYS = ("pack_id", "pack_source_url", "commit_sha", "content_hash", "contract_hash")
 
 _STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since"
 
@@ -83,7 +89,6 @@ def create_agent(
     description: str | None = None,
     done_fail_bar: str | None = None,
     communication: dict[str, str] | None = None,
-    prompt_template: str | None = None,
     color: str = "#3b82f6",
     connection_id: str | None = None,
     thinking_social: str = "default",
@@ -95,12 +100,19 @@ def create_agent(
     guardian_repetition_threshold: float = 0.85,
     guardian_no_progress_threshold: int = 100,
     floor_id: str | None = None,
+    pack_link: dict[str, str | None] | None = None,
 ) -> Agent:
     """Insert a new agent, its companion state rows and its snapshot atomically.
 
     Home floor defaults to Lobby. A named floor must already exist.
     ``connection_id`` is stored as given; the API checks that it names a
     usable connection before it gets here.
+
+    ``pack_link`` records the pack a hire came from, for pack updates: a
+    mapping with exactly the keys ``pack_id``, ``pack_source_url``,
+    ``commit_sha``, ``content_hash`` and ``contract_hash`` (``pack_id`` or
+    ``pack_source_url`` may be ``None``, not both). ``None`` hires an unlinked
+    agent. Raises ``ValueError`` for a mapping with missing or extra keys.
     """
     from db.floors import LOBBY_ID, ensure_lobby, get_floor
 
@@ -108,26 +120,29 @@ def create_agent(
     home = (floor_id or "").strip() or LOBBY_ID
     if get_floor(home) is None:
         raise ValueError("Floor not found")
+    link = _checked_pack_link(pack_link) if pack_link is not None else dict.fromkeys(_PACK_LINK_KEYS)
     with transaction():
         created = insert_returning_dict(
             """
             INSERT INTO agents (
-                name, role, description, done_fail_bar, communication, prompt_template, color,
+                name, role, description, done_fail_bar, communication, color,
                 connection_id, thinking_social, thinking_work, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
-                floor_id
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+                floor_id, pack_id, pack_source_url, pack_commit_sha,
+                pack_content_hash, pack_contract_hash
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
             RETURNING id
             """,
             [
                 name, role, description, done_fail_bar,
                 dump_communication_json(communication, specialty=role),
-                prompt_template, color,
+                color,
                 connection_id, thinking_social, thinking_work, desk_x, desk_y,
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
-                home,
+                home, link["pack_id"], link["pack_source_url"], link["commit_sha"],
+                link["content_hash"], link["contract_hash"],
             ],
         )
         agent_id = str(created["id"])
@@ -265,6 +280,77 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
     if applied and agent is not None:
         _capture_snapshot(agent, deleted=False)
     return agent
+
+
+def _checked_pack_link(pack_link: dict[str, str | None]) -> dict[str, str | None]:
+    """Return ``pack_link`` after checking it carries exactly the link keys.
+
+    Raises ``ValueError`` on a missing or unknown key, when neither
+    ``pack_id`` nor ``pack_source_url`` is set (a link with no pack key could
+    never be matched back to a template), or when a version fact is empty.
+    """
+    keys = set(pack_link)
+    if keys != set(_PACK_LINK_KEYS):
+        raise ValueError(
+            f"pack_link must have exactly the keys {sorted(_PACK_LINK_KEYS)}, got {sorted(keys)}"
+        )
+    if not pack_link["pack_id"] and not pack_link["pack_source_url"]:
+        raise ValueError("pack_link needs a pack_id or a pack_source_url")
+    for key in ("commit_sha", "content_hash", "contract_hash"):
+        if not pack_link[key]:
+            raise ValueError(f"pack_link needs a non-empty {key}")
+    return pack_link
+
+
+def set_agent_pack_link(
+    agent_id: str,
+    *,
+    pack_id: str | None,
+    pack_source_url: str | None,
+    commit_sha: str,
+    content_hash: str,
+    contract_hash: str,
+) -> Agent | None:
+    """Record which pack version an agent's contract was last written from.
+
+    The one writer of the link columns after a hire: a pack update calls it
+    right after it rewrites the contract fields, inside the caller's
+    transaction. Like ``set_agent_cli_auto_approve_dm`` it does not re-capture
+    the snapshot — snapshots carry no pack link — and the contract write
+    before it already did.
+
+    Args:
+        agent_id: The agent to stamp.
+        pack_id: Catalog natural key, or ``None`` for a URL pack.
+        pack_source_url: URL natural key, or ``None`` for a catalog pack.
+        commit_sha: Commit the written contract was read at.
+        content_hash: ``pack_content_hash`` of that pack file.
+        contract_hash: ``contract_hash`` of the fields just written, so a
+            later operator edit shows as "edited".
+
+    Returns:
+        The agent after the write, or ``None`` when no agent has ``agent_id``.
+
+    Raises:
+        ValueError: Neither ``pack_id`` nor ``pack_source_url`` is given, or
+            a version fact is empty.
+    """
+    link = _checked_pack_link({
+        "pack_id": pack_id,
+        "pack_source_url": pack_source_url,
+        "commit_sha": commit_sha,
+        "content_hash": content_hash,
+        "contract_hash": contract_hash,
+    })
+    execute(
+        "UPDATE agents SET pack_id = $1, pack_source_url = $2, pack_commit_sha = $3, "
+        "pack_content_hash = $4, pack_contract_hash = $5 WHERE id = $6",
+        [
+            link["pack_id"], link["pack_source_url"], link["commit_sha"],
+            link["content_hash"], link["contract_hash"], agent_id,
+        ],
+    )
+    return get_agent(agent_id)
 
 
 def set_agent_cli_auto_approve_dm(agent_id: str, enabled: bool) -> Agent | None:

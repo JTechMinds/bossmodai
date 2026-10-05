@@ -25,7 +25,6 @@ from core.agent_pack import (
     DEFAULT_CATALOG_REPO,
     describe_pack,
     pack_content_hash,
-    parse_pack_yaml,
 )
 from core.models.agent_template import AgentTemplate
 
@@ -129,7 +128,7 @@ def test_install_creates_one_row_and_never_an_agent(
     assert body["author_name"] == "JTech Minds"
     assert body["author_url"] == "https://github.com/JTechMinds"
     assert body["commit_sha"] == PINNED_SHA
-    assert body["content_hash"] == pack_content_hash(parse_pack_yaml(AUDITOR_PACK))
+    assert body["content_hash"] == pack_content_hash(AUDITOR_PACK)
 
     installed = db.list_agent_templates()
     assert len(installed) == 1
@@ -214,7 +213,7 @@ def test_changed_pack_updates_content_hash_and_updated_at(
     after = rows[0]
     assert after.id == before.id
     assert after.content_hash != before.content_hash
-    assert after.content_hash == pack_content_hash(parse_pack_yaml(CHANGED_AUDITOR_PACK))
+    assert after.content_hash == pack_content_hash(CHANGED_AUDITOR_PACK)
     assert after.updated_at > before.updated_at
     assert after.installed_at == before.installed_at
     assert "diffs" in after.description
@@ -397,7 +396,7 @@ def test_catalog_cards_carry_description_and_content_hash(
     card = listed.json()["categories"][0]["packs"][0]
     assert card["id"] == "code-auditor"
     assert "Reviews claims" in card["description"]
-    assert card["content_hash"] == pack_content_hash(parse_pack_yaml(AUDITOR_PACK))
+    assert card["content_hash"] == pack_content_hash(AUDITOR_PACK)
 
 
 def test_installed_rows_carry_parsed_sections_without_storing_them(
@@ -459,7 +458,6 @@ def _upsert_kwargs(**overrides) -> dict:
         specialty="Code Auditor",
         description="Mission: reviews claims.",
         what_done_looks_like="A checkable allow/deny exists.",
-        personality_hint=None,
         tools_hint=["work", "cli"],
         author_name="JTech Minds",
         author_url="https://github.com/JTechMinds",
@@ -504,9 +502,10 @@ def test_malformed_tools_hint_is_surfaced_not_defaulted() -> None:
 
 
 def test_pack_content_hash_is_content_addressed() -> None:
-    original = pack_content_hash(parse_pack_yaml(AUDITOR_PACK))
-    assert original == pack_content_hash(parse_pack_yaml(AUDITOR_PACK))
-    assert original != pack_content_hash(parse_pack_yaml(CHANGED_AUDITOR_PACK))
+    original = pack_content_hash(AUDITOR_PACK)
+    assert original == pack_content_hash(AUDITOR_PACK)
+    assert original == pack_content_hash(AUDITOR_PACK.encode("utf-8"))
+    assert original != pack_content_hash(CHANGED_AUDITOR_PACK)
     assert len(original) == 64
 
 
@@ -569,6 +568,11 @@ _OLD_CATALOG_ROW = {
     "updated_at": "2026-09-02 00:00:00+00:00",
 }
 _REBUILT = "Migration: rebuilt agent_templates to allow local templates"
+# The rebuilt table no longer carries the retired personality hint, so the row
+# read back is the old row without it.
+_REBUILT_CATALOG_ROW = {
+    key: value for key, value in _OLD_CATALOG_ROW.items() if key != "personality_hint"
+}
 
 
 def _build_old_library(*, with_communication: bool) -> None:
@@ -614,7 +618,7 @@ def _library_state() -> tuple[list, list[dict]]:
     ).fetchall()
     rows = db.query(
         "SELECT id, source, pack_id, source_url, category, title, specialty, description, "
-        "what_done_looks_like, personality_hint, tools_hint, communication, author_name, "
+        "what_done_looks_like, tools_hint, communication, author_name, "
         "author_url, commit_sha, content_hash, CAST(installed_at AS TEXT) AS installed_at, "
         "CAST(updated_at AS TEXT) AS updated_at FROM agent_templates ORDER BY id"
     )
@@ -638,7 +642,7 @@ def test_the_library_rebuild_keeps_every_row_and_every_index(
     assert _REBUILT in caplog.text
 
     _ddl, rows = _library_state()
-    expected = dict(_OLD_CATALOG_ROW)
+    expected = dict(_REBUILT_CATALOG_ROW)
     if not with_communication:
         # Added empty by the column migration that runs first.
         expected["communication"] = None
@@ -739,7 +743,6 @@ def _local_body(**overrides) -> dict:
         "specialty": "Writes release notes",
         "description": "Turns a merged PR list into notes an operator can read.",
         "what_done_looks_like": "A dated notes file exists.",
-        "personality_hint": "Software Engineer",
         "communication": {"tone": "direct", "density": "compact", "jargon": "light",
                           "audience": "operator"},
     }
@@ -761,7 +764,7 @@ def test_a_local_template_is_saved_without_a_pack_behind_it(
     assert body["category"] == "custom"
     assert body["specialty"] == "Writes release notes"
     assert body["what_done_looks_like"] == "A dated notes file exists."
-    assert body["personality_hint"] == "Software Engineer"
+    assert "personality_hint" not in body
     assert body["communication"] == _local_body()["communication"]
     assert body["tools_hint"] == []
     for absent in ("pack_id", "source_url", "author_name", "author_url",
@@ -801,7 +804,7 @@ def test_replace_updates_the_local_template_in_place(
                         json=_local_body()).json()
     replaced = client.post("/api/agent-templates/local", headers=_headers(), json=_local_body(
         category="writing", specialty="Edits release notes", description="Tightens them.",
-        what_done_looks_like="", personality_hint="", replace=True,
+        what_done_looks_like="", replace=True,
     ))
     assert replaced.status_code == 201, replaced.text
     body = replaced.json()
@@ -812,7 +815,6 @@ def test_replace_updates_the_local_template_in_place(
         "writing", "Edits release notes", "Tightens them.",
     )
     assert body["what_done_looks_like"] == ""
-    assert body["personality_hint"] is None
     assert len(db.list_agent_templates()) == 1
     # replace on a title nobody holds is an ordinary insert.
     fresh = client.post("/api/agent-templates/local", headers=_headers(), json=_local_body(

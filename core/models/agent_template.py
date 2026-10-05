@@ -28,8 +28,8 @@ class AgentTemplate(BaseModel):
     ``source`` says where it came from. ``'catalog'`` and ``'url'`` are pinned
     snapshots of a pack: ``pack_id`` is set for catalog installs and
     ``source_url`` for URL installs, exactly one of the two is the row's
-    natural key, and ``content_hash`` is the digest of the pack's canonical
-    YAML at ``commit_sha``, so staleness is answerable without refetching and
+    natural key, and ``content_hash`` is the digest of the pack file's bytes at
+    ``commit_sha``, so staleness is answerable without refetching and
     without comparing the repo-wide catalog pin (which moves for packs that
     never changed). ``'local'`` is the operator's own template, saved from an
     agent form: keyed by its title, and carrying NONE of ``pack_id``,
@@ -49,7 +49,6 @@ class AgentTemplate(BaseModel):
     specialty: str
     description: str
     what_done_looks_like: str
-    personality_hint: str | None = None
     tools_hint: list[str] = Field(default_factory=list)
     communication: dict[str, str] | None = None
     author_name: str | None = None

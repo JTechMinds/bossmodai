@@ -97,12 +97,15 @@ class FakePackSource:
     refs: dict[tuple[str, str, str], str]
     resolve_calls: list[tuple[str, str, str]]
     fetch_calls: list[tuple[str, str, str, str]]
+    # (owner, repo) -> the full SHA its default-branch HEAD resolves to.
+    heads: dict[tuple[str, str], str]
 
     def __init__(self) -> None:
         self.files = {}
         self.refs = {}
         self.resolve_calls = []
         self.fetch_calls = []
+        self.heads = {}
 
     def add(self, *, owner: str, repo: str, path: str, ref: str, sha: str, yaml_text: str) -> None:
         self.refs[(owner.lower(), repo.lower(), ref)] = sha.lower()
@@ -116,6 +119,12 @@ class FakePackSource:
         if key not in self.refs:
             raise AgentPackError("ref not found", code="pin_unresolved")
         return self.refs[key]
+
+    def resolve_head_sha(self, owner: str, repo: str) -> str:
+        key = (owner.lower(), repo.lower())
+        if key not in self.heads:
+            raise AgentPackError("HEAD not found", code="pin_unresolved")
+        return self.heads[key]
 
     def fetch_file(self, owner: str, repo: str, path: str, sha: str) -> str:
         self.fetch_calls.append((owner, repo, path, sha))
@@ -190,7 +199,9 @@ def test_schema_validates_required_hire_fields() -> None:
     assert pack.specialty == "Software Engineer"
     assert "Implements features" in pack.description
     assert "Tests evidence" in pack.what_done_looks_like
-    assert pack.personality_hint == "Software Engineer"
+    # AI Personalities are retired: a pack that still carries the hint is
+    # read, and the key is reported as ignored rather than refused.
+    assert "personality_hint" in pack.ignored_keys
     assert pack.tools_hint == ("cli", "work")
     assert pack.pack_author is None
     assert "extra_credit" in pack.ignored_keys
@@ -1113,17 +1124,19 @@ def test_long_structured_pack_parses_and_export_round_trips_unchanged() -> None:
     assert reparsed.what_done_looks_like == hire["done_fail_bar"]
 
 
-def test_over_length_pack_personality_hint_is_omitted_and_reported() -> None:
+def test_retired_personality_keys_are_ignored_and_reported() -> None:
     pack = parse_pack_yaml(yaml.safe_dump({
         "schema": SCHEMA_ID,
         "specialty": "Writer",
         "description": "Writes first drafts.",
         "what_done_looks_like": "A named draft exists.",
         "personality_hint": "p" * 121,
+        "personality": "Technical Writer",
     }))
-    assert pack.personality_hint is None
-    assert "personality_hint" in pack.ignored_keys
+    assert not hasattr(pack, "personality_hint")
+    assert {"personality_hint", "personality"} <= set(pack.ignored_keys)
     assert "personality_hint" not in pack.as_dict()
+    assert "personality_hint" not in pack.hire_fields()
 
 
 def test_over_length_pack_specialty_is_rejected_not_truncated() -> None:
@@ -1213,7 +1226,6 @@ def _export_with_settings(
     *,
     company_name: str,
     company_url: str,
-    prompt_template: str | None = None,
 ) -> dict:
     client = _client(monkeypatch, _catalog_source())
     agent = db.create_agent(
@@ -1221,7 +1233,6 @@ def _export_with_settings(
         role="Code Auditor",
         description="Reviews claims.",
         done_fail_bar="A checkable allow/deny exists.",
-        prompt_template=prompt_template,
     )
     db.set_setting("company_name", company_name, "general")
     db.set_setting("company_url", company_url, "general")
@@ -1251,19 +1262,17 @@ def test_api_export_keeps_author_name_and_reports_invalid_company_url(
     assert "pack_author.url" in body["ignored_keys"]
 
 
-def test_api_export_omits_and_reports_over_length_personality_hint(
+def test_api_export_carries_no_personality_hint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    template = "You are a meticulous reviewer of claims."
-    db.create_personality("P" * 121, template)
     body = _export_with_settings(
         monkeypatch,
         company_name="Northwind",
         company_url="https://northwind.example",
-        prompt_template=template,
     )
     assert "personality_hint" not in body["pack"]
-    assert "personality_hint" in body["ignored_keys"]
+    assert "personality_hint" not in body["yaml"]
+    assert "personality_hint" not in body["ignored_keys"]
     assert body["pack"]["pack_author"]["name"] == "Northwind"
 
 

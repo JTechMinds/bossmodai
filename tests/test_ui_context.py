@@ -116,6 +116,7 @@ CONTEXT_MODULES = [
     CONTEXT / "schedule-preview.js",
     CONTEXT / "schedule-layer.js",
     CONTEXT / "desk-schedules.js",
+    CONTEXT / "desk-pack.js",
     CONTEXT / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks
@@ -454,7 +455,7 @@ def test_a_failed_dependency_read_still_renders_the_form() -> None:
     """`loadFormData`'s documented degradation, made true for an HTTP error.
 
     It promises empty lists so the form still renders with its "no connections
-    configured" and "no personalities configured" links to Settings. It had no
+    configured" link to Settings. It had no
     `res.ok` and no `Array.isArray`, so a 500's `{detail}` object was assigned
     straight through, the matrix iterated it, and `connections.map is not a
     function` came out of the renderer — reaching the operator as the generic
@@ -475,9 +476,9 @@ def test_a_failed_dependency_read_still_renders_the_form() -> None:
     assert "if (!Array.isArray(body))" in form
     # ...and it still degrades rather than refusing to render. The one shared
     # catch that used to do that is gone, and its replacement is the point: it
-    # degraded ALL FOUR reads whenever any one of them rejected, so a dead
-    # /api/personalities emptied the connections list of an operator who had
-    # two. Each read now settles alone and names itself when it fails.
+    # degraded EVERY read whenever any one of them rejected, so a dead sibling
+    # read emptied the connections list of an operator who had two. Each read
+    # now settles alone and names itself when it fails.
     assert "await Promise.allSettled(requests)" in form
     assert "if (outcome.status === 'rejected') throw outcome.reason;" in form
     assert "failed.push(what);" in form
@@ -487,9 +488,9 @@ def test_a_failed_dependency_read_still_renders_the_form() -> None:
 def test_one_failing_dependency_read_does_not_erase_the_others() -> None:
     """A rejected sibling cost three healthy reads their results.
 
-    `loadFormData` ran its four requests through one `Promise.all` and one
+    `loadFormData` ran its requests through one `Promise.all` and one
     catch, so a REJECTED request — a network error, an abort — rejected the
-    batch and left every list empty. With `/api/personalities` down and
+    batch and left every list empty. With the roster read down and
     `/api/connections` perfectly healthy the operator was shown "No connections
     configured. Add one in Settings" while holding two, no matrix to choose
     one in, and a live primary: `readConnections` is a separate call, so
@@ -957,17 +958,15 @@ def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:
 
     Two things a snapshot cannot promise are named rather than dropped: a
     thinking level its connection no longer offers is listed under the AI
-    Connection section (and its control falls back to Server default), and a
-    prompt no personality carries any more rides in on its own option with the
-    text in a hidden input. A prompt one DOES carry selects that personality, exactly as
-    it does for an edit.
+    Connection section (and its control falls back to Server default). AI
+    Personalities are retired, so a recreate carries no personality control,
+    no kept prompt and no template link.
     """
     payload = _harness()
     for key in (
         "recreateFillsTheFormFromTheSnapshot", "recreateIsACreateNotAnEdit",
-        "theUnofferedLevelIsNamed", "keptOptionCarriesThePrompt",
-        "recreateSavesAsACreateWithTheKeptPrompt",
-        "aMatchedPromptIsJustThatPersonality",
+        "theUnofferedLevelIsNamed", "recreateCarriesNoPersonality",
+        "recreateSavesAsACreate",
     ):
         assert payload[key] is True, key
     # The policy a recreate starts from is the SNAPSHOT'S, and the one fallback
@@ -977,21 +976,16 @@ def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:
     assert "if (!prefill.prompt_history_policy) return { ...DEFAULTS };" in policy
     assert "The one fallback here, and it is stated" in policy
     assert "const promptHistoryPolicy = prefill ? prefillPolicy(prefill) : loadedPolicy;" in form
-    # The kept option and the value it submits are one vocabulary, not two.
+    # The personality vocabulary is gone from every half of the form.
     fields = _read(CONTEXT / "agent-fields.js")
-    assert "const KEPT_PERSONALITY = '__kept__';" in fields
-    # The kept OPTION is the personality dropdown's (agent-form-choices.js);
-    # the hidden input carrying its text is the Advanced markup's.
+    assert "KEPT_PERSONALITY" not in fields
     choices = _read(CONTEXT / "agent-form-choices.js")
-    assert "const FIELDS = BossModAgentFields;" in choices
-    assert "FIELDS.KEPT_PERSONALITY" in choices
+    assert "personality" not in choices.lower()
     advanced = _read(CONTEXT / "agent-form-advanced.js")
-    assert 'name="prompt_template_kept"' in advanced
+    assert 'name="prompt_template_kept"' not in advanced
     submit = _read(CONTEXT / "agent-submit.js")
-    assert "if (personalityId === BossModAgentFields.KEPT_PERSONALITY) {" in submit
-    assert "const kept = formData.get('prompt_template_kept');" in submit
-    # No silent fallback: a kept choice with no text is refused, not sent null.
-    assert "throw new Error('The kept prompt template is missing from the form.');" in submit
+    assert "/api/personalities" not in submit
+    assert "agentData.template_id = formData.get('template_id') || null;" in submit
     # The notes are the connections module's, from the one reading of the
     # stored values that the markup and the bindings share.
     conn = _read(CONTEXT / "agent-form-connections.js")
@@ -1000,3 +994,20 @@ def test_recreating_a_recent_agent_fills_the_form_and_still_creates() -> None:
     assert "const start = startingValues(values, connections);" in conn
     bindings = _read(CONTEXT / "agent-form-bindings.js")
     assert "const start = CONNECTIONS.startingValues(values, connections);" in bindings
+
+
+def test_the_desk_names_the_pack_and_offers_its_update() -> None:
+    """The desk's pack line (context/desk-pack.js), driven through the real desk.
+
+    An agent hired from a pack says which, at which catalog commit, under its
+    status in About. When the installed template is newer it offers Update
+    behind the standard confirm layer, which names what is replaced and warns
+    when the agent's contract was edited. The update sends back the template
+    hash that was on screen; an agent not hired from a pack has no line.
+    """
+    payload = _harness()
+    for key in (
+        "thePackLineNamesThePackAndTheUpdate", "thePackConfirmWarnsAboutEdits",
+        "thePackUpdateSendsTheHashItShowed", "anUnlinkedAgentHasNoPackLine",
+    ):
+        assert payload[key] is True, key

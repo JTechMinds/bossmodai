@@ -26,7 +26,7 @@ NATIVE_SELECT = re.compile(r"<select\b|h\(\s*['\"]select['\"]")
 # The form values the menu-selects own. A direct `.value =` on any of them
 # moves the value without the trigger.
 MENU_NAMES = (
-    r"personality_id|desk|communication_[^\"'\]]*|tier|match_mode|agent_id"
+    r"desk|communication_[^\"'\]]*|tier|match_mode|agent_id"
     r"|connection_id|thinking_social|thinking_work"
 )
 DIRECT_WRITE = re.compile(
@@ -80,7 +80,7 @@ def test_no_module_writes_a_menu_selects_form_value_directly() -> None:
 def test_the_direct_write_gate_would_catch_one() -> None:
     """The regex above matches the shapes it exists to ban."""
     for line in (
-        "formRoot.querySelector('[name=\"personality_id\"]').value = '';",
+        "formRoot.querySelector('[name=\"desk\"]').value = '';",
         "form.querySelector(`[name=\"communication_${key}\"]`).value = comm[key];",
         "slot.querySelector('[name=\"tier\"]').value = 'glob';",
     ):

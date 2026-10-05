@@ -1,5 +1,6 @@
 /**
- * BossMod AI — the four calls the local agent template library makes.
+ * BossMod AI — the calls the local agent template library makes, and the
+ * catalog-update pair that keeps it in step with the catalog.
  *
  * A template is a locally-installed, pinned snapshot of a pack, or the
  * operator's own — a role contract saved from an agent form. These are the
@@ -83,7 +84,7 @@ const BossModAgentTemplatesApi = (() => {
      *
      * @param {{title: string, category: string, specialty: string,
      *   description: string, what_done_looks_like: string,
-     *   personality_hint: string|null, communication: object|null,
+     *   communication: object|null,
      *   replace?: boolean}} body  What POST /api/agent-templates/local takes.
      * @returns {Promise<object>} The stored `AgentTemplate` row
      *   (`source: 'local'`).
@@ -119,5 +120,40 @@ const BossModAgentTemplatesApi = (() => {
         if (!res.ok) throw await failure(res, 'Uninstall failed.');
     }
 
-    return { listTemplates, installTemplate, saveLocalTemplate, uninstallTemplate };
+    /**
+     * Preview a move of the catalog pin to the catalog's HEAD. Writes nothing.
+     *
+     * @returns {Promise<object>} `{repo, pinned_sha, target_sha, pinned_short,
+     *   target_short, pin_moves, templates, agents, skipped, needs_review}`.
+     * @throws {Error} With the server's message and `code` intact
+     *   (`pin_unresolved`, `fetch_failed`, …) on any non-2xx.
+     */
+    async function checkUpdates() {
+        const res = await apiFetch('/api/agent-packs/updates', { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t check the catalog for updates.');
+        return res.json();
+    }
+
+    /**
+     * Apply a reviewed catalog update.
+     *
+     * @param {{target_sha: string, include_agents: boolean}} body  The
+     *   `target_sha` the preview was computed for — sent back so the server
+     *   applies exactly what was reviewed, never a newer HEAD.
+     * @returns {Promise<object>} What was applied, in `checkUpdates`' shape.
+     * @throws {Error} With the server's message and `code` intact.
+     */
+    async function applyUpdates(body) {
+        const res = await apiFetch('/api/agent-packs/updates/apply', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ target_sha: body.target_sha, include_agents: Boolean(body.include_agents) }),
+        });
+        if (!res.ok) throw await failure(res, 'Update failed.');
+        return res.json();
+    }
+
+    return {
+        listTemplates, installTemplate, saveLocalTemplate, uninstallTemplate, checkUpdates, applyUpdates,
+    };
 })();

@@ -24,7 +24,6 @@ CREATE TABLE IF NOT EXISTS agents (
     description                   TEXT,
     done_fail_bar                 TEXT,
     communication                 TEXT,
-    prompt_template               TEXT,
     color                         VARCHAR DEFAULT '#3b82f6',
     -- The one AI connection, read live each turn. No FK: the 409 delete
     -- guard keeps it valid and names the agents that use it.
@@ -42,6 +41,16 @@ CREATE TABLE IF NOT EXISTS agents (
     -- System AI auto-approve for this agent's DM and its work with no origin
     -- thread (core.bm_cli.approval_gate.gate.auto_approve_effective).
     cli_auto_approve_dm           INTEGER NOT NULL DEFAULT 0,
+    -- Provenance: the pack a hire came from (pack_id for catalog, source_url
+    -- for URL packs — the template natural keys, so the link survives a
+    -- template reinstall), the commit and file hash its contract was last
+    -- written at, and the hash of that contract so operator edits show.
+    -- NULL on agents not hired from a pack. Never written by PATCH.
+    pack_id                       VARCHAR,
+    pack_source_url               TEXT,
+    pack_commit_sha               VARCHAR,
+    pack_content_hash             VARCHAR,
+    pack_contract_hash            VARCHAR,
     created_at                    TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -393,17 +402,6 @@ CREATE TABLE IF NOT EXISTS ai_connections (
     extra_body   TEXT,
     thinking_levels TEXT,                 -- JSON: level → fragment merged over extra_body, or NULL
     created_at   TIMESTAMP DEFAULT current_timestamp
-);
-
--- ───────────────────────────────────────────────────────────────────────────
--- AI Personalities — reusable prompt templates for agent roles
--- ───────────────────────────────────────────────────────────────────────────
-
-CREATE TABLE IF NOT EXISTS ai_personalities (
-    id              VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
-    name            VARCHAR NOT NULL,
-    prompt_template TEXT    NOT NULL,
-    created_at      TIMESTAMP DEFAULT current_timestamp
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -847,7 +845,6 @@ CREATE TABLE IF NOT EXISTS agent_templates (
     specialty            TEXT NOT NULL,
     description          TEXT NOT NULL,
     what_done_looks_like TEXT NOT NULL,
-    personality_hint     VARCHAR,
     tools_hint           TEXT NOT NULL DEFAULT '[]',
     communication        TEXT,
     author_name          VARCHAR,
@@ -888,7 +885,6 @@ CREATE TABLE IF NOT EXISTS agent_snapshots (
     description           TEXT,
     done_fail_bar         TEXT,
     communication         TEXT,                      -- same JSON text as agents.communication
-    prompt_template       TEXT,
     color                 VARCHAR,
     connection_id         VARCHAR,
     thinking_social       VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','low','medium','high','xhigh')),

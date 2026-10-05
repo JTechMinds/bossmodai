@@ -95,7 +95,6 @@ SIBLING_FORMS = (
     "places/tasks/assign-form.js",
     "places/tasks/task-file-picker.js",
     "settings/settings-nest-git.js",
-    "settings/settings-personalities.js",
     "settings/cli-policy/rule-form.js",
     "settings/cli-policy/policy-settings.js",
     "settings/settings-connections-form.js",
@@ -129,8 +128,9 @@ def _sibling_controls() -> list[tuple[str, str, str]]:
 def test_sibling_inputs_and_selects_wear_the_shared_field_classes() -> None:
     controls = _sibling_controls()
     # 26 when this landed, 21 once the five native selects among them became
-    # BossModMenuSelect dropdowns; a scanner that stopped matching cannot pass.
-    assert len(controls) >= 21, controls
+    # BossModMenuSelect dropdowns, 20 once the AI Personalities form (and its
+    # one name input) was retired; a scanner that stopped matching cannot pass.
+    assert len(controls) >= 20, controls
     offenders = [
         control for control in controls
         if ("field-select" if control[1] == "select" else "field-input") not in control[2].split()

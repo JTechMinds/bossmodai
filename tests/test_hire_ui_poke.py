@@ -110,7 +110,9 @@ def test_casual_hire_shows_color_under_description() -> None:
     assert panel.index(">Color</legend>") < panel.index('name="done_fail_bar"')
     assert panel.index('id="advanced-toggle"') < panel.index("Desk Assignment")
     assert "nextUnusedAgentColor" in panel
-    assert "runtime core, prompt template, and desk" in panel
+    # The personality control is retired, so the hint no longer names a prompt template.
+    assert "runtime core, and desk" in panel
+    assert "prompt template" not in panel
     assert "prompt template, color, and desk" not in panel
 
 

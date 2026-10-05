@@ -255,7 +255,6 @@ async function main() {
         thinking_social: "default", thinking_work: "default",
     };
     const advanced = BossModAgentFormAdvanced.advancedSection(editAgent, {
-        personalities: [{ id: "p1", name: "Terse", prompt_template: "be terse" }],
         roster: [],
         promptHistoryPolicy: BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY,
     });
@@ -270,10 +269,7 @@ async function main() {
     // The edit form once its dropdowns are mounted, as context/agent-form.js
     // mounts them: the Advanced choices, then the AI section.
     const editForm = formWithMounts(editMarkup);
-    BossModAgentFormChoices.mount(editForm, {
-        personalities: [{ id: "p1", name: "Terse", prompt_template: "be terse" }],
-        roster: [], values: editAgent, kept: null,
-    });
+    BossModAgentFormChoices.mount(editForm, { roster: [], values: editAgent });
     BossModAgentFormBindings.bindAiConnection(editForm, CONNECTIONS, editAgent);
     const hireMarkup = [
         BossModAgentFormFields.nameField(null),

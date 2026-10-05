@@ -89,6 +89,9 @@ class PackSource(Protocol):
     def resolve_commit_sha(self, owner: str, repo: str, ref: str) -> str:
         """Return the full commit SHA for a tag or SHA prefix."""
 
+    def resolve_head_sha(self, owner: str, repo: str) -> str:
+        """Return the full commit SHA of the repo's default-branch HEAD."""
+
     def fetch_file(self, owner: str, repo: str, path: str, sha: str) -> str:
         """Return UTF-8 file contents at ``sha``."""
 
@@ -107,6 +110,43 @@ class GitHubPackSource:
         if status == 404 or not sha:
             raise AgentPackError(
                 f"GitHub ref {ref!r} could not be resolved to a commit.",
+                code="pin_unresolved",
+            )
+        if status >= 400:
+            raise AgentPackError(
+                "GitHub ref lookup failed.",
+                code="fetch_failed",
+                status=502,
+            )
+        return sha.lower()
+
+    def resolve_head_sha(self, owner: str, repo: str) -> str:
+        """Resolve the repo's default-branch HEAD to a full commit SHA.
+
+        Discovery only. A separate, named method rather than ``HEAD`` passed
+        through ``resolve_commit_sha``, so ``validate_pin_ref`` and
+        ``FLOATING_REFS`` keep refusing floating refs everywhere a pin is
+        read: the caller gets a 40-character SHA back and pins that, never
+        the word ``HEAD``.
+
+        Args:
+            owner: GitHub owner of the catalog repo.
+            repo: GitHub repo name.
+
+        Returns:
+            The lowercase 40-character commit SHA HEAD points at now.
+
+        Raises:
+            AgentPackError: ``pin_unresolved`` when GitHub answers 404 or with
+                no SHA, ``fetch_failed`` (502) on any other error status or a
+                transport failure — the same codes ``resolve_commit_sha``
+                raises.
+        """
+        url = f"https://api.github.com/repos/{owner}/{repo}/commits/HEAD"
+        status, _body, sha = self._get_json_sha(url)
+        if status == 404 or not sha:
+            raise AgentPackError(
+                f"GitHub HEAD of {owner}/{repo} could not be resolved to a commit.",
                 code="pin_unresolved",
             )
         if status >= 400:

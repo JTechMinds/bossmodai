@@ -14,7 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 from core.agent_pack.catalog import (
     CATALOG_INDEX_PATH,
@@ -47,7 +47,6 @@ from core.agent_pack.sections import (
     first_unlabeled_line,
 )
 from core.models.agent import Agent
-from core.models.settings import AIPersonality
 
 logger = logging.getLogger(__name__)
 
@@ -77,11 +76,17 @@ class PackImportRequest:
 
 @dataclass(frozen=True)
 class PackImportResult:
-    """Hydrated hire fields plus the commit the app pinned."""
+    """Hydrated hire fields plus the commit the app pinned.
+
+    ``content_hash`` is ``pack_content_hash`` of the file bytes this import
+    fetched, so the installer stores the identity of the published file
+    rather than recomputing one from the parsed pack.
+    """
 
     pack: AgentPack
     location: PackLocation
     hire_fields: dict[str, Any]
+    content_hash: str
     catalog_entry: CatalogEntry | None = None
 
 
@@ -89,8 +94,9 @@ class PackImportResult:
 class CatalogListPack:
     """One browse card, built from a pack that passed the install gate.
 
-    Specialty, description, done bar, tools hint, communication and content
-    hash are all read from the one parse ``list_catalog`` already ran, and
+    Specialty, description, done bar, tools hint and communication are all
+    read from the one parse ``list_catalog`` already ran, the content hash
+    from the file bytes that parse read, and
     none of them is optional: a row whose pack does not parse — or parses but fails
     ``validate_pack_quality`` — never becomes a card at all, it comes back as a
     ``WithheldPack``. So no field here is ``None`` standing in for "never
@@ -114,6 +120,9 @@ class CatalogListPack:
     tools_hint: tuple[str, ...]
     communication: dict[str, str]
     content_hash: str
+    # The parsed pack itself, so an update can write exactly what was listed
+    # without a second fetch of the same file.
+    pack: AgentPack
     pack_author: dict[str, str] | None = None
     summary: str | None = None
 
@@ -274,8 +283,9 @@ def list_catalog(
     had to remember would eventually be forgotten by one of them, and browse
     would go back to offering packs install refuses.
 
-    Every card field — ``pack_author``, specialty, description, the done bar,
-    the tools hint and the content hash — still comes out of that one parse.
+    Every card field — ``pack_author``, specialty, description, the done bar
+    and the tools hint — still comes out of that one parse, and the content
+    hash out of the same fetched bytes.
     ``validate_pack_quality`` is a pure function over the parsed pack, so
     validating costs no further fetch. Does not create or patch an agent.
 
@@ -337,7 +347,8 @@ def list_catalog(
                 what_done_looks_like=pack.what_done_looks_like,
                 tools_hint=pack.tools_hint,
                 communication=pack.communication.as_dict(),
-                content_hash=pack_content_hash(pack),
+                content_hash=pack_content_hash(raw),
+                pack=pack,
                 pack_author=pack.pack_author.as_dict() if pack.pack_author else None,
                 # The pack read here IS the pack install writes, so its own
                 # preamble outranks the index row's summary.
@@ -356,36 +367,39 @@ def list_catalog(
 def export_pack(
     agent: Agent,
     *,
-    personalities: Iterable[AIPersonality] | None = None,
     company_name: str | None = None,
     company_url: str | None = None,
 ) -> AgentPack:
     """Export an agent's specialty / description / done bar as a pack.
 
-    Optional metadata (company author, personality hint) that is over its cap
-    or invalid is left out, and the returned pack's ``ignored_keys`` names it.
+    Optional metadata (company author) that is over its cap or invalid is left
+    out, and the returned pack's ``ignored_keys`` names it.
     """
-    hint = _personality_hint(agent, personalities)
     author, dropped = pack_author_from_company(company_name, company_url)
-    return export_agent_pack(
-        agent, personality_hint=hint, pack_author=author, dropped=dropped,
-    )
+    return export_agent_pack(agent, pack_author=author, dropped=dropped)
 
 
-def pack_content_hash(pack: AgentPack) -> str:
-    """Return the sha256 hex digest of a pack's canonical YAML.
+def pack_content_hash(raw: str | bytes) -> str:
+    """Return the sha256 hex digest of a pack file exactly as it was fetched.
 
-    ``AgentPack.to_yaml()`` is a canonical ``safe_dump`` with a fixed key
-    order and no tags, so the digest is stable across fetches and is the
-    identity an installed template is compared against to decide whether it is
-    stale. Commit SHAs cannot answer that: the catalog pin is repo-wide, so
-    comparing SHAs would mark every installed template stale on any pin bump,
-    including packs whose file never changed.
+    The identity is the published file, not this app's reading of it. A hash
+    over the parsed pack's canonical YAML moved every time ``as_dict()``
+    learned a new key, so an app upgrade alone marked every installed template
+    stale; the file's own bytes only change when the file does. Commit SHAs
+    cannot answer staleness either: the catalog pin is repo-wide, so comparing
+    SHAs would mark every installed template stale on any pin bump, including
+    packs whose file never changed.
 
-    Takes a parsed pack; raises nothing of its own. A pack that could not be
-    parsed has no canonical form and therefore no hash.
+    Args:
+        raw: The file contents as the source returned them. ``str`` is hashed
+            as its UTF-8 bytes, so a text read and a byte read of the same
+            file agree.
+
+    Returns:
+        The lowercase sha256 hex digest. Raises nothing of its own.
     """
-    return hashlib.sha256(pack.to_yaml().encode("utf-8")).hexdigest()
+    data = raw.encode("utf-8") if isinstance(raw, str) else raw
+    return hashlib.sha256(data).hexdigest()
 
 
 def describe_pack(description: str, what_done_looks_like: str) -> dict[str, Any]:
@@ -464,6 +478,7 @@ def _import_url(
         pack=pack,
         location=pinned,
         hire_fields=pack.hire_fields(),
+        content_hash=pack_content_hash(raw),
     )
 
 
@@ -489,6 +504,7 @@ def _import_catalog(
         pack=pack,
         location=pinned,
         hire_fields=pack.hire_fields(),
+        content_hash=pack_content_hash(raw),
         catalog_entry=entry,
     )
 
@@ -551,16 +567,3 @@ def _parse_imported_pack(raw: str | bytes) -> AgentPack:
     validate_pack_quality(pack)
     return pack
 
-
-def _personality_hint(
-    agent: Agent,
-    personalities: Iterable[AIPersonality] | None,
-) -> str | None:
-    template = (agent.prompt_template or "").strip()
-    if not template or personalities is None:
-        return None
-    for personality in personalities:
-        if (personality.prompt_template or "").strip() == template:
-            name = (personality.name or "").strip()
-            return name or None
-    return None
