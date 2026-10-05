@@ -190,14 +190,12 @@ def test_build_context_injects_communication_into_role_prompt() -> None:
             contract_kind="decision",
         )
     )
-    role_msgs = [
-        str(message.get("content") or "")
-        for message in context
-        if str(message.get("content") or "").startswith("# Role contract")
-    ]
-    assert role_msgs
-    assert "Communication:" in role_msgs[0]
-    assert "- tone: precise-but-scannable" in role_msgs[0]
+    role_block = format_role_contract_block(agent)
+    assert "Communication:" in role_block
+    assert "- tone: precise-but-scannable" in role_block
+    # Rendered once into the system prompt, never repeated as its own message.
+    occurrences = sum(str(message.get("content") or "").count(role_block) for message in context)
+    assert occurrences == 1
 
 
 def test_create_and_patch_agent_persist_communication() -> None:

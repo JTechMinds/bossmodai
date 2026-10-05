@@ -590,7 +590,6 @@ async def test_l5_a_delegation_is_not_filed_under_the_paused_task() -> None:
             "agentId": peer.id,
             "taskTitle": "Pull the daily numbers",
             "taskDescription": "Alice asked for today's numbers by email.",
-            "confirmSpecialtyMismatch": True,
         },
         agent,
         db.get_agent_state(agent.id),

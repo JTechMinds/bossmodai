@@ -204,19 +204,16 @@ def test_injected_core_includes_audience_soft_judgment() -> None:
                 contract_kind="decision",
             )
         )
-        core_msgs = [
-            str(message.get("content") or "")
-            for message in context
-            if str(message.get("content") or "").startswith("# Runtime core")
-        ]
-        assert core_msgs
-        assert AUDIENCE_SOFT_JUDGMENT in core_msgs[0]
-        assert CHAT_FORMATTING in core_msgs[0]
+        # The runtime core reaches the model once, inside the system prompt.
+        core = format_runtime_core_block(agent)
         joined = "\n".join(str(message.get("content") or "") for message in context)
+        assert joined.count(core) == 1
+        assert AUDIENCE_SOFT_JUDGMENT in core
+        assert CHAT_FORMATTING in core
         assert AUDIENCE_SOFT_JUDGMENT in joined
         assert CHAT_FORMATTING in joined
         assert "@" not in AUDIENCE_SOFT_JUDGMENT
-        assert "router" not in core_msgs[0].lower()
+        assert "router" not in core.lower()
 
 
 def test_injected_core_includes_chat_formatting() -> None:
@@ -254,15 +251,13 @@ def test_injected_core_includes_chat_formatting() -> None:
             contract_kind="decision",
         )
     )
-    core_msgs = [
-        str(message.get("content") or "")
-        for message in context
-        if str(message.get("content") or "").startswith("# Runtime core")
-    ]
-    assert core_msgs
-    assert CHAT_FORMATTING in core_msgs[0]
-    assert "No hard length limit" in core_msgs[0]
-    lowered = core_msgs[0].lower()
+    # The runtime core reaches the model once, inside the system prompt.
+    core = format_runtime_core_block(writer)
+    joined = "\n".join(str(message.get("content") or "") for message in context)
+    assert joined.count(core) == 1
+    assert CHAT_FORMATTING in core
+    assert "No hard length limit" in core
+    lowered = core.lower()
     assert "word limit" not in lowered
     assert "character limit" not in lowered
     assert "max words" not in lowered

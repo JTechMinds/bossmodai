@@ -29,7 +29,6 @@ from core.agent_loop.task_origins import (
     task_source_channel_for_trigger,
 )
 from core.agent_loop.work_binding import bound_task_id
-from core.agent_loop.role_contracts import evaluate_specialty_assignment
 from core.agent_loop.task_roles import (
     default_task_owner_id,
     task_has_participant,
@@ -173,29 +172,6 @@ async def _handle_delegate_task(
 
     task_title = str(action.get("taskTitle") or "").strip()
     task_description = str(action.get("taskDescription") or "").strip()
-    evaluation = evaluate_specialty_assignment(
-        assignee=target,
-        title=task_title,
-        description=task_description,
-        teammates=[
-            item for item in db.list_agents()
-            if peers_share_floor(agent.id, item.id)
-        ],
-        confirm=bool(action.get("confirmSpecialtyMismatch")),
-    )
-    if evaluation.deny:
-        return {
-            "event": "world_feedback",
-            "detail": evaluation.warning,
-            "agent_name": agent.name,
-            "specialty_warning": evaluation.warning,
-            "suggested_assignees": [
-                {"id": item.id, "name": item.name, "role": item.role}
-                for item in evaluation.suggested
-            ],
-            "expected_action": "delegateTask",
-        }
-
     parent_task_id = bound_task_id(agent.id)
     parent_task = db.get_task(parent_task_id) if parent_task_id else None
     if parent_task is not None:
@@ -320,8 +296,6 @@ async def _handle_delegate_task(
             "human_visible": _task_is_human_visible(task),
         },
     }
-    if evaluation.warning:
-        result["specialty_warning"] = evaluation.warning
     _append_task_stakeholder_reports(
         result=result,
         actor=agent,

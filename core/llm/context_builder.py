@@ -166,14 +166,9 @@ def build_context(
     render_context = _build_prompt_render_context(turn)
     system_prompt = _render_system_prompt(turn, render_context, template_overrides)
 
+    # The role contract and runtime core reach the model only through the
+    # {{role_contract}} / {{runtime_core}} slots of the system prompt.
     messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "system", "content": format_role_contract_block(turn.agent)})
-    messages.append(
-        {
-            "role": "system",
-            "content": format_runtime_core_block(turn.agent, task_id=_turn_task_id(turn)),
-        }
-    )
     standing_prefs = _standing_prefs_warm_message(turn)
     if standing_prefs:
         messages.append(standing_prefs)
@@ -357,11 +352,6 @@ def _standing_prefs_warm_message(turn: TurnContext) -> dict[str, str] | None:
     if not section:
         return None
     return {"role": "system", "content": section}
-
-
-def _turn_task_id(turn: TurnContext) -> str | None:
-    """Return the current task id for one turn, if any."""
-    return _task_id(turn.current_task)
 
 
 def _task_id(task: dict[str, Any] | None) -> str | None:

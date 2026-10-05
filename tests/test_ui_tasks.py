@@ -298,20 +298,19 @@ def test_selection_and_bulk_cancel_are_keyboard_reachable_and_confirmed() -> Non
     )
 
 
-def test_assign_form_reuses_the_shared_specialty_helpers() -> None:
-    """One opinion about whether an assignment is sensible, not two.
+def test_assign_form_does_not_judge_specialty() -> None:
+    """Whoever assigns decides who does the work.
 
-    The ranking, the match labels, and the warning copy all live in
-    core/specialty.js.
-    A local copy here would be a second opinion that drifts, and the operator
-    would have no way to tell which one they were reading.
+    The assign dialog lists the roster by name: no specialty ranking, no
+    match labels, no mismatch warning, and no local copy of the specialty
+    inference that would bring one back.
     """
     source = (TASKS / "assign-form.js").read_text(encoding="utf-8")
-    assert "BossModSpecialty.specialtyRank(" in source
-    assert "BossModSpecialty.specialtyWarningMessage(" in source
-    assert "BossModSpecialty.specialtyMatch(" in source
-    for helper in ("specialtyRank", "specialtyWarningMessage", "specialtyMatch",
-                   "inferWorkFamily", "specialtyFamily"):
+    assert "BossModSpecialty." not in source
+    for legacy in ("(matches)", "(mismatch)", "ct-assign-mismatch", "confirm_specialty_mismatch",
+                   "specialty_mismatch", "rankRoster", "optionLabel"):
+        assert legacy not in source, f"assign-form.js still carries {legacy}"
+    for helper in ("inferWorkFamily", "specialtyFamily"):
         assert f"function {helper}(" not in source, f"assign-form.js redefines {helper}"
 
     # The composer's clipboard target (spec 4.4). It is not wired in this phase;
@@ -423,7 +422,7 @@ def test_task_detail_and_assign_are_modals() -> None:
     it; in Edit mode it holds a draft, so the click is refused.
     Assign holds a half-written task, so it does not — and its primary is
     pinned in the footer band through createModal's `form:` action, which
-    submits without closing so an outcome (a mismatch, an ambiguous match) is
+    submits without closing so an outcome (an ambiguous match) is
     shown in the dialog rather than lost with it.
     """
     detail = (TASKS / "task-detail.js").read_text(encoding="utf-8")
@@ -488,9 +487,8 @@ def test_task_detail_harness() -> None:
     holds the task's own editable rows and its subtasks' read-only ones,
     counted together; ✕ restores the task; ✓ sends only what changed
     (nothing changed sends nothing; clearing every file sends
-    `work_contract: null`) and re-reads Activity; a specialty mismatch offers
-    "Reassign anyway", which resends with the confirmation; a failed save
-    keeps the draft; a save repaints the same layer; and neither an outside
+    `work_contract: null`) and re-reads Activity; a reassign is one PATCH,
+    with no specialty label or override step; a failed save keeps the draft; a save repaints the same layer; and neither an outside
     click nor Esc loses a draft by closing the panel. The assignee reads as a
     field (short name and chip, full label in its accessible name). A file row
     appears only once its path is picked from the draft assignee's folders,
@@ -527,7 +525,7 @@ def test_task_detail_harness() -> None:
         "discardRestores": True,
         "unchangedSaveSendsNothing": True,
         "saveRepaintsInPlace": True,
-        "mismatchOffersOverride": True,
+        "reassignSavesDirectly": True,
         "failedSaveKeepsDraft": True,
         "fileEditsSendTheList": True,
         "filesArePicked": True,

@@ -160,33 +160,18 @@ def test_reassign_moves_assignee_and_owner_and_posts_rerouted(monkeypatch: pytes
     assert "Cap One Rerouted to Cap Two — Reassigned by the operator" in lines
 
 
-def test_reassign_specialty_mismatch_is_409_until_confirmed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_reassign_of_a_mismatched_specialty_pair_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Whoever assigns decides: reassigning review work to a Writer is saved, not refused."""
     client = _client(monkeypatch)
     auditor = db.create_agent("Cap Auditor", role="Auditor", desk_x=1, desk_y=1)
     writer = db.create_agent("Cap Writer", role="Writer", desk_x=2, desk_y=1)
-    task = _create(
-        client,
-        title="Review the security audit",
-        description="Audit the package and report findings.",
-        assigned_to=auditor.id,
-    )
+    task = _create(client, title="Review the audit log", assigned_to=auditor.id)
 
-    denied = client.patch(f"/api/tasks/{task['id']}", headers=_headers(), json={"assigned_to": writer.id})
+    response = client.patch(f"/api/tasks/{task['id']}", headers=_headers(), json={"assigned_to": writer.id})
 
-    assert denied.status_code == 409
-    body = denied.json()
-    assert body["outcome"] == "specialty_mismatch"
-    assert "Writer" in body["reason"]
-    assert [item["id"] for item in body["suggested_assignees"]] == [auditor.id]
-    assert db.get_task(task["id"]).assigned_to == auditor.id
-
-    confirmed = client.patch(
-        f"/api/tasks/{task['id']}",
-        headers=_headers(),
-        json={"assigned_to": writer.id, "confirm_specialty_mismatch": True},
-    )
-    assert confirmed.status_code == 200, confirmed.text
-    assert confirmed.json()["assigned_to"] == writer.id
+    assert response.status_code == 200, response.text
+    assert response.json()["assigned_to"] == writer.id
+    assert db.get_task(task["id"]).assigned_to == writer.id
 
 
 def test_cross_floor_reassign_is_403(monkeypatch: pytest.MonkeyPatch) -> None:

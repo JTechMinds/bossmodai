@@ -19,11 +19,10 @@ import db
 from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import assignment_wake_trigger, build_task_update_trigger
 from core.agent_loop.deliverables import build_work_contract
-from core.agent_loop.role_contracts import evaluate_specialty_assignment
 from core.agent_loop.task_followups import _CHILD_UPDATES_TO_PARENT_EVENT_TYPES
 from core.agent_loop.task_origin_mirrors import mirror_origin_status, mirror_task_completed_by_operator
 from core.agent_loop.task_roles import default_task_owner_id
-from core.floors import assert_assignment, on_floor, task_floor_id
+from core.floors import assert_assignment
 from core.models import Agent, Task, TaskUpdateRequest, WorkContract
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import append_task_event, list_open_child_tasks, rewrite_shared_work_contract
@@ -64,15 +63,6 @@ class OpenChildTasks(ValueError):
         super().__init__("Resolve the task's open subtasks before marking it complete")
 
 
-class SpecialtyMismatch(ValueError):
-    """The new assignee's specialty does not fit the work and the operator has not confirmed."""
-
-    def __init__(self, warning: str, suggested: list[Agent]) -> None:
-        self.warning = warning
-        self.suggested = suggested
-        super().__init__(warning)
-
-
 def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> OperatorTaskResult:
     """Apply the operator's edit to an open task: title, description, assignee, requirements.
 
@@ -95,8 +85,6 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
             assignee, or relative deliverable paths on an unassigned task.
         IllegalTaskTransition: The task is closed.
         FloorDenied: The new assignee is not on the task's floor.
-        SpecialtyMismatch: The new assignee's specialty does not fit and
-            ``confirm_specialty_mismatch`` is false.
         PathOutsideRootsError: A deliverable path resolves outside the agent's roots.
     """
     task = db.get_task(task_id)
@@ -109,19 +97,15 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
     columns: dict[str, Any] = {}
     summary_bits: list[str] = []
 
-    title = task.title
     # The request model rejects a blank or null title, so a set title is text.
     if "title" in fields_set and changes.title is not None and changes.title != task.title:
-        title = changes.title
-        columns["title"] = title
+        columns["title"] = changes.title
         summary_bits.append("title")
 
-    description = task.description
     description_changed = False
     if "description" in fields_set:
         wanted = (changes.description or "").strip() or None
         if wanted != task.description:
-            description = wanted
             columns["description"] = wanted
             description_changed = True
             summary_bits.append("description")
@@ -149,8 +133,6 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
             channel_id=task.notification_channel_id,
             parent_channel_id=parent.notification_channel_id if parent is not None else None,
         )
-        if assignee is not None:
-            _check_specialty(task, assignee=assignee, title=title, description=description, changes=changes)
         columns["assigned_to"] = assignee_id
         if owner_id != task.owner_id:
             columns["owner_id"] = owner_id
@@ -372,30 +354,6 @@ def _validate_new_assignee(assignee_id: str | None) -> Agent | None:
     if agent is None:
         raise ValueError("Assigned agent not found")
     return agent
-
-
-def _check_specialty(
-    task: Task,
-    *,
-    assignee: Agent,
-    title: str,
-    description: str | None,
-    changes: TaskUpdateRequest,
-) -> None:
-    """Raise ``SpecialtyMismatch`` when the new assignee clearly does not fit the work."""
-    floor_id = task_floor_id(task)
-    teammates = [agent for agent in db.list_agents() if on_floor(agent.id, floor_id)]
-    evaluation = evaluate_specialty_assignment(
-        assignee=assignee,
-        title=title,
-        description=description,
-        teammates=teammates,
-        confirm=changes.confirm_specialty_mismatch,
-    )
-    if evaluation.deny:
-        if not evaluation.warning:
-            raise RuntimeError("Specialty evaluation denied the assignee without a warning")
-        raise SpecialtyMismatch(evaluation.warning, evaluation.suggested)
 
 
 def _normalize_contract(

@@ -232,11 +232,10 @@ const BossModTaskDetail = (() => {
          * it is in flight.
          * @returns {Promise<object>} The stored row.
          */
-        async function sendUpdate(payload, { confirmMismatch }) {
+        async function sendUpdate(payload) {
             saveButton.disabled = true;
             try {
-                return await actions.update(task.id,
-                    confirmMismatch ? { ...payload, confirm_specialty_mismatch: true } : payload);
+                return await actions.update(task.id, payload);
             } finally {
                 saveButton.disabled = false;
             }

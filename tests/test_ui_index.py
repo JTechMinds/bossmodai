@@ -130,7 +130,6 @@ UTILS_EXPORTS = {
     ),
     "core/specialty.js": (
         "inferWorkFamily", "specialtyFamily", "suggestFinishLine",
-        "specialtyMatch", "specialtyRank", "specialtyWarningMessage",
         "doneClaimGuidance", "formatDoneClaim",
     ),
 }
@@ -175,10 +174,11 @@ def test_utils_is_gone_and_its_exports_have_owners() -> None:
                 f"{owner} declares {name} but does not export it"
             )
 
-    # 22 names, three owners, no overlap.
+    # 19 names, three owners, no overlap (the three specialty-match helpers
+    # went with the assignment gate).
     all_names = [name for names in UTILS_EXPORTS.values() for name in names]
-    assert len(all_names) == 22
-    assert len(set(all_names)) == 22
+    assert len(all_names) == 19
+    assert len(set(all_names)) == 19
 
 
 def test_no_module_uses_the_retired_overlay_helpers() -> None:

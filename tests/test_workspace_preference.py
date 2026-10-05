@@ -405,16 +405,14 @@ def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> Non
             contract_kind="decision",
         )
     )
-    core_msgs = [
-        str(message.get("content") or "")
-        for message in context
-        if str(message.get("content") or "").startswith("# Runtime core")
-    ]
-    assert core_msgs
-    assert LOCKED_WORKSPACE_COPY_STEER in core_msgs[0]
-    assert dest in core_msgs[0]
-    assert "Do not park @Operator to reopen" in core_msgs[0]
-    assert "Do not park @Operator as the test runner or git pusher" in core_msgs[0]
+    # The runtime core reaches the model once, inside the system prompt.
+    core = format_runtime_core_block(agent, task_id=task_id)
+    joined = "\n".join(str(message.get("content") or "") for message in context)
+    assert joined.count(core) == 1
+    assert LOCKED_WORKSPACE_COPY_STEER in core
+    assert dest in core
+    assert "Do not park @Operator to reopen" in core
+    assert "Do not park @Operator as the test runner or git pusher" in core
 
 
 def test_runtime_core_steers_teammate_off_host_direct_when_task_branch_locked() -> None:

@@ -1,13 +1,14 @@
-"""Role-contract v1 helpers: specialty matching and checkable done claims.
+"""Role-contract v1 helpers: the role-contract prompt block and checkable done claims.
 
 Hire stores a one-line specialty on ``Agent.role``, an optional casual
-description, and a short done/fail bar (finish line). Assign/routing and
-complete/deliver use those fields on the existing task paths.
+description, and a short done/fail bar (finish line). Complete/deliver uses
+those fields on the existing task paths. The specialty is not used for
+assignment or routing: whoever assigns work decides who does it.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from core.agent_loop.communication_contract import communication_from_agent
@@ -25,48 +26,17 @@ from core.agent_loop.tool_evidence import (
 # these as "unused" - see core/agent_loop/specialty.py for the cycle they break.
 from core.agent_loop.specialty import (  # noqa: F401
     SpecialtyFamily,
-    infer_work_kind,
     specialty_family,
     suggest_finish_line,
     tokenize,
 )
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models import Agent
-from core.models.task import AssigneeSuggestion, Task
+from core.models.task import Task
 
-MatchStatus = Literal["match", "unknown", "mismatch"]
 DoneClaimType = Literal["artifact", "tests", "proof"]
 
-_FAMILY_LABELS: dict[SpecialtyFamily, str] = {
-    "write": "writing",
-    "review": "review/audit",
-    "implement": "implementation",
-    "research": "research",
-    "design": "design",
-    "coordinate": "coordination",
-}
-
 _DONE_CLAIM_TYPES = frozenset({"artifact", "tests", "proof"})
-
-# Soft-deny only when work is clearly outside the hire specialty.
-# Engineers writing a report is unknown, not a mismatch.
-_CLEAR_CONFLICTS = frozenset({
-    frozenset({"write", "review"}),
-    frozenset({"design", "review"}),
-    frozenset({"design", "implement"}),
-})
-
-
-@dataclass(frozen=True)
-class SpecialtyAssignment:
-    """Result of comparing one assignee specialty against inferred work kind."""
-
-    status: MatchStatus
-    work_kind: SpecialtyFamily | None
-    assignee_family: SpecialtyFamily | None
-    warning: str | None
-    suggested: list[Agent] = field(default_factory=list)
-    deny: bool = False
 
 
 @dataclass(frozen=True)
@@ -91,129 +61,6 @@ def is_auditor_specialty(role: str | None) -> bool:
     return specialty_family(role) == "review"
 
 
-def match_specialty(
-    *,
-    assignee_role: str | None,
-    work_kind: SpecialtyFamily | None,
-) -> MatchStatus:
-    """Compare one assignee specialty against an inferred work kind."""
-    if work_kind is None:
-        return "unknown"
-    family = specialty_family(assignee_role)
-    if family is None or family == "coordinate":
-        return "unknown"
-    if family == work_kind:
-        return "match"
-    if frozenset({family, work_kind}) in _CLEAR_CONFLICTS:
-        return "mismatch"
-    return "unknown"
-
-
-def rank_agents_for_work(
-    agents: list[Agent],
-    *,
-    title: str | None,
-    description: str | None = None,
-    requested_specialty: str | None = None,
-) -> list[Agent]:
-    """Prefer teammates whose specialty matches the inferred work kind."""
-    work_kind = infer_work_kind(title, description, requested_specialty=requested_specialty)
-    order = {"match": 0, "unknown": 1, "mismatch": 2}
-    return sorted(
-        agents,
-        key=lambda agent: (
-            order[match_specialty(assignee_role=agent.role, work_kind=work_kind)],
-            (agent.name or "").lower(),
-        ),
-    )
-
-
-def prefer_specialty_match(
-    candidates: list[Agent],
-    *,
-    title: str | None,
-    description: str | None = None,
-    requested_specialty: str | None = None,
-) -> Agent | None:
-    """If exactly one candidate matches the work kind, return that agent."""
-    work_kind = infer_work_kind(title, description, requested_specialty=requested_specialty)
-    if work_kind is None:
-        return None
-    matched = [
-        agent
-        for agent in candidates
-        if match_specialty(assignee_role=agent.role, work_kind=work_kind) == "match"
-    ]
-    if len(matched) == 1:
-        return matched[0]
-    return None
-
-
-def evaluate_specialty_assignment(
-    *,
-    assignee: Agent,
-    title: str | None,
-    description: str | None = None,
-    requested_specialty: str | None = None,
-    teammates: list[Agent] | None = None,
-    confirm: bool = False,
-) -> SpecialtyAssignment:
-    """Warn / soft-deny when assigned work is clearly outside the hire specialty."""
-    work_kind = infer_work_kind(title, description, requested_specialty=requested_specialty)
-    assignee_family = specialty_family(assignee.role)
-    status = match_specialty(assignee_role=assignee.role, work_kind=work_kind)
-    suggested: list[Agent] = []
-    if work_kind is not None and teammates:
-        suggested = [
-            agent
-            for agent in rank_agents_for_work(
-                [item for item in teammates if item.id != assignee.id],
-                title=title,
-                description=description,
-                requested_specialty=requested_specialty,
-            )
-            if match_specialty(assignee_role=agent.role, work_kind=work_kind) == "match"
-        ]
-    if status != "mismatch":
-        return SpecialtyAssignment(
-            status=status,
-            work_kind=work_kind,
-            assignee_family=assignee_family,
-            warning=None,
-            suggested=suggested,
-            deny=False,
-        )
-
-    work_label = _FAMILY_LABELS.get(work_kind, work_kind or "this work")
-    assignee_label = assignee.role or "unspecified specialty"
-    suggestion = ""
-    if suggested:
-        names = ", ".join(agent.name for agent in suggested[:3])
-        suggestion = f" Prefer {names}."
-    else:
-        suggestion = " Pick a teammate whose specialty matches, or confirm the mismatch."
-    warning = (
-        f'{assignee.name} is "{assignee_label}"; this work looks like {work_label}.'
-        f"{suggestion}"
-    )
-    return SpecialtyAssignment(
-        status="mismatch",
-        work_kind=work_kind,
-        assignee_family=assignee_family,
-        warning=warning,
-        suggested=suggested,
-        deny=not confirm,
-    )
-
-
-def suggested_assignees(agents: list[Agent]) -> list[AssigneeSuggestion]:
-    """Serialize ranked teammate suggestions for assign API/UI."""
-    return [
-        AssigneeSuggestion(id=agent.id, name=agent.name, role=agent.role, match="match")
-        for agent in agents
-    ]
-
-
 def format_role_contract_block(agent: Agent) -> str:
     """Render the hire contract the model must follow on every turn."""
     specialty = (agent.role or "").strip() or "unspecified"
@@ -236,9 +83,6 @@ def format_role_contract_block(agent: Agent) -> str:
         f"{description_line}"
         f"Done/fail bar: {bar}\n"
         f"{communication}\n"
-        "- Prefer teammates whose specialty matches the work. "
-        "Do not assign review/audit work to a writer, or writing to an auditor, "
-        "unless the mismatch was confirmed.\n"
         "- Complete/deliver requires a checkable claim: a satisfied file deliverable, "
         "or data.claim {type: artifact|tests|proof, path?, ev?}. "
         f"{clear_line}"

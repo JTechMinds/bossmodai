@@ -553,42 +553,26 @@ async function editMode() {
         && updated.length === 1 && updated[0].title === row.title && document.activeElement === pencil;
     if (!saveRepaintsInPlace) fail(`a title save sent ${JSON.stringify(requests[0])}; head "${titleText()}"`);
 
-    // ── mismatchOffersOverride (Enter saves from the title) ─────────────
+    // ── reassignSavesDirectly (Enter saves from the title) ──────────────
+    // Whoever assigns decides who does the work: the menu labels no
+    // specialty match, and a reassign is one PATCH with no override step.
     await enter();
     await click(panel.querySelector(".menu-select-trigger"), "the assignee trigger");
-    const pickDebra = async () => {
-        const debra = panel.querySelectorAll(".menu-select-option").find((item) => item.textContent.includes("Debra"));
-        await click(debra, "Debra in the assignee menu");
-    };
-    await pickDebra();
-    reply(409, {
-        outcome: "specialty_mismatch",
-        reason: "Debra is \"Designer\".",
-        suggested_assignees: [{ id: "a1", name: "Jim", role: "Implementation engineer", match: "match" }],
-    });
+    const optionTexts = panel.querySelectorAll(".menu-select-option").map((item) => item.textContent);
+    const debra = panel.querySelectorAll(".menu-select-option").find((item) => item.textContent.includes("Debra"));
+    await click(debra, "Debra in the assignee menu");
+    row = { ...row, assigned_to: "a2", assigned_to_name: "Debra" };
+    reply(200, row);
     let prevented = false;
     titleInput().dispatchEvent({ type: "keydown", key: "Enter", preventDefault() { prevented = true; } });
     await drain();
-    const warn = errorCallout();
-    const warned = prevented && Boolean(warn) && warn.getAttribute("data-tone") === "warn"
-        && warn.textContent.includes("Specialty mismatch — nothing was saved")
-        && warn.textContent.includes("Debra is") && editing()
-        && same(requests[1].body, { assigned_to: "a2" });
-    // A suggestion chooses, it does not save.
-    const jim = warn.querySelectorAll("button").find((item) => item.textContent.startsWith("Jim"));
-    await click(jim, "the suggested Jim");
-    const suggestionChoosesOnly = requests.length === 2
-        && panel.querySelector(".menu-select-trigger").getAttribute("aria-label").includes("Jim");
-    await click(panel.querySelector(".menu-select-trigger"), "the assignee trigger");
-    await pickDebra();
-    row = { ...row, assigned_to: "a2", assigned_to_name: "Debra" };
-    reply(200, row);
-    await click(panel.querySelector("#ct-edit-reassign-anyway"), "Reassign anyway");
-    const mismatchOffersOverride = warned && suggestionChoosesOnly
-        && same(requests[2].body, { assigned_to: "a2", confirm_specialty_mismatch: true })
-        && atRest() && top() === panel && updated.length === 2;
-    if (!mismatchOffersOverride) {
-        fail(`the reassign sent ${JSON.stringify(requests.slice(1))}; warned ${warned}, suggestion ${suggestionChoosesOnly}`);
+    const unlabelled = optionTexts.length > 0
+        && optionTexts.every((text) => !text.includes("(matches)") && !text.includes("(mismatch)"));
+    const reassignSavesDirectly = prevented && unlabelled
+        && requests.length === 2 && same(requests[1].body, { assigned_to: "a2" })
+        && !errorCallout() && atRest() && top() === panel && updated.length === 2;
+    if (!reassignSavesDirectly) {
+        fail(`the reassign sent ${JSON.stringify(requests.slice(1))}; options ${JSON.stringify(optionTexts)}`);
     }
 
     // ── failedSaveKeepsDraft, fileEditsSendTheList, filesArePicked ──────
@@ -634,7 +618,7 @@ async function editMode() {
     row = { ...row, work_contract: { deliverables: files } };
     reply(200, row);
     await click(save, "✓");
-    const replacedFiles = same(requests[4].body, { work_contract: { deliverables: files } }) && atRest();
+    const replacedFiles = same(requests[3].body, { work_contract: { deliverables: files } }) && atRest();
     await enter();
     await click(fileRows()[0].querySelector(".task-detail-file-remove"), "the file's ✕");
     // No own file left: the head counts the subtask's one.
@@ -644,8 +628,8 @@ async function editMode() {
     reply(200, row);
     await click(save, "✓");
     const fileEditsSendTheList = replacedFiles && countedChildOnly
-        && same(requests[5].body, { work_contract: null }) && atRest();
-    if (!fileEditsSendTheList) fail(`the file edits sent ${JSON.stringify(requests.slice(3))}`);
+        && same(requests[4].body, { work_contract: null }) && atRest();
+    if (!fileEditsSendTheList) fail(`the file edits sent ${JSON.stringify(requests.slice(2))}`);
 
     // ── browsingFollowsTheAssignee ──────────────────────────────────────
     // With the draft unassigned there is no file view to browse: the add-row
@@ -684,7 +668,7 @@ async function editMode() {
         preventDefault() { escPrevented = true; }, stopPropagation() { stopped = true; },
     });
     const escDiscardsWhileEditing = stopped && escPrevented && top() === panel && atRest()
-        && titleText() === row.title && requests.length === 6;
+        && titleText() === row.title && requests.length === 5;
     await click(scrim, "the backdrop");
     const backdropClosesAtRest = document.body.querySelectorAll(".modal-panel").length === 0;
     if (!backdropRefusedWhileEditing || !backdropClosesAtRest) fail("the backdrop ignored Edit mode");
@@ -699,7 +683,7 @@ async function editMode() {
         discardRestores,
         unchangedSaveSendsNothing,
         saveRepaintsInPlace,
-        mismatchOffersOverride,
+        reassignSavesDirectly,
         failedSaveKeepsDraft,
         fileEditsSendTheList,
         filesArePicked,

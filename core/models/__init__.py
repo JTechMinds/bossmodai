@@ -58,7 +58,6 @@ from core.models.settings import (
     AIConnectionUpdate,
 )
 from core.models.task import (
-    AssigneeSuggestion,
     Task,
     TaskCandidateSummary,
     TaskCancelRequest,
@@ -106,7 +105,6 @@ __all__ = [
     "MeetingSession",
     "MeetingSessionMessage",
     # Task
-    "AssigneeSuggestion",
     "Task",
     "TaskCandidateSummary",
     "TaskCancelRequest",

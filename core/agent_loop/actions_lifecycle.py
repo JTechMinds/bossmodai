@@ -19,7 +19,7 @@ from core.agent_loop.activity_scheduler import (
     build_task_update_trigger,
     next_work_after_end,
 )
-from core.agent_loop.role_contracts import evaluate_specialty_assignment, resolve_done_claim
+from core.agent_loop.role_contracts import resolve_done_claim
 from core.agent_loop.task_followups import (
     _CHILD_UPDATES_TO_PARENT_EVENT_TYPES,
     _append_task_follow_up_message,
@@ -485,29 +485,6 @@ async def _handle_delegated(
     if not peers_share_floor(agent.id, target.id):
         return {"event": "world_feedback", "detail": CROSS_FLOOR_DENY, "agent_name": agent.name}
     original_task = db.get_task(task_id)
-    if original_task is not None:
-        evaluation = evaluate_specialty_assignment(
-            assignee=target,
-            title=original_task.title,
-            description=original_task.description,
-            teammates=[
-                item for item in db.list_agents()
-                if peers_share_floor(agent.id, item.id)
-            ],
-            confirm=bool(action.get("confirmSpecialtyMismatch")),
-        )
-        if evaluation.deny:
-            return {
-                "event": "world_feedback",
-                "detail": evaluation.warning,
-                "agent_name": agent.name,
-                "specialty_warning": evaluation.warning,
-                "suggested_assignees": [
-                    {"id": item.id, "name": item.name, "role": item.role}
-                    for item in evaluation.suggested
-                ],
-                "expected_action": "delegated",
-            }
     follow_up_message = action.get("followUpMessage")
     if _task_requires_conversational_follow_up(original_task, actor_id=agent.id) and not (
         isinstance(follow_up_message, str) and follow_up_message.strip()

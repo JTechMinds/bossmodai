@@ -1,10 +1,11 @@
 /**
- * BossMod AI — specialty matching and the honesty rules around "done".
+ * BossMod AI — specialty families and the honesty rules around "done".
  *
  * The third of the three modules utils.js became. Two related jobs, one
- * vocabulary: inferring what family of work a task is and what family an
- * agent's role is (so an assignment can warn before it goes wrong), and
- * stating what a checkable done claim looks like.
+ * vocabulary: inferring what family of work some text describes and what
+ * family an agent's role is (only to seed hire-form defaults such as the
+ * suggested finish line — never to judge an assignment), and stating what a
+ * checkable done claim looks like.
  *
  * The done-claim copy is behaviourally load-bearing — `test_role_contracts.py`
  * asserts it reaches the Tasks place's task detail and the desk's task cards, and
@@ -20,12 +21,6 @@ const BossModSpecialty = (() => {
         { work: ['research', 'analyze', 'analysis'], roles: ['researcher', 'analyst'], family: 'research' },
         { work: ['design', 'mockup', 'ux'], roles: ['designer', 'design', 'ux'], family: 'design' },
     ];
-    const SPECIALTY_CONFLICTS = {
-        write: ['review'],
-        review: ['write', 'design'],
-        design: ['review', 'implement'],
-        implement: ['design'],
-    };
     const FINISH_LINE_DEFAULTS = {
         write: 'A named draft or document exists. Empty done does not count.',
         review: 'A checkable allow/deny (or tests/artifact) exists. Empty done does not count.',
@@ -60,8 +55,8 @@ const BossModSpecialty = (() => {
      * The family an agent's role belongs to.
      *
      * @param {string|null} role
-     * @returns {string|null} 'coordinate' for lead-shaped roles, which match
-     *   everything and so never warn; null when ambiguous.
+     * @returns {string|null} 'coordinate' for lead-shaped roles; null when
+     *   ambiguous.
      */
     function specialtyFamily(role) {
         const text = (role || '').toLowerCase();
@@ -87,66 +82,6 @@ const BossModSpecialty = (() => {
     function suggestFinishLine(specialty, description) {
         const family = specialtyFamily(specialty) || inferWorkFamily(null, description);
         return FINISH_LINE_DEFAULTS[family] || FALLBACK_FINISH_LINE;
-    }
-
-    /**
-     * Does this agent's specialty fit this work?
-     *
-     * @param {string|null} role
-     * @param {string|null} title
-     * @param {string|null} description
-     * @returns {'match'|'mismatch'|'unknown'} 'unknown' whenever either side is
-     *   ambiguous, so the operator is warned only about a real conflict.
-     */
-    function specialtyMatch(role, title, description) {
-        const work = inferWorkFamily(title, description);
-        const family = specialtyFamily(role);
-        if (!work || !family || family === 'coordinate') return 'unknown';
-        if (family === work) return 'match';
-        if ((SPECIALTY_CONFLICTS[family] || []).includes(work)) return 'mismatch';
-        return 'unknown';
-    }
-
-    /**
-     * A sort key: matches first, mismatches last.
-     *
-     * @param {object} agent
-     * @param {string|null} title
-     * @param {string|null} description
-     * @returns {number} 0 match, 1 unknown, 2 mismatch.
-     */
-    function specialtyRank(agent, title, description) {
-        const status = specialtyMatch(agent?.role, title, description);
-        if (status === 'match') return 0;
-        if (status === 'mismatch') return 2;
-        return 1;
-    }
-
-    const WORK_FAMILY_LABELS = {
-        write: 'writing',
-        review: 'review/audit',
-        implement: 'implementation',
-        research: 'research',
-        design: 'design',
-    };
-
-    /**
-     * What to tell the operator before a mismatched assignment.
-     *
-     * @param {object} agent
-     * @param {string|null} title
-     * @param {string|null} description
-     * @returns {string} '' for anything but a mismatch — the caller renders no
-     *   warning rather than an empty one.
-     */
-    function specialtyWarningMessage(agent, title, description) {
-        const status = specialtyMatch(agent?.role, title, description);
-        if (status !== 'mismatch') return '';
-        const name = agent?.name || 'This assignee';
-        const role = agent?.role || 'unspecified specialty';
-        const work = inferWorkFamily(title, description);
-        const workLabel = WORK_FAMILY_LABELS[work] || 'this work';
-        return `${name} is "${role}"; this work looks like ${workLabel}. Prefer a matching teammate, or assign anyway (you will be asked to confirm).`;
     }
 
     /**
@@ -194,9 +129,6 @@ const BossModSpecialty = (() => {
         inferWorkFamily,
         specialtyFamily,
         suggestFinishLine,
-        specialtyMatch,
-        specialtyRank,
-        specialtyWarningMessage,
         doneClaimGuidance,
         formatDoneClaim,
     };

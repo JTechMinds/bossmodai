@@ -1,8 +1,8 @@
 /**
  * BossMod AI — the assign sheet's result panels.
  *
- * The create-task route answers with one of five outcomes, two of which are
- * refusals that need the operator to choose. Turning that response into a panel
+ * The create-task route answers with one of three outcomes, one of which is
+ * a refusal that needs the operator to choose. Turning that response into a panel
  * is pure rendering given callbacks, so it lives apart from the form that
  * submits it — and an outcome this build does not recognise is shown as itself
  * rather than being treated as a quiet success.
@@ -25,28 +25,6 @@ const BossModAssignOutcomes = (() => {
 
     function line(text) {
         return h('p', { class: 'callout-body' }, text);
-    }
-
-    function mismatchPanel(body, handlers) {
-        const reason = body.reason || body.specialty_warning
-            || 'That assignee specialty does not match this work.';
-        const suggested = Array.isArray(body.suggested_assignees) ? body.suggested_assignees : [];
-        const box = panel('warn', 'Specialty mismatch — no new task was created',
-            line(`${reason} Pick a matching teammate, or assign anyway.`));
-        suggested.forEach((agent) => {
-            box.append(h('button', {
-                class: 'assign-pick', type: 'button',
-                onclick: () => handlers.onPickAssignee(agent.id),
-            }, `${agent.name || 'Teammate'} — ${agent.role || 'No specialty'}`));
-        });
-        if (suggested.length === 0) {
-            box.append(line('No matching specialty is on the roster. Confirm only if this '
-                + 'mismatch is intentional.'));
-        }
-        box.append(h('button', {
-            class: 'assign-pick', type: 'button', onclick: handlers.onAssignAnyway,
-        }, 'Assign anyway'));
-        return box;
     }
 
     function clarifyPanel(body, handlers) {
@@ -84,8 +62,6 @@ const BossModAssignOutcomes = (() => {
      *
      * @param {object} body  The create-task response.
      * @param {object} handlers
-     * @param {(agentId: string) => void} handlers.onPickAssignee
-     * @param {() => void} handlers.onAssignAnyway
      * @param {(taskId: string) => void} handlers.onReuse
      * @param {(taskId: string) => void} [handlers.onOpenTask]  Optional.
      * @returns {HTMLElement}
@@ -101,7 +77,6 @@ const BossModAssignOutcomes = (() => {
             return panel('info', 'Reused an open task',
                 line(`${task.title || 'That workstream'} already exists, so nothing was duplicated.`));
         }
-        if (body.outcome === 'specialty_mismatch') return mismatchPanel(body, handlers);
         if (body.outcome === 'clarify_ambiguous_match') return clarifyPanel(body, handlers);
         return panel('alert', 'Unexpected outcome', line(String(body.outcome || 'unknown')));
     }

@@ -80,9 +80,11 @@ def test_prompt_assembly_includes_notes_rules_without_a_second_store() -> None:
     core_msgs = [
         str(message.get("content") or "")
         for message in bundle["messages"]
-        if str(message.get("content") or "").startswith("# Runtime core")
+        if "# Runtime core" in str(message.get("content") or "").splitlines()
     ]
-    assert core_msgs
+    # The runtime core reaches the model once, through the system prompt slot.
+    assert len(core_msgs) == 1
+    assert str(core_msgs[0]).splitlines().count("# Runtime core") == 1
     assert NOTES_STORE_RETRIEVE in core_msgs[0]
     joined = "\n".join(str(message.get("content") or "") for message in bundle["messages"])
     assert "Pointers-first." in joined

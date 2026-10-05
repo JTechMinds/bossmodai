@@ -135,36 +135,30 @@ def specialty_family(role: str | None) -> SpecialtyFamily | None:
 def infer_work_kind(
     title: str | None,
     description: str | None = None,
-    *,
-    requested_specialty: str | None = None,
 ) -> SpecialtyFamily | None:
-    """Infer work kind from an explicit requested specialty or title/description.
+    """Infer the work-kind family from task title/description tokens.
 
-    An explicit ``requested_specialty`` wins outright unless it resolves to
-    ``"coordinate"``, which is too broad to describe a unit of work.
+    Used only to seed the hire-form finish-line suggestion; it never gates or
+    routes assignment.
 
     Args:
         title: Task title, or ``None``.
         description: Task description, or ``None``.
-        requested_specialty: Specialty the caller asked for, if any.
 
     Returns:
         The inferred family, or ``None`` when there is no signal or when two
         families tie on token overlap.
     """
-    requested = specialty_family(requested_specialty)
-    if requested and requested != "coordinate":
-        return requested
     tokens = tokenize(title) | tokenize(description)
     if not tokens:
-        return requested
+        return None
     scores: dict[SpecialtyFamily, int] = {}
     for family, family_tokens in _WORK_KIND_TOKENS.items():
         overlap = tokens & family_tokens
         if overlap:
             scores[family] = len(overlap)
     if not scores:
-        return requested
+        return None
     best = max(scores.values())
     winners = [family for family, score in scores.items() if score == best]
     if len(winners) == 1:

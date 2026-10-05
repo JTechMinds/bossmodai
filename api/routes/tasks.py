@@ -9,21 +9,15 @@ from api.websocket import manager
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
 from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.role_contracts import (
-    evaluate_specialty_assignment,
-    infer_work_kind,
     is_auditor_specialty,
-    match_specialty,
     operator_done_claim_guidance,
     parse_done_claim_from_text,
-    rank_agents_for_work,
-    suggested_assignees,
 )
 from core.agent_loop.task_origin_mirrors import OPERATOR_CANCEL_REASON, broadcast_origin_line
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.floors import FloorDenied
 from core.models import (
-    AssigneeSuggestion,
     Task,
     TaskCandidateSummary,
     TaskCancelRequest,
@@ -39,7 +33,6 @@ from core.tasking.operator_actions import (
     OPERATOR_RESUMABLE_STATUSES,
     OpenChildTasks,
     OperatorTaskResult,
-    SpecialtyMismatch,
     complete_task_as_operator,
     resume_task_as_operator,
     update_task_as_operator,
@@ -193,78 +186,6 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
     if body.bind_task_id and not db.get_task(body.bind_task_id):
         raise HTTPException(404, "Task not found")
 
-    specialty_warning = None
-    ranked_suggestions: list[AssigneeSuggestion] = []
-    if body.assigned_to and not body.bind_task_id:
-        assignee = db.get_agent(body.assigned_to)
-        if assignee is None:
-            raise HTTPException(404, "Assigned agent not found")
-        from core.floors import home_floor_id, on_floor
-
-        bound_floor = None
-        if body.notification_channel_id:
-            from core.floors import channel_floor_id
-
-            bound_floor = channel_floor_id(body.notification_channel_id)
-        elif body.assigned_to:
-            bound_floor = home_floor_id(body.assigned_to)
-        teammates = [
-            agent for agent in db.list_agents()
-            if bound_floor is None or on_floor(agent.id, bound_floor)
-        ]
-        evaluation = evaluate_specialty_assignment(
-            assignee=assignee,
-            title=body.title,
-            description=body.description,
-            requested_specialty=body.requested_specialty,
-            teammates=teammates,
-            confirm=body.confirm_specialty_mismatch,
-        )
-        ranked_suggestions = suggested_assignees(evaluation.suggested)
-        if evaluation.deny:
-            response.status_code = 409
-            return TaskCreateResponse(
-                task=None,
-                outcome="specialty_mismatch",
-                reason=evaluation.warning,
-                specialty_warning=evaluation.warning,
-                suggested_assignees=ranked_suggestions,
-            )
-        specialty_warning = evaluation.warning
-    elif not body.assigned_to:
-        work_kind = infer_work_kind(
-            body.title,
-            body.description,
-            requested_specialty=body.requested_specialty,
-        )
-        if work_kind is not None:
-            from core.floors import channel_floor_id, on_floor
-
-            suggestion_floor = (
-                channel_floor_id(body.notification_channel_id)
-                if body.notification_channel_id
-                else None
-            )
-            ranked = rank_agents_for_work(
-                [
-                    agent for agent in db.list_agents()
-                    if suggestion_floor is None or on_floor(agent.id, suggestion_floor)
-                ],
-                title=body.title,
-                description=body.description,
-                requested_specialty=body.requested_specialty,
-            )
-            ranked_suggestions = [
-                AssigneeSuggestion(
-                    id=agent.id,
-                    name=agent.name,
-                    role=agent.role,
-                    match=match_specialty(assignee_role=agent.role, work_kind=work_kind),
-                )
-                for agent in ranked
-                if match_specialty(assignee_role=agent.role, work_kind=work_kind) == "match"
-            ]
-
     owner_id = body.owner_id or default_task_owner_id(
         assignee_id=body.assigned_to,
         requester_id=requester_id,
@@ -328,8 +249,6 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
     return TaskCreateResponse(
         task=task,
         outcome=creation.outcome,
-        specialty_warning=specialty_warning,
-        suggested_assignees=ranked_suggestions,
     )
 
 
@@ -387,10 +306,7 @@ async def update_task(task_id: str, body: TaskUpdateRequest):
     A reassign or a requirements change re-presents the task to its assignee.
 
     Returns:
-        The serialized task row (as ``GET /tasks`` lists it), or a 409
-        ``{"outcome": "specialty_mismatch", "reason", "suggested_assignees"}``
-        body when the new assignee's specialty does not fit and the body did
-        not set ``confirm_specialty_mismatch``.
+        The serialized task row (as ``GET /tasks`` lists it).
 
     Raises:
         HTTPException: 404 unknown task, 400 invalid edit or deliverable path,
@@ -398,15 +314,6 @@ async def update_task(task_id: str, body: TaskUpdateRequest):
     """
     try:
         result = update_task_as_operator(task_id, body)
-    except SpecialtyMismatch as exc:
-        return JSONResponse(
-            status_code=409,
-            content={
-                "outcome": "specialty_mismatch",
-                "reason": exc.warning,
-                "suggested_assignees": [item.model_dump(mode="json") for item in suggested_assignees(exc.suggested)],
-            },
-        )
     except IllegalTaskTransition as exc:
         raise HTTPException(409, str(exc)) from exc
     except FloorDenied as exc:

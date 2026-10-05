@@ -204,7 +204,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError('"data" must be an object when provided')
     extra_data = set(extra) - {
         "cmd", "body", "out", "to", "aid", "aids", "msg", "tid", "kind",
-        "dst", "mode", "topic", "sum", "why", "task", "claim", "confirm", "path",
+        "dst", "mode", "topic", "sum", "why", "task", "claim", "path",
     }
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
@@ -251,7 +251,6 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
             normalized["taskTitle"] = task.get("title")
             normalized["taskDescription"] = task.get("desc")
             normalized["deliverables"] = _normalize_compact_deliverables(task.get("outs"))
-            normalized["confirmSpecialtyMismatch"] = _as_bool(extra.get("confirm"))
         case "walk":
             normalized["destination"] = _map_optional_code(extra.get("dst"), _DESTINATION_CODE_TO_NAME, "data.dst")
         case "mtg":
@@ -273,7 +272,6 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         case "deleg":
             normalized["agentId"] = extra.get("aid")
             normalized["followUpMessage"] = extra.get("msg")
-            normalized["confirmSpecialtyMismatch"] = _as_bool(extra.get("confirm"))
         case "idle":
             pass
 
@@ -316,15 +314,6 @@ def _map_optional_code(value: Any, mapping: dict[str, str], field_name: str) -> 
     if not isinstance(value, str) or value not in mapping:
         raise ValueError(f'invalid "{field_name}"')
     return mapping[value]
-
-
-def _as_bool(value: Any) -> bool:
-    """Treat compact confirm flags as true only for explicit truthy values."""
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes"}
-    return False
 
 
 def _candidate_thought(payload: Any) -> str:

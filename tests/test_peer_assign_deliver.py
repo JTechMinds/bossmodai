@@ -399,7 +399,6 @@ async def test_delegated_parent_points_at_the_childs_shared_file_and_can_complet
             "action": "delegated",
             "agentId": worker.id,
             "followUpMessage": "Handing this to Worker.",
-            "confirmSpecialtyMismatch": True,
         },
         lead,
         lead_state,

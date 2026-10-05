@@ -12,18 +12,6 @@
  */
 const BossModTaskActions = (() => {
     /**
-     * An update refusal, typed so the edit mode can tell a specialty
-     * mismatch (which it offers to override) from any other failure.
-     *
-     * @param {string} message
-     * @param {object} fields  `kind`, and for a mismatch `reason`/`suggested`.
-     * @returns {Error}
-     */
-    function refusal(message, fields) {
-        return Object.assign(new Error(message), fields);
-    }
-
-    /**
      * Build the action set.
      *
      * @param {object} deps
@@ -95,12 +83,9 @@ const BossModTaskActions = (() => {
          * PATCH an open task with the fields the operator changed.
          *
          * @param {string} taskId
-         * @param {object} payload  Only the changed fields, plus
-         *   `confirm_specialty_mismatch` on a resend past a mismatch.
+         * @param {object} payload  Only the changed fields.
          * @returns {Promise<object>} The stored row, as GET /api/tasks lists it.
-         * @throws {Error} (rejects) `kind: 'specialty_mismatch'` with `reason`
-         *   and `suggested` (the server's suggested assignees), or
-         *   `kind: 'failed'` with the server's `detail` as the message.
+         * @throws {Error} (rejects) With the server's `detail` as the message.
          */
         async function update(taskId, payload) {
             let res;
@@ -112,26 +97,19 @@ const BossModTaskActions = (() => {
                 });
             } catch (err) {
                 console.error('[task-actions] the update request failed', err);
-                throw refusal((err && err.message) || 'The request failed.', { kind: 'failed' });
+                throw new Error((err && err.message) || 'The request failed.');
             }
             let body;
             try {
                 body = await res.json();
             } catch (err) {
                 console.error('[task-actions] the update response had no JSON body', err);
-                throw refusal(`HTTP ${res.status}`, { kind: 'failed' });
-            }
-            if (res.status === 409 && body && body.outcome === 'specialty_mismatch') {
-                throw refusal('Specialty mismatch — nothing was saved', {
-                    kind: 'specialty_mismatch',
-                    reason: body.reason || '',
-                    suggested: Array.isArray(body.suggested_assignees) ? body.suggested_assignees : [],
-                });
+                throw new Error(`HTTP ${res.status}`);
             }
             if (!res.ok) {
                 const detail = body && body.detail;
                 const message = typeof detail === 'string' ? detail : JSON.stringify(detail || `HTTP ${res.status}`);
-                throw refusal(message, { kind: 'failed' });
+                throw new Error(message);
             }
             onUpdated(body);
             return body;

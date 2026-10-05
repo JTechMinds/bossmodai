@@ -19,9 +19,9 @@
  * decides what a change means — a reassign or a requirements change puts
  * the task back in front of its assignee, a title edit wakes nobody.
  *
- * The assignee list is ranked exactly as the assign dialog ranks it
- * (BossModAssignForm.rankRoster / optionLabel): a second ranking would be a
- * second opinion about whether an assignment is sensible.
+ * The assignee list is the assign dialog's list
+ * (BossModAssignForm.rosterOptions): the roster by name, never ranked or
+ * judged by specialty — whoever assigns decides who does the work.
  */
 const BossModTaskEditMode = (() => {
     const { h, clear } = BossModDom;
@@ -52,13 +52,13 @@ const BossModTaskEditMode = (() => {
      *   lists the draft assignee's files through it.
      * @param {(dirty: boolean) => void} deps.onDirtyChange  `isDirty()` after every
      *   input, file row added, removed or repicked, and assignee change.
-     * @param {(payload: object, opts: {confirmMismatch: boolean}) => Promise<object>} deps.onSave
+     * @param {(payload: object) => Promise<object>} deps.onSave
      *   Sends the changed fields and resolves with the stored row; rejects
-     *   with the typed Error of `update` in task-actions.js.
+     *   with the Error of `update` in task-actions.js.
      * @param {(result: {saved: boolean, row?: object}) => void} deps.onLeave
      *   Edit mode has ended — saved (with the stored row), discarded, or
-     *   saved with nothing changed. However it ended (✓, Enter, ✕, Esc,
-     *   Reassign anyway), the detail repaints from here.
+     *   saved with nothing changed. However it ended (✓, Enter, ✕, Esc),
+     *   the detail repaints from here.
      * @returns {{titleInput: HTMLInputElement, assigneeControl: HTMLElement,
      *   descriptionSection: HTMLElement, deliverablesSection: HTMLElement,
      *   errorSlot: HTMLElement, begin: () => void, discard: () => void,
@@ -80,8 +80,6 @@ const BossModTaskEditMode = (() => {
         if (typeof onDirtyChange !== 'function') throw new Error('[task-edit-mode] deps.onDirtyChange is required');
 
         const agents = roster.filter((agent) => agent && (!task.floor_id || agent.floorId === task.floor_id));
-        /** Suggested assignees the roster does not list, kept choosable once picked. */
-        const extra = [];
         let editing = false;
         let saving = false;
         let destroyed = false;
@@ -89,29 +87,28 @@ const BossModTaskEditMode = (() => {
         const titleInput = h('input', {
             class: `${FIELD} edit-field-title`, type: 'text', maxlength: '200', autocomplete: 'off',
             readonly: true, 'aria-label': 'Task title', 'aria-required': 'true',
-            oninput: () => { fitTitle(); refreshAssignees(); changed(); },
+            oninput: () => { fitTitle(); changed(); },
             onkeydown: (event) => {
                 if (event.key !== 'Enter') return;
                 event.preventDefault();
-                void send(false);
+                void send();
             },
         });
         const description = h('textarea', {
             class: `task-detail-instructions ${FIELD} edit-field-multiline`,
             maxlength: '4000', readonly: true, 'aria-label': 'Task description',
             placeholder: 'What the task asks for',
-            oninput: () => { refreshAssignees(); changed(); },
+            oninput: () => changed(),
         });
         /** Grows the description to its text, as the composer grows. */
         const grow = BossModAutoGrow.bind(description);
 
         /**
-         * Assignee options, ranked for the words in the draft right now — the
-         * assign dialog's rows (BossModAssignForm.rosterOptions), plus the
-         * kept assignee and any `extra` agent this task needs offered.
+         * Assignee options: the assign dialog's rows
+         * (BossModAssignForm.rosterOptions), plus the kept assignee.
          */
         function assigneeOptions() {
-            const options = ASSIGN.rosterOptions(agents, titleInput.value, description.value);
+            const options = ASSIGN.rosterOptions(agents);
             const listed = (id) => options.some((option) => option.value === id);
             // The current assignee stays choosable even when the roster no
             // longer lists them, so entering Edit mode never changes it.
@@ -120,16 +117,12 @@ const BossModTaskEditMode = (() => {
                 const kept = task.assigned_to_name || task.assigned_to;
                 options.splice(1, 0, { value: task.assigned_to, label: kept, short: kept });
             }
-            extra.forEach((agent) => {
-                const name = agent.name || agent.id;
-                if (!listed(agent.id)) options.push({ value: agent.id, label: name, short: name });
-            });
             return options;
         }
 
         const assignee = BossModMenuSelect.create({
             label: 'Assignee',
-            options: ASSIGN.rosterOptions([], '', ''),
+            options: ASSIGN.rosterOptions([]),
             value: UNASSIGNED,
             variant: 'field',
             // The control owns the choice; it is read back when Save runs.
@@ -145,10 +138,6 @@ const BossModTaskEditMode = (() => {
         function assigneeChanged() {
             files.syncAgent();
             changed();
-        }
-
-        function refreshAssignees() {
-            assignee.setOptions(assigneeOptions());
         }
 
         const errorSlot = h('div', { class: 'task-detail-edit-error', role: 'alert' });
@@ -172,7 +161,6 @@ const BossModTaskEditMode = (() => {
             titleInput.value = task.title || '';
             fitTitle();
             description.value = task.description || '';
-            extra.length = 0;
             assignee.setOptions(assigneeOptions(), task.assigned_to || UNASSIGNED);
             // After the assignee, so the rows' browsing follows the restored one.
             files.restore();
@@ -218,28 +206,6 @@ const BossModTaskEditMode = (() => {
             return Boolean(error) || Object.keys(payload).length > 0;
         }
 
-        /** Choose a suggested assignee in the dropdown; the operator saves. */
-        function pickSuggested(agent) {
-            if (!extra.some((item) => item.id === agent.id)) extra.push(agent);
-            assignee.setOptions(assigneeOptions(), agent.id);
-            assigneeChanged();
-        }
-
-        /** The mismatch refusal, with its suggestions and the override. */
-        function mismatch(err) {
-            const actions = h('div', { class: 'callout-actions' },
-                err.suggested.map((agent) => h('button', {
-                    class: 'btn btn-sm', type: 'button', onclick: () => pickSuggested(agent),
-                }, `${agent.name || 'Teammate'} — ${agent.role || 'No specialty'}`)),
-                h('button', {
-                    class: 'btn btn-sm', id: 'ct-edit-reassign-anyway', type: 'button',
-                    onclick: () => { void send(true); },
-                }, 'Reassign anyway'));
-            return callout('warn', 'Specialty mismatch — nothing was saved',
-                h('p', { class: 'callout-body' }, err.reason || 'That specialty does not match this work.'),
-                actions);
-        }
-
         /** Leave edit mode and tell the detail how it ended. */
         function leave(result) {
             setEditing(false);
@@ -249,10 +215,9 @@ const BossModTaskEditMode = (() => {
 
         /**
          * Send the draft, or leave when nothing changed.
-         * @param {boolean} confirmMismatch  Resend past a specialty warning.
          * @returns {Promise<{saved: boolean, row?: object}>} Never rejects.
          */
-        async function send(confirmMismatch) {
+        async function send() {
             if (!editing || saving) return { saved: false };
             const { payload, error } = draft();
             if (error) {
@@ -266,14 +231,12 @@ const BossModTaskEditMode = (() => {
             saving = true;
             let row;
             try {
-                row = await onSave(payload, { confirmMismatch });
+                row = await onSave(payload);
             } catch (err) {
                 console.error('[task-edit-mode] save failed', err);
                 if (destroyed) return { saved: false };
-                show(err && err.kind === 'specialty_mismatch'
-                    ? mismatch(err)
-                    : callout('alert', 'Could not save the task',
-                        h('p', { class: 'callout-body' }, (err && err.message) || 'The request failed.')));
+                show(callout('alert', 'Could not save the task',
+                    h('p', { class: 'callout-body' }, (err && err.message) || 'The request failed.')));
                 return { saved: false };
             } finally {
                 saving = false;
@@ -305,7 +268,7 @@ const BossModTaskEditMode = (() => {
                 restore();
                 leave({ saved: false });
             },
-            save: () => send(false),
+            save: () => send(),
             isEditing: () => editing,
             isDirty,
             /** A status action's refusal, in the slot a save's refusal uses. */

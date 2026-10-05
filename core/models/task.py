@@ -94,8 +94,6 @@ class TaskCreate(BaseModel):
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
     notification_channel_id: str | None = None
-    requested_specialty: str | None = None
-    confirm_specialty_mismatch: bool = False
 
 
 class TaskCancelRequest(BaseModel):
@@ -112,8 +110,7 @@ class TaskUpdateRequest(BaseModel):
     Only the fields present in the body change; ``model_fields_set`` tells an
     omitted field apart from one set to ``null``. ``assigned_to: null``
     unassigns; ``work_contract: null`` (or an empty ``deliverables`` list)
-    drops the file requirement. ``confirm_specialty_mismatch`` re-sends a
-    reassign the specialty check warned about.
+    drops the file requirement.
 
     Raises:
         pydantic.ValidationError: No editable field is present, ``title`` is
@@ -126,7 +123,6 @@ class TaskUpdateRequest(BaseModel):
     description: str | None = None
     assigned_to: str | None = None
     work_contract: WorkContract | None = None
-    confirm_specialty_mismatch: bool = False
 
     @model_validator(mode="after")
     def _validate_changes(self) -> "TaskUpdateRequest":
@@ -168,7 +164,6 @@ TaskCreateOutcome = Literal[
     "create_new_task",
     "bind_existing_task",
     "clarify_ambiguous_match",
-    "specialty_mismatch",
 ]
 
 
@@ -183,15 +178,6 @@ class TaskCandidateSummary(BaseModel):
     last_activity: datetime | None = None
 
 
-class AssigneeSuggestion(BaseModel):
-    """One teammate suggested when assign routing prefers a specialty match."""
-
-    id: str
-    name: str
-    role: str | None = None
-    match: Literal["match", "unknown", "mismatch"] = "unknown"
-
-
 class TaskCreateResponse(BaseModel):
     """POST /api/tasks result, including whether the workstream was reused."""
 
@@ -199,5 +185,3 @@ class TaskCreateResponse(BaseModel):
     outcome: TaskCreateOutcome
     candidates: list[TaskCandidateSummary] = []
     reason: str | None = None
-    specialty_warning: str | None = None
-    suggested_assignees: list[AssigneeSuggestion] = Field(default_factory=list)

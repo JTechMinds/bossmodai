@@ -6,70 +6,33 @@
  * module rather than letting Phase 2 build a second one, so `openAssignForm` is
  * the entry point conversation/composer.js opens in Phase 3B.
  *
- * Specialty ranking, the mismatch warning, and the match labels all come from
- * BossModSpecialty. None of that logic is reimplemented here — a second copy would
- * be a second opinion about whether an assignment is sensible.
+ * The assignee list is the roster by name. Whoever assigns decides who does
+ * the work, so the dialog never ranks, labels or warns by specialty.
  */
 const BossModAssignForm = (() => {
     const { h, clear } = BossModDom;
 
     const HINT_COPY = 'Same title + assignee reuses an open workstream instead of '
-        + 'creating a duplicate. Matching specialties are listed first.';
-
-    /**
-     * Rank the roster: matching specialties first, then by name.
-     *
-     * @param {object[]} roster
-     * @param {string} title
-     * @param {string} description
-     * @returns {object[]} A new array.
-     */
-    function rankRoster(roster, title, description) {
-        return roster.slice().sort((a, b) => {
-            const delta = BossModSpecialty.specialtyRank(a, title, description)
-                - BossModSpecialty.specialtyRank(b, title, description);
-            if (delta !== 0) return delta;
-            return (a.name || '').localeCompare(b.name || '');
-        });
-    }
-
-    /**
-     * The label one assignee gets in the dropdown.
-     *
-     * @param {object} agent
-     * @param {string} title
-     * @param {string} description
-     * @returns {string}
-     */
-    function optionLabel(agent, title, description) {
-        const status = BossModSpecialty.specialtyMatch(agent.role, title, description);
-        let label = agent.name || 'Teammate';
-        if (agent.role) label += ` — ${agent.role}`;
-        if (status === 'match') label += ' (matches)';
-        if (status === 'mismatch') label += ' (mismatch)';
-        return label;
-    }
+        + 'creating a duplicate.';
 
     /** The "nobody yet" choice; `short` is what a field trigger shows. */
     const BACKLOG = Object.freeze({ value: '', label: 'Unassigned backlog', short: 'Unassigned' });
 
     /**
-     * The assignee dropdown's options, ranked for the words in a draft. One
-     * shape for both task forms: this dialog and the task detail's Edit mode
-     * (places/tasks/task-edit-mode.js).
+     * The assignee dropdown's options. One shape for both task forms: this
+     * dialog and the task detail's Edit mode (places/tasks/task-edit-mode.js).
      *
      * @param {object[]} agents
-     * @param {string} title
-     * @param {string} note  The draft's description.
      * @returns {Array<{value: string, label: string, short: string,
      *   avatar?: {name: string, color: string}}>} The backlog first, then the
-     *   ranked roster: each row's `label` is the full "name — role (match)",
+     *   roster sorted by name: each row's `label` is the full "name — role",
      *   its `short` the name alone, which is all a field trigger has room for.
      */
-    function rosterOptions(agents, title, note) {
-        return [BACKLOG, ...rankRoster(agents, title, note).map((agent) => ({
+    function rosterOptions(agents) {
+        const sorted = agents.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        return [BACKLOG, ...sorted.map((agent) => ({
             value: agent.id,
-            label: optionLabel(agent, title, note),
+            label: agent.role ? `${agent.name || 'Teammate'} — ${agent.role}` : (agent.name || 'Teammate'),
             short: agent.name || 'Teammate',
             avatar: { name: agent.name, color: agent.color },
         }))];
@@ -115,29 +78,26 @@ const BossModAssignForm = (() => {
         const titleInput = h('input', {
             class: 'field-input', type: 'text', required: true, maxlength: '200',
             placeholder: 'What should they work on?',
-            oninput: () => refreshSpecialtyHints(),
         });
         const agentSelect = BossModMenuSelect.create({
             label: 'Assignee',
-            options: rosterOptions([], '', ''),
+            options: rosterOptions([]),
             value: BACKLOG.value,
             variant: 'field',
             id: 'ct-assign-agent',
-            onChange: (value) => { chosen = value; refreshSpecialtyHints(); },
+            onChange: (value) => { chosen = value; },
         });
         BossModIcons.paint(agentSelect.element, 'assign-form');
-        const mismatch = h('div', { class: 'assign-mismatch', id: 'ct-assign-mismatch', hidden: true });
         const description = h('textarea', {
             class: 'field-textarea', id: 'ct-assign-description', 'data-size': 'long', 'data-autogrow': true,
             maxlength: '4000', placeholder: 'Context, constraints, or the expected deliverable',
-            oninput: () => refreshSpecialtyHints(),
         });
         const grow = BossModAutoGrow.bind(description);
         const result = h('div', { class: 'assign-result' });
 
-        function field(label, control, extra) {
+        function field(label, control) {
             return h('label', { class: 'assign-field' },
-                h('span', { class: 'assign-field-label' }, label), control, extra || null);
+                h('span', { class: 'assign-field-label' }, label), control);
         }
 
         const form = h('form', { class: 'assign-form', id: 'ct-assign-form', onsubmit: (event) => {
@@ -145,7 +105,7 @@ const BossModAssignForm = (() => {
             void send({});
         } },
             field('Title', titleInput),
-            field('Assignee', agentSelect.element, mismatch),
+            field('Assignee', agentSelect.element),
             field('Description (optional)', description),
             h('p', { class: 'assign-hint' }, HINT_COPY),
             result);
@@ -156,7 +116,7 @@ const BossModAssignForm = (() => {
             actions: [
                 { label: 'Cancel' },
                 // Submits the form from the footer band and does NOT close: the
-                // outcome — created, reused, a mismatch to confirm — lands in
+                // outcome — created, reused, an ambiguous match to clarify — lands in
                 // the dialog, and only a settled one should let it go.
                 { label: 'Assign', tone: 'primary', id: 'ct-assign-submit', form: 'ct-assign-form' },
             ],
@@ -168,22 +128,6 @@ const BossModAssignForm = (() => {
             return modal.element.querySelector('#ct-assign-submit');
         }
 
-        /** Repaint the ranked options and the mismatch warning together. */
-        function refreshSpecialtyHints() {
-            const title = titleInput.value;
-            const note = description.value;
-            agentSelect.setOptions(rosterOptions(roster, title, note), chosen);
-
-            clear(mismatch);
-            const agent = roster.find((item) => item.id === chosen);
-            const warning = BossModSpecialty.specialtyWarningMessage(agent, title, note);
-            mismatch.hidden = !warning;
-            if (warning) {
-                mismatch.append(
-                    BossModAssignOutcomes.renderNotice('warn', 'Specialty mismatch', warning));
-            }
-        }
-
         function show(node) {
             clear(result);
             if (node) result.append(node);
@@ -191,13 +135,6 @@ const BossModAssignForm = (() => {
 
         function showOutcome(body) {
             show(BossModAssignOutcomes.renderOutcome(body, {
-                onPickAssignee: (agentId) => {
-                    chosen = agentId;
-                    agentSelect.setValue(agentId);
-                    refreshSpecialtyHints();
-                    void send({});
-                },
-                onAssignAnyway: () => { void send({ confirmSpecialtyMismatch: true }); },
                 onReuse: (candidateId) => { void send({ bindTaskId: candidateId }); },
                 // Passed straight through: when the caller cannot open a task,
                 // assign-outcomes.js renders no View button at all.
@@ -212,10 +149,9 @@ const BossModAssignForm = (() => {
          *
          * @param {object} options
          * @param {string} [options.bindTaskId]
-         * @param {boolean} [options.confirmSpecialtyMismatch]
          * @returns {Promise<void>} Never rejects; a failure is shown in the dialog.
          */
-        async function send({ bindTaskId, confirmSpecialtyMismatch }) {
+        async function send({ bindTaskId }) {
             if (submitting) return;
             const title = titleInput.value.trim();
             if (!title) {
@@ -229,7 +165,6 @@ const BossModAssignForm = (() => {
             const payload = { title, description: description.value.trim() || null };
             if (chosen) payload.assigned_to = chosen;
             if (bindTaskId || taskId) payload.bind_task_id = bindTaskId || taskId;
-            if (confirmSpecialtyMismatch) payload.confirm_specialty_mismatch = true;
             if (bindOrigin && state.conversationKind === 'thread' && state.conversationId) {
                 payload.source_channel = 'channel';
                 payload.notification_channel_id = state.conversationId;
@@ -249,8 +184,7 @@ const BossModAssignForm = (() => {
                         ? body.detail : JSON.stringify(body.detail));
                 }
                 showOutcome(body);
-                const settled = body.outcome !== 'clarify_ambiguous_match'
-                    && body.outcome !== 'specialty_mismatch';
+                const settled = body.outcome !== 'clarify_ambiguous_match';
                 if (settled && body.task && onCreated) onCreated(body.task);
             } catch (err) {
                 console.error('[assign-form] assign failed', err);
@@ -277,7 +211,7 @@ const BossModAssignForm = (() => {
                 const rows = await res.json();
                 roster = Array.isArray(rows) ? rows : [];
                 if (preselect && roster.some((agent) => agent.id === preselect)) chosen = preselect;
-                refreshSpecialtyHints();
+                agentSelect.setOptions(rosterOptions(roster), chosen);
             } catch (err) {
                 console.error('[assign-form] could not load the roster', err);
                 show(BossModAssignOutcomes.renderNotice('alert', 'Could not load the roster',
@@ -285,12 +219,11 @@ const BossModAssignForm = (() => {
             }
         }
 
-        refreshSpecialtyHints();
         void loadRoster();
         titleInput.focus();
 
         return { close: modal.close };
     }
 
-    return { openAssignForm, rankRoster, optionLabel, rosterOptions };
+    return { openAssignForm, rosterOptions };
 })();

@@ -300,6 +300,7 @@ def seed_defaults() -> None:
     reconcile_work_commit_prompt_contract()
     reconcile_work_commit_resume_prompt()
     reconcile_extension_event_prompt()
+    reconcile_specialty_gate_prompt_lines()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -472,6 +473,59 @@ def reconcile_extension_event_prompt() -> None:
     set_setting(_EXTENSION_EVENT_PROMPT_KEY, load_default_prompt(_EXTENSION_EVENT_PROMPT_KEY), seeded[1])
     set_setting(_EXTENSION_EVENT_PROMPT_RECONCILED, "true", "advanced")
     logger.info("Reconciled prompt setting to the extension_event contract: %s", _EXTENSION_EVENT_PROMPT_KEY)
+
+
+# The specialty-mismatch assign gate was removed, and with it the one line in
+# each contract row that described it (it told agents to send ``data.confirm``,
+# a key the parser now rejects). Copied verbatim from the shipped files before
+# the lines were deleted there.
+_SPECIALTY_GATE_PROMPT_LINES: dict[str, str] = {
+    "runtime_contract_execution": "  - assign: prefer a teammate whose specialty matches the work; if it is a clear mismatch, pick a better teammate or set data.confirm=true only after stating why\n",
+    "runtime_contract_decision": "- Prefer a teammate whose specialty matches the child work. A clear mismatch (writer vs review/audit) is rejected unless a matching teammate is chosen.\n",
+}
+_SPECIALTY_GATE_PROMPT_LINES_RECONCILED = "specialty_gate_prompt_lines_reconciled"
+
+
+def reconcile_specialty_gate_prompt_lines() -> None:
+    """Remove the retired specialty-gate line from the two contract rows once.
+
+    Unlike the whole-row reconcilers above, this edits only the exact line:
+    stored prompt rows drift from the shipped defaults (older seeds, operator
+    edits), so overwriting a row would silently discard text this pass has no
+    business touching. Each row loses the first whole line (newline included)
+    that equals its retired line; every other byte stays as stored, and the
+    row keeps its category. A row without the line is left untouched. It is
+    logged as a warning, so the operator can review that prompt by hand, only
+    when it differs from the shipped default (``load_default_prompt``) or is
+    missing: a row equal to the shipped default (every fresh or reset
+    database) never had the line and needs no review.
+
+    Guarded by a marker row like :func:`reconcile_extension_event_prompt`:
+    the first pass records the marker and every later pass is a no-op.
+    ``system_prompt_template`` is never read or written here.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_SPECIALTY_GATE_PROMPT_LINES_RECONCILED],
+    )
+    if seen is not None:
+        return
+    for key, retired_line in _SPECIALTY_GATE_PROMPT_LINES.items():
+        row = query_one("SELECT value, category FROM settings WHERE key = $1", [key])
+        lines = str(row.get("value") or "").splitlines(keepends=True) if row is not None else []
+        if row is None or retired_line not in lines:
+            if row is not None and str(row.get("value") or "") == load_default_prompt(key):
+                continue
+            logger.warning(
+                "Prompt setting '%s': the retired specialty-gate assign line was not found; "
+                "review that prompt for specialty-mismatch / data.confirm guidance",
+                key,
+            )
+            continue
+        lines.remove(retired_line)
+        set_setting(key, "".join(lines), str(row["category"]))
+        logger.info("Removed the retired specialty-gate assign line from prompt setting: %s", key)
+    set_setting(_SPECIALTY_GATE_PROMPT_LINES_RECONCILED, "true", "advanced")
 
 
 def ensure_local_api_token() -> str:
