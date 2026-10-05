@@ -6,7 +6,7 @@
  * with no clear owner: a change to a date format and a change to the status
  * palette touched the same file for no reason other than history.
  *
- * These twelve answer one question — how does a value read on screen. They have
+ * These fourteen answer one question — how does a value read on screen. They have
  * no dependencies, no state, and no DOM beyond `escapeHtml`'s one scratch
  * node, which is why they load first among the three.
  */
@@ -204,6 +204,49 @@ const BossModFormat = (() => {
     }
 
     /**
+     * The day something is dated — `Sep 14` this year, `Sep 14, 2025` in any
+     * other — by the rule calendarDay keeps for every day on screen.
+     *
+     * For a date the server always sends, such as a pack version's commit
+     * date, so an unreadable one is a server bug, as in formatClockTime.
+     *
+     * @param {string} isoString
+     * @returns {string}
+     * @throws {Error} When the value is missing or unparseable.
+     */
+    function formatCalendarDay(isoString) {
+        const then = parse(isoString);
+        if (!then) throw new Error(`[format] unreadable date ${isoString}`);
+        return calendarDay(then, new Date());
+    }
+
+    /**
+     * Two versions as a span of dates — `Sep 14 → Oct 3`.
+     *
+     * When both fall on the same LOCAL day each end carries its time
+     * (`Oct 3, 9:12 AM → Oct 3, 4:40 PM`), because `Oct 3 → Oct 3` would read
+     * as "nothing changed". An unknown earlier version (a record written
+     * before dates were kept) is just the later day, `Oct 3` — the one
+     * documented case where a span has a single end.
+     *
+     * @param {string|null} fromIso  The current version's date, or null when
+     *   it was never recorded.
+     * @param {string} toIso  The newer version's date.
+     * @returns {string}
+     * @throws {Error} When `toIso`, or a non-null `fromIso`, is unparseable.
+     */
+    function formatVersionSpan(fromIso, toIso) {
+        const to = parse(toIso);
+        if (!to) throw new Error(`[format] unreadable date ${toIso}`);
+        if (fromIso == null) return formatCalendarDay(toIso);
+        const from = parse(fromIso);
+        if (!from) throw new Error(`[format] unreadable date ${fromIso}`);
+        if (sameDay(from, to)) return `${formatDateTime(fromIso)} → ${formatDateTime(toIso)}`;
+        const now = new Date();
+        return `${calendarDay(from, now)} → ${calendarDay(to, now)}`;
+    }
+
+    /**
      * A stored time of day as the operator reads it — `07:30` is `7:30 AM`,
      * `19:05` is `7:05 PM` — spelled as every other time on screen is
      * (clockTime, by hand for the reason formatActivityTime gives).
@@ -299,6 +342,8 @@ const BossModFormat = (() => {
         formatDayLabel,
         formatDateTime,
         formatClockTime,
+        formatCalendarDay,
+        formatVersionSpan,
         formatTimeOfDay,
         formatNumber,
         formatDuration,

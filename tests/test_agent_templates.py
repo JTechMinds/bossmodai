@@ -34,6 +34,7 @@ from core.models.agent_template import AgentTemplate
 from tests.test_agent_packs import (
     AUDITOR_PACK,
     AUDITOR_PATH,
+    FAKE_COMMIT_DATE,
     PINNED_SHA,
     VALID_PACK,
     FakePackSource,
@@ -128,6 +129,8 @@ def test_install_creates_one_row_and_never_an_agent(
     assert body["author_name"] == "JTech Minds"
     assert body["author_url"] == "https://github.com/JTechMinds"
     assert body["commit_sha"] == PINNED_SHA
+    # The pinned commit's committer date rides along: the UI shows it, not the SHA.
+    assert db.get_agent_template(body["id"]).commit_date == FAKE_COMMIT_DATE
     assert body["content_hash"] == pack_content_hash(AUDITOR_PACK)
 
     installed = db.list_agent_templates()
@@ -462,6 +465,7 @@ def _upsert_kwargs(**overrides) -> dict:
         author_name="JTech Minds",
         author_url="https://github.com/JTechMinds",
         commit_sha=PINNED_SHA,
+        commit_date=FAKE_COMMIT_DATE,
         content_hash="0" * 64,
     )
     base.update(overrides)

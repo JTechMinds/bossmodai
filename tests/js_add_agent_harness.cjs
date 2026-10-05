@@ -74,6 +74,11 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };
 
 const PIN = "aa11bb2ccccccccccccccccccccccccccccccccc";
+// The installed version's date, as a LOCAL wall-clock ISO string in the
+// current year so the chip reads "Sep 14" in every zone and on every run. The
+// chip shows this, never the hash; HEX is what a hash on screen would look like.
+const SEP_14 = `${new Date().getFullYear()}-09-14T15:00:00`;
+const HEX = /\b[0-9a-f]{7,40}\b/;
 
 // `sections` is a COMPUTED field on the real AgentTemplate model — the server
 // derives it from `description` and `what_done_looks_like` through
@@ -103,7 +108,7 @@ function template(overrides) {
         what_done_looks_like: "A checkable allow/deny exists.",
         tools_hint: ["work"],
         author_name: "JTech Minds", author_url: "https://github.com/JTechMinds",
-        commit_sha: PIN, content_hash: "hash-1",
+        commit_sha: PIN, commit_date: SEP_14, content_hash: "hash-1",
         installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
     }, overrides);
     // Derived AFTER the overrides, so a fixture that changes the description
@@ -301,7 +306,8 @@ global.apiFetch = (url, init) => {
             description: body.description,
             what_done_looks_like: body.what_done_looks_like,
             tools_hint: [],
-            author_name: null, author_url: null, commit_sha: null, content_hash: null,
+            author_name: null, author_url: null, commit_sha: null, commit_date: null,
+            content_hash: null,
         }), 201);
     }
     if (String(url).startsWith("/api/agent-snapshots")) {
@@ -730,7 +736,8 @@ async function main() {
         // control in this app lives.
         && Boolean(back()) && back().hidden === false;
     verdict.provenanceChip = find(".template-chip-text").textContent
-        === "Code Auditor · JTech Minds · pinned aa11bb2";
+        === "Code Auditor · JTech Minds · Sep 14 version"
+        && !HEX.test(find(".template-chip").textContent);
 
     const form = find("#agent-form");
     const field = (selector) => form.querySelector(selector);
@@ -1297,7 +1304,7 @@ async function main() {
         && panelOf("add").hidden === false
         && panelOf("marketplace").hidden === true
         && Boolean(find("#agent-form"))
-        && chipText() === "Code Auditor · JTech Minds · pinned aa11bb2"
+        && chipText() === "Code Auditor · JTech Minds · Sep 14 version"
         && footerNames().join("|") === "Save as template|Cancel|Create Agent"
         && back().hidden === false
         && trail() === "Agents › Code Auditor"

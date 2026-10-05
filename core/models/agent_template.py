@@ -55,6 +55,10 @@ class AgentTemplate(BaseModel):
     author_url: str | None = None
     # None exactly when ``source == 'local'``: a local template was never fetched.
     commit_sha: str | None
+    # ``commit_sha``'s committer date, the version date the UI shows instead
+    # of the hash. None on local templates and on rows installed before it
+    # was recorded, until their next re-install.
+    commit_date: datetime | None
     content_hash: str | None
     installed_at: datetime
     updated_at: datetime

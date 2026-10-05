@@ -775,8 +775,9 @@ def test_the_browse_door_and_its_copy_are_gone() -> None:
     hydrate = _read(CONTEXT / "agent-form-hydrate.js")
     assert "function applyHireFields(" in hydrate
     assert hydrate.rsplit("return {", 1)[-1].strip().startswith("applyHireFields }")
-    # shortSha moved to the module that renders the pinned SHA on the chip.
-    assert "function shortSha(" in _read(CONTEXT / "agent-form-template.js")
+    # The chip names the installed version by its date, never a short SHA.
+    assert "shortSha" not in _read(CONTEXT / "agent-form-template.js")
+    assert "formatCalendarDay(template.commit_date)" in _read(CONTEXT / "agent-form-template.js")
     assert "shortSha" not in hydrate
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
@@ -263,26 +264,41 @@ class AgentPackUpdatesApplyBody(BaseModel):
     include_agents: bool = False
 
 
-def _short(sha: str | None) -> str | None:
-    return sha[:7] if sha else None
+def _iso(moment: datetime | None) -> str | None:
+    return moment.isoformat() if moment is not None else None
+
+
+def _version_day(moment: datetime) -> str:
+    """``Oct 3`` this year, ``Oct 3, 2025`` otherwise, on this machine's clock.
+
+    The activity feed's spelling of a catalog version, by the rule the UI's
+    ``formatCalendarDay`` uses; the feed shows server text as given.
+    """
+    local = moment.astimezone()
+    day = f"{local:%b} {local.day}"
+    return day if local.year == datetime.now().astimezone().year else f"{day}, {local.year}"
 
 
 def _update_plan_payload(plan: UpdatePlan) -> dict[str, Any]:
     """Serialize an ``UpdatePlan`` for the marketplace banner and review layer.
 
-    ``*_short`` values are catalog commits (the pin a row was last written at,
-    and the target), not the commit where that one pack file changed.
-    ``needs_review`` is true when anything of the operator's would change or
-    is being left behind; when it is false and ``pin_moves`` is true the
-    client advances the pin without asking.
+    Versions are ISO-8601 committer dates of catalog commits (the pin a row
+    was last written at, and the target), not of the commit where that one
+    pack file changed. No SHA is shown to the operator: ``target_sha`` is
+    here only for the client to send back to apply, and ``pinned_sha`` only
+    to say what the pin is. A row's ``from_date`` is null only in an applied
+    plan for a row written before dates were recorded; a preview always
+    carries it. ``needs_review`` is true when anything of the operator's
+    would change or is being left behind; when it is false and ``pin_moves``
+    is true the client advances the pin without asking.
     """
     templates = [
         {
             "template_id": row.template_id,
             "pack_id": row.pack_id,
             "title": row.title,
-            "from_short": _short(row.from_sha),
-            "to_short": _short(row.to_sha),
+            "from_date": _iso(row.from_date),
+            "to_date": _iso(row.to_date),
         }
         for row in plan.templates
     ]
@@ -292,8 +308,8 @@ def _update_plan_payload(plan: UpdatePlan) -> dict[str, Any]:
             "name": row.name,
             "pack_id": row.pack_id,
             "template_title": row.template_title,
-            "from_short": _short(row.from_sha),
-            "to_short": _short(row.to_sha),
+            "from_date": _iso(row.from_date),
+            "to_date": _iso(row.to_date),
             "edited": row.edited,
         }
         for row in plan.agents
@@ -312,8 +328,8 @@ def _update_plan_payload(plan: UpdatePlan) -> dict[str, Any]:
         "repo": plan.repo,
         "pinned_sha": plan.pinned_sha,
         "target_sha": plan.target_sha,
-        "pinned_short": _short(plan.pinned_sha),
-        "target_short": _short(plan.target_sha),
+        "pinned_date": _iso(plan.pinned_date),
+        "target_date": _iso(plan.target_date),
         "pin_moves": plan.pinned_sha != plan.target_sha,
         "templates": templates,
         "agents": agents,
@@ -331,7 +347,7 @@ def check_agent_pack_updates() -> dict[str, Any]:
     from them. Nothing is written, not even the pin.
 
     Returns:
-        ``{repo, pinned_sha, target_sha, pinned_short, target_short,
+        ``{repo, pinned_sha, target_sha, pinned_date, target_date,
         pin_moves, templates, agents, skipped, needs_review}`` — see
         ``_update_plan_payload``.
 
@@ -381,11 +397,12 @@ async def apply_agent_pack_updates(body: AgentPackUpdatesApplyBody) -> dict[str,
     # The pin is a setting this process just wrote; reload like every other
     # settings writer here so the next catalog read uses it.
     config.reload()
-    short = _short(plan.target_sha)
+    # The feed is UI: it names the version by its date, never its hash.
+    version = f"the {_version_day(plan.target_date)} version"
     if plan.templates or plan.agents:
-        detail = f"Updated {len(plan.templates)} packs, {len(plan.agents)} agents to {short}"
+        detail = f"Updated {len(plan.templates)} packs, {len(plan.agents)} agents to {version}"
     else:
-        detail = f"Catalog pin advanced to {short}"
+        detail = f"Catalog pin advanced to {version}"
     await manager.broadcast_world_state()
     await manager.broadcast_activity(event="agent_packs_updated", detail=detail)
     for row in plan.agents:

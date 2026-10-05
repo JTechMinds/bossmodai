@@ -23,7 +23,7 @@ _TEMPLATE_COLUMNS = (
     "id, source, pack_id, source_url, category, title, specialty, description, "
     "what_done_looks_like, tools_hint, communication, "
     "author_name, author_url, "
-    "commit_sha, content_hash, installed_at, updated_at"
+    "commit_sha, commit_date, content_hash, installed_at, updated_at"
 )
 # The natural key (source, pack_id, source_url) and installed_at identify the
 # row and when it entered the library; a re-install refreshes everything else.
@@ -38,6 +38,7 @@ _MUTABLE_COLUMNS = {
     "author_name",
     "author_url",
     "commit_sha",
+    "commit_date",
     "content_hash",
     "updated_at",
 }
@@ -137,6 +138,7 @@ def upsert_agent_template(
     author_name: str | None,
     author_url: str | None,
     commit_sha: str,
+    commit_date: datetime,
     content_hash: str,
 ) -> AgentTemplate:
     """Install or re-install one template and return the stored row.
@@ -150,6 +152,8 @@ def upsert_agent_template(
     ``source_url`` the second. ``tools_hint`` is stored as a JSON array in the
     ``TEXT`` column. On an existing row every mutable column plus ``updated_at``
     is refreshed, so a changed pack updates in place instead of duplicating.
+    ``commit_date`` is ``commit_sha``'s committer date, the version date the
+    UI shows; a re-install writes it too, so a row that predates it gains one.
 
     Raises ``ValueError`` when ``source`` is not one of those two — ``'local'``
     included: a local template has no pin and no hash to store, and is
@@ -192,6 +196,7 @@ def upsert_agent_template(
                 "author_name": author_name,
                 "author_url": author_url,
                 "commit_sha": commit_sha,
+                "commit_date": commit_date,
                 "content_hash": content_hash,
                 "updated_at": now,
             },
@@ -210,9 +215,9 @@ def upsert_agent_template(
         INSERT INTO agent_templates (
             source, pack_id, source_url, category, title, specialty,
             description, what_done_looks_like, tools_hint,
-            communication, author_name, author_url, commit_sha, content_hash,
-            installed_at, updated_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+            communication, author_name, author_url, commit_sha, commit_date,
+            content_hash, installed_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
         RETURNING {_TEMPLATE_COLUMNS}
         """,
         [
@@ -229,6 +234,7 @@ def upsert_agent_template(
             author_name,
             author_url,
             commit_sha,
+            commit_date,
             content_hash,
             now,
             now,

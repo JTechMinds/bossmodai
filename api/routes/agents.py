@@ -691,7 +691,7 @@ async def open_agent_desk_folder(agent_id: str, path: str = "/me"):
     return {"status": "ok", "path": str(target)}
 
 
-def _pack_link_for_hire(template_id: str | None) -> dict[str, str | None] | None:
+def _pack_link_for_hire(template_id: str | None) -> dict[str, Any] | None:
     """Return the pack link a hire from ``template_id`` records, or ``None``.
 
     A ``catalog`` or ``url`` template links the new agent to its pack, keyed
@@ -715,6 +715,7 @@ def _pack_link_for_hire(template_id: str | None) -> dict[str, str | None] | None
         "pack_id": template.pack_id,
         "pack_source_url": template.source_url,
         "commit_sha": template.commit_sha,
+        "commit_date": template.commit_date,
         "content_hash": template.content_hash,
         "contract_hash": template_contract_hash(template),
     }
@@ -836,12 +837,16 @@ async def get_agent_pack_status(agent_id: str) -> dict[str, object]:
 
     Returns:
         ``{linked, pack_id, template_id, template_title, installed,
-        current_short, available_short, available_content_hash,
+        current_date, available_date, available_content_hash,
         update_available, edited}``. ``linked`` is false (and everything else
-        empty) for an agent not hired from a pack. ``available_content_hash``
-        is what ``POST …/pack-update`` must send back as
-        ``expected_content_hash``; it and ``available_short`` are ``None``
-        unless ``update_available``.
+        empty) for an agent not hired from a pack. The dates are ISO-8601
+        committer dates of the version the agent was last written from and of
+        the installed template's; ``current_date`` is ``None`` for a link made
+        before dates were recorded. ``available_content_hash`` is what
+        ``POST …/pack-update`` must send back as ``expected_content_hash`` and
+        is never displayed; it and ``available_date`` are ``None`` unless
+        ``update_available`` (``available_date`` also when the template
+        predates recorded dates).
 
     Raises:
         HTTPException: 404 when the agent does not exist.
@@ -856,8 +861,8 @@ async def get_agent_pack_status(agent_id: str) -> dict[str, object]:
             "template_id": None,
             "template_title": None,
             "installed": False,
-            "current_short": None,
-            "available_short": None,
+            "current_date": None,
+            "available_date": None,
             "available_content_hash": None,
             "update_available": False,
             "edited": False,
@@ -870,8 +875,10 @@ async def get_agent_pack_status(agent_id: str) -> dict[str, object]:
         "template_id": template.id if template is not None else None,
         "template_title": template.title if template is not None else None,
         "installed": template is not None,
-        "current_short": agent.pack_commit_sha[:7] if agent.pack_commit_sha else None,
-        "available_short": template.commit_sha[:7] if update_available and template.commit_sha else None,
+        "current_date": agent.pack_commit_date.isoformat() if agent.pack_commit_date else None,
+        "available_date": (
+            template.commit_date.isoformat() if update_available and template.commit_date else None
+        ),
         "available_content_hash": template.content_hash if update_available else None,
         "update_available": update_available,
         "edited": agent_is_edited(agent),

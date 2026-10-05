@@ -255,6 +255,8 @@ const BossModMarketplaceItems = (() => {
             packId: row.pack_id || null,
             template: row,
             commitSha: row.commit_sha || '',
+            // For display: the installed version's date, null when unrecorded.
+            commitDate: row.commit_date || null,
             category: row.category,
             ...parsed(row),
         };
@@ -284,7 +286,10 @@ const BossModMarketplaceItems = (() => {
                 packId: card.id,
                 template: installed,
                 state: cardState(card, installed),
+                // What an install reads at (marketplace.js), never displayed.
                 commitSha: state.pin,
+                // Only an installed card has a version to show.
+                commitDate: installed ? installed.commit_date || null : null,
                 category: card.category || group.id,
                 inCatalog: true,
                 catalogStatus: 'catalog',

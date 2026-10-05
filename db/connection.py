@@ -271,12 +271,18 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _drop_column_if_present(con, "agent_templates", "personality_hint")
     _drop_column_if_present(con, "agents", "prompt_template")
     _drop_column_if_present(con, "agent_snapshots", "prompt_template")
+    # The version date a template was installed at. After the rebuild above,
+    # whose column lists do not carry it. NULL on existing rows until they are
+    # next written: a backfill would need GitHub inside a migration.
+    _add_column_if_missing(con, "agent_templates", "commit_date", "TIMESTAMP")
     # The pack an agent was hired from. NULL for every existing agent: links
     # are made at hire time only, never inferred.
     for column, definition in (
         ("pack_id", "VARCHAR"),
         ("pack_source_url", "TEXT"),
         ("pack_commit_sha", "VARCHAR"),
+        # NULL on links made before dates were recorded; never backfilled.
+        ("pack_commit_date", "TIMESTAMP"),
         ("pack_content_hash", "VARCHAR"),
         ("pack_contract_hash", "VARCHAR"),
     ):

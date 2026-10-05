@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,7 @@ from core.agent_pack import (
 from core.agent_pack.catalog import parse_catalog_yaml, resolve_catalog_entry, validate_catalog_pack_path
 from core.agent_pack.github import (
     FLOATING_REFS,
+    ResolvedCommit,
     catalog_pack_location,
     parse_github_pack_url,
     validate_pin_ref,
@@ -91,6 +93,10 @@ extra_credit: ignored on purpose
 """
 
 
+# The committer date every fake commit carries unless a test dates it.
+FAKE_COMMIT_DATE = datetime(2026, 9, 14, 15, 0, tzinfo=timezone.utc)
+
+
 @dataclass
 class FakePackSource:
     files: dict[tuple[str, str, str, str], str]
@@ -99,6 +105,8 @@ class FakePackSource:
     fetch_calls: list[tuple[str, str, str, str]]
     # (owner, repo) -> the full SHA its default-branch HEAD resolves to.
     heads: dict[tuple[str, str], str]
+    # Full SHA -> its committer date; FAKE_COMMIT_DATE when a test set none.
+    dates: dict[str, datetime]
 
     def __init__(self) -> None:
         self.files = {}
@@ -106,25 +114,29 @@ class FakePackSource:
         self.resolve_calls = []
         self.fetch_calls = []
         self.heads = {}
+        self.dates = {}
 
     def add(self, *, owner: str, repo: str, path: str, ref: str, sha: str, yaml_text: str) -> None:
         self.refs[(owner.lower(), repo.lower(), ref)] = sha.lower()
         self.files[(owner.lower(), repo.lower(), path, sha.lower())] = yaml_text
 
-    def resolve_commit_sha(self, owner: str, repo: str, ref: str) -> str:
+    def _commit(self, sha: str) -> ResolvedCommit:
+        return ResolvedCommit(sha=sha, committed_at=self.dates.get(sha, FAKE_COMMIT_DATE))
+
+    def resolve_commit(self, owner: str, repo: str, ref: str) -> ResolvedCommit:
         self.resolve_calls.append((owner, repo, ref))
         key = (owner.lower(), repo.lower(), ref)
         if len(ref) == 40 and all(ch in "0123456789abcdef" for ch in ref.lower()):
-            return ref.lower()
+            return self._commit(ref.lower())
         if key not in self.refs:
             raise AgentPackError("ref not found", code="pin_unresolved")
-        return self.refs[key]
+        return self._commit(self.refs[key])
 
-    def resolve_head_sha(self, owner: str, repo: str) -> str:
+    def resolve_head(self, owner: str, repo: str) -> ResolvedCommit:
         key = (owner.lower(), repo.lower())
         if key not in self.heads:
             raise AgentPackError("HEAD not found", code="pin_unresolved")
-        return self.heads[key]
+        return self._commit(self.heads[key])
 
     def fetch_file(self, owner: str, repo: str, path: str, sha: str) -> str:
         self.fetch_calls.append((owner, repo, path, sha))

@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from core.agent_pack.catalog import (
@@ -80,13 +81,15 @@ class PackImportResult:
 
     ``content_hash`` is ``pack_content_hash`` of the file bytes this import
     fetched, so the installer stores the identity of the published file
-    rather than recomputing one from the parsed pack.
+    rather than recomputing one from the parsed pack. ``committed_at`` is the
+    pinned commit's committer date (UTC), the version date the UI shows.
     """
 
     pack: AgentPack
     location: PackLocation
     hire_fields: dict[str, Any]
     content_hash: str
+    committed_at: datetime
     catalog_entry: CatalogEntry | None = None
 
 
@@ -196,11 +199,15 @@ class CatalogListResult:
     ``kind`` value rather than a third top-level key every consumer must learn.
     The cost is that a caller wanting only refusals filters, which is the one
     line the two-list shape would have saved.
+
+    ``committed_at`` is ``commit_sha``'s committer date (UTC): the date of
+    this catalog version, which is what the UI shows instead of the hash.
     """
 
     repo: str
     requested_ref: str
     commit_sha: str
+    committed_at: datetime
     packs: tuple[CatalogListPack, ...]
     withheld: tuple[WithheldPack, ...]
 
@@ -318,7 +325,8 @@ def list_catalog(
     """
     validate_pin_ref(ref)
     owner, repo = parse_catalog_repo(catalog_repo)
-    sha = source.resolve_commit_sha(owner, repo, ref)
+    resolved = source.resolve_commit(owner, repo, ref)
+    sha = resolved.sha
     index_text = source.fetch_file(owner, repo, CATALOG_INDEX_PATH, sha)
     index = parse_catalog_yaml(index_text, allow_empty=True)
     cards: list[CatalogListPack] = []
@@ -359,6 +367,7 @@ def list_catalog(
         repo=f"{owner}/{repo}",
         requested_ref=ref,
         commit_sha=sha,
+        committed_at=resolved.committed_at,
         packs=tuple(cards),
         withheld=tuple(withheld),
     )
@@ -470,7 +479,8 @@ def _import_url(
         confirm_token=confirm_token,
         confirm_secret=confirm_secret,
     )
-    sha = source.resolve_commit_sha(location.owner, location.repo, location.requested_ref)
+    resolved = source.resolve_commit(location.owner, location.repo, location.requested_ref)
+    sha = resolved.sha
     pinned = location.with_sha(sha)
     raw = source.fetch_file(pinned.owner, pinned.repo, pinned.path, pinned.commit_sha or sha)
     pack = _parse_imported_pack(raw)
@@ -479,6 +489,7 @@ def _import_url(
         location=pinned,
         hire_fields=pack.hire_fields(),
         content_hash=pack_content_hash(raw),
+        committed_at=resolved.committed_at,
     )
 
 
@@ -492,7 +503,8 @@ def _import_catalog(
 ) -> PackImportResult:
     validate_pin_ref(ref)
     owner, repo = parse_catalog_repo(catalog_repo)
-    sha = source.resolve_commit_sha(owner, repo, ref)
+    resolved = source.resolve_commit(owner, repo, ref)
+    sha = resolved.sha
     index_text = source.fetch_file(owner, repo, CATALOG_INDEX_PATH, sha)
     index = parse_catalog_yaml(index_text)
     entry = resolve_catalog_entry(index, pack_id=pack_id, path=path)
@@ -505,6 +517,7 @@ def _import_catalog(
         location=pinned,
         hire_fields=pack.hire_fields(),
         content_hash=pack_content_hash(raw),
+        committed_at=resolved.committed_at,
         catalog_entry=entry,
     )
 

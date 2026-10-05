@@ -92,6 +92,33 @@ const clockRefusals = ["not a timestamp", "", null].map((value) => {
     }
 });
 
+// ─── Pack versions, by date: never a commit hash ───
+//
+// The marketplace review and the desk name a pack version by its commit's
+// date. Same calendar rule as the rail; a span within one local day carries
+// times so it never reads "Oct 3 → Oct 3"; an unknown earlier version is
+// just the later day; and an unreadable date the server sent throws.
+const span = (from, to) => global.BossModFormat.formatVersionSpan(from, to);
+const spanThisYear = withClock(NOW_MS, () => span(iso(2026, 8, 14, 15, 0, 0), iso(2026, 9, 3, 16, 40, 0)));
+const spanAcrossYears = withClock(NOW_MS, () => span(iso(2025, 8, 14, 15, 0, 0), iso(2026, 9, 3, 16, 40, 0)));
+const spanSameDay = withClock(NOW_MS, () => span(iso(2026, 9, 3, 9, 12, 0), iso(2026, 9, 3, 16, 40, 0)));
+const spanUnknownFrom = withClock(NOW_MS, () => span(null, iso(2026, 9, 3, 16, 40, 0)));
+const versionDay = withClock(NOW_MS, () => [
+    global.BossModFormat.formatCalendarDay(iso(2026, 8, 14, 15, 0, 0)),
+    global.BossModFormat.formatCalendarDay(iso(2025, 8, 14, 15, 0, 0)),
+].join("|"));
+const versionRefusals = [
+    () => span(iso(2026, 8, 14, 15, 0, 0), null),
+    () => span("not a date", iso(2026, 9, 3, 16, 40, 0)),
+    () => global.BossModFormat.formatCalendarDay(""),
+].map((call) => {
+    try {
+        return `returned ${call()}`;
+    } catch (err) {
+        return err.message;
+    }
+});
+
 // ─── Local midnight, across offsets on both sides of UTC ───
 //
 // Kiritimati is +14 and Niue is -11, which is the widest spread there is. In
@@ -157,6 +184,12 @@ process.stdout.write(JSON.stringify({
     clockUtc,
     clockKolkata,
     clockRefusals,
+    spanThisYear,
+    spanAcrossYears,
+    spanSameDay,
+    spanUnknownFrom,
+    versionDay,
+    versionRefusals,
     respectsLocalMidnight,
     midnightDetail,
 }));

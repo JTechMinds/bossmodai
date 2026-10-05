@@ -31,7 +31,7 @@ FakeEl.prototype.setSelectionRange = function setSelectionRange(start, end) {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu",
+    "BossModDom", "BossModFormat", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu",
     // The browse head's filter is the app's toolbar search.
     "BossModSearchField",
     // The update banner drops a stale check with a load generation.
@@ -53,6 +53,13 @@ NAMES.forEach((name, index) => {
 });
 
 const PIN = "aa11bb2ccccccccccccccccccccccccccccccccc";
+// Pack version dates, as LOCAL wall-clock ISO strings in the current year so
+// "Sep 14" reads the same in every zone and on every run. The UI shows these,
+// never a commit hash; HEX is what a hash on screen would look like.
+const YEAR = new Date().getFullYear();
+const SEP_14 = `${YEAR}-09-14T15:00:00`;
+const OCT_3 = `${YEAR}-10-03T16:40:00`;
+const HEX = /\b[0-9a-f]{7,40}\b/;
 // The catalog title carries markup on purpose: h() must render it as TEXT.
 const HOSTILE_TITLE = "<script>alert(1)</script>";
 
@@ -278,7 +285,7 @@ function template(overrides) {
         category: "engineering", title: "T", specialty: "S", description: "D",
         what_done_looks_like: "A checkable allow/deny exists.",
         tools_hint: [], author_name: null, author_url: null,
-        commit_sha: PIN, content_hash: "h",
+        commit_sha: PIN, commit_date: SEP_14, content_hash: "h",
         installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
     }, overrides);
     // The server derives this on read from the two stored hire strings. The
@@ -314,31 +321,31 @@ let holdWrite = null;
 const TARGET = "9d2352eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee";
 const NO_UPDATES = {
     repo: "JTechMinds/BossMod_AgentMP", pinned_sha: PIN, target_sha: PIN,
-    pinned_short: "aa11bb2", target_short: "aa11bb2", pin_moves: false,
+    pinned_date: SEP_14, target_date: SEP_14, pin_moves: false,
     templates: [], agents: [], skipped: [], needs_review: false,
 };
 // One changed pack, two agents behind it — one edited since the pack last
 // wrote it — and one installed pack the catalog dropped at the target.
 const REVIEW_PLAN = {
-    ...NO_UPDATES, target_sha: TARGET, target_short: "9d2352e", pin_moves: true,
+    ...NO_UPDATES, target_sha: TARGET, target_date: OCT_3, pin_moves: true,
     templates: [{
         template_id: "t-auditor", pack_id: "code-auditor", title: "Code Auditor",
-        from_short: "aa11bb2", to_short: "9d2352e",
+        from_date: SEP_14, to_date: OCT_3,
     }],
     agents: [
         { agent_id: "a1", name: "Ada", pack_id: "code-auditor", template_title: "Code Auditor",
-            from_short: "aa11bb2", to_short: "9d2352e", edited: false },
+            from_date: SEP_14, to_date: OCT_3, edited: false },
         { agent_id: "a2", name: "Bea", pack_id: "code-auditor", template_title: "Code Auditor",
-            from_short: "aa11bb2", to_short: "9d2352e", edited: true },
+            from_date: SEP_14, to_date: OCT_3, edited: true },
     ],
     skipped: [{
         pack_id: "feature-planner", title: "Feature Planner", kind: "removed",
-        code: "pack_removed", message: "The catalog at 9d2352e no longer lists this pack.",
+        code: "pack_removed", message: "The catalog no longer lists this pack.",
     }],
     needs_review: true,
 };
 // HEAD moved, a pack nobody installed was added, nothing installed changed.
-const PIN_ONLY_PLAN = { ...NO_UPDATES, target_sha: TARGET, target_short: "9d2352e", pin_moves: true };
+const PIN_ONLY_PLAN = { ...NO_UPDATES, target_sha: TARGET, target_date: OCT_3, pin_moves: true };
 let updatesPlan = NO_UPDATES;
 let updatesFail = false;
 // Every POST /api/agent-packs/updates/apply body, in order.
@@ -1074,7 +1081,8 @@ async function main() {
         && count(".market-detail-state") === 0
         && Boolean(byline.querySelector(".market-detail-installed"))
         && byline.textContent
-            === "Engineering · By Studio · pinned aa11bb2 · Installed";
+            === "Engineering · By Studio · Sep 14 version · Installed"
+        && !HEX.test(byline.textContent);
     verdict.uninstallStaysQuiet = (() => {
         const remove = host().querySelector("#market-uninstall");
         return Boolean(remove) && !remove.classList.contains("market-action-lead")
@@ -1597,7 +1605,8 @@ async function main() {
     verdict.updateBannerSummarises = Boolean(banner)
         && !host().querySelector("#market-updates").hidden
         && banner.getAttribute("data-tone") === "info"
-        && banner.textContent.includes("Catalog update aa11bb2 → 9d2352e · 1 pack · 2 agents")
+        && banner.textContent.includes("Pack updates available · Oct 3 · 1 pack · 2 agents")
+        && !HEX.test(banner.textContent)
         && host().querySelector("#market-updates-packs").textContent === "Update all packs"
         && host().querySelector("#market-updates-all").textContent === "Update all packs + agents"
         && applyCalls.length === 0;
@@ -1609,7 +1618,10 @@ async function main() {
     verdict.packsOnlyReviewNamesTheDeskUpdates = panelsNow().length === 2
         && review.textContent.includes("2 agents will show an update on their desk.")
         && review.querySelectorAll(".market-review-chip").length === 0
-        && !review.textContent.includes("Bea");
+        && !review.textContent.includes("Bea")
+        && review.textContent.includes("Catalog version from Oct 3. Nothing changes until you confirm.")
+        && review.textContent.includes("Code Auditor") && review.textContent.includes("Sep 14 → Oct 3")
+        && !HEX.test(review.textContent);
     await click(review.querySelector("#market-updates-cancel"));
     verdict.cancelWritesNothing = applyCalls.length === 0 && panelsNow().length === 1
         && Boolean(host().querySelector(".market-updates-banner"));
@@ -1620,12 +1632,13 @@ async function main() {
     review = topLayer();
     const reviewRows = review.querySelectorAll(".market-review-row").map((row) => row.textContent);
     verdict.agentsReviewFlagsTheEditedAgent = reviewRows.some((text) => text.startsWith("Ada")
-            && text.includes("Code Auditor · aa11bb2 → 9d2352e") && !text.includes("edited"))
+            && text.includes("Code Auditor · Sep 14 → Oct 3") && !text.includes("edited"))
         && reviewRows.some((text) => text.startsWith("Bea") && text.includes("edited — will be overwritten"))
-        && review.querySelectorAll(".market-review-chip").length === 1;
+        && review.querySelectorAll(".market-review-chip").length === 1
+        && !HEX.test(review.textContent);
     verdict.reviewNeverHidesASkippedPack = reviewRows.some((text) => text.includes("Feature Planner")
         && text.includes("No longer in the catalog")
-        && text.includes("The catalog at 9d2352e no longer lists this pack."));
+        && text.includes("The catalog no longer lists this pack."));
     const writesBeforeConfirm = applyCalls.length;
     await click(review.querySelector("#market-updates-confirm"));
     verdict.confirmAppliesExactlyWhatWasReviewed = writesBeforeConfirm === 0

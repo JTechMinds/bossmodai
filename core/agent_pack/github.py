@@ -12,6 +12,7 @@ import hmac
 import re
 import secrets
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol
 from urllib.parse import unquote, urlparse
 
@@ -83,14 +84,27 @@ class PackLocation:
         )
 
 
+@dataclass(frozen=True)
+class ResolvedCommit:
+    """A catalog or pack commit and when it was committed.
+
+    ``committed_at`` is GitHub's ``commit.committer.date``, timezone-aware
+    UTC. It is the version date the UI shows in place of the hash: a SHA is
+    for pinning, a date is for people.
+    """
+
+    sha: str
+    committed_at: datetime
+
+
 class PackSource(Protocol):
     """Fetch a pack file at a pinned GitHub ref. Injected in tests."""
 
-    def resolve_commit_sha(self, owner: str, repo: str, ref: str) -> str:
-        """Return the full commit SHA for a tag or SHA prefix."""
+    def resolve_commit(self, owner: str, repo: str, ref: str) -> ResolvedCommit:
+        """Return the full commit, with its date, for a tag, SHA prefix or full SHA."""
 
-    def resolve_head_sha(self, owner: str, repo: str) -> str:
-        """Return the full commit SHA of the repo's default-branch HEAD."""
+    def resolve_head(self, owner: str, repo: str) -> ResolvedCommit:
+        """Return the commit, with its date, of the repo's default-branch HEAD."""
 
     def fetch_file(self, owner: str, repo: str, path: str, sha: str) -> str:
         """Return UTF-8 file contents at ``sha``."""
@@ -101,13 +115,40 @@ class GitHubPackSource:
 
     def __init__(self, client: httpx.Client | None = None) -> None:
         self._client = client
+        # Full SHA -> its commit. Commits are immutable, so a SHA's date never
+        # changes: this is a cache, not a fallback, and it keeps a full-SHA
+        # pin at one GitHub call per process rather than one per read.
+        self._commits: dict[str, ResolvedCommit] = {}
 
-    def resolve_commit_sha(self, owner: str, repo: str, ref: str) -> str:
+    def resolve_commit(self, owner: str, repo: str, ref: str) -> ResolvedCommit:
+        """Resolve a pin ref to its full commit SHA and committer date.
+
+        A full SHA also goes through the API (once, then cached), because its
+        date is only known to GitHub. A tag or SHA prefix is always asked:
+        a tag can be moved.
+
+        Args:
+            owner: GitHub owner of the repo.
+            repo: GitHub repo name.
+            ref: A full SHA, a SHA prefix or a tag.
+
+        Returns:
+            The ``ResolvedCommit`` with a lowercase 40-character SHA.
+
+        Raises:
+            AgentPackError: ``pin_unresolved`` when GitHub answers without a
+                commit (404, or any other non-2xx status — the order of the
+                checks below is the pre-dates behaviour, kept unchanged);
+                ``fetch_failed`` (502) on a transport failure or a 2xx answer
+                missing the SHA or the committer date.
+        """
         if _FULL_SHA_RE.fullmatch(ref):
-            return ref.lower()
+            cached = self._commits.get(ref.lower())
+            if cached is not None:
+                return cached
         url = f"https://api.github.com/repos/{owner}/{repo}/commits/{ref}"
-        status, body, sha = self._get_json_sha(url)
-        if status == 404 or not sha:
+        status, _body, commit = self._get_json_commit(url)
+        if status == 404 or commit is None:
             raise AgentPackError(
                 f"GitHub ref {ref!r} could not be resolved to a commit.",
                 code="pin_unresolved",
@@ -118,33 +159,36 @@ class GitHubPackSource:
                 code="fetch_failed",
                 status=502,
             )
-        return sha.lower()
+        self._commits[commit.sha] = commit
+        return commit
 
-    def resolve_head_sha(self, owner: str, repo: str) -> str:
-        """Resolve the repo's default-branch HEAD to a full commit SHA.
+    def resolve_head(self, owner: str, repo: str) -> ResolvedCommit:
+        """Resolve the repo's default-branch HEAD to a full commit and its date.
 
         Discovery only. A separate, named method rather than ``HEAD`` passed
-        through ``resolve_commit_sha``, so ``validate_pin_ref`` and
+        through ``resolve_commit``, so ``validate_pin_ref`` and
         ``FLOATING_REFS`` keep refusing floating refs everywhere a pin is
         read: the caller gets a 40-character SHA back and pins that, never
-        the word ``HEAD``.
+        the word ``HEAD``. Never served from the cache (HEAD moves), but its
+        answer is cached by SHA, so listing the catalog at it costs no second
+        call.
 
         Args:
             owner: GitHub owner of the catalog repo.
             repo: GitHub repo name.
 
         Returns:
-            The lowercase 40-character commit SHA HEAD points at now.
+            The ``ResolvedCommit`` HEAD points at now.
 
         Raises:
-            AgentPackError: ``pin_unresolved`` when GitHub answers 404 or with
-                no SHA, ``fetch_failed`` (502) on any other error status or a
-                transport failure — the same codes ``resolve_commit_sha``
-                raises.
+            AgentPackError: the same codes ``resolve_commit`` raises —
+                ``pin_unresolved`` when GitHub answers without a commit,
+                ``fetch_failed`` (502) on a transport failure or a 2xx answer
+                missing the SHA or the committer date.
         """
         url = f"https://api.github.com/repos/{owner}/{repo}/commits/HEAD"
-        status, _body, sha = self._get_json_sha(url)
-        if status == 404 or not sha:
+        status, _body, commit = self._get_json_commit(url)
+        if status == 404 or commit is None:
             raise AgentPackError(
                 f"GitHub HEAD of {owner}/{repo} could not be resolved to a commit.",
                 code="pin_unresolved",
@@ -155,7 +199,8 @@ class GitHubPackSource:
                 code="fetch_failed",
                 status=502,
             )
-        return sha.lower()
+        self._commits[commit.sha] = commit
+        return commit
 
     def fetch_file(self, owner: str, repo: str, path: str, sha: str) -> str:
         url = f"https://raw.githubusercontent.com/{owner}/{repo}/{sha}/{path}"
@@ -193,7 +238,17 @@ class GitHubPackSource:
             ) from exc
         return response.status_code, response.text
 
-    def _get_json_sha(self, url: str) -> tuple[int, str, str | None]:
+    def _get_json_commit(self, url: str) -> tuple[int, str, ResolvedCommit | None]:
+        """GET a GitHub commit endpoint and parse ``sha`` and ``commit.committer.date``.
+
+        Returns the status, the body and the commit, which is ``None`` for any
+        non-2xx answer (the caller maps the status to its error).
+
+        Raises:
+            AgentPackError: ``fetch_failed`` (502) on a transport failure, or
+                on a 2xx answer that lacks a full SHA or a timezone-aware ISO
+                8601 committer date. A commit is never given a made-up date.
+        """
         try:
             response = self._http().get(url)
         except httpx.HTTPError as exc:
@@ -202,16 +257,36 @@ class GitHubPackSource:
                 code="fetch_failed",
                 status=502,
             ) from exc
-        sha = None
+        if not 200 <= response.status_code < 300:
+            return response.status_code, response.text, None
+        malformed = AgentPackError(
+            "GitHub ref lookup returned a commit without a SHA or a date.",
+            code="fetch_failed",
+            status=502,
+        )
         try:
             payload = response.json()
-        except ValueError:
-            payload = None
-        if isinstance(payload, dict):
-            raw_sha = payload.get("sha")
-            if isinstance(raw_sha, str) and _FULL_SHA_RE.fullmatch(raw_sha):
-                sha = raw_sha
-        return response.status_code, response.text, sha
+        except ValueError as exc:
+            raise malformed from exc
+        if not isinstance(payload, dict):
+            raise malformed
+        raw_sha = payload.get("sha")
+        commit = payload.get("commit")
+        committer = commit.get("committer") if isinstance(commit, dict) else None
+        raw_date = committer.get("date") if isinstance(committer, dict) else None
+        if not (isinstance(raw_sha, str) and _FULL_SHA_RE.fullmatch(raw_sha)) or not isinstance(raw_date, str):
+            raise malformed
+        try:
+            committed_at = datetime.fromisoformat(raw_date)
+        except ValueError as exc:
+            raise malformed from exc
+        if committed_at.tzinfo is None:
+            raise malformed
+        return (
+            response.status_code,
+            response.text,
+            ResolvedCommit(sha=raw_sha.lower(), committed_at=committed_at.astimezone(timezone.utc)),
+        )
 
 
 def parse_github_pack_url(raw: str) -> PackLocation:

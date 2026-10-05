@@ -46,9 +46,12 @@ CREATE TABLE IF NOT EXISTS agents (
     -- template reinstall), the commit and file hash its contract was last
     -- written at, and the hash of that contract so operator edits show.
     -- NULL on agents not hired from a pack. Never written by PATCH.
+    -- pack_commit_date is that commit's committer date, the version date the
+    -- desk shows; NULL on links written before dates were recorded.
     pack_id                       VARCHAR,
     pack_source_url               TEXT,
     pack_commit_sha               VARCHAR,
+    pack_commit_date              TIMESTAMP,
     pack_content_hash             VARCHAR,
     pack_contract_hash            VARCHAR,
     created_at                    TIMESTAMP DEFAULT current_timestamp
@@ -850,7 +853,10 @@ CREATE TABLE IF NOT EXISTS agent_templates (
     author_name          VARCHAR,
     author_url           TEXT,
     -- Pinned pack facts: a local template was never fetched, so it has neither.
+    -- commit_date is commit_sha's committer date, the version date the UI
+    -- shows; NULL on local templates and on rows installed before it existed.
     commit_sha           VARCHAR,
+    commit_date          TIMESTAMP,
     content_hash         VARCHAR,
     installed_at         TIMESTAMP DEFAULT current_timestamp,
     updated_at           TIMESTAMP DEFAULT current_timestamp,

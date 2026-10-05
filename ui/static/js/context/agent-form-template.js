@@ -41,21 +41,17 @@
 const BossModAgentFormTemplate = (() => {
     const { h } = BossModDom;
     const HYDRATE = BossModAgentFormHydrate;
+    const { formatCalendarDay } = BossModFormat;
 
     const COPY = Object.freeze({
         mark: '◆',
-        pinned: 'pinned',
+        version: 'version',
         clear: 'Remove template',
         tools: 'Tools',
         recreating: 'Recreating',
         deleted: 'deleted',
         startBlank: 'Start blank',
     });
-
-    /** The pinned commit, short enough to read on one chip line. */
-    function shortSha(sha) {
-        return String(sha || '').replace(/[^0-9a-f]/gi, '').slice(0, 7);
-    }
 
     /**
      * The form fields one installed template answers.
@@ -90,7 +86,10 @@ const BossModAgentFormTemplate = (() => {
     }
 
     /**
-     * `◆ <title> · <author> · pinned <sha>`, with the control that undoes it.
+     * `◆ <title> · <author> · Sep 14 version`, with the control that undoes
+     * it. The version is the installed commit's date, never its hash, and is
+     * left off a template that has none (a local one, or a pack installed
+     * before dates were recorded).
      *
      * @param {object} template
      * @param {() => void} onClear
@@ -99,8 +98,7 @@ const BossModAgentFormTemplate = (() => {
     function provenanceChip(template, onClear) {
         const parts = [template.title || ''];
         if (template.author_name) parts.push(template.author_name);
-        const sha = shortSha(template.commit_sha);
-        if (sha) parts.push(`${COPY.pinned} ${sha}`);
+        if (template.commit_date) parts.push(`${formatCalendarDay(template.commit_date)} ${COPY.version}`);
         return h('p', { class: 'template-chip', id: 'quick-provenance' },
             h('span', { class: 'template-chip-mark', 'aria-hidden': 'true' }, COPY.mark),
             h('span', { class: 'template-chip-text' }, parts.filter(Boolean).join(' · ')),
@@ -231,5 +229,5 @@ const BossModAgentFormTemplate = (() => {
             }, COPY.startBlank)));
     }
 
-    return { COPY, shortSha, templateFields, applyTemplate, applySnapshotChip };
+    return { COPY, templateFields, applyTemplate, applySnapshotChip };
 })();

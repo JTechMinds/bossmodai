@@ -41,7 +41,8 @@ _AGENT_COLUMNS = (
     "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
     "agents.floor_id, agents.vacation_since, agents.cli_auto_approve_dm, "
     "agents.pack_id, agents.pack_source_url, agents.pack_commit_sha, "
-    "agents.pack_content_hash, agents.pack_contract_hash, agents.created_at"
+    "agents.pack_commit_date, agents.pack_content_hash, agents.pack_contract_hash, "
+    "agents.created_at"
 )
 
 _AGENT_VALID_COLUMNS = {
@@ -55,7 +56,9 @@ _AGENT_VALID_COLUMNS = {
 # The pack link (pack_id … pack_contract_hash) is deliberately NOT in the set
 # above: only a hire from a template and ``set_agent_pack_link`` write it, so a
 # PATCH cannot forge which pack an agent came from.
-_PACK_LINK_KEYS = ("pack_id", "pack_source_url", "commit_sha", "content_hash", "contract_hash")
+_PACK_LINK_KEYS = (
+    "pack_id", "pack_source_url", "commit_sha", "commit_date", "content_hash", "contract_hash",
+)
 
 _STATE_COLUMNS = "agent_id, x, y, status, last_active_at, idle_since"
 
@@ -100,7 +103,7 @@ def create_agent(
     guardian_repetition_threshold: float = 0.85,
     guardian_no_progress_threshold: int = 100,
     floor_id: str | None = None,
-    pack_link: dict[str, str | None] | None = None,
+    pack_link: dict[str, Any] | None = None,
 ) -> Agent:
     """Insert a new agent, its companion state rows and its snapshot atomically.
 
@@ -110,9 +113,11 @@ def create_agent(
 
     ``pack_link`` records the pack a hire came from, for pack updates: a
     mapping with exactly the keys ``pack_id``, ``pack_source_url``,
-    ``commit_sha``, ``content_hash`` and ``contract_hash`` (``pack_id`` or
-    ``pack_source_url`` may be ``None``, not both). ``None`` hires an unlinked
-    agent. Raises ``ValueError`` for a mapping with missing or extra keys.
+    ``commit_sha``, ``commit_date``, ``content_hash`` and ``contract_hash``
+    (``pack_id`` or ``pack_source_url`` may be ``None``, not both;
+    ``commit_date`` is ``None`` when the template predates recorded dates).
+    ``None`` hires an unlinked agent. Raises ``ValueError`` for a mapping with
+    missing or extra keys.
     """
     from db.floors import LOBBY_ID, ensure_lobby, get_floor
 
@@ -130,8 +135,8 @@ def create_agent(
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
                 floor_id, pack_id, pack_source_url, pack_commit_sha,
-                pack_content_hash, pack_contract_hash
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+                pack_commit_date, pack_content_hash, pack_contract_hash
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
             RETURNING id
             """,
             [
@@ -142,7 +147,7 @@ def create_agent(
                 guardian_token_limit, guardian_velocity_limit,
                 guardian_repetition_threshold, guardian_no_progress_threshold,
                 home, link["pack_id"], link["pack_source_url"], link["commit_sha"],
-                link["content_hash"], link["contract_hash"],
+                link["commit_date"], link["content_hash"], link["contract_hash"],
             ],
         )
         agent_id = str(created["id"])
@@ -282,12 +287,14 @@ def update_agent(agent_id: str, **fields: Any) -> Agent | None:
     return agent
 
 
-def _checked_pack_link(pack_link: dict[str, str | None]) -> dict[str, str | None]:
+def _checked_pack_link(pack_link: dict[str, Any]) -> dict[str, Any]:
     """Return ``pack_link`` after checking it carries exactly the link keys.
 
     Raises ``ValueError`` on a missing or unknown key, when neither
     ``pack_id`` nor ``pack_source_url`` is set (a link with no pack key could
     never be matched back to a template), or when a version fact is empty.
+    ``commit_date`` may be ``None`` (a template that predates recorded dates)
+    but is otherwise a ``datetime``.
     """
     keys = set(pack_link)
     if keys != set(_PACK_LINK_KEYS):
@@ -299,6 +306,8 @@ def _checked_pack_link(pack_link: dict[str, str | None]) -> dict[str, str | None
     for key in ("commit_sha", "content_hash", "contract_hash"):
         if not pack_link[key]:
             raise ValueError(f"pack_link needs a non-empty {key}")
+    if pack_link["commit_date"] is not None and not isinstance(pack_link["commit_date"], datetime):
+        raise ValueError("pack_link commit_date must be a datetime or None")
     return pack_link
 
 
@@ -308,6 +317,7 @@ def set_agent_pack_link(
     pack_id: str | None,
     pack_source_url: str | None,
     commit_sha: str,
+    commit_date: datetime | None,
     content_hash: str,
     contract_hash: str,
 ) -> Agent | None:
@@ -324,6 +334,8 @@ def set_agent_pack_link(
         pack_id: Catalog natural key, or ``None`` for a URL pack.
         pack_source_url: URL natural key, or ``None`` for a catalog pack.
         commit_sha: Commit the written contract was read at.
+        commit_date: That commit's committer date, or ``None`` when the
+            template it came from predates recorded dates.
         content_hash: ``pack_content_hash`` of that pack file.
         contract_hash: ``contract_hash`` of the fields just written, so a
             later operator edit shows as "edited".
@@ -339,15 +351,16 @@ def set_agent_pack_link(
         "pack_id": pack_id,
         "pack_source_url": pack_source_url,
         "commit_sha": commit_sha,
+        "commit_date": commit_date,
         "content_hash": content_hash,
         "contract_hash": contract_hash,
     })
     execute(
         "UPDATE agents SET pack_id = $1, pack_source_url = $2, pack_commit_sha = $3, "
-        "pack_content_hash = $4, pack_contract_hash = $5 WHERE id = $6",
+        "pack_commit_date = $4, pack_content_hash = $5, pack_contract_hash = $6 WHERE id = $7",
         [
             link["pack_id"], link["pack_source_url"], link["commit_sha"],
-            link["content_hash"], link["contract_hash"], agent_id,
+            link["commit_date"], link["content_hash"], link["contract_hash"], agent_id,
         ],
     )
     return get_agent(agent_id)

@@ -75,9 +75,12 @@ class Agent(BaseModel):
     # ``pack_content_hash`` are the pack version its contract was last written
     # from; ``pack_contract_hash`` is ``contract_hash`` of what was written,
     # so a later operator edit is detectable. Read-only through the API.
+    # ``pack_commit_date`` is ``pack_commit_sha``'s committer date, the version
+    # date the desk shows; None on links made before dates were recorded.
     pack_id: str | None = None
     pack_source_url: str | None = None
     pack_commit_sha: str | None = None
+    pack_commit_date: datetime | None = None
     pack_content_hash: str | None = None
     pack_contract_hash: str | None = None
 

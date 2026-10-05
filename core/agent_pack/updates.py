@@ -8,8 +8,10 @@ it. Every GitHub read happens before any write, and every write of one apply
 an update is never half-applied.
 
 Staleness is per pack file (its ``content_hash``), while the ``from → to``
-labels are catalog commits: "catalog version", not the commit where that one
+versions are catalog commits: "catalog version", not the commit where that one
 file last changed. Pinning per file would cost a GitHub API call per pack.
+Each version carries its commit's committer date, which is what the operator
+reads; the SHAs stay internal.
 """
 
 from __future__ import annotations
@@ -18,7 +20,8 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING, Any
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from core.agent_loop.communication_contract import load_communication_value
 from core.agent_pack.github import CATALOG_PIN_SETTING, PackSource, parse_catalog_repo, validate_pin_ref
@@ -55,6 +58,11 @@ class TemplateUpdate:
     title: str
     from_sha: str | None
     to_sha: str
+    # Committer dates of the two catalog versions. ``from_date`` is None only
+    # for a row installed before dates were recorded, until ``check_updates``
+    # resolves it.
+    from_date: datetime | None
+    to_date: datetime
 
 
 @dataclass(frozen=True)
@@ -63,6 +71,7 @@ class AgentUpdate:
 
     ``edited`` is true when the agent's current contract no longer matches
     the one the pack last wrote, so an update would overwrite operator edits.
+    ``from_date`` / ``to_date`` are as on ``TemplateUpdate``.
     Not to be confused with ``core.models.AgentUpdate``, the PATCH payload.
     """
 
@@ -72,7 +81,13 @@ class AgentUpdate:
     template_title: str
     from_sha: str | None
     to_sha: str
+    from_date: datetime | None
+    to_date: datetime
     edited: bool
+
+
+# A plan row that carries a ``from_sha`` / ``from_date`` pair.
+_Row = TypeVar("_Row", TemplateUpdate, AgentUpdate)
 
 
 @dataclass(frozen=True)
@@ -93,11 +108,16 @@ class SkippedPack:
 
 @dataclass(frozen=True)
 class UpdatePlan:
-    """What an update to ``target_sha`` changes, computed before any write."""
+    """What an update to ``target_sha`` changes, computed before any write.
+
+    ``pinned_date`` and ``target_date`` are the two commits' committer dates.
+    """
 
     repo: str
     pinned_sha: str
     target_sha: str
+    pinned_date: datetime
+    target_date: datetime
     templates: tuple[TemplateUpdate, ...]
     agents: tuple[AgentUpdate, ...]
     skipped: tuple[SkippedPack, ...]
@@ -140,6 +160,7 @@ def plan_updates(
     templates: list[AgentTemplate],
     agents: list[Agent],
     pinned_sha: str,
+    pinned_date: datetime,
 ) -> UpdatePlan:
     """Decide which templates and agents a move to ``catalog`` would update.
 
@@ -152,16 +173,22 @@ def plan_updates(
     its template nor its agents are listed; so is a pack the catalog offers
     that agents are behind on but that has no installed template.
 
+    Each row's ``from_date`` is the date stored with it (``commit_date`` /
+    ``pack_commit_date``), which is None for a row written before dates were
+    recorded; this function does no I/O to fill it.
+
     Args:
         catalog: The listing at the target commit.
         templates: Every installed template.
         agents: Every agent.
         pinned_sha: The full SHA the catalog is pinned at now.
+        pinned_date: That commit's committer date.
 
     Returns:
         The ``UpdatePlan`` for ``catalog.commit_sha``.
     """
     target = catalog.commit_sha
+    target_date = catalog.committed_at
     cards = {card.entry.id: card for card in catalog.packs}
     withheld = {row.id: row for row in catalog.withheld}
     installed = {
@@ -181,7 +208,7 @@ def plan_updates(
                 title,
                 SKIPPED_REMOVED,
                 "pack_removed",
-                f"The catalog at {target[:7]} no longer lists this pack.",
+                "The catalog no longer lists this pack.",
             )
         return None
 
@@ -198,6 +225,8 @@ def plan_updates(
                 title=template.title,
                 from_sha=template.commit_sha,
                 to_sha=target,
+                from_date=template.commit_date,
+                to_date=target_date,
             ))
 
     agent_updates: list[AgentUpdate] = []
@@ -233,6 +262,8 @@ def plan_updates(
             template_title=template.title,
             from_sha=agent.pack_commit_sha,
             to_sha=target,
+            from_date=agent.pack_commit_date,
+            to_date=target_date,
             edited=agent_is_edited(agent),
         ))
 
@@ -240,6 +271,8 @@ def plan_updates(
         repo=catalog.repo,
         pinned_sha=pinned_sha,
         target_sha=target,
+        pinned_date=pinned_date,
+        target_date=target_date,
         templates=tuple(template_updates),
         agents=tuple(agent_updates),
         skipped=tuple(skipped.values()),
@@ -248,6 +281,12 @@ def plan_updates(
 
 def check_updates(*, source: PackSource, catalog_repo: str, pinned_ref: str) -> UpdatePlan:
     """Plan an update from the configured pin to the catalog's HEAD. Writes nothing.
+
+    Every row comes back with both dates. A row whose stored date is NULL
+    (written before dates were recorded) has its ``from_sha`` resolved through
+    ``source.resolve_commit`` — one call per distinct SHA with
+    ``GitHubPackSource``'s cache, and none for a row at the pin, which was
+    just resolved — so the review never shows an unknown date.
 
     Args:
         source: Pack source the catalog is read through.
@@ -258,17 +297,31 @@ def check_updates(*, source: PackSource, catalog_repo: str, pinned_ref: str) -> 
         The ``UpdatePlan`` whose ``target_sha`` is HEAD resolved now.
 
     Raises:
-        AgentPackError: The pin or HEAD cannot be resolved, or the catalog
-            index cannot be read at HEAD.
+        AgentPackError: The pin or HEAD cannot be resolved, the catalog
+            index cannot be read at HEAD, or an undated row's commit cannot
+            be resolved — surfaced, never shown as a blank date.
     """
     validate_pin_ref(pinned_ref)
     owner, repo = parse_catalog_repo(catalog_repo)
-    pinned_sha = source.resolve_commit_sha(owner, repo, pinned_ref)
-    head_sha = source.resolve_head_sha(owner, repo)
-    catalog = list_catalog(source=source, catalog_repo=catalog_repo, ref=head_sha)
+    pinned = source.resolve_commit(owner, repo, pinned_ref)
+    head = source.resolve_head(owner, repo)
+    catalog = list_catalog(source=source, catalog_repo=catalog_repo, ref=head.sha)
     import db
 
-    return plan_updates(catalog, db.list_agent_templates(), db.list_agents(), pinned_sha)
+    plan = plan_updates(
+        catalog, db.list_agent_templates(), db.list_agents(), pinned.sha, pinned.committed_at,
+    )
+
+    def _dated(row: _Row) -> _Row:
+        if row.from_date is not None or row.from_sha is None:
+            return row
+        return replace(row, from_date=source.resolve_commit(owner, repo, row.from_sha).committed_at)
+
+    return replace(
+        plan,
+        templates=tuple(_dated(row) for row in plan.templates),
+        agents=tuple(_dated(row) for row in plan.agents),
+    )
 
 
 def apply_updates(
@@ -294,7 +347,10 @@ def apply_updates(
 
     Returns:
         The applied plan. Its ``pinned_sha`` is the new pin (``target_sha``),
-        and ``agents`` is empty when ``include_agents`` is false.
+        and ``agents`` is empty when ``include_agents`` is false. Templates
+        and agent links are written with ``target_sha``'s committer date. A
+        row's ``from_date`` is left as stored (None for an undated row): no
+        network read happens inside the transaction.
 
     Raises:
         AgentPackError: ``invalid_source`` for a ``target_sha`` that is not 40
@@ -316,9 +372,11 @@ def apply_updates(
     with db.transaction():
         # Planned inside the transaction so the rows it reads are the rows it
         # writes; the network reads are all done above.
-        plan = plan_updates(catalog, db.list_agent_templates(), db.list_agents(), sha)
+        plan = plan_updates(
+            catalog, db.list_agent_templates(), db.list_agents(), sha, catalog.committed_at,
+        )
         for update in plan.templates:
-            _upsert_catalog_template(cards[update.pack_id], catalog.commit_sha)
+            _upsert_catalog_template(cards[update.pack_id], catalog.commit_sha, catalog.committed_at)
         db.set_setting(CATALOG_PIN_SETTING, catalog.commit_sha, _CATALOG_PIN_CATEGORY)
         if include_agents:
             for update in plan.agents:
@@ -341,8 +399,8 @@ def apply_template_to_agent(agent: Agent, template: AgentTemplate) -> Agent:
     The one write path for an agent pack update, shared by Update all and the
     desk. Overwrites ``description``, ``done_fail_bar`` and ``communication``
     only — name, specialty, color, connection, thinking levels and desk are
-    never touched — then stamps the template's commit, file hash and the
-    contract hash of what was written.
+    never touched — then stamps the template's commit, its date, file hash
+    and the contract hash of what was written.
 
     Opens no transaction of its own: the two writes must land together, so
     the caller wraps this in ``db.transaction()`` (or is already inside one).
@@ -373,6 +431,7 @@ def apply_template_to_agent(agent: Agent, template: AgentTemplate) -> Agent:
         pack_id=template.pack_id,
         pack_source_url=template.source_url,
         commit_sha=template.commit_sha,
+        commit_date=template.commit_date,
         content_hash=template.content_hash,
         contract_hash=template_contract_hash(template),
     )
@@ -391,7 +450,9 @@ def agent_is_edited(agent: Agent) -> bool:
     return contract_hash(agent.description, agent.done_fail_bar, agent.communication) != agent.pack_contract_hash
 
 
-def _upsert_catalog_template(card: CatalogListPack, commit_sha: str) -> AgentTemplate:
+def _upsert_catalog_template(
+    card: CatalogListPack, commit_sha: str, commit_date: datetime,
+) -> AgentTemplate:
     """Re-install one catalog template from a card already fetched.
 
     The same field mapping ``POST /api/agent-templates`` uses for a catalog
@@ -416,5 +477,6 @@ def _upsert_catalog_template(card: CatalogListPack, commit_sha: str) -> AgentTem
         author_name=author.name if author else None,
         author_url=author.url if author else None,
         commit_sha=commit_sha,
+        commit_date=commit_date,
         content_hash=card.content_hash,
     )

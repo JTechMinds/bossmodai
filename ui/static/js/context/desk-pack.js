@@ -2,10 +2,13 @@
  * BossMod AI — the desk's pack line: which pack an agent was hired from, and
  * the per-agent update when its installed template has moved on.
  *
- * `◆ Code Auditor · 8a0d68a` under the agent's status, in the About section.
- * When the installed template is newer than the contract this agent was last
- * given, the line adds `Update available 8a0d68a → 9d2352e` and an Update
- * button. The update replaces the agent's description, done bar and
+ * `◆ From the Code Auditor pack · Sep 14 version` under the agent's status,
+ * in the About section. When the installed template is newer than the
+ * contract this agent was last given, a second line reads
+ * `Update available · Sep 14 → Oct 3` beside an Update button — or
+ * `Update available · Oct 3` for an agent hired before version dates were
+ * recorded, whose own date is unknown. Versions are dates (core/format.js);
+ * a commit hash is never shown. The update replaces the agent's description, done bar and
  * communication only, behind the standard confirm layer (core/overlays.js),
  * which also warns when the agent's contract was edited and those edits would
  * be overwritten.
@@ -21,6 +24,7 @@
  */
 const BossModDeskPack = (() => {
     const { h, clear } = BossModDom;
+    const { formatCalendarDay, formatVersionSpan } = BossModFormat;
 
     const COPY = Object.freeze({
         mark: '◆',
@@ -80,15 +84,17 @@ const BossModDeskPack = (() => {
             if (busy) element.setAttribute('aria-busy', 'true');
             else element.removeAttribute('aria-busy');
             if (status && status.linked) {
-                const parts = [status.template_title || status.pack_id];
-                if (status.current_short) parts.push(status.current_short);
+                const parts = [`From the ${status.template_title || status.pack_id} pack`];
+                // Unknown only for an agent hired before dates were recorded.
+                if (status.current_date) parts.push(`${formatCalendarDay(status.current_date)} version`);
                 if (!status.installed) parts.push(COPY.notInstalled);
                 element.append(h('p', { class: 'desk-pack-line' },
                     h('span', { class: 'desk-pack-mark', 'aria-hidden': 'true' }, COPY.mark),
                     h('span', {}, parts.join(' · '))));
                 if (status.update_available) {
                     element.append(h('p', { class: 'desk-pack-update' },
-                        h('span', {}, `${COPY.available} ${status.current_short || ''} → ${status.available_short}`),
+                        h('span', {}, `${COPY.available} · `
+                            + formatVersionSpan(status.current_date, status.available_date)),
                         h('button', {
                             class: 'btn btn-sm', id: 'desk-pack-update', type: 'button',
                             disabled: busy, onclick: () => confirmUpdate(),
@@ -156,7 +162,7 @@ const BossModDeskPack = (() => {
                 closeOnBackdrop: true,
                 body: h('div', { class: 'desk-pack-confirm' },
                     h('p', {}, `Replaces this agent’s description, done bar and communication with `
-                        + `${title} at ${status.available_short}. ${COPY.kept}`),
+                        + `the ${title} pack’s ${formatCalendarDay(status.available_date)} version. ${COPY.kept}`),
                     status.edited ? h('div', { class: 'callout', 'data-tone': 'warn' },
                         h('p', { class: 'callout-body' }, COPY.edited)) : null),
                 actions: [

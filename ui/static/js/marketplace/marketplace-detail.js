@@ -36,10 +36,11 @@ const BossModMarketplaceDetail = (() => {
     const ITEMS = BossModMarketplaceItems;
     const WITHHELD = BossModMarketplaceWithheld;
     const READER = BossModMarketplaceSections;
+    const { formatCalendarDay } = BossModFormat;
 
     const COPY = Object.freeze({
         by: 'By',
-        pinned: 'pinned',
+        version: 'version',
         install: 'Install',
         update: 'Update',
         installed: 'Installed',
@@ -59,10 +60,6 @@ const BossModMarketplaceDetail = (() => {
         trustConfirm: 'Install anyway',
         detailLabel: 'Agent detail',
     });
-
-    function shortSha(sha) {
-        return String(sha || '').replace(/[^0-9a-f]/gi, '').slice(0, 7);
-    }
 
     /**
      * The bubble that says which FAMILY a pack belongs to.
@@ -165,11 +162,13 @@ const BossModMarketplaceDetail = (() => {
     // is a control a screen reader cannot announce.
     //
     // `Installed` rides this line rather than the hero: it is metadata about
-    // the pack, the same kind of fact as who wrote it and which commit it was
-    // read at, and it earned no more room than they get.
+    // the pack, the same kind of fact as who wrote it and which version is
+    // installed, and it earned no more room than they get. The version is a
+    // DATE (`Sep 14 version`), never a commit hash, and only an installed
+    // template has one: an uninstalled card's would be the catalog pin's,
+    // which is not shown.
     function byline(item) {
         const author = item.author && item.author.name ? item.author : null;
-        const sha = shortSha(item.commitSha);
         const parts = [];
         // FIRST, and it is new here: the hero drew a mark for the category and
         // named it nowhere, so a pack opened from the `Engineering` rail row
@@ -187,7 +186,9 @@ const BossModMarketplaceDetail = (() => {
         } else if (author) {
             parts.push(`${COPY.by} ${author.name}`);
         }
-        if (sha) parts.push(`${parts.length ? ' · ' : ''}${COPY.pinned} ${sha}`);
+        if (item.commitDate) {
+            parts.push(`${parts.length ? ' · ' : ''}${formatCalendarDay(item.commitDate)} ${COPY.version}`);
+        }
         if (item.state === 'installed') {
             if (parts.length) parts.push(' · ');
             parts.push(h('span', { class: 'market-detail-installed' }, COPY.installed));

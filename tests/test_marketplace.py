@@ -30,6 +30,8 @@ HERE = Path(__file__).resolve().parent
 # index.html must load them in an order that satisfies the same dependencies.
 HARNESS_MODULES = [
     JS / "core" / "dom.js",
+    # Pack versions are shown as dates (formatCalendarDay / formatVersionSpan).
+    JS / "core" / "format.js",
     JS / "core" / "avatar.js",
     JS / "core" / "overlay-focus.js",
     JS / "core" / "modal-trail.js",

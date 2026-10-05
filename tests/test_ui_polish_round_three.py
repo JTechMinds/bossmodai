@@ -291,6 +291,23 @@ def test_day_labels_and_date_times_read_the_local_calendar() -> None:
     assert payload["dateTimeLastYear"] == "Sep 21, 2025, 9:05 PM"
 
 
+def test_pack_versions_read_as_dates_and_never_as_one_day_twice() -> None:
+    """``formatVersionSpan`` / ``formatCalendarDay``: pack versions by date.
+
+    The marketplace review and the desk name a pack version by its commit's
+    date, never its hash. Same calendar rule as the rail (year only off this
+    year); a span inside one local day carries both times; an unknown earlier
+    version shows just the later day; an unreadable date throws.
+    """
+    payload = _format_payload()
+    assert payload["spanThisYear"] == "Sep 14 → Oct 3"
+    assert payload["spanAcrossYears"] == "Sep 14, 2025 → Oct 3"
+    assert payload["spanSameDay"] == "Oct 3, 9:12 AM → Oct 3, 4:40 PM"
+    assert payload["spanUnknownFrom"] == "Oct 3"
+    assert payload["versionDay"] == "Sep 14|Sep 14, 2025"
+    assert all(not text.startswith("returned") for text in payload["versionRefusals"]), payload
+
+
 def test_clock_time_is_local_12_hour_and_refuses_an_unreadable_value() -> None:
     """``formatClockTime``: the desk's schedules and extensions share it.
 

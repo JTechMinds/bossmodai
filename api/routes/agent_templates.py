@@ -213,6 +213,7 @@ def install_agent_template(body: AgentTemplateInstallBody) -> AgentTemplate:
         author_name=author.name if author else None,
         author_url=author.url if author else None,
         commit_sha=commit_sha,
+        commit_date=result.committed_at,
         content_hash=result.content_hash,
     )
 

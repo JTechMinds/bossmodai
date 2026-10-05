@@ -16,7 +16,8 @@
  * layer (core/overlays.js) listing every pack, every agent — with "edited —
  * will be overwritten" on an agent whose contract the operator changed — and
  * every pack that will be skipped and why. Confirm sends back the exact
- * `target_sha` that was reviewed. The one exception is a QUIET ADVANCE: when
+ * `target_sha` that was reviewed. Versions are shown as their DATES
+ * (`Sep 14 → Oct 3`, core/format.js); a commit hash is never put on screen. The one exception is a QUIET ADVANCE: when
  * HEAD moved and nothing installed changed, nothing of the operator's is at
  * stake, so the pin moves without a banner and new catalog packs appear.
  *
@@ -25,6 +26,7 @@
  */
 const BossModMarketplaceUpdates = (() => {
     const { h, clear } = BossModDom;
+    const { formatCalendarDay, formatVersionSpan } = BossModFormat;
 
     const COPY = Object.freeze({
         checking: 'Checking the catalog for updates…',
@@ -41,7 +43,6 @@ const BossModMarketplaceUpdates = (() => {
         edited: 'edited — will be overwritten',
         fields: 'Each agent’s description, done bar and communication are replaced. '
             + 'Name, specialty, colour, AI connection and desk are kept.',
-        unknownSha: 'unknown',
     });
 
     // The server's whole vocabulary for `skipped[].kind`. An unknown kind is a
@@ -58,19 +59,16 @@ const BossModMarketplaceUpdates = (() => {
         return `${n} ${noun}${n === 1 ? '' : 's'}`;
     }
 
-    /** `8a0d68a → 9d2352e`; a row with no recorded commit says so. */
-    function fromTo(from, to) {
-        return `${from || COPY.unknownSha} → ${to}`;
-    }
-
     /**
      * The banner's one line.
      *
      * @param {object} plan  What `checkUpdates` answered.
-     * @returns {string} `Catalog update <pinned> → <target> · N packs · M agents`.
+     * @returns {string} `Pack updates available · Oct 3 · N packs · M agents`,
+     *   dated by the catalog version the update moves to.
+     * @throws {Error} Through formatCalendarDay, on an unreadable `target_date`.
      */
     function summary(plan) {
-        return `Catalog update ${fromTo(plan.pinned_short, plan.target_short)} · `
+        return `Pack updates available · ${formatCalendarDay(plan.target_date)} · `
             + `${count(plan.templates.length, 'pack')} · ${count(plan.agents.length, 'agent')}`;
     }
 
@@ -98,14 +96,15 @@ const BossModMarketplaceUpdates = (() => {
      * @param {object} plan  The previewed plan.
      * @param {boolean} includeAgents  The "+ agents" variant.
      * @returns {HTMLElement}
-     * @throws {Error} On a skipped `kind` this build does not know.
+     * @throws {Error} On a skipped `kind` this build does not know, or an
+     *   unreadable date.
      */
     function reviewBody(plan, includeAgents) {
-        const packs = plan.templates.map((tpl) => row(tpl.title, fromTo(tpl.from_short, tpl.to_short)));
+        const packs = plan.templates.map((tpl) => row(tpl.title, formatVersionSpan(tpl.from_date, tpl.to_date)));
         const agents = includeAgents
             ? group(COPY.agentsHead, plan.agents.map((agent) => row(
                 agent.name,
-                `${agent.template_title} · ${fromTo(agent.from_short, agent.to_short)}`,
+                `${agent.template_title} · ${formatVersionSpan(agent.from_date, agent.to_date)}`,
                 agent.edited ? COPY.edited : null,
             )), plan.agents.length ? COPY.fields : null)
             : (plan.agents.length
@@ -119,7 +118,7 @@ const BossModMarketplaceUpdates = (() => {
         });
         return h('div', { class: 'market-review' },
             h('p', { class: 'market-review-note' },
-                `Catalog ${fromTo(plan.pinned_short, plan.target_short)}. Nothing changes until you confirm.`),
+                `Catalog version from ${formatCalendarDay(plan.target_date)}. Nothing changes until you confirm.`),
             group(COPY.packsHead, packs),
             agents,
             group(COPY.skippedHead, skipped));

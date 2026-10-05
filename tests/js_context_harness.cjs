@@ -252,6 +252,14 @@ const NOTES = {
     a3: null,
 };
 
+// Pack version dates, as LOCAL wall-clock ISO strings in the current year so
+// "Sep 14" reads the same in every zone and on every run. The UI shows these,
+// never a commit hash; HEX is what a hash on screen would look like.
+const YEAR = new Date().getFullYear();
+const SEP_14 = `${YEAR}-09-14T15:00:00`;
+const OCT_3 = `${YEAR}-10-03T16:40:00`;
+const HEX = /\b[0-9a-f]{7,40}\b/;
+
 // The installed template library GET /api/agent-templates answers with. ONE
 // row: what the QUICK layout does to the form is the subject here, not the
 // picker's grouping or its filter, which tests/js_add_agent_harness.cjs owns.
@@ -263,7 +271,7 @@ const TEMPLATES = [{
     what_done_looks_like: "A checkable allow/deny exists.",
     tools_hint: ["work"],
     author_name: "JTech Minds", author_url: "https://github.com/JTechMinds",
-    commit_sha: "aa11bb2ccccccccccccccccccccccccccccccccc", content_hash: "hash-1",
+    commit_sha: "aa11bb2ccccccccccccccccccccccccccccccccc", commit_date: SEP_14, content_hash: "hash-1",
     installed_at: "2026-09-01T00:00:00Z", updated_at: "2026-09-01T00:00:00Z",
     // See the note in tests/js_add_agent_harness.cjs: `sections` is a computed
     // field the server derives on every read, so a row without one is a shape
@@ -301,7 +309,7 @@ let rosterFail = false;
 // What GET /api/agents/{id}/pack-status answers, and every pack-update POST.
 const UNLINKED_PACK = Object.freeze({
     linked: false, pack_id: null, template_id: null, template_title: null,
-    installed: false, current_short: null, available_short: null,
+    installed: false, current_date: null, available_date: null,
     available_content_hash: null, update_available: false, edited: false,
 });
 let packStatus = UNLINKED_PACK;
@@ -1063,20 +1071,24 @@ async function main() {
 
     // ─── The desk's pack line, and its per-agent update ───
     //
-    // An agent hired from a pack says which, at which catalog commit; when
-    // the installed template is newer it offers the update behind a confirm
-    // that names what is replaced and warns about edits it would overwrite.
+    // An agent hired from a pack says which, and which version by its date;
+    // when the installed template is newer it offers the update behind a
+    // confirm that names what is replaced and warns about edits it would
+    // overwrite. No commit hash is ever on screen.
     packStatus = {
         linked: true, pack_id: "code-auditor", template_id: "t1", template_title: "Code Auditor",
-        installed: true, current_short: "8a0d68a", available_short: "9d2352e",
+        installed: true, current_date: SEP_14, available_date: OCT_3,
         available_content_hash: "hash-2", update_available: true, edited: true,
     };
     desk.open("a1");
     await drain();
     const packLine = inDesk(".desk-pack");
     const thePackLineNamesThePackAndTheUpdate = Boolean(packLine) && packLine.hidden === false
-        && packLine.querySelector(".desk-pack-line").textContent.includes("Code Auditor · 8a0d68a")
-        && packLine.textContent.includes("Update available 8a0d68a → 9d2352e")
+        && packLine.querySelector(".desk-pack-line").textContent
+            === "◆From the Code Auditor pack · Sep 14 version"
+        && packLine.querySelector(".desk-pack-update").textContent.startsWith(
+            "Update available · Sep 14 → Oct 3")
+        && !HEX.test(packLine.textContent)
         && Boolean(inDesk("#desk-pack-update"))
         // Under the status pill, in About.
         && inDesk(".desk-about-block").children.indexOf(packLine)
@@ -1089,9 +1101,11 @@ async function main() {
         && packConfirm.textContent.includes("Those edits will be overwritten.")
         && packConfirm.textContent.includes("Name, specialty, colour, AI connection and desk are kept.")
         && packConfirm.querySelector(".callout").getAttribute("data-tone") === "warn"
+        && packConfirm.textContent.includes("the Code Auditor pack’s Oct 3 version.")
+        && !HEX.test(packConfirm.textContent)
         && packUpdates.length === 0;
     packStatus = {
-        ...packStatus, current_short: "9d2352e", available_short: null,
+        ...packStatus, current_date: OCT_3, available_date: null,
         available_content_hash: null, update_available: false, edited: false,
     };
     await packConfirm.querySelector("#desk-pack-confirm").dispatchClick();
@@ -1100,7 +1114,22 @@ async function main() {
         && packUpdates[0].agentId === "a1"
         && packUpdates[0].body.expected_content_hash === "hash-2"
         && !inDesk("#desk-pack-update")
-        && inDesk(".desk-pack").textContent.includes("Code Auditor · 9d2352e");
+        && inDesk(".desk-pack").textContent.includes("Code Auditor pack · Oct 3 version");
+    desk.close();
+    await drain();
+    // Hired before version dates were recorded: no version on the line, and
+    // the update names only the new date — never a hash in its place.
+    packStatus = {
+        ...packStatus, current_date: null, available_date: OCT_3,
+        available_content_hash: "hash-3", update_available: true, edited: false,
+    };
+    desk.open("a1");
+    await drain();
+    const anUndatedAgentShowsOnlyTheNewDate = inDesk(".desk-pack-line").textContent
+            === "◆From the Code Auditor pack"
+        && inDesk(".desk-pack-update").textContent.startsWith("Update available · Oct 3")
+        && !inDesk(".desk-pack-update").textContent.includes("→")
+        && !HEX.test(inDesk(".desk-pack").textContent);
     desk.close();
     await drain();
     packStatus = UNLINKED_PACK;
@@ -1111,10 +1140,11 @@ async function main() {
     desk.close();
     await drain();
     if (!thePackLineNamesThePackAndTheUpdate || !thePackConfirmWarnsAboutEdits
-        || !thePackUpdateSendsTheHashItShowed || !anUnlinkedAgentHasNoPackLine) {
+        || !thePackUpdateSendsTheHashItShowed || !anUndatedAgentShowsOnlyTheNewDate
+        || !anUnlinkedAgentHasNoPackLine) {
         throw new Error(`the desk pack line: line ${thePackLineNamesThePackAndTheUpdate} `
             + `confirm ${thePackConfirmWarnsAboutEdits} update ${thePackUpdateSendsTheHashItShowed} `
-            + `unlinked ${anUnlinkedAgentHasNoPackLine}`);
+            + `undated ${anUndatedAgentShowsOnlyTheNewDate} unlinked ${anUnlinkedAgentHasNoPackLine}`);
     }
 
     // ─── Chat, from the head ───

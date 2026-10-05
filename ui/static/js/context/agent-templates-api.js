@@ -123,8 +123,9 @@ const BossModAgentTemplatesApi = (() => {
     /**
      * Preview a move of the catalog pin to the catalog's HEAD. Writes nothing.
      *
-     * @returns {Promise<object>} `{repo, pinned_sha, target_sha, pinned_short,
-     *   target_short, pin_moves, templates, agents, skipped, needs_review}`.
+     * @returns {Promise<object>} `{repo, pinned_sha, target_sha, pinned_date,
+     *   target_date, pin_moves, templates, agents, skipped, needs_review}`.
+     *   Versions are ISO dates for display; the SHAs are only sent back.
      * @throws {Error} With the server's message and `code` intact
      *   (`pin_unresolved`, `fetch_failed`, …) on any non-2xx.
      */

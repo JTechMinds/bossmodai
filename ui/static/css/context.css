@@ -239,7 +239,8 @@
 .desk-pack-line,
 .desk-pack-update { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
 .desk-pack-mark { color: var(--blue-ink); }
-.desk-pack-update { color: var(--blue-ink); }
+/* "Update available" is a fact, not a control: it keeps .desk-pack's muted
+   ink so only the Update button beside it reads as clickable. */
 .desk-pack-confirm { display: flex; flex-direction: column; gap: 10px; }
 .desk-pack-confirm p { margin: 0; }
 
