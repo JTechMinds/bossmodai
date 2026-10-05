@@ -13,7 +13,6 @@ not require @.
 from __future__ import annotations
 
 from core.agent_loop.standing_prefs import PREF_KINDS
-from core.bm_cli.host_roots import configured_host_roots
 from core.models import Agent
 from core.models.host_path_consent import HostPathConsentRequest
 
@@ -132,12 +131,6 @@ def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> st
     name = (agent.name or "").strip() or "Unnamed agent"
     specialty = (agent.role or "").strip() or "unspecified"
     desk = _desk_line(agent)
-    host_roots = [str(root) for root in configured_host_roots()]
-    host_line = (
-        "operator-allowed host roots: " + ", ".join(host_roots)
-        if host_roots
-        else "no extra host roots until the operator consents on the in-chat card"
-    )
     tools = ", ".join(ALLOWED_TOOLS)
     dest_line = _locked_copy_dest_lines(agent, task_id=task_id)
     dest_suffix = f"{dest_line}\n" if dest_line else ""
@@ -146,16 +139,17 @@ def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> st
         f"You are {name} ({specialty}).\n"
         f"{desk}\n"
         f"Tools you may use: {tools}.\n"
-        f"Host paths: stay inside /me, /projects, and {host_line}. "
-        "If you need a path outside those roots, call request_host_access "
-        "(path + reason) or attempt cli on that path — do not ask the operator "
-        "for verbal yes/no. Do not invent access or claim the file exists.\n"
+        "Workspace: /me is your private scratch and /projects is shared "
+        "with your floor — prefer them. Other host paths are fine where the "
+        "operator names or allows them: use them in cli, and if one is denied "
+        "call request_host_access (path + reason). Do not ask the operator for "
+        "a verbal yes/no. Do not invent access or claim the file exists.\n"
         "Done: complete only with a checkable claim "
         "(artifact path, tests evidence, or allow/deny proof). "
         "Empty done is rejected. Do not fake done. "
         "A chat assertion is not a claim — the log must show tool evidence. "
         "Thread-origin work: Done must point at a path peers can open "
-        "(project/docs/ or a host path under the shared grant). "
+        "(a /projects path, or the host path the task itself names). "
         "/me is desk-private scratch, not a handoff.\n"
         f"{NOTES_STORE_RETRIEVE}\n"
         f"{LOCKED_WORKSPACE_COPY_STEER}\n"

@@ -317,6 +317,21 @@ def test_git_in_nested_repo_under_project_runs() -> None:
     assert _git(nested, "log", "-1", "--pretty=%s").stdout.strip() == "nested work"
 
 
+def test_git_with_a_leading_global_option_runs_shell_git() -> None:
+    """``git --no-pager status`` from ``/me`` is shell git, not virtual git.
+
+    Virtual git understands only the bare ``git <subcommand>`` form, so a
+    leading global option must route to the shell before dispatch.
+    """
+    _enable_shell()
+    agent, state = _agent_and_state()
+    assert get_cli_cwd(agent.id) == "/me"
+
+    status = execute_bm_cli(agent, state, "git --no-pager status")
+    assert status.executor == "shell"
+    assert "Unsupported git subcommand" not in f"{status.detail} {status.data}"
+
+
 def test_git_never_discovers_the_application_repo(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -202,11 +202,41 @@ def test_build_context_marks_the_trigger_and_manifests_history(tmp_path):
     assert ATTACHMENT_IDS_KEY not in earlier
     assert earlier["content"].endswith(
         f"Attachments: old.png (image, {len(_PNG)} B) at /projects/.attachments/direct/{agent.id}/u_old.png"
+        " — run `view <path>` to see an image again"
     )
     plain = next(m for m in history if "no files" in m["content"])
     assert "Attachments:" not in plain["content"]
     assert all(ATTACHMENT_IDS_KEY not in m for m in messages[:-1])
     assert old.id not in str(messages)
+
+
+def test_history_manifest_adds_the_view_hint_only_for_model_viewable_images(tmp_path):
+    from core.llm.attachment_parts import history_manifests
+    from core.models.message import HUMAN_SENDER_ID
+
+    agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
+
+    def _message_with(name: str, body: bytes, mime: str, tier: str) -> str:
+        msg = db.create_message(HUMAN_SENDER_ID, agent.id, name, message_type="human")
+        path = tmp_path / f"u_{name}"
+        path.write_bytes(body)
+        db_att.create_attachment(
+            msg.id, name, len(body), mime, str(path), tier, context_type="direct", context_id=agent.id,
+        )
+        return msg.id
+
+    image = _message_with("pic.png", _PNG, "image/png", "image")
+    text = _message_with("notes.txt", b"hello", "text/plain", "text")
+    svg = _message_with("logo.svg", b"<svg/>", "image/svg+xml", "image")
+
+    manifests = history_manifests([{"id": image}, {"id": text}, {"id": svg}])
+
+    assert manifests[image] == (
+        f"Attachments: pic.png (image, {len(_PNG)} B) at /projects/.attachments/direct/{agent.id}/u_pic.png"
+        " — run `view <path>` to see an image again"
+    )
+    assert manifests[text] == f"Attachments: notes.txt (text, 5 B) at /projects/.attachments/direct/{agent.id}/u_notes.txt"
+    assert "view" not in manifests[svg]
 
 
 # ─── client.completion: expansion keyed by the RAW model name ───
@@ -311,7 +341,7 @@ def test_attachment_route_line_unknown_id_raises():
         attachment_route_line(["no-such-id"])
 
 
-# ─── CLI screenshots (Browser Vision): only the newest is sent as an image ───
+# ─── CLI result images: only the newest is sent as an image ───
 
 
 def _shot(tmp_path, name: str) -> str:
@@ -326,15 +356,30 @@ def _cli_result(text: str, *paths: str) -> dict:
     return wrap_cli_tool_message(text, image_paths=tuple(paths))
 
 
-def test_screenshot_png_is_a_model_image_type():
-    from core.attachments import MODEL_IMAGE_MIME_TYPES
-    from core.llm.attachment_parts import SCREENSHOT_MIME_TYPE
+def test_a_jpeg_cli_image_expands_with_its_own_mime_type(tmp_path):
+    set_supports_images("vision-model", True)
+    path = tmp_path / "photo.jpg"
+    path.write_bytes(b"jpeg-bytes")
 
-    assert SCREENSHOT_MIME_TYPE in MODEL_IMAGE_MIME_TYPES
+    out = expand_attachment_messages([_cli_result("view", str(path))], model="vision-model")
+
+    assert out[0]["content"][1] == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(b"jpeg-bytes").decode()},
+    }
 
 
-def test_only_the_last_screenshot_carrier_is_expanded(tmp_path):
-    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY, SCREENSHOT_SUPERSEDED_TEXT
+def test_a_cli_image_of_a_type_models_reject_is_an_integrity_failure(tmp_path):
+    set_supports_images("vision-model", True)
+    path = tmp_path / "logo.svg"
+    path.write_bytes(b"<svg/>")
+
+    with pytest.raises(ValueError, match="image/svg\\+xml"):
+        expand_attachment_messages([_cli_result("view", str(path))], model="vision-model")
+
+
+def test_only_the_last_cli_image_carrier_is_expanded(tmp_path):
+    from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY, IMAGE_SUPERSEDED_TEXT
 
     set_supports_images("vision-model", True)
     old, new = _shot(tmp_path, "old.png"), _shot(tmp_path, "new.png")
@@ -345,13 +390,13 @@ def test_only_the_last_screenshot_carrier_is_expanded(tmp_path):
         _cli_result("second view", new),
         {"role": "user", "content": "continue"},
     ]
-    assert messages[1][SCREENSHOT_PATHS_KEY] == [old]
+    assert messages[1][CLI_IMAGE_PATHS_KEY] == [old]
 
     out = expand_attachment_messages(messages, model="vision-model")
 
     earlier, newest = out[1]["content"], out[3]["content"]
     assert earlier[0]["type"] == "text" and "first view" in earlier[0]["text"]
-    assert earlier[1:] == [{"type": "text", "text": SCREENSHOT_SUPERSEDED_TEXT}]
+    assert earlier[1:] == [{"type": "text", "text": IMAGE_SUPERSEDED_TEXT}]
     assert "second view" in newest[0]["text"]
     assert newest[1] == {
         "type": "image_url",
@@ -361,8 +406,8 @@ def test_only_the_last_screenshot_carrier_is_expanded(tmp_path):
     assert out[4] == {"role": "user", "content": "continue"}
 
 
-def test_screenshot_key_is_never_sent_and_input_is_untouched(tmp_path):
-    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY
+def test_cli_image_key_is_never_sent_and_input_is_untouched(tmp_path):
+    from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY
 
     set_supports_images("vision-model", True)
     path = _shot(tmp_path, "s.png")
@@ -370,25 +415,26 @@ def test_screenshot_key_is_never_sent_and_input_is_untouched(tmp_path):
 
     out = expand_attachment_messages(messages, model="vision-model")
 
-    assert all(SCREENSHOT_PATHS_KEY not in message for message in out)
-    assert messages[0][SCREENSHOT_PATHS_KEY] == [path]
+    assert all(CLI_IMAGE_PATHS_KEY not in message for message in out)
+    assert messages[0][CLI_IMAGE_PATHS_KEY] == [path]
     assert isinstance(messages[0]["content"], str)
 
 
-def test_non_vision_model_gets_the_cannot_view_notice_for_a_screenshot(tmp_path, caplog):
+def test_non_vision_model_gets_the_cannot_view_notice_for_a_cli_image(tmp_path, caplog):
     set_supports_images("text-model", False)
     path = _shot(tmp_path, "s.png")
 
     with caplog.at_level("WARNING"):
         out = expand_attachment_messages([_cli_result("view", path)], model="text-model")
 
-    notice = out[0]["content"][1]
-    assert notice["type"] == "text"
-    assert "your model cannot view images" in notice["text"]
+    assert out[0]["content"][1] == {
+        "type": "text",
+        "text": "[An image was loaded, but your model cannot view images. Tell the operator you can't see it.]",
+    }
     assert "not marked image-capable" in caplog.text
 
 
-def test_a_missing_newest_screenshot_gets_the_unavailable_notice_and_a_warning(tmp_path, caplog):
+def test_a_missing_newest_cli_image_gets_the_unavailable_notice_and_a_warning(tmp_path, caplog):
     set_supports_images("vision-model", True)
     path = _shot(tmp_path, "gone.png")
     Path(path).unlink()
@@ -396,21 +442,14 @@ def test_a_missing_newest_screenshot_gets_the_unavailable_notice_and_a_warning(t
     with caplog.at_level("WARNING"):
         out = expand_attachment_messages([_cli_result("view", path)], model="vision-model")
 
-    assert out[0]["content"][1] == {
-        "type": "text",
-        "text": (
-            "[screenshot unavailable: the browser session that took it has ended (the app restarted "
-            'or the browser was closed); run "bv status" to see whether a page is open, '
-            'and "bv open <url>" to start again]'
-        ),
-    }
+    assert out[0]["content"][1] == {"type": "text", "text": "[image unavailable: its file no longer exists]"}
     assert "is missing" in caplog.text
 
 
-def test_a_frozen_transcript_keeps_the_screenshot_paths(tmp_path):
+def test_a_frozen_transcript_keeps_the_cli_image_paths(tmp_path):
     from core.agent_loop import activity_runtime
     from core.agent_loop.work_snapshot import freeze_work_turn, restore_work_turn
-    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY
+    from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY
     from core.models.message import HUMAN_SENDER_ID
     from core.tasking import create_or_bind_task
 
@@ -428,14 +467,14 @@ def test_a_frozen_transcript_keeps_the_screenshot_paths(tmp_path):
     snapshot = freeze_work_turn(
         agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
     )
-    assert snapshot.transcript[1][SCREENSHOT_PATHS_KEY] == [path]
+    assert snapshot.transcript[1][CLI_IMAGE_PATHS_KEY] == [path]
     stored = db.get_work_snapshot(activity.id)
-    assert stored.transcript[1][SCREENSHOT_PATHS_KEY] == [path]
+    assert stored.transcript[1][CLI_IMAGE_PATHS_KEY] == [path]
     restored = restore_work_turn(activity=activity, context=[{"role": "system", "content": "sys"}, {"role": "user", "content": "go on"}])
-    assert restored[2][SCREENSHOT_PATHS_KEY] == [path]
+    assert restored[2][CLI_IMAGE_PATHS_KEY] == [path]
 
 
-# ─── superseded screenshot results collapse to their one-line summary (R22) ───
+# ─── superseded CLI image results collapse to their one-line summary (R22) ───
 
 
 def _bv_result(text: str, path: str, summary: str) -> dict:
@@ -446,7 +485,7 @@ def _bv_result(text: str, path: str, summary: str) -> dict:
 
 def test_only_the_newest_browser_result_keeps_its_full_text(tmp_path):
     from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN, CLI_TOOL_RESULT_END, wrap_cli_text
-    from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY, SCREENSHOT_SUPERSEDED_TEXT, SUMMARY_KEY
+    from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY, IMAGE_SUPERSEDED_TEXT, SUMMARY_KEY
 
     set_supports_images("vision-model", True)
     legend = '[@1] button "Sign in"\n[@2] textbox "Email" (empty)'
@@ -469,15 +508,15 @@ def test_only_the_newest_browser_result_keeps_its_full_text(tmp_path):
         assert parts[0]["text"].startswith(CLI_TOOL_RESULT_BEGIN)
         assert parts[0]["text"].endswith(CLI_TOOL_RESULT_END)
         assert "[@1]" not in parts[0]["text"] and "url: page" not in parts[0]["text"]
-        assert parts[1:] == [{"type": "text", "text": SCREENSHOT_SUPERSEDED_TEXT}]
+        assert parts[1:] == [{"type": "text", "text": IMAGE_SUPERSEDED_TEXT}]
     assert "url: page 2" in newest[0]["text"] and legend in newest[0]["text"]
     assert newest[1]["type"] == "image_url"
-    assert all(SUMMARY_KEY not in m and SCREENSHOT_PATHS_KEY not in m for m in out)
+    assert all(SUMMARY_KEY not in m and CLI_IMAGE_PATHS_KEY not in m for m in out)
     # The input is untouched.
     assert messages[2][SUMMARY_KEY] == summaries[0] and isinstance(messages[2]["content"], str)
 
 
-def test_a_summary_is_kept_only_beside_screenshots():
+def test_a_summary_is_kept_only_beside_cli_images():
     from core.bm_cli.results import cli_continuation_messages, wrap_cli_tool_message
     from core.llm.attachment_parts import SUMMARY_KEY
 
@@ -492,7 +531,7 @@ def test_a_summary_is_kept_only_beside_screenshots():
 def test_a_frozen_transcript_keeps_the_summary(tmp_path):
     from core.agent_loop import activity_runtime
     from core.agent_loop.work_snapshot import freeze_work_turn, restore_work_turn
-    from core.llm.attachment_parts import SCREENSHOT_SUPERSEDED_TEXT, SUMMARY_KEY
+    from core.llm.attachment_parts import IMAGE_SUPERSEDED_TEXT, SUMMARY_KEY
     from core.models.message import HUMAN_SENDER_ID
     from core.tasking import create_or_bind_task
 
@@ -521,15 +560,15 @@ def test_a_frozen_transcript_keeps_the_summary(tmp_path):
     out = expand_attachment_messages(restored, model="vision-model")
     assert "bv open example.com → example.com" in out[2]["content"][0]["text"]
     assert "full first result" not in out[2]["content"][0]["text"]
-    assert out[2]["content"][1]["text"] == SCREENSHOT_SUPERSEDED_TEXT
+    assert out[2]["content"][1]["text"] == IMAGE_SUPERSEDED_TEXT
     assert "full second result" in out[4]["content"][0]["text"]
 
 
-def test_a_resumed_transcript_whose_session_ended_gets_the_session_ended_notice(tmp_path):
-    """R28: the restart deleted the session's screenshots, so the resumed turn is told, not shown the old page."""
+def test_a_resumed_transcript_whose_images_are_gone_gets_the_missing_notice(tmp_path):
+    """R28: the images were deleted (e.g. a browser session ended), so the resumed turn is told, not shown them."""
     from core.agent_loop import activity_runtime
     from core.agent_loop.work_snapshot import freeze_work_turn, restore_work_turn
-    from core.llm.attachment_parts import SCREENSHOT_SESSION_ENDED_TEXT, SCREENSHOT_SUPERSEDED_TEXT
+    from core.llm.attachment_parts import IMAGE_MISSING_TEXT, IMAGE_SUPERSEDED_TEXT
     from core.models.message import HUMAN_SENDER_ID
     from core.tasking import create_or_bind_task
 
@@ -552,13 +591,13 @@ def test_a_resumed_transcript_whose_session_ended_gets_the_session_ended_notice(
     freeze_work_turn(
         agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
     )
-    # The session ended (app restart): its screenshot folder is gone.
+    # The command that produced them deleted them (e.g. app restart).
     Path(older).unlink()
     Path(newest).unlink()
 
     restored = restore_work_turn(activity=activity, context=[{"role": "system", "content": "sys"}, {"role": "user", "content": "go on"}])
     out = expand_attachment_messages(restored, model="vision-model")
 
-    assert out[4]["content"][1] == {"type": "text", "text": SCREENSHOT_SESSION_ENDED_TEXT}
+    assert out[4]["content"][1] == {"type": "text", "text": IMAGE_MISSING_TEXT}
     assert not any(part.get("type") == "image_url" for m in out if isinstance(m["content"], list) for part in m["content"])
-    assert out[2]["content"][1]["text"] == SCREENSHOT_SUPERSEDED_TEXT
+    assert out[2]["content"][1]["text"] == IMAGE_SUPERSEDED_TEXT

@@ -19,7 +19,6 @@ from core.bm_cli.floor_roots import (
 )
 from core.bm_cli.host_roots import (
     PathOutsideRootsError,
-    configured_host_roots,
     denial_message,
     extra_host_roots,
     is_within_roots,
@@ -121,13 +120,7 @@ def resolve_cli_path(agent_storage_key: str, cwd: str, raw_path: str | None = No
     if looks_like_named_absolute_path(virtual_path):
         return _resolve_named_absolute(agent_storage_key, virtual_path)
 
-    extras = extra_host_roots()
-    raise PathOutsideRootsError(
-        denial_message(virtual_path, extra_roots=extras)
-        if extras
-        else 'BossMod CLI paths must stay under "/", "/me", "/projects", or a configured host root.',
-        raw_path=virtual_path,
-    )
+    raise PathOutsideRootsError(denial_message(virtual_path), raw_path=virtual_path)
 
 
 def _projects_mount(agent_storage_key: str, virtual_path: str) -> Path:
@@ -179,10 +172,11 @@ def _resolve_named_absolute(agent_storage_key: str, virtual_path: str) -> Resolv
 
 
 def virtual_root_entries(agent_storage_key: str) -> list[str]:
-    """Return one agent's top-level virtual CLI mounts, including host roots.
+    """Return one agent's top-level virtual CLI mounts: ``me/`` and ``projects/``.
 
     ``projects/`` is listed only for an agent with a floor: an agent on
-    vacation has no ``/projects``.
+    vacation has no ``/projects``. Operator-allowed host roots are a
+    permission checked when a named path is used, never listed here.
 
     Raises:
         LookupError: No agent owns this storage key.
@@ -190,8 +184,6 @@ def virtual_root_entries(agent_storage_key: str) -> list[str]:
     entries = ["me/"]
     if agent_floor_id(agent_storage_key) is not None:
         entries.append("projects/")
-    for root in configured_host_roots():
-        entries.append(f"{root}/")
     return entries
 
 

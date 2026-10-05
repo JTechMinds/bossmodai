@@ -130,6 +130,24 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
         ),
         discovery_hint="full-file read; use for short files or final verification",
     ),
+    "view": VirtualCommandMeta(
+        name="view",
+        category="files",
+        description="Show an image file to yourself.",
+        usage_syntax="view <path>",
+        help_text=(
+            "Load a PNG, JPEG, GIF or WebP image so you can see it. The\n"
+            "image is attached to your next step. Only the newest image\n"
+            "stays visible; earlier ones are not resent. Works on thread\n"
+            "attachments under /projects/.attachments/... as well as your\n"
+            "own files.\n"
+            "\n"
+            "Examples:\n"
+            "  view /projects/.attachments/direct/<id>/<file>.png  — see an attached image again\n"
+            "  view /me/notes/diagram.png                          — see an image you saved"
+        ),
+        discovery_hint="see an attached or saved image again",
+    ),
     "ol": VirtualCommandMeta(
         name="ol",
         category="files",

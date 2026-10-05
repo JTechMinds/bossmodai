@@ -39,7 +39,7 @@ def save_work_snapshot(
         agent_id: Owning agent.
         task_id: Bound task, if any.
         transcript: Full working transcript as ``{role, content}`` messages
-            (a CLI result may also name its screenshot paths).
+            (a CLI result may also name its image paths).
         fingerprints: Every command fingerprint seen on this activity.
         no_progress_checkpoints: Checkpoints spent since the last progress step.
 

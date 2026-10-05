@@ -307,13 +307,13 @@ def wrap_cli_tool_message(
     Args:
         content: The CLI output text.
         role: ``user`` or ``tool``.
-        image_paths: Screenshot files this result shows. When non-empty they
-            are named under ``SCREENSHOT_PATHS_KEY`` and expanded into image
+        image_paths: Image files this result shows. When non-empty they
+            are named under ``CLI_IMAGE_PATHS_KEY`` and expanded into image
             parts (newest carrier only) at the completion seam.
-        summary: One line that replaces ``content`` once a newer screenshot
-            supersedes this one. Stored under ``SUMMARY_KEY`` only together
-            with ``image_paths``: superseding is a screenshot notion, so on a
-            result without screenshots it has no use and is not kept.
+        summary: One line that replaces ``content`` once a newer CLI result
+            image supersedes this one. Stored under ``SUMMARY_KEY`` only
+            together with ``image_paths``: superseding is an image notion, so
+            on a result without images it has no use and is not kept.
 
     Returns:
         The message dict.
@@ -329,9 +329,9 @@ def wrap_cli_tool_message(
     if image_paths:
         # Imported here: attachment_parts pulls in db and model routing, which
         # this rendering module otherwise does not need.
-        from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY, SUMMARY_KEY
+        from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY, SUMMARY_KEY
 
-        message[SCREENSHOT_PATHS_KEY] = list(image_paths)
+        message[CLI_IMAGE_PATHS_KEY] = list(image_paths)
         if summary is not None:
             message[SUMMARY_KEY] = summary
     return message

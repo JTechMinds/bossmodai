@@ -35,7 +35,7 @@ class WorkSnapshot(BaseModel):
     agent_id: str
     task_id: str | None = None
     # {role, content} messages; a CLI result may also carry
-    # attachment_parts.SCREENSHOT_PATHS_KEY: a list of screenshot paths, and
+    # attachment_parts.CLI_IMAGE_PATHS_KEY: a list of image paths, and
     # with it attachment_parts.SUMMARY_KEY: its one-line summary.
     transcript: list[dict[str, str | list[str]]] = Field(default_factory=list)
     fingerprints: list[str] = Field(default_factory=list)

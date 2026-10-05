@@ -953,7 +953,7 @@ def _step_messages(
             assistant_content=response_content,
             cli_prompt_content=result["cli_prompt_content"],
             followup_content=load_default_prompt("internal_loop_execution_cli_followup"),
-            # Absent on results built without a CLI result (no screenshot).
+            # Absent on results built without a CLI result (no image).
             image_paths=tuple(result.get("cli_image_paths", ())),
             summary=result.get("cli_summary"),
         )

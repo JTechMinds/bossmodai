@@ -22,7 +22,7 @@ from core import config
 from core.agent_loop.actions import parse_action
 from core.agent_loop.liveness import command_fingerprint
 from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN, CLI_TOOL_RESULT_END
-from core.llm.attachment_parts import SCREENSHOT_PATHS_KEY, SUMMARY_KEY
+from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY, SUMMARY_KEY
 from core.default_prompts import render_default_prompt
 from core.models import Activity, Agent, WorkSnapshot
 
@@ -334,17 +334,17 @@ def _chars(messages: list[dict[str, Any]]) -> int:
 
 
 def _plain_message(message: dict[str, Any]) -> dict[str, Any]:
-    """Keep role, content and a CLI result's screenshot paths and summary; drop anything else.
+    """Keep role, content and a CLI result's image paths and summary; drop anything else.
 
     The paths must survive a freeze so a resumed turn still shows its newest
-    screenshot (or says it is gone); they are plain path strings, never bytes.
+    CLI result image (or says it is gone); they are plain path strings, never bytes.
     The summary must survive too, so a superseded result still collapses to
     one line after a resume.
     """
     plain: dict[str, Any] = {"role": str(message.get("role") or ""), "content": str(message.get("content") or "")}
-    shots = message.get(SCREENSHOT_PATHS_KEY)
-    if shots:
-        plain[SCREENSHOT_PATHS_KEY] = [str(path) for path in shots]
+    images = message.get(CLI_IMAGE_PATHS_KEY)
+    if images:
+        plain[CLI_IMAGE_PATHS_KEY] = [str(path) for path in images]
         summary = message.get(SUMMARY_KEY)
         if summary is not None:
             plain[SUMMARY_KEY] = str(summary)

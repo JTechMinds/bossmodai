@@ -113,7 +113,6 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("workspace.projects_root", "Default shared projects workspace root"),
     ("workspace.default_save_root", "Preferred default save root for new files in this turn"),
     ("workspace.project_root", "Relevant shared project folder when present"),
-    ("workspace.host_roots", "Operator-configured extra host roots for named absolute paths"),
     ("workspace.preference", "Locked workspace preference when Branch/workspace-copy is already chosen (cloned or branched)"),
     ("workspace.clone_dest", "Agent workspace copy path when Branch/workspace-copy is locked"),
     ("conversation.speaker_name", "Conversation speaker display name"),
@@ -384,11 +383,8 @@ def _workspace_context(
     agent_id: str | None = None,
 ) -> dict[str, str]:
     """Return compact workspace defaults for prompt rendering."""
-    from core.bm_cli.host_roots import configured_host_roots
-
     project_root = _workspace_project_root(cli_cwd, task)
     default_save_root = cli_cwd if project_root and cli_cwd.startswith(project_root) else (project_root or "/me")
-    host_roots = [str(root) for root in configured_host_roots()]
     preference = workspace_preference_context(
         agent_id=agent_id or "",
         task_id=_task_id(task),
@@ -398,7 +394,6 @@ def _workspace_context(
         "projects_root": "/projects",
         "default_save_root": default_save_root,
         "project_root": project_root,
-        "host_roots": ", ".join(host_roots),
         "preference": preference["preference"],
         "clone_dest": preference["clone_dest"],
     }

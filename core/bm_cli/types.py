@@ -26,11 +26,11 @@ class BossModCliResult:
     matched_rule_id: str | None = None
     approval_request_id: str | None = None
     consent_request_id: str | None = None
-    # Screenshot files to show the model with this result (see
-    # core.llm.attachment_parts.SCREENSHOT_PATHS_KEY). Paths, never bytes.
+    # Image files to show the model with this result (see
+    # core.llm.attachment_parts.CLI_IMAGE_PATHS_KEY). Paths, never bytes.
     image_paths: tuple[str, ...] = ()
-    # One line that stands in for this result's text once a newer screenshot
-    # supersedes it (core.llm.attachment_parts.SUMMARY_KEY). Only kept on
+    # One line that stands in for this result's text once a newer CLI result
+    # image supersedes it (core.llm.attachment_parts.SUMMARY_KEY). Only kept on
     # results that carry image_paths.
     summary: str | None = None
     # A command on the no-retry list reached its handler (core.bm_cli.retry_policy).

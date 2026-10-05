@@ -681,3 +681,19 @@ def test_a_missing_list_raises_before_an_approved_shell_command_runs(
         assert calls == []
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
+
+
+def test_a_virtual_error_naming_unsupported_stays_virtual_with_the_shell_on() -> None:
+    """Routing never reads error text: a missing file stays a virtual error."""
+    _enable_shell()
+    agent = db.create_agent("Unsupported Notes Reader")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    workspace = agent_artifact_dir(agent.storage_key)
+    try:
+        result = execute_bm_cli(agent, state, "cat /me/unsupported-notes.md")
+        assert result.executor == "virtual"
+        assert result.ok is False
+        assert result.data["error"].startswith("File not found:")
+    finally:
+        shutil.rmtree(workspace, ignore_errors=True)

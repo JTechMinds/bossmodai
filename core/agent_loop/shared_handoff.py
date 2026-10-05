@@ -1,8 +1,8 @@
 """Shared-thread handoff: peers must be able to open the Done artifact.
 
 ``/me`` is desk-private. Thread-origin work (a multi-party channel) cannot
-CLEAR by pointing only at that scratch tree. Prefer ``/projects/...`` or a
-host path under the shared grant (often ``.../docs``).
+CLEAR by pointing only at that scratch tree. Prefer a ``/projects/...`` path,
+or the host path the task itself names.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ PEER_INVISIBLE_HANDOFF_CODE = "peer_invisible_handoff"
 PEER_INVISIBLE_HANDOFF_LINE = "Blocked — handoff needs a shared path"
 PEER_INVISIBLE_HANDOFF_MESSAGE = (
     "Thread-origin Done needs a path peers can open "
-    "(project/docs/ or a host path under the shared grant). "
+    "(a /projects path, or the host path the task itself names). "
     "`/me` is desk-private and is not a handoff."
 )
 

@@ -12,7 +12,9 @@ counts and logs therefore never hold file bytes.
 Only the triggering message carries the key (the context builder sets it);
 earlier messages show a one-line manifest in their text instead, so images
 are not resent on every turn. The agent can still open any file by its
-``/projects/.attachments/...`` path.
+``/projects/.attachments/...`` path, and a history manifest naming a
+model-viewable image says to run ``view <path>`` to see it again (the
+trigger's manifest does not: its images are attached).
 
 What each attachment becomes:
 
@@ -29,25 +31,25 @@ What each attachment becomes:
 - longer text, non-UTF-8 text, documents and anything else → a text
   reference line with the path.
 
-CLI screenshots (Browser Vision) travel the same way under the private
-:data:`SCREENSHOT_PATHS_KEY`, a list of PNG paths on a CLI result message.
-Only the LAST message carrying it is expanded, so context does not grow by
-one image per browser action:
+CLI result images travel the same way under the private
+:data:`CLI_IMAGE_PATHS_KEY`, a list of image file paths on a CLI result
+message. Any CLI command, core or extension, names them through
+``BossModCliResult.image_paths``; the core ``view <path>`` command is one
+such command. Only the LAST message carrying the key is expanded, so
+context does not grow by one image per command:
 
-- newest screenshot, model flagged image-capable, file present → an
-  ``image_url`` part;
-- newest screenshot, model not flagged → an explicit text notice that the
+- newest image, model flagged image-capable, file present → an
+  ``image_url`` part whose MIME type comes from the file's extension;
+- newest image, model not flagged → an explicit text notice that the
   model cannot view it (and a warning log);
-- newest screenshot, file missing → :data:`SCREENSHOT_SESSION_ENDED_TEXT`
-  (and a warning log). Screenshots are deleted when the browser session
-  that took them ends (``bv close``, disable, app restart), so a resumed
-  transcript naming one learns the browser is gone instead of seeing the
-  old page as current;
-- any earlier carrier → a text line saying it was superseded, and when it
-  has a one-line summary under the private :data:`SUMMARY_KEY`, its text is
+- newest image, file missing → :data:`IMAGE_MISSING_TEXT` (and a warning
+  log). The command that produced it may have deleted it since, so a
+  resumed transcript naming it is told it is gone rather than failing;
+- any earlier carrier → :data:`IMAGE_SUPERSEDED_TEXT`, and when it has a
+  one-line summary under the private :data:`SUMMARY_KEY`, its text is
   replaced by that summary (still inside the CLI result delimiters), so the
-  context does not grow by a full result (marks legend and all) per action.
-  Each new capture therefore changes exactly one earlier message.
+  context does not grow by a full result per command. Each new image
+  therefore changes exactly one earlier message.
 
 Parts use the OpenAI chat content format, which litellm translates for each
 provider.
@@ -61,7 +63,7 @@ from pathlib import Path
 from typing import Any
 
 from core import config
-from core.attachments import MODEL_IMAGE_MIME_TYPES, virtual_path
+from core.attachments import MODEL_IMAGE_MIME_TYPES, detect_mime_type, virtual_path
 from core.bm_cli.results import wrap_cli_text
 from core.models import Attachment
 from db import attachments as db_att
@@ -71,19 +73,16 @@ logger = logging.getLogger(__name__)
 
 # Private message key naming a message's attachment ids. Never sent to a model.
 ATTACHMENT_IDS_KEY = "bm_attachment_ids"
-# Private message key naming CLI screenshot files. Never sent to a model.
-SCREENSHOT_PATHS_KEY = "bm_screenshot_paths"
-# Private message key: a screenshot carrier's one-line stand-in text for when
-# it is superseded. Never sent to a model.
+# Private message key naming a CLI result's image files. Never sent to a model.
+CLI_IMAGE_PATHS_KEY = "bm_cli_image_paths"
+# Private message key: an image carrier's one-line stand-in text for when it
+# is superseded. Never sent to a model.
 SUMMARY_KEY = "bm_cli_summary"
-SCREENSHOT_MIME_TYPE = "image/png"
-SCREENSHOT_SUPERSEDED_TEXT = "[screenshot not resent — superseded by a newer capture]"
-SCREENSHOT_SESSION_ENDED_TEXT = (
-    "[screenshot unavailable: the browser session that took it has ended (the app restarted "
-    'or the browser was closed); run "bv status" to see whether a page is open, '
-    'and "bv open <url>" to start again]'
-)
-_PRIVATE_KEYS = frozenset({ATTACHMENT_IDS_KEY, SCREENSHOT_PATHS_KEY, SUMMARY_KEY})
+IMAGE_SUPERSEDED_TEXT = "[image not resent — superseded by a newer image]"
+IMAGE_MISSING_TEXT = "[image unavailable: its file no longer exists]"
+# Appended to a history manifest naming a model-viewable image.
+_VIEW_HINT = " — run `view <path>` to see an image again"
+_PRIVATE_KEYS = frozenset({ATTACHMENT_IDS_KEY, CLI_IMAGE_PATHS_KEY, SUMMARY_KEY})
 
 
 class AttachmentUnavailableError(Exception):
@@ -103,16 +102,16 @@ def expand_attachment_messages(
     """Return a copy of ``messages`` ready for the model.
 
     Every message loses :data:`ATTACHMENT_IDS_KEY`,
-    :data:`SCREENSHOT_PATHS_KEY` and :data:`SUMMARY_KEY`. A message that
+    :data:`CLI_IMAGE_PATHS_KEY` and :data:`SUMMARY_KEY`. A message that
     carried ids or paths has its ``content`` replaced by content parts: its
     text first, then one part per attachment in the order the ids were
-    given, then its screenshot parts (see the module doc: only the last
+    given, then its CLI image parts (see the module doc: only the last
     carrier gets images, and an earlier carrier's text is its wrapped summary
     when it has one). The input list and its dicts are not modified.
 
     Args:
         messages: Chat messages; ``content`` is text on every message that
-            carries attachment ids or screenshot paths.
+            carries attachment ids or CLI image paths.
         model: The RAW model string (before any provider prefix), which is
             how image support is keyed in ``model_capabilities``.
 
@@ -123,24 +122,26 @@ def expand_attachment_messages(
         AttachmentUnavailableError: A named attachment has no row or no file.
         core.config.ConfigError: ``bossmod.attach.inline_text_max_chars`` is
             missing or not an integer (read only when some message has ids).
+        ValueError: The newest carrier names a CLI image whose extension is
+            not a model image type (``MODEL_IMAGE_MIME_TYPES``).
     """
     expanded: list[dict[str, Any]] = []
     inline_cap: int | None = None
     vision: bool | None = None
-    carriers = [index for index, message in enumerate(messages) if message.get(SCREENSHOT_PATHS_KEY)]
-    newest_shots = carriers[-1] if carriers else None
+    carriers = [index for index, message in enumerate(messages) if message.get(CLI_IMAGE_PATHS_KEY)]
+    newest_images = carriers[-1] if carriers else None
     for index, message in enumerate(messages):
         copy = {key: value for key, value in message.items() if key not in _PRIVATE_KEYS}
         ids = message.get(ATTACHMENT_IDS_KEY)
-        shots = message.get(SCREENSHOT_PATHS_KEY)
-        if not ids and not shots:
+        images = message.get(CLI_IMAGE_PATHS_KEY)
+        if not ids and not images:
             expanded.append(copy)
             continue
         if vision is None:
             vision = supports_images(model)
         text = str(copy.get("content", ""))
         summary = message.get(SUMMARY_KEY)
-        if shots and index != newest_shots and summary is not None:
+        if images and index != newest_images and summary is not None:
             text = wrap_cli_text(str(summary))
         parts: list[dict[str, Any]] = [{"type": "text", "text": text}]
         if ids:
@@ -148,11 +149,11 @@ def expand_attachment_messages(
                 inline_cap = config.require_int("bossmod.attach.inline_text_max_chars")
             for attachment_id in ids:
                 parts.append(_attachment_part(_load(attachment_id), model=model, vision=vision, cap=inline_cap))
-        if shots:
-            if index == newest_shots:
-                parts.extend(_screenshot_part(str(path), model=model, vision=vision) for path in shots)
+        if images:
+            if index == newest_images:
+                parts.extend(_cli_image_part(str(path), model=model, vision=vision) for path in images)
             else:
-                parts.append({"type": "text", "text": SCREENSHOT_SUPERSEDED_TEXT})
+                parts.append({"type": "text", "text": IMAGE_SUPERSEDED_TEXT})
         copy["content"] = parts
         expanded.append(copy)
     return expanded
@@ -188,7 +189,10 @@ def history_manifests(history: list[dict[str, Any]]) -> dict[str, str]:
     """Manifest lines for the history entries that had attachments.
 
     One batched lookup. Entries without an ``id`` (synthetic ones such as
-    fade summaries) and messages without files are simply absent.
+    fade summaries) and messages without files are simply absent. A line
+    naming at least one model-viewable image (image tier, a type in
+    ``MODEL_IMAGE_MIME_TYPES``) ends with the ``view`` hint, since history
+    images are not resent and ``view`` is how the agent sees one again.
 
     Args:
         history: Prompt history entries, each normally carrying its message ``id``.
@@ -198,7 +202,11 @@ def history_manifests(history: list[dict[str, Any]]) -> dict[str, str]:
     """
     ids = [str(entry["id"]) for entry in history if entry.get("id")]
     by_message = db_att.get_attachments_for_messages(ids)
-    return {message_id: format_attachment_manifest(atts) for message_id, atts in by_message.items() if atts}
+    return {
+        message_id: format_attachment_manifest(atts) + (_VIEW_HINT if any(map(_model_viewable, atts)) else "")
+        for message_id, atts in by_message.items()
+        if atts
+    }
 
 
 def attachment_route_line(attachment_ids: list[str]) -> str:
@@ -236,6 +244,10 @@ def format_attachment_manifest(atts: list[Attachment]) -> str:
         for att in atts
     ]
     return "Attachments: " + "; ".join(entries)
+
+
+def _model_viewable(att: Attachment) -> bool:
+    return att.preview_tier == "image" and att.mime_type in MODEL_IMAGE_MIME_TYPES
 
 
 def _human_size(size: int) -> str:
@@ -288,22 +300,40 @@ def _image_part(path: Path, mime_type: str) -> dict[str, Any]:
     }
 
 
-def _screenshot_part(path: str, *, model: str, vision: bool) -> dict[str, Any]:
-    """The newest CLI screenshot as an image part, or the notice saying why not."""
+def _cli_image_part(path: str, *, model: str, vision: bool) -> dict[str, Any]:
+    """The newest CLI result image as an image part, or the notice saying why not.
+
+    Args:
+        path: Real path of the image file a CLI result named.
+        model: Raw model string, for the warning log.
+        vision: Whether the model is flagged image-capable.
+
+    Returns:
+        An ``image_url`` part, or a text notice when the model cannot view
+        images or the file no longer exists.
+
+    Raises:
+        ValueError: The file's extension maps to a type outside
+            ``MODEL_IMAGE_MIME_TYPES``. Commands that name images (``view``)
+            refuse such files first, so this is an integrity failure.
+    """
+    mime_type = detect_mime_type(Path(path).suffix)
+    if mime_type not in MODEL_IMAGE_MIME_TYPES:
+        raise ValueError(f"CLI result image {path} has type {mime_type}, which models do not accept")
     if not vision:
-        logger.warning("Model %s is not marked image-capable; screenshot %s sent as a notice", model, path)
+        logger.warning("Model %s is not marked image-capable; CLI image %s sent as a notice", model, path)
         return {
             "type": "text",
             "text": (
-                "[A screenshot was captured, but your model cannot view images. "
+                "[An image was loaded, but your model cannot view images. "
                 "Tell the operator you can't see it.]"
             ),
         }
     file = Path(path)
     if not file.is_file():
-        logger.warning("Screenshot %s is missing (its browser session ended); sent as a notice", path)
-        return {"type": "text", "text": SCREENSHOT_SESSION_ENDED_TEXT}
-    return _image_part(file, SCREENSHOT_MIME_TYPE)
+        logger.warning("CLI image %s is missing; sent as a notice", path)
+        return {"type": "text", "text": IMAGE_MISSING_TEXT}
+    return _image_part(file, mime_type)
 
 
 def _text_part(att: Attachment, cap: int) -> dict[str, Any]:

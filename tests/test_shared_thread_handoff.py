@@ -11,8 +11,10 @@ import db
 from core import config
 from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_runtime import activate_work_activity
+from core.agent_loop.role_contracts import resolve_done_claim
 from core.agent_loop.runtime_core import format_runtime_core_block
 from core.agent_loop.shared_handoff import (
+    PEER_INVISIBLE_HANDOFF_CODE,
     PEER_INVISIBLE_HANDOFF_LINE,
     PEER_INVISIBLE_HANDOFF_MESSAGE,
     is_peer_invisible_path,
@@ -20,6 +22,7 @@ from core.agent_loop.shared_handoff import (
 )
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.models.message import HUMAN_SENDER_ID
+from core.models.work_contract import DeliverableSpec, WorkContract
 from core.tasking.service import create_or_bind_task
 
 
@@ -46,7 +49,13 @@ def _write_virtual(storage_key: str, virtual_path: str, content: str) -> str:
     return resolved.virtual_path
 
 
-def _thread_task(*, assignee_id: str, channel_id: str, title: str = "Requirements note"):
+def _thread_task(
+    *,
+    assignee_id: str,
+    channel_id: str,
+    title: str = "Requirements note",
+    work_contract: WorkContract | None = None,
+):
     return create_or_bind_task(
         title=title,
         description="Write requirements peers can open.",
@@ -56,7 +65,7 @@ def _thread_task(*, assignee_id: str, channel_id: str, title: str = "Requirement
         owner_id=None,
         created_by=HUMAN_SENDER_ID,
         parent_task_id=None,
-        work_contract=None,
+        work_contract=work_contract,
         source_channel="channel",
         notification_policy="completion_blocked",
         notification_channel_id=channel_id,
@@ -163,6 +172,62 @@ async def test_thread_origin_done_at_projects_succeeds() -> None:
     refreshed = db.get_task(creation.task.id)
     assert refreshed is not None
     assert refreshed.status == "complete"
+
+
+@pytest.mark.asyncio
+async def test_thread_origin_me_deliverable_is_rewritten_and_completes() -> None:
+    """An operator-requested thread task declared at /me can still finish.
+
+    Creation moves the deliverable to /projects; Done pins the claim to that
+    deliverable, so the handoff check has nothing to reject.
+    """
+    debra = db.create_agent("Debra", role="Requirements Analyst", desk_x=1, desk_y=1)
+    jim = db.create_agent("Jim", role="Engineer", desk_x=2, desk_y=1)
+    channel = db.create_channel(
+        name="Gerry, Debra, Jim",
+        member_agent_ids=[debra.id, jim.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    state = db.get_agent_state(debra.id)
+    assert state is not None
+    creation = _thread_task(
+        assignee_id=debra.id,
+        channel_id=channel.id,
+        work_contract=WorkContract(
+            deliverables=[DeliverableSpec(type="file", path="/me/requirements-note.md")],
+        ),
+    )
+    task = creation.task
+    assert task is not None
+    assert task.requester_id == HUMAN_SENDER_ID
+    assert is_shared_thread_origin(task) is True
+    assert task.work_contract is not None
+    shared_path = task.work_contract.deliverables[0].path
+    assert shared_path == f"/projects/shared/{task.id}/requirements-note.md"
+    _write_virtual(debra.storage_key, shared_path, "criteria")
+
+    claim, error = resolve_done_claim(agent=debra, task=db.get_task(task.id), action={"action": "complete"})
+    assert error is None
+    assert claim is not None
+    assert claim.path == shared_path
+
+    activate_work_activity(debra.id, task)
+    result = await execute_action(
+        {
+            "action": "complete",
+            "summary": "Requirements are ready.",
+            "followUpMessage": "Requirements note is ready.",
+        },
+        debra,
+        state,
+    )
+    assert result["event"] == "status_changed", result.get("detail")
+    assert result.get("feedback_code") != PEER_INVISIBLE_HANDOFF_CODE
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "complete"
+    messages = db.list_channel_messages(channel.id)
+    assert not any(PEER_INVISIBLE_HANDOFF_LINE in (item.content or "") for item in messages)
 
 
 @pytest.mark.asyncio

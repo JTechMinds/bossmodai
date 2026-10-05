@@ -170,8 +170,11 @@ def test_resolve_cli_path_opens_named_host_file(tmp_path: Path) -> None:
     assert resolved.mount == "host"
     assert resolved.real_path == fixture.resolve()
     assert resolved.exists is True
-    assert "me/" in virtual_root_entries(agent.storage_key)
-    assert f"{host.resolve()}/" in virtual_root_entries(agent.storage_key)
+    # `ls /` shows only the agent's mounts: the allowed root is a
+    # permission, never listed, while the named path above still resolves.
+    entries = virtual_root_entries(agent.storage_key)
+    assert entries == ["me/", "projects/"]
+    assert not any(str(host.resolve()) in entry for entry in entries)
 
 
 def test_resolve_cli_path_denies_outside_host_roots(tmp_path: Path) -> None:
@@ -180,7 +183,7 @@ def test_resolve_cli_path_denies_outside_host_roots(tmp_path: Path) -> None:
     _set_host_roots(host)
     agent = db.create_agent("Path Reviewer")
 
-    with pytest.raises(PathOutsideRootsError, match="outside the allowed workspace roots"):
+    with pytest.raises(PathOutsideRootsError, match="is not an operator-allowed host path"):
         resolve_cli_path(agent.storage_key, "/me", "/etc/passwd")
     with pytest.raises(PathOutsideRootsError):
         resolve_cli_path(agent.storage_key, "/me", str(tmp_path / "other" / "secret.md"))
@@ -237,10 +240,10 @@ def test_execute_bm_cli_reads_and_writes_named_host_path(tmp_path: Path) -> None
     denied = execute_bm_cli(agent, state, "cat /etc/passwd")
     assert denied.ok is False
     payload = (denied.detail or "") + denied.prompt_content
-    assert "outside the allowed workspace roots" in payload
-    assert "not a full host mount" in payload
-    assert '"/me"' in payload
-    assert str(host.resolve()) in payload
+    assert "is not an operator-allowed host path" in payload
+    assert "request_host_access" in payload
+    assert "/me" in payload
+    assert str(host.resolve()) not in payload
     assert "root:" not in payload
 
 
@@ -385,7 +388,7 @@ def test_execute_bm_cli_uname_and_path_escape(tmp_path: Path) -> None:
     escaped = execute_bm_cli(agent, state, "cat /etc/passwd")
     assert escaped.ok is False
     payload = f"{escaped.detail} {escaped.prompt_content}"
-    assert "Path jail" in payload or "outside the allowed workspace roots" in payload
+    assert "Path jail" in payload or "is not an operator-allowed host path" in payload
     assert "root:" not in payload
 
 
@@ -395,11 +398,15 @@ def test_seed_rules_include_uname_always_allowed() -> None:
     assert "cat" in always
 
 
-def test_denial_message_is_honest() -> None:
-    text = denial_message("/etc/passwd", extra_roots=())
-    assert "not a full host mount" in text
+def test_denial_message_is_honest(tmp_path: Path) -> None:
+    host = tmp_path / "named-root"
+    host.mkdir()
+    _set_host_roots(host)
+    text = denial_message("/etc/passwd")
     assert "/me" in text
     assert "/projects" in text
+    assert "request_host_access" in text
+    assert str(host.resolve()) not in text
 
 
 def test_consent_grant_root_clamps_desktop_junk_to_project(tmp_path: Path) -> None:

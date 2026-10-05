@@ -247,30 +247,16 @@ def allowed_workspace_roots(agent_storage_key: str) -> tuple[Path, ...]:
     return named_path_roots(agent_storage_key)
 
 
-def describe_allowed_roots(
-    *,
-    extra_roots: Sequence[Path] | None = None,
-    include_virtual: bool = True,
-) -> str:
-    """Return a short human-readable description of the current allowlist."""
-    extras = tuple(Path(root).resolve() for root in (extra_roots if extra_roots is not None else configured_host_roots()))
-    parts: list[str] = []
-    if include_virtual:
-        parts.append('"/me"')
-        parts.append('"/projects"')
-    if extras:
-        parts.append("configured host roots: " + ", ".join(str(root) for root in extras))
-    else:
-        parts.append("no extra host roots")
-    return ", ".join(parts)
+def denial_message(raw_path: str) -> str:
+    """Return the denial for a path outside every allowed root.
 
-
-def denial_message(raw_path: str, *, extra_roots: Sequence[Path] | None = None) -> str:
-    """Return a clear denial for a path outside the allowlisted roots."""
+    The allowlist is a permission, not a workspace: the message never names
+    the configured host roots. It points the agent at request_host_access.
+    """
     return (
-        f"Path {raw_path!r} is outside the allowed workspace roots "
-        f"({describe_allowed_roots(extra_roots=extra_roots)}). "
-        "This is an allowlisted-roots model, not a full host mount."
+        f"Path {raw_path!r} is outside /me and /projects and is not an "
+        "operator-allowed host path. Call request_host_access (path + reason) "
+        "to ask for it."
     )
 
 
@@ -291,10 +277,10 @@ def resolve_absolute_under_roots(
     """
     token = (raw_path or "").strip()
     if not token:
-        raise PathOutsideRootsError(denial_message(raw_path, extra_roots=roots), raw_path=raw_path)
+        raise PathOutsideRootsError(denial_message(raw_path), raw_path=raw_path)
     path = Path(token).expanduser()
     if not path.is_absolute():
-        raise PathOutsideRootsError(denial_message(raw_path, extra_roots=roots), raw_path=raw_path)
+        raise PathOutsideRootsError(denial_message(raw_path), raw_path=raw_path)
     try:
         resolved = path.resolve()
     except OSError as exc:

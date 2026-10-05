@@ -23,7 +23,7 @@ FIELD VALUES:
 
 RULES:
   - cli: require data.cmd; include data.body only when the chosen command needs body text or a manifest
-  - request_host_access: require data.path and data.why; use it when a named host path is outside /me, /projects, and configured host roots. This opens the Allow once / Always allow / Deny card. Do not ask the operator for a verbal yes/no.
+  - request_host_access: require data.path and data.why; use it when cli denies a named host path. This opens the Allow once / Always allow / Deny card. Do not ask the operator for a verbal yes/no.
   - cli + write: use data.body for a short exact file body, or omit data.body for one substantial generated file
   - cli + append: require data.body and keep it small
   - cli + bwrite: require data.body as a short manifest with path + goal entries, not full file contents
@@ -72,8 +72,8 @@ RULES:
 CLI CALL:
   {"act":"cli","data":{"cmd":"<command>","body":"<optional text>"},"th":"brief note"}
 CLI NOTES:
-  - bounded paths: "/me", "/projects", and any operator-configured host roots (not a full host mount)
-  - a user-named absolute path works only when it stays inside those roots; otherwise call request_host_access or attempt cli on that path — do not ask the operator for verbal yes/no
+  - workspace: prefer "/me" (private) and "/projects" (shared); other host paths work wherever the operator has allowed them (not a full host mount)
+  - if cli denies a named host path, call request_host_access or attempt cli on that path — do not ask the operator for verbal yes/no
   - cwd starts at "/me"
   - "/me" is git-tracked; "/me/scratchpad" is untracked
   - results are turn-local

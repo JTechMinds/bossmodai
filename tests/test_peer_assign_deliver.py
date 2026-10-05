@@ -266,8 +266,8 @@ async def test_host_path_owner_assigns_worker_edits_and_deny_stays_closed(
     )
     assert denied["event"] == "bm_cli_error"
     deny_text = (denied.get("detail") or "") + (denied.get("cli_prompt_content") or "")
-    assert "outside the allowed workspace roots" in deny_text
-    assert "not a full host mount" in deny_text
+    assert "is not an operator-allowed host path" in deny_text
+    assert "request_host_access" in deny_text
     assert fixture.read_text(encoding="utf-8") == 'print("after-review")\n'
 
     http_deny = client.get("/api/company/files", params={"path": "/etc/passwd"}, headers=headers)
@@ -522,6 +522,57 @@ def test_create_task_api_peer_requester_queues_wake_and_lists_triggers(
     )
 
 
+def _operator_thread_task_with_me_deliverable(*, assignee_id: str, channel_id: str):
+    return create_or_bind_task(
+        title="Write the thread note",
+        description=None,
+        project=None,
+        assigned_to=assignee_id,
+        requester_id=HUMAN_SENDER_ID,
+        owner_id=None,
+        created_by=HUMAN_SENDER_ID,
+        parent_task_id=None,
+        work_contract=WorkContract(deliverables=[DeliverableSpec(type="file", path="/me/x.md")]),
+        source_channel="channel",
+        notification_policy="completion_blocked",
+        notification_channel_id=channel_id,
+        audit_author_name="Human Operator",
+        audit_author_type="human",
+    ).task
+
+
+def test_operator_task_on_multi_party_thread_gets_shared_deliverable_path() -> None:
+    """Done rejects /me on a multi-party thread, so creation must not store one."""
+    worker = db.create_agent("Cap Worker", role="Writer", desk_x=1, desk_y=1)
+    peer = db.create_agent("Cap Peer", role="Editor", desk_x=2, desk_y=1)
+    channel = db.create_channel(
+        name="Cap Worker, Cap Peer",
+        member_agent_ids=[worker.id, peer.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    task = _operator_thread_task_with_me_deliverable(assignee_id=worker.id, channel_id=channel.id)
+    assert task is not None
+    assert task.requester_id == HUMAN_SENDER_ID
+    assert task.work_contract is not None
+    assert task.work_contract.deliverables[0].path == f"/projects/shared/{task.id}/x.md"
+    stored = db.get_task(task.id)
+    assert stored is not None
+    assert stored.work_contract == task.work_contract
+
+
+def test_operator_task_in_one_to_one_thread_keeps_me_deliverable_path() -> None:
+    worker = db.create_agent("Cap Worker", role="Writer", desk_x=1, desk_y=1)
+    channel = db.create_channel(
+        name="Cap Worker",
+        member_agent_ids=[worker.id],
+        created_by=HUMAN_SENDER_ID,
+    )
+    task = _operator_thread_task_with_me_deliverable(assignee_id=worker.id, channel_id=channel.id)
+    assert task is not None
+    assert task.work_contract is not None
+    assert task.work_contract.deliverables[0].path == "/me/x.md"
+
+
 def test_create_task_api_host_path_outside_roots_is_400(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -547,8 +598,8 @@ def test_create_task_api_host_path_outside_roots_is_400(
     )
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert "outside the allowed workspace roots" in detail
-    assert "not a full host mount" in detail
+    assert "is not an operator-allowed host path" in detail
+    assert "request_host_access" in detail
     assert db.list_tasks() == []
 
 
@@ -576,7 +627,7 @@ async def test_delegate_task_host_path_outside_roots_fails_closed(tmp_path: Path
         state,
     )
     assert result["event"] == "world_feedback"
-    assert "outside the allowed workspace roots" in result["detail"]
+    assert "is not an operator-allowed host path" in result["detail"]
     assert db.list_tasks(assigned_to=worker.id) == []
 
 

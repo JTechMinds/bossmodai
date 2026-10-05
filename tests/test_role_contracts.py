@@ -1089,7 +1089,11 @@ def test_preview_bundle_injects_role_contract() -> None:
     assert core_msgs
     assert "Description:" not in core_msgs[0]
     assert "request_host_access" in core_msgs[0]
-    assert "do not ask the operator for verbal yes/no" in core_msgs[0]
+    assert (
+        "Workspace: /me is your private scratch and /projects is shared "
+        "with your floor — prefer them."
+    ) in core_msgs[0]
+    assert "Do not ask the operator for a verbal yes/no." in core_msgs[0]
     assert "stop and ask in chat" not in core_msgs[0]
     assert AUDIENCE_SOFT_JUDGMENT in core_msgs[0]
     assert AUDIENCE_SOFT_JUDGMENT in contents

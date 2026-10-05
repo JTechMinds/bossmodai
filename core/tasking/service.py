@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import db
+from core.agent_loop.shared_handoff import is_shared_thread_origin
 from core.agent_loop.task_roles import default_task_owner_id
 from core.bm_cli.filesystem import slugify_name
 from core.models import Task
@@ -426,18 +427,21 @@ def rewrite_shared_work_contract(
     requester_id: str | None,
     owner_id: str | None,
 ) -> WorkContract | None:
-    """Rewrite /me file deliverables into shared /projects paths for delegated work.
+    """Rewrite /me file deliverables into shared /projects paths for shared work.
 
     Policy:
     - /me is private scratch per-agent.
     - If another agent (requester/owner) must review the output, file deliverables must
       live under /projects/<project-or-shared>/<task-id>/... so they are shareable.
+    - A task born on a multi-party thread (``is_shared_thread_origin``) gets the same
+      shared paths whoever requested it, because Done rejects a /me handoff there.
 
     Used by task creation and by the operator's reassign/requirements edit, so
     both apply one sharing policy.
 
     Args:
-        task: The persisted task; its id and project name the shared folder.
+        task: The persisted task; its id and project name the shared folder, and
+            its ``source_channel``/``notification_channel_id`` mark a thread origin.
         work_contract: The contract to rewrite (a ``WorkContract`` or its dict form).
         assigned_to: The task's assignee.
         requester_id: Who asked for the work.
@@ -457,7 +461,10 @@ def rewrite_shared_work_contract(
     if not assignee:
         return None
 
-    if not _outputs_should_be_shared(assignee_id=assignee, requester_id=requester_id, owner_id=owner_id):
+    if not (
+        _outputs_should_be_shared(assignee_id=assignee, requester_id=requester_id, owner_id=owner_id)
+        or is_shared_thread_origin(task)
+    ):
         return None
 
     contract = work_contract if isinstance(work_contract, WorkContract) else WorkContract.model_validate(work_contract)

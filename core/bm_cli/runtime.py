@@ -27,6 +27,7 @@ from core.bm_cli.fs_commands import (
     handle_write,
 )
 from core.bm_cli.git_commands import handle_git
+from core.bm_cli.image_commands import handle_view
 from core.bm_cli.help_commands import (
     handle_commands,
     handle_fsearch,
@@ -86,6 +87,7 @@ _HANDLERS: dict[str, CliHandler] = {
     "cd": handle_cd,
     "ls": handle_ls,
     "cat": handle_cat,
+    "view": handle_view,
     "ol": handle_outline,
     "rr": handle_read_range,
     "mkdir": handle_mkdir,
@@ -332,7 +334,7 @@ def _execute_bm_cli_inner(
         return auth.materialize(content=content, channel_id=channel_id)
     parsed, policy = auth.parsed, _run_policy(auth)
 
-    # --- Virtual git that belongs on the clone or is not a virtual subcommand ---
+    # --- Virtual git that belongs on the clone or is not the bare virtual form ---
     if policy.executor == "virtual" and _use_shell_git(agent, parsed, cwd_before):
         return _execute_shell_policy(
             agent=agent,
@@ -355,20 +357,6 @@ def _execute_bm_cli_inner(
             trigger_type=trigger_type,
             channel_id=channel_id,
         )
-        # If virtual handler returned an "unsupported" error and shell is enabled,
-        # fall through to the policy engine for shell execution.
-        if not result.ok and result.kind == "error" and config.get_live("cli_shell_enabled") == "true":
-            data = result.data or {}
-            error_msg = str(data.get("error", ""))
-            if "unsupported" in error_msg.lower():
-                return _execute_shell_policy(
-                    agent=agent,
-                    parsed=parsed,
-                    content=content,
-                    cwd_before=cwd_before,
-                    trigger_type=trigger_type,
-                    channel_id=channel_id,
-                )
         return result
 
     # --- Shell executor ---
@@ -973,13 +961,24 @@ def _record_project_env_deny(
 
 
 def _use_shell_git(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> bool:
-    """Return True when this git command should use shell policy, not virtual git."""
+    """Return True when this git command should use shell policy, not virtual git.
+
+    Virtual git handles only the bare ``git <subcommand> …`` form. With the
+    shell on, a leading global option (``--no-pager``, ``-c k=v``, ``-C``),
+    a non-virtual subcommand, a location override or a nested-clone cwd all
+    mean the shell's real git. With the shell off this returns False and
+    virtual git reports its own explicit error for forms it cannot serve.
+    """
     from core.bm_cli.nest_git import git_subcommand, is_git_cli
 
     if not is_git_cli(parsed):
         return False
     if config.get_live("cli_shell_enabled") != "true":
         return False
+    # ``handle_git`` reads ``args[0]`` as the subcommand, so any leading
+    # option would reach it as an unknown subcommand.
+    if parsed.args and parsed.args[0].startswith("-"):
+        return True
     from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
 
     subcommand = git_subcommand(parsed.args)

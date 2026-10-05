@@ -117,7 +117,11 @@ def _bind_task(agent_id: str):
     )
 
 
-def test_runtime_core_is_compact_and_skips_description() -> None:
+def test_runtime_core_is_compact_and_skips_description(tmp_path: Path) -> None:
+    host = tmp_path / "allowed-root"
+    host.mkdir()
+    db.set_setting("workspace_host_roots", str(host.resolve()), "cli_policy")
+    config.reload()
     agent = db.create_agent(
         "Core Writer",
         role="Writer",
@@ -131,7 +135,13 @@ def test_runtime_core_is_compact_and_skips_description() -> None:
     assert "Desk: assigned at (1,2)." in block
     assert "Tools you may use:" in block
     assert "request_host_access" in block
-    assert "do not ask the operator for verbal yes/no" in block
+    assert (
+        "Workspace: /me is your private scratch and /projects is shared "
+        "with your floor — prefer them."
+    ) in block
+    assert "Do not ask the operator for a verbal yes/no." in block
+    # The allowlist is a permission: the runtime core never names it.
+    assert str(host.resolve()) not in block
     assert "stop and ask in chat" not in block
     assert "Empty done is rejected" in block
     assert LOCKED_WORKSPACE_COPY_STEER in block
@@ -413,7 +423,7 @@ def test_etc_stays_hard_denied_without_a_card() -> None:
     assert denied.consent_required is False
     assert db.list_consent_requests(agent_id=agent.id) == []
     payload = (denied.detail or "") + denied.prompt_content
-    assert "outside the allowed workspace roots" in payload
+    assert "is not an operator-allowed host path" in payload
     assert "root:" not in payload
 
 
@@ -694,7 +704,7 @@ def test_request_host_access_etc_is_hard_denied_without_a_card() -> None:
     assert denied.consent_required is False
     assert db.list_consent_requests(agent_id=agent.id) == []
     payload = (denied.detail or "") + denied.prompt_content
-    assert "outside the allowed workspace roots" in payload
+    assert "is not an operator-allowed host path" in payload
     assert "root:" not in payload
 
 
@@ -1456,7 +1466,7 @@ def test_slash_la_alone_is_rejected_without_a_card() -> None:
     assert denied.consent_required is False
     assert db.list_consent_requests(agent_id=agent.id) == []
     payload = (denied.detail or "") + denied.prompt_content
-    assert "outside the allowed workspace roots" in payload
+    assert "is not an operator-allowed host path" in payload
 
 
 def test_existing_directory_named_like_a_flag_can_still_be_granted(tmp_path: Path) -> None:
@@ -1504,7 +1514,7 @@ def test_junk_rr_cli_does_not_grant_desktop(tmp_path: Path) -> None:
     card = (junk.data or {}).get("host_path_consent") or {}
     assert card.get("grant_root") != str(desktop.resolve())
     payload = (junk.detail or "") + junk.prompt_content
-    assert "outside the allowed workspace roots" in payload
+    assert "is not an operator-allowed host path" in payload
 
     asked = request_host_path_access(
         agent=agent,

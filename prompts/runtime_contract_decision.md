@@ -332,7 +332,7 @@ Use CLI only when the snapshot and surrounding turn context still lack an intern
 You may use up to 10 CLI lookups in the same decision turn. Path tweaks of the same lookup still count as the same peek (`ls a` and `ls a/` are one fingerprint). Repeating the same peek three times in a row ends the turn — decide or accept work instead. Each lookup spends one of the 10, including a repeat of an earlier peek.
 request_host_access does not count against that peek budget.
 A multi-step host review is accepted work: accept, then inspect on the execution path. Do not turn this decision turn into a long dig.
-If a named host path is outside /me, /projects, and configured host roots, call request_host_access or attempt cli on that path. Do not ask the operator for a verbal yes/no.
+If cli denies a named host path, call request_host_access. Do not ask the operator for a verbal yes/no.
 Once you have enough information, end the turn with a final conversation decision object.
 
 ```json
@@ -400,11 +400,8 @@ TURN GUIDANCE
 
 CLI LOOKUP DETAILS
 
-- bounded paths: "/me", "/projects", and any operator-configured host roots (not a full host mount)
-{{if workspace.host_roots}}
-- configured host roots for named paths: `{{workspace.host_roots}}`
-{{end}}
-- a user-named absolute path works only when it stays inside those roots; otherwise call request_host_access or attempt cli on that path — do not ask the operator for verbal yes/no
+- workspace: prefer "/me" (private) and "/projects" (shared); other host paths work wherever the operator has allowed them (not a full host mount)
+- if cli denies a named host path, call request_host_access or attempt cli on that path — do not ask the operator for verbal yes/no
 - current cwd is `{{cli.cwd}}`; relative paths resolve from it
 - default save root for this turn is `{{workspace.default_save_root}}`
 {{if workspace.project_root}}

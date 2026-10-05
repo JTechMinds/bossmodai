@@ -24,6 +24,7 @@ Aim in this order:
 - `bv window phone|tablet|desktop|widescreen|<W>x<H>` switches the device class.
 - Downloads land in `/me/downloads/` and can be read and edited with the normal CLI.
 - Only the latest screenshot stays visible to you; earlier results shrink to one line. Run `bv view` again if unsure.
+- Screenshots are deleted when the browser session ends (bv close, extension disabled, app restart). If a screenshot is reported unavailable, run `bv status`, then `bv open <url>` to start again.
 - Run `bv close` when you are done browsing.
 - Some sites block automated browsers. If a result says `BLOCKED` or `SITE_COOLDOWN`, stop using that site, tell the operator, and do not retry or use other tools (like `curl`) to get around it.
 - For property sale prices, public records are better and not blocked: county property appraiser sites (e.g. Miami-Dade, Broward) and downloadable market data such as Redfin's Data Center.
