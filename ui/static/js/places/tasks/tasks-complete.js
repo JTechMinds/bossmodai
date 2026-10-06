@@ -99,7 +99,7 @@ const BossModTasksComplete = (() => {
         function ask(task, resolve, reject) {
             let submitted = false;
             const summary = h('textarea', {
-                class: 'field-textarea', id: 'ct-complete-summary', 'data-autogrow': true, maxlength: '2000',
+                class: 'field-textarea', id: 'ct-complete-summary', 'data-autogrow': true,
                 'aria-required': 'true', placeholder: 'What was delivered, or why it counts as done',
             });
             const grow = BossModAutoGrow.bind(summary);

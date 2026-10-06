@@ -735,7 +735,7 @@ def test_desk_schedules_section_and_layer() -> None:
         "theLockAndTheAuthorShow", "setUpByShows", "theLockSwitchPatches", "createSendsTheLock",
         "timesUseTheSharedClock", "scheduleRefusalsSayWhy",
         "aNewScheduleEditsInPlace", "anEditKeepsTheFactsInPlace", "anInvalidTypedTimeIsSaidNotSent",
-        "aTypedTimeIsShownFormatted",
+        "aTypedTimeIsShownFormatted", "scheduleInstructionsUncapped",
     ):
         assert payload[key] is True, key
     panel = _read(CONTEXT / "desk-panel.js")

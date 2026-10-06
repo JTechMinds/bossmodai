@@ -109,12 +109,33 @@ def test_unknown_agent_and_schedule_are_404(client: TestClient) -> None:
         _body(recurrence={**RULE, "times": ["06:00", "06:00"]}),
         _body(recurrence={**RULE, "interval": 0}),
         _body(title="   "),
+        _body(instructions="   "),
         _body(extra="field"),
     ],
 )
 def test_bad_bodies_are_422(client: TestClient, body: dict) -> None:
     ada = db.create_agent("Ada", role="Operator")
     assert client.post(f"/api/agents/{ada.id}/schedules", json=body).status_code == 422
+
+
+def test_long_instructions_round_trip_intact(client: TestClient) -> None:
+    """Instructions have no length cap: they become the run's task description, which has none."""
+    ada = db.create_agent("Ada", role="Operator")
+
+    def long_text(length: int) -> str:
+        # Multi-line, and ends on a non-space so stripping leaves it exactly ``length``.
+        return ("Read the page; note what changed.\n" * length)[:length - 1] + "."
+
+    created_text = long_text(10_000)
+    created = client.post(f"/api/agents/{ada.id}/schedules", json=_body(instructions=created_text))
+    assert created.status_code == 201, created.text
+    assert created.json()["instructions"] == created_text
+
+    edited_text = long_text(12_000)
+    patched = client.patch(f"/api/schedules/{created.json()['id']}", json={"instructions": edited_text})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["instructions"] == edited_text
+    assert client.get(f"/api/agents/{ada.id}/schedules").json()[0]["instructions"] == edited_text
 
 
 def test_bad_edits_are_422(client: TestClient) -> None:

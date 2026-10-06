@@ -344,7 +344,7 @@ async function main() {
 
     const edit = await editMode();
     const status = await statusActions();
-    const { completeNeedsSummary } = await operatorActions();
+    const { completeNeedsSummary, summaryUncapped } = await operatorActions();
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -361,6 +361,7 @@ async function main() {
         ...edit,
         ...status,
         completeNeedsSummary,
+        summaryUncapped,
         contractIsCollapsible,
         activityReadsAsSentences,
         deliverablesCounted,
@@ -472,6 +473,9 @@ async function editMode() {
         && Boolean(panel.querySelector(".edit-field-multiline"))
         && fileRows().length === 1 && document.body.querySelectorAll(".modal-panel").length === 1;
     if (!editModeEntersInPlace) fail("entering Edit mode did not make the same panel editable");
+    // The description is the agent's instructions: no length cap in markup.
+    const descriptionUncapped = !panel.querySelector(".task-detail-instructions").hasAttribute("maxlength");
+    if (!descriptionUncapped) fail("the task description carries a maxlength");
 
     // ── assigneeReadsAsAField ───────────────────────────────────────────
     // The fact cell's dropdown is the field look: no .btn, the short name
@@ -676,6 +680,7 @@ async function editMode() {
 
     return {
         editModeEntersInPlace,
+        descriptionUncapped,
         assigneeReadsAsAField,
         oneDeliverablesSection,
         statusActionsWaitForTheDraft,
@@ -827,6 +832,9 @@ async function operatorActions() {
     const completing = actions.complete(BLOCKED);
     await drain();
     const completePanel = top();
+    // The summary is posted whole and mirrored in full: no length cap in markup.
+    const summaryUncapped = !completePanel.querySelector("#ct-complete-summary").hasAttribute("maxlength");
+    if (!summaryUncapped) fail("the completion summary carries a maxlength");
     await click(completePanel.querySelector("#ct-complete-submit"), "#ct-complete-submit");
     const refusedBlank = requests.length === 0
         && completePanel.querySelector(".callout").textContent.includes("A summary is required");
@@ -851,7 +859,7 @@ async function operatorActions() {
     if (!err || !err.message.includes(global.BossModTasksComplete.SUBTASKS_COPY) || changed.length !== 1) {
         fail(`an open-subtask refusal said [${err && err.message}]`);
     }
-    return { completeNeedsSummary };
+    return { completeNeedsSummary, summaryUncapped };
 }
 
 main().catch((err) => {

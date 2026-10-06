@@ -96,7 +96,7 @@ const BossModTaskEditMode = (() => {
         });
         const description = h('textarea', {
             class: `task-detail-instructions ${FIELD} edit-field-multiline`,
-            maxlength: '4000', readonly: true, 'aria-label': 'Task description',
+            readonly: true, 'aria-label': 'Task description',
             placeholder: 'What the task asks for',
             oninput: () => changed(),
         });

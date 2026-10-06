@@ -34,7 +34,6 @@ MAX_TIMES_PER_DAY = 12
 # "Every" mode's longest step: every 12 hours.
 MAX_EVERY_MINUTES = 720
 TITLE_MAX_CHARS = 200
-INSTRUCTIONS_MAX_CHARS = 4000
 # How many upcoming runs one preview may ask for.
 PREVIEW_MAX_COUNT = 20
 # The schedule fields a scheduled task's ``task_assigned`` trigger payload
@@ -51,17 +50,27 @@ SCHEDULE_TRIGGER_FIELDS: tuple[tuple[str, str], ...] = (
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 
 
-def _clean_text(value: str | None, *, label: str, max_chars: int) -> str:
-    """Strip ``value`` and require 1..``max_chars`` characters.
+def _require_text(value: str | None, *, label: str) -> str:
+    """Strip ``value`` and require at least one character.
 
     Raises:
-        ValueError: The value is missing, blank, or too long.
+        ValueError: The value is missing or blank.
     """
     text = (value or "").strip()
     if not text:
         raise ValueError(f"A schedule {label} cannot be blank")
-    if len(text) > max_chars:
-        raise ValueError(f"A schedule {label} can be at most {max_chars} characters")
+    return text
+
+
+def _clean_title(value: str | None) -> str:
+    """Strip a schedule title and require 1..``TITLE_MAX_CHARS`` characters.
+
+    Raises:
+        ValueError: The title is missing, blank, or too long.
+    """
+    text = _require_text(value, label="title")
+    if len(text) > TITLE_MAX_CHARS:
+        raise ValueError(f"A schedule title can be at most {TITLE_MAX_CHARS} characters")
     return text
 
 
@@ -210,8 +219,8 @@ class ScheduleCreate(BaseModel):
     choice (unset: locked); the service refuses it from an agent.
 
     Raises:
-        pydantic.ValidationError: An unknown field, a blank or over-long
-            title (200) or instructions (4000), or an invalid rule.
+        pydantic.ValidationError: An unknown field, a blank title or one
+            over 200 characters, blank instructions, or an invalid rule.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -225,10 +234,8 @@ class ScheduleCreate(BaseModel):
 
     @model_validator(mode="after")
     def _clean(self) -> "ScheduleCreate":
-        self.title = _clean_text(self.title, label="title", max_chars=TITLE_MAX_CHARS)
-        self.instructions = _clean_text(
-            self.instructions, label="instructions", max_chars=INSTRUCTIONS_MAX_CHARS,
-        )
+        self.title = _clean_title(self.title)
+        self.instructions = _require_text(self.instructions, label="instructions")
         return self
 
 
@@ -240,8 +247,8 @@ class ScheduleUpdate(BaseModel):
 
     Raises:
         pydantic.ValidationError: No field is present, an unknown field is
-            sent, a present field is ``null``, or ``title``/``instructions``
-            is blank or too long, or ``recurrence`` is invalid.
+            sent, a present field is ``null``, ``title`` is blank or too
+            long, ``instructions`` is blank, or ``recurrence`` is invalid.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -269,7 +276,7 @@ class AgentScheduleUpdate(BaseModel):
     Raises:
         pydantic.ValidationError: No field, an unknown field (including
             ``agent_can_change`` and ``enabled``), a ``null`` field, a blank
-            or too-long ``title``/``instructions``, or an invalid rule.
+            or too-long ``title``, blank ``instructions``, or an invalid rule.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -289,8 +296,8 @@ def _check_edit(edit: BaseModel) -> None:
     """The rules every schedule edit shares; strips ``title``/``instructions`` in place.
 
     Raises:
-        ValueError: No field present, a present field is ``null``, or a
-            blank or too-long title or instructions.
+        ValueError: No field present, a present field is ``null``, a blank
+            or too-long title, or blank instructions.
     """
     present = edit.model_fields_set
     if not present:
@@ -299,9 +306,9 @@ def _check_edit(edit: BaseModel) -> None:
         if getattr(edit, name) is None:
             raise ValueError(f"A schedule's {name} cannot be null")
     if "title" in present:
-        edit.title = _clean_text(edit.title, label="title", max_chars=TITLE_MAX_CHARS)
+        edit.title = _clean_title(edit.title)
     if "instructions" in present:
-        edit.instructions = _clean_text(edit.instructions, label="instructions", max_chars=INSTRUCTIONS_MAX_CHARS)
+        edit.instructions = _require_text(edit.instructions, label="instructions")
 
 
 class ScheduleView(AgentSchedule):

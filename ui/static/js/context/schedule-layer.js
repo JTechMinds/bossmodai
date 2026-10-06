@@ -82,7 +82,7 @@ const BossModScheduleLayer = (() => {
         });
         const instructions = h('textarea', {
             class: 'edit-field edit-field-multiline schedule-instructions',
-            maxlength: '4000', readonly: true, 'aria-label': 'Instructions',
+            readonly: true, 'aria-label': 'Instructions',
             placeholder: 'What each run asks the agent to do',
         });
         /** Sizes the instructions to their text, in view mode too, so a long one is never clipped. */

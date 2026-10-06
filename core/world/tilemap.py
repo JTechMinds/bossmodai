@@ -1,6 +1,6 @@
 """BossMod AI — Office tilemap definition.
 
-Defines tile types, room metadata, and the default 28x20 office layout.
+Defines tile types, room metadata, and the default 28x21 office layout.
 The Canvas renderer reads this data (served via API) to draw the office.
 The world simulation uses it for pathfinding and location rules.
 """
@@ -50,19 +50,19 @@ DEFAULT_ROOMS = [
         "id": "break_room",
         "name": "Break Room",
         "room_type": RoomType.BREAK,
-        "bounds": (16, 12, 23, 18),
+        "bounds": (16, 12, 23, 19),
     },
     {
         "id": "hallway_main",
         "name": "Hallway",
         "room_type": RoomType.HALLWAY,
-        "bounds": (13, 1, 15, 18),
+        "bounds": (13, 1, 15, 19),
     },
     {
         "id": "workspace_south",
         "name": "South Workspace",
         "room_type": RoomType.WORKSPACE,
-        "bounds": (1, 12, 12, 18),
+        "bounds": (1, 12, 12, 19),
     },
 ]
 
@@ -90,7 +90,7 @@ DEFAULT_DESKS = [
 
 # Map grid dimensions
 MAP_WIDTH = 28
-MAP_HEIGHT = 20
+MAP_HEIGHT = 21
 
 # V = VOID, F = FLOOR, W = WALL, D = DESK, M = MEETING, B = BREAK,
 # T = TRANSIT, O = DOOR, C = CHAIR
@@ -118,7 +118,8 @@ DEFAULT_MAP = [
     [_W,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 16
     [_W,_F,_F,_C,_F,_F,_F,_C,_F,_F,_F,_C,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 17
     [_W,_F,_F,_D,_F,_F,_F,_D,_F,_F,_F,_D,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 18
-    [_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_V,_V,_V],  # 19
+    [_W,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_F,_T,_T,_T,_W,_B,_B,_B,_B,_B,_B,_B,_W,_V,_V,_V],  # 19
+    [_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_W,_V,_V,_V],  # 20
 ]
 # fmt: on
 

@@ -214,7 +214,7 @@ const MAP_ROOMS = [
     { id: "meeting_room", name: "Meeting Room", bounds: [16, 1, 23, 8] },
     { id: "break_room", name: "Break Room", bounds: [16, 12, 23, 18] },
     { id: "hallway_main", name: "Hallway", bounds: [13, 1, 15, 18] },
-    { id: "workspace_south", name: "South Workspace", bounds: [1, 12, 12, 18] },
+    { id: "workspace_south", name: "South Workspace", bounds: [1, 12, 12, 19] },
 ];
 // The desks GET /api/map answers with: core/world/tilemap.py's DEFAULT_DESKS,
 // trimmed to what the agent form reads (its only desk list).
@@ -1342,6 +1342,8 @@ async function main() {
         && newLayer.querySelector("#schedule-save").hidden === false;
     const aNewScheduleEditsInPlace = editsInPlace(newLayer, ["Repeats", "Next run", "Notify"])
         && noNativeDateTimeOrNumber(newLayer);
+    // Each run's task carries the instructions in full: no length cap in markup.
+    const scheduleInstructionsUncapped = !newLayer.querySelector(".schedule-instructions").hasAttribute("maxlength");
     newLayer.querySelector(".edit-field-title").value = "Weekly report";
     newLayer.querySelector(".schedule-instructions").value = "Summarise the week.";
     await newLayer.querySelector(".schedule-fields").querySelector(".menu-select-trigger").dispatchClick();
@@ -1642,11 +1644,11 @@ async function main() {
     await drain();
     if (!aRowOpensTheScheduleLayer || !anEditPatchesOnlyWhatChanged || !newOpensInEditMode
         || !weeklyNeedsAWeekday || !aCreatePostsTheExactRule || !leavingTheDeskClosesTheScheduleLayer
-        || !aNewScheduleEditsInPlace) {
+        || !aNewScheduleEditsInPlace || !scheduleInstructionsUncapped) {
         throw new Error(`the schedule layer: opens ${aRowOpensTheScheduleLayer}, in place ${aNewScheduleEditsInPlace}, patch `
             + `${anEditPatchesOnlyWhatChanged} ${JSON.stringify(editWrite)}, new ${newOpensInEditMode}, `
             + `weekday ${weeklyNeedsAWeekday}, create ${aCreatePostsTheExactRule} ${JSON.stringify(createWrite)}, `
-            + `leaving ${leavingTheDeskClosesTheScheduleLayer}`);
+            + `leaving ${leavingTheDeskClosesTheScheduleLayer}, uncapped ${scheduleInstructionsUncapped}`);
     }
 
     // ─── 3b. Notes read the agent's workspace, not a column ───
@@ -2707,6 +2709,7 @@ async function main() {
         anUnfinishedSaveSaysWhy,
         aNewScheduleCanBeSavedOff,
         aNewScheduleEditsInPlace,
+        scheduleInstructionsUncapped,
         anEditKeepsTheFactsInPlace,
         anInvalidTypedTimeIsSaidNotSent,
         aTypedTimeIsShownFormatted,

@@ -145,6 +145,7 @@ const BossModOfficeCanvas = (() => {
             SPRITES.drawAgents(ctx2d, agents, {
                 ...opts, hoveredId, statusColor: BossModAgentStatus.getStatusColor,
             });
+            SPRITES.drawNameTags(ctx2d, agents, opts);
             SPRITES.drawThoughtBubbles(ctx2d, motion.bubbles(), opts);
             ctx2d.restore();
         }

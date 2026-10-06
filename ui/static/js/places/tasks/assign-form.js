@@ -90,7 +90,7 @@ const BossModAssignForm = (() => {
         BossModIcons.paint(agentSelect.element, 'assign-form');
         const description = h('textarea', {
             class: 'field-textarea', id: 'ct-assign-description', 'data-size': 'long', 'data-autogrow': true,
-            maxlength: '4000', placeholder: 'Context, constraints, or the expected deliverable',
+            placeholder: 'Context, constraints, or the expected deliverable',
         });
         const grow = BossModAutoGrow.bind(description);
         const result = h('div', { class: 'assign-result' });

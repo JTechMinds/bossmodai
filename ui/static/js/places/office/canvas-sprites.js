@@ -37,6 +37,12 @@ const BossModCanvasSprites = (() => {
         FADE_MS: 500,
     });
 
+    /** Text-on-pill geometry shared by room labels and name tags. Pixels at scale 1. */
+    const PILL = Object.freeze({ HEIGHT: 18, RADIUS: 4, PAD_X: 8 });
+
+    /** Agent name-tag type. */
+    const NAME_FONT = '10px system-ui, sans-serif';
+
     /** Agent circle radius as a fraction of one tile. */
     const AGENT_RADIUS_RATIO = 0.35;
 
@@ -67,7 +73,33 @@ const BossModCanvasSprites = (() => {
     }
 
     /**
-     * Paint each room's name on a pill at its centre.
+     * Paint `text` centred on a `palette.pill` rounded rect, in the context's
+     * current font. The pill is sized to the whole text: nothing is clipped.
+     *
+     * @param {CanvasRenderingContext2D} ctx2d
+     * @param {string} text
+     * @param {number} centerX
+     * @param {number} centerY
+     * @param {string} ink  A palette colour for the text.
+     * @param {{palette: object}} opts
+     * @returns {void}
+     */
+    function drawPill(ctx2d, text, centerX, centerY, ink, opts) {
+        const pillW = ctx2d.measureText(text).width + PILL.PAD_X * 2;
+        ctx2d.fillStyle = opts.palette.pill;
+        ctx2d.beginPath();
+        ctx2d.roundRect(centerX - pillW / 2, centerY - PILL.HEIGHT / 2, pillW, PILL.HEIGHT, PILL.RADIUS);
+        ctx2d.fill();
+        ctx2d.textAlign = 'center';
+        ctx2d.textBaseline = 'middle';
+        ctx2d.fillStyle = ink;
+        ctx2d.fillText(text, centerX, centerY);
+    }
+
+    /**
+     * Paint each room's name on a pill, centred on the room's first interior
+     * row. That row is an aisle in every room, so no seated agent's name tag
+     * can land under the label.
      *
      * @param {CanvasRenderingContext2D} ctx2d
      * @param {Array<{name: string, bounds: number[]}>} rooms  Empty is valid.
@@ -77,19 +109,11 @@ const BossModCanvasSprites = (() => {
     function drawRoomLabels(ctx2d, rooms, opts) {
         const { tileSize, palette } = opts;
         ctx2d.font = 'bold 11px system-ui, sans-serif';
-        ctx2d.textAlign = 'center';
-        ctx2d.textBaseline = 'middle';
         for (const room of rooms || []) {
-            const [x1, y1, x2, y2] = room.bounds;
+            const [x1, y1, x2] = room.bounds;
             const centerX = ((x1 + x2) / 2) * tileSize + tileSize / 2;
-            const centerY = ((y1 + y2) / 2) * tileSize + tileSize / 2;
-            const pillW = ctx2d.measureText(room.name).width + 16;
-            ctx2d.fillStyle = palette.pill;
-            ctx2d.beginPath();
-            ctx2d.roundRect(centerX - pillW / 2, centerY - 9, pillW, 18, 4);
-            ctx2d.fill();
-            ctx2d.fillStyle = palette.roomInk;
-            ctx2d.fillText(room.name, centerX, centerY);
+            const centerY = y1 * tileSize + tileSize / 2;
+            drawPill(ctx2d, room.name, centerX, centerY, palette.roomInk, opts);
         }
     }
 
@@ -113,7 +137,8 @@ const BossModCanvasSprites = (() => {
     }
 
     /**
-     * Paint every agent: shadow, body, hover ring, status dot, name.
+     * Paint every agent: shadow, body, hover ring, status dot. Names are a
+     * separate pass (drawNameTags) so no body can paint over a tag.
      *
      * @param {CanvasRenderingContext2D} ctx2d
      * @param {Array<object>} agents  Tile coordinates, possibly fractional
@@ -171,12 +196,27 @@ const BossModCanvasSprites = (() => {
             ctx2d.strokeStyle = palette.pill;
             ctx2d.lineWidth = 1;
             ctx2d.stroke();
+        }
+    }
 
-            ctx2d.font = '10px system-ui, sans-serif';
-            ctx2d.textAlign = 'center';
-            ctx2d.textBaseline = 'alphabetic';
-            ctx2d.fillStyle = palette.nameInk;
-            ctx2d.fillText(agent.name, cx, cy + radius + 12);
+    /**
+     * Paint every agent's full name on a pill just below its body. Names are
+     * never shortened: a long name's tag may overlap a neighbour's, by
+     * operator decision. Call after drawAgents so tags sit above every body.
+     *
+     * @param {CanvasRenderingContext2D} ctx2d
+     * @param {Array<object>} agents  Same shape as drawAgents.
+     * @param {{tileSize: number, palette: object}} opts
+     * @returns {void}
+     */
+    function drawNameTags(ctx2d, agents, opts) {
+        const { tileSize, palette } = opts;
+        const radius = tileSize * AGENT_RADIUS_RATIO;
+        ctx2d.font = NAME_FONT;
+        for (const agent of agents || []) {
+            const cx = agent.x * tileSize + tileSize / 2;
+            const cy = agent.y * tileSize + tileSize / 2;
+            drawPill(ctx2d, agent.name, cx, cy + radius + PILL.HEIGHT / 2 + 2, palette.nameInk, opts);
         }
     }
 
@@ -287,6 +327,6 @@ const BossModCanvasSprites = (() => {
 
     return {
         TILE, BUBBLE, AGENT_RADIUS_RATIO,
-        drawTiles, drawRoomLabels, drawDesks, drawAgents, drawThoughtBubbles, wrapText,
+        drawTiles, drawRoomLabels, drawDesks, drawAgents, drawNameTags, drawThoughtBubbles, wrapText,
     };
 })();
