@@ -1,23 +1,27 @@
 /**
  * Node harness: core/icons.js paints one scope, once, or fails out loud.
  *
- * Run against the REAL vendored lucide bundle (it is a UMD, so `require`
- * hands back the same `icons` map and `createElement` the browser gets) and
- * the shared fake DOM. Stubbing lucide here would prove nothing: the two
+ * Run against what index.html SHIPS — the generated vendor/lucide.subset.js,
+ * evaluated as the browser evaluates it so it sets `window.lucide` — and the
+ * shared fake DOM. Stubbing lucide here would prove nothing: the two
  * behaviours this module exists to correct — an ignored `nodes` option and an
  * SVG that carries `data-lucide` forward so it gets repainted forever — are
- * behaviours of the real bundle.
+ * behaviours of the real bundle. The full vendored bundle (a UMD, so `require`
+ * hands back its `icons` and `createElement`) is loaded beside it only to
+ * prove the subset builds every icon it carries exactly as the full one does.
  *
  * Invoked by tests/test_ui_icons.py. Not a browser bundle.
  *
- * argv: [2] core/icons.js  [3] vendor/lucide.min.js  [4] ui/static/js root
+ * argv: [2] core/icons.js  [3] vendor/lucide.subset.js  [4] ui/static/js root
+ *       [5] vendor/lucide.min.js
  */
 const fs = require("fs");
 const path = require("path");
 const { installDom } = require("./js_fake_dom.cjs");
 
 const document = installDom();
-global.window.lucide = require(path.resolve(process.argv[3]));
+eval(fs.readFileSync(process.argv[3], "utf8"));
+const fullBundle = require(path.resolve(process.argv[5]));
 
 eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModIcons = BossModIcons;\n`);
 
@@ -137,6 +141,38 @@ const firstSweep = BossModIcons.paintDocument("harness.sweep");
 const secondSweep = BossModIcons.paintDocument("harness.sweep");
 const paintDocumentSweepsAndSettles = firstSweep > 0 && secondSweep === 0;
 
+// ── An unknown name is console.error'd as well as thrown ─────────────────
+// A caller that catches the throw must not be able to turn a blank glyph back
+// into a silent one.
+const errors = [];
+const realError = console.error;
+console.error = (...args) => { errors.push(args.join(" ")); };
+const outsideSubset = h("div", {}, h("i", { "data-lucide": "anchor-off-not-real" }));
+document.body.append(outsideSubset);
+try {
+    BossModIcons.paint(outsideSubset, "harness.logged");
+} catch (_err) {
+    // Expected; the assertion is on what was logged.
+}
+console.error = realError;
+outsideSubset.remove();
+const unknownIconIsLogged = errors.length === 1
+    && errors[0].includes("anchor-off-not-real")
+    && errors[0].includes("harness.logged");
+
+// ── The subset builds each icon exactly as the full bundle does ──────────
+/** A node, its attributes in order and its children, as one string. */
+function serialise(node) {
+    const attrs = Array.from(node.attributes || []).map((a) => `${a.name}=${a.value}`).join(" ");
+    const kids = Array.from(node.childNodes || []).map(serialise).join("");
+    return `<${node.tagName} ${node.namespaceURI || ""} ${attrs}>${kids}</>`;
+}
+const subsetKeys = Object.keys(global.window.lucide.icons);
+const subsetMatchesFullBundle = subsetKeys.length > 0
+    && subsetKeys.length < Object.keys(fullBundle.icons).length
+    && subsetKeys.every((key) => serialise(global.window.lucide.createElement(global.window.lucide.icons[key]))
+        === serialise(fullBundle.createElement(fullBundle.icons[key])));
+
 // ── A missing bundle is a broken build, not a state to paint around ──────
 const restore = global.window.lucide;
 global.window.lucide = undefined;
@@ -187,6 +223,8 @@ process.stdout.write(`${JSON.stringify({
     detachedRootThrows,
     paintDocumentSweepsAndSettles,
     missingVendorThrows,
+    unknownIconIsLogged,
+    subsetMatchesFullBundle,
     everyShippedNameResolves,
     nameConversionMatchesIconSet,
     unresolvable,

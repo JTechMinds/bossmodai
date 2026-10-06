@@ -381,7 +381,7 @@ def test_the_diagnostics_row_limit_still_purges_oldest_first() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The hourly hook on the task watchdog
+# The history-prune hook on the task watchdog
 # ---------------------------------------------------------------------------
 
 def test_retention_settings_are_seeded() -> None:
@@ -390,6 +390,7 @@ def test_retention_settings_are_seeded() -> None:
         ("activity_log_retention_days", "30"),
         ("diagnostics_retention_days", "7"),
         ("diagnostics_retention_limit", "5000"),
+        ("history_prune_interval_minutes", "60"),
     ):
         row = query_one("SELECT value, category FROM settings WHERE key = $1", [key])
         assert row == {"value": value, "category": "advanced"}, key
@@ -406,7 +407,7 @@ def _counting_prunes(monkeypatch: pytest.MonkeyPatch) -> dict[str, list[datetime
     return calls
 
 
-def test_the_watchdog_prunes_on_its_first_tick_then_at_most_hourly(
+def test_the_watchdog_prunes_on_its_first_tick_then_once_per_interval(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
 ) -> None:
     import core.agent_loop.watchdog as watchdog_module
@@ -439,6 +440,16 @@ def test_the_watchdog_prunes_on_its_first_tick_then_at_most_hourly(
     clock[0] += 1.0
     watchdog._prune_history_if_due()
     assert [len(v) for v in calls.values()] == [2, 2, 2]
+
+    # The interval is the history_prune_interval_minutes setting, read each tick.
+    db.set_setting("history_prune_interval_minutes", "5", "advanced")
+    config.reload()
+    clock[0] += 299.0
+    watchdog._prune_history_if_due()
+    assert [len(v) for v in calls.values()] == [2, 2, 2]
+    clock[0] += 1.0
+    watchdog._prune_history_if_due()
+    assert [len(v) for v in calls.values()] == [3, 3, 3]
 
 
 def test_a_non_positive_retention_raises_before_anything_is_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -577,3 +588,17 @@ def test_recent_tasks_order_ties_newest_insert_first_and_pages_consistently() ->
         assert [t.id for t in db.list_recent_tasks(limit=50, **filters)] == newest_first, filters
         # A smaller limit is a prefix of the same order: no reshuffle at the edge.
         assert [t.id for t in db.list_recent_tasks(limit=3, **filters)] == newest_first[:3], filters
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "soon"])
+def test_a_bad_prune_interval_raises_before_anything_is_deleted(
+    monkeypatch: pytest.MonkeyPatch, value: str,
+) -> None:
+    import core.agent_loop.watchdog as watchdog_module
+
+    calls = _counting_prunes(monkeypatch)
+    db.set_setting("history_prune_interval_minutes", value, "advanced")
+    config.reload()
+    with pytest.raises(ConfigError):
+        watchdog_module.TaskWatchdog()._prune_history_if_due()
+    assert calls == {"triggers": [], "log": [], "diagnostics": []}

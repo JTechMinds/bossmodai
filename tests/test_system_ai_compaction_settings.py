@@ -110,6 +110,8 @@ def _render_system_settings() -> dict:
             str(JS / "core" / "overlays.js"),
             str(JS / "core" / "menu.js"),
             str(JS / "core" / "menu-select.js"),
+            # The Advanced section's Retention card, loaded before settings-advanced.js.
+            str(JS / "settings" / "settings-retention.js"),
         ],
         check=False,
         capture_output=True,
@@ -831,7 +833,7 @@ def test_system_ai_picker_source_is_under_ai_connections() -> None:
 
 
 def test_retention_limits_save_only_whole_numbers_in_range() -> None:
-    """Settings → Advanced: the four retention limits share one card and one save.
+    """Settings → Advanced: the retention limits and prune interval share one card and one save.
 
     A value that is not a whole number in the field's range is reported
     under the field and never sent. A setting the server does not have is
@@ -843,13 +845,15 @@ def test_retention_limits_save_only_whole_numbers_in_range() -> None:
         "Diagnostics Retention (days)",
         "Finished Wake-up Retention (days)",
         "Activity Log Retention (days)",
+        "History Prune Interval (minutes)",
     ]
-    assert flow["values"] == ["5000", "7", "7"]
+    assert flow["values"] == ["5000", "7", "7", "60"]
     for case, message in (
         ("zeroDays", "Enter a whole number, 1 or more."),
         ("fraction", "Enter a whole number, 1 or more."),
         ("text", "Enter a whole number, 1 or more."),
         ("belowRowMin", "Enter a whole number, 100 to 50000."),
+        ("negativeInterval", "Enter a whole number, 1 or more."),
     ):
         assert flow[case] == {"saves": [], "error": message, "invalid": "true"}, case
     assert flow["goodDays"] == {
@@ -859,6 +863,11 @@ def test_retention_limits_save_only_whole_numbers_in_range() -> None:
     }
     assert flow["goodRows"] == {
         "saves": ["/api/settings/diagnostics_retention_limit?value=8000&category=advanced"],
+        "error": "",
+        "invalid": "false",
+    }
+    assert flow["goodInterval"] == {
+        "saves": ["/api/settings/history_prune_interval_minutes?value=30&category=advanced"],
         "error": "",
         "invalid": "false",
     }

@@ -76,6 +76,23 @@ const BossModMarkdown = (() => {
     const LANGUAGE_CLASS = /^language-([a-z0-9+#-]+)$/;
 
     /**
+     * Run `use(hljs)` now when highlight.js is loaded, else once it lands. It
+     * is no `<script>` tag (core/lazy-script.js): the first fence declaring a
+     * language loads it, so an undefined global is expected until then. A
+     * failed load is logged and the code stays plain, readable text. Exported
+     * for places/files/file-content.js.
+     *
+     * @param {(hljs: object) => void} use
+     * @returns {void}
+     */
+    function withHighlighter(use) {
+        if (typeof hljs !== 'undefined') use(hljs);
+        else BossModLazyScript.load('highlight', 'hljs').then(use, (err) => {
+            console.error('[markdown] highlight.js did not load; code stays unhighlighted:', err);
+        });
+    }
+
+    /**
      * Replace a node with a plain text node, or drop it when there is nothing
      * to say. This is how an <img> keeps its alt text.
      *
@@ -188,6 +205,9 @@ const BossModMarkdown = (() => {
      * wrong (a Go snippet reads as C#). hljs itself is case-insensitive, so
      * the only thing standing between ```Go and correct colour is this.
      *
+     * Before highlight.js loads the normalised class is kept; highlightFence
+     * applies the same test once it has.
+     *
      * @param {HTMLElement} el
      * @returns {void}
      */
@@ -195,7 +215,8 @@ const BossModMarkdown = (() => {
         const raw = el.getAttribute('class');
         if (!raw) return;
         const match = LANGUAGE_CLASS.exec(raw.trim().toLowerCase());
-        if (match && hljs.getLanguage(match[1])) el.setAttribute('class', `language-${match[1]}`);
+        const known = match && (typeof hljs === 'undefined' || hljs.getLanguage(match[1]));
+        if (known) el.setAttribute('class', `language-${match[1]}`);
         else el.removeAttribute('class');
     }
 
@@ -294,8 +315,9 @@ const BossModMarkdown = (() => {
      * The test for "did it declare one" is the class, and it is trustworthy
      * because sanitize ran first: stripAttributes leaves <code> nothing but
      * `class`, and keepLanguageClass either rewrites it to a language hljs
-     * resolved or removes it. So a class here IS a known language, and an
-     * unknown tag (```brainfuck) has already become the untagged case.
+     * resolved or removes it. So a class here IS a known language (or, before
+     * hljs has loaded, one highlightFence checks again), and an unknown tag
+     * (```brainfuck) has already become the untagged case.
      *
      * Walked by hand rather than through `querySelectorAll('pre code')`: the
      * descendant selector is the one form the DOM this runs against in tests
@@ -303,22 +325,38 @@ const BossModMarkdown = (() => {
      * renderer that is not tested.
      *
      * @param {Node} root
+     * @param {HTMLElement[]} [declared]  Accumulator for the recursion.
      * @returns {void}
      */
-    function highlightCode(root) {
+    function highlightCode(root, declared) {
+        const fences = declared || [];
         for (const node of Array.from(root.childNodes)) {
             if (node.nodeType !== ELEMENT_NODE) continue;
             if (node.tagName === 'CODE'
                 && node.parentNode && node.parentNode.tagName === 'PRE') {
-                const declared = node.getAttribute('class');
+                if (node.getAttribute('class')) fences.push(node);
                 // The class the vendored hljs stylesheet paints the code
                 // SURFACE with. An untagged fence is still a code block.
                 node.classList.add('hljs');
-                if (declared) hljs.highlightElement(node);
                 continue;
             }
-            highlightCode(node);
+            highlightCode(node, fences);
         }
+        if (!declared && fences.length) {
+            withHighlighter((lib) => fences.forEach((node) => highlightFence(lib, node)));
+        }
+    }
+
+    /**
+     * Highlight a declared fence, or drop a language highlight.js lacks (kept
+     * only when keepLanguageClass ran before it loaded).
+     * @param {object} lib @param {HTMLElement} node @returns {void}
+     */
+    function highlightFence(lib, node) {
+        const language = String(node.getAttribute('class')).split(/\s+/)
+            .map((name) => LANGUAGE_CLASS.exec(name)).find(Boolean);
+        if (language && lib.getLanguage(language[1])) lib.highlightElement(node);
+        else node.setAttribute('class', 'hljs');
     }
 
     /**
@@ -357,5 +395,5 @@ const BossModMarkdown = (() => {
         el.replaceChildren(...render(text));
     }
 
-    return { render, renderInto, sanitize };
+    return { render, renderInto, sanitize, withHighlighter };
 })();

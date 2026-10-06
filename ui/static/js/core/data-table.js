@@ -23,6 +23,12 @@
  *
  * Loading and error are this wrapper's states over the table (Tabulator's
  * own loader overlay is off); empty is Tabulator's placeholder.
+ *
+ * Tabulator is not a `<script>` tag. It is 448 KB with this one consumer, so
+ * the first `create` loads it through BossModLazyScript and builds the table
+ * when it lands; until then the wrapper shows its own loading state, and a
+ * library that fails to load shows the error state with "Try again", which
+ * retries the load.
  */
 const BossModDataTable = (() => {
     const { h } = BossModDom;
@@ -62,7 +68,8 @@ const BossModDataTable = (() => {
      * @param {number} options.pageSize  Rows per page (a positive integer).
      * @param {string} options.emptyText  Shown when the first page is empty.
      * @param {(el: HTMLElement, opts: object) => object} [options.tableFactory]
-     *   Test seam; defaults to the vendored Tabulator.
+     *   Test seam, used synchronously. Omitted, the vendored Tabulator is
+     *   used, loaded on first use: until it arrives the table shows loading.
      * @returns {{element: HTMLElement, reload: () => void, destroy: () => void}}
      *   Mount `element` in the document BEFORE the first layout matters:
      *   Tabulator measures its host.
@@ -70,8 +77,7 @@ const BossModDataTable = (() => {
      */
     function create(options) {
         const {
-            caption, columns, rowLabel, onActivate, loadPage, pageSize, emptyText,
-            tableFactory = tabulatorFactory,
+            caption, columns, rowLabel, onActivate, loadPage, pageSize, emptyText, tableFactory,
         } = options || {};
         if (!caption || typeof caption !== 'string') throw new Error('[data-table] caption is required');
         if (!Array.isArray(columns) || !columns.length) throw new Error('[data-table] columns must be a non-empty array');
@@ -94,6 +100,10 @@ const BossModDataTable = (() => {
         const element = h('div', { class: 'data-table' }, statusEl, errorEl, gridEl);
 
         let destroyed = false;
+        /** The library's table, once it is built. */
+        let table = null;
+        /** True while the library is being loaded. */
+        let loading = false;
 
         function showLoading() {
             statusEl.textContent = COPY.loading;
@@ -136,27 +146,55 @@ const BossModDataTable = (() => {
             formatter: index === 0 ? activatorCell(column.key) : textCell(column.key),
         }));
 
-        const table = tableFactory(gridEl, {
-            layout: 'fitColumns',
-            // Every row of the page stays in the DOM: a page is small, assistive
-            // tech then sees all its rows, and a hidden host (a layer opened
-            // over the list) does not empty the virtual renderer, which would
-            // drop the row button focus has to return to.
-            renderVertical: 'basic',
-            columns: tableColumns,
-            placeholder: emptyText,
-            dataLoader: false,
-            pagination: true,
-            paginationMode: 'remote',
-            paginationSize: pageSize,
-            // Tabulator only asks its request function when a URL is set; this
-            // one names the request, the function below makes it.
-            ajaxURL: 'bossmod:data-table',
-            ajaxRequestFunc: (_url, _config, params) => request(params),
-            rowFormatter: (row) => {
-                row.getElement().classList.toggle('is-emphasis', Boolean(row.getData().emphasis));
-            },
-        });
+        /**
+         * Build the library's table over the grid host and wire row activation.
+         *
+         * @param {(el: HTMLElement, opts: object) => object} factory
+         * @returns {void}
+         */
+        function build(factory) {
+            table = factory(gridEl, {
+                layout: 'fitColumns',
+                // Every row of the page stays in the DOM: a page is small, assistive
+                // tech then sees all its rows, and a hidden host (a layer opened
+                // over the list) does not empty the virtual renderer, which would
+                // drop the row button focus has to return to.
+                renderVertical: 'basic',
+                columns: tableColumns,
+                placeholder: emptyText,
+                dataLoader: false,
+                pagination: true,
+                paginationMode: 'remote',
+                paginationSize: pageSize,
+                // Tabulator only asks its request function when a URL is set; this
+                // one names the request, the function below makes it.
+                ajaxURL: 'bossmod:data-table',
+                ajaxRequestFunc: (_url, _config, params) => request(params),
+                rowFormatter: (row) => {
+                    row.getElement().classList.toggle('is-emphasis', Boolean(row.getData().emphasis));
+                },
+            });
+            table.on('rowClick', (_event, row) => onActivate(row.getData()));
+        }
+
+        /**
+         * Load the library, then build. A failure is the wrapper's error state
+         * (its "Try again" calls reload, which retries the load) and is logged.
+         *
+         * @returns {void}
+         */
+        function loadAndBuild() {
+            loading = true;
+            showLoading();
+            BossModLazyScript.load('tabulator', 'Tabulator').then(() => {
+                loading = false;
+                if (!destroyed) build(tabulatorFactory);
+            }, (err) => {
+                loading = false;
+                console.error('[data-table] the table library did not load:', err);
+                if (!destroyed) showError(String((err && err.message) || err));
+            });
+        }
 
         async function request(params) {
             const page = Number(params && params.page) || 1;
@@ -172,14 +210,20 @@ const BossModDataTable = (() => {
             }
         }
 
-        table.on('rowClick', (_event, row) => onActivate(row.getData()));
+        // Once any table has loaded the library its global is defined, and
+        // every later table builds at once.
+        if (tableFactory) build(tableFactory);
+        else if (typeof Tabulator !== 'undefined') build(tabulatorFactory);
+        else loadAndBuild();
 
-        /** Re-read from the first page. @returns {void} */
+        /** Re-read from the first page, or retry a library load that failed. @returns {void} */
         function reload() {
             if (destroyed) return;
             // A failure reaches request() above, which shows it; Tabulator
             // itself resolves setData() either way.
-            table.setData();
+            if (table) table.setData();
+            // Still loading: the table reads page one when it is built.
+            else if (!loading) loadAndBuild();
         }
 
         return {
@@ -188,7 +232,7 @@ const BossModDataTable = (() => {
             /** Tear the table down; later loads paint nothing. @returns {void} */
             destroy() {
                 destroyed = true;
-                table.destroy();
+                if (table) table.destroy();
             },
         };
     }

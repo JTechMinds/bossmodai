@@ -51,7 +51,7 @@ const BossModAgentForm = (() => {
      * Read one of the form's list dependencies.
      *
      * @param {Response} res
-     * @param {string} what  The path, named in the error: three reads share
+     * @param {string} what  The path, named in the error: four reads share
      *   this shape, and "which one" is the first thing a reader of the failure
      *   needs. `settledList` below is what catches it.
      * @returns {Promise<object[]>}

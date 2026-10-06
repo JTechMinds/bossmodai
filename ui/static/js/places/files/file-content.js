@@ -85,6 +85,10 @@ const BossModFileContent = (() => {
     /**
      * A highlighted <pre><code> block.
      *
+     * Returned at once with the text in place; the colour follows when
+     * highlight.js is loaded, which the first code file asks for
+     * (BossModMarkdown.withHighlighter).
+     *
      * @param {string} code
      * @param {string|null} lang
      * @returns {HTMLElement}
@@ -92,8 +96,10 @@ const BossModFileContent = (() => {
     function codeBlock(code, lang) {
         const codeEl = h('code', { class: 'hljs' });
         codeEl.textContent = code;
-        if (lang && hljs.getLanguage(lang)) codeEl.classList.add(`language-${lang}`);
-        hljs.highlightElement(codeEl);
+        BossModMarkdown.withHighlighter((hljs) => {
+            if (lang && hljs.getLanguage(lang)) codeEl.classList.add(`language-${lang}`);
+            hljs.highlightElement(codeEl);
+        });
         return h('pre', { class: 'file-view-code' }, codeEl);
     }
 

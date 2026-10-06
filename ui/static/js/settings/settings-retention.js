@@ -59,16 +59,18 @@ const BossModRetentionSettings = (() => {
     }
 
     function fieldHtml(field, setting) {
-        const id = BossModFormat.escapeAttribute(field.id);
-        const max = field.max ? `max="${field.max}"` : '';
+        const id = field.id;
         return `<div>
-                        <label for="${id}" class="block text-sm font-medium mb-1">${BossModFormat.escapeHtml(field.label)}</label>
-                        <p id="${id}-hint" class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(field.hint)}</p>
-                        <input type="number" id="${id}" aria-describedby="${id}-hint ${id}-error"
+                        <label for="${BossModFormat.escapeAttribute(id)}" class="block text-sm font-medium mb-1">${BossModFormat.escapeHtml(field.label)}</label>
+                        <p id="${BossModFormat.escapeAttribute(`${id}-hint`)}" class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(field.hint)}</p>
+                        <input type="number" id="${BossModFormat.escapeAttribute(id)}"
+                               aria-describedby="${BossModFormat.escapeAttribute(`${id}-hint ${id}-error`)}"
                                value="${BossModFormat.escapeAttribute(setting ? setting.value : '')}" ${setting ? '' : 'disabled'}
-                               min="${field.min}" ${max} step="${field.step ?? 1}"
+                               min="${BossModFormat.escapeAttribute(String(field.min))}"
+                               max="${BossModFormat.escapeAttribute(field.max ? String(field.max) : '')}"
+                               step="${BossModFormat.escapeAttribute(String(field.step ?? 1))}"
                                class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg bg-bm-bg">
-                        <p id="${id}-error" role="alert" class="text-xs text-red-600 mt-1">${setting ? '' : 'Not configured. Reset Seed Settings restores it.'}</p>
+                        <p id="${BossModFormat.escapeAttribute(`${id}-error`)}" role="alert" class="text-xs text-red-600 mt-1">${setting ? '' : 'Not configured. Reset Seed Settings restores it.'}</p>
                     </div>`;
     }
 

@@ -48,7 +48,19 @@ RETIRED_VENDOR = (
 # The three the app cannot render without. Split.js was the fourth; the
 # Tailwind Play compiler left too, replaced by the pre-built
 # css/tailwind.generated.css, which is app CSS rather than a vendored asset.
-CHROME_ASSETS = ("lucide.min.js", "marked.min.js", "highlight.min.js")
+# Lucide ships as the generated subset (scripts/build_lucide_subset.cjs);
+# highlight.js is loaded on first use but is still chrome the app needs.
+CHROME_ASSETS = ("lucide.subset.js", "marked.min.js", "highlight.min.js")
+
+# On disk in vendor/ on purpose and loaded by nothing: the full Lucide bundle
+# is the INPUT scripts/build_lucide_subset.cjs reads to generate
+# lucide.subset.js. It is the one exception to "vendored but nothing loads it",
+# and it must never be loaded again — that was 358 KB parsed per launch.
+GENERATOR_INPUTS = ("lucide.min.js",)
+
+# Vendored scripts that are not script tags: core/lazy-script.js loads each one
+# on first use from a `bossmod-lazy-script` meta carrying its URL.
+LAZY_SCRIPTS = {"highlight": "highlight.min.js", "tabulator": "tabulator.min.js"}
 
 
 def _html() -> str:
@@ -69,7 +81,11 @@ def test_index_does_not_load_cdn_chrome() -> None:
                 "cdnjs.cloudflare.com", "fonts.googleapis.com"):
         assert cdn not in html, f"index.html reaches for {cdn}"
     assert "static_url('css/tailwind.generated.css')" in html
-    assert "static_url('js/vendor/lucide.min.js')" in html
+    assert "static_url('js/vendor/lucide.subset.js')" in html
+    for name in GENERATOR_INPUTS:
+        assert f"static_url('js/vendor/{name}')" not in html, (
+            f"{name} is a generator input and must not be loaded"
+        )
     for name in RETIRED_VENDOR:
         assert name not in html, f"{name} is loaded again"
 
@@ -90,11 +106,11 @@ def test_vendor_chrome_assets_exist() -> None:
     human to measure, and the answer is recorded in RETIRED_VENDOR.
     """
     references = _vendor_references()
-    # Six: Lucide, marked, highlight.js, the hljs stylesheet, and Tabulator's
-    # script and base stylesheet (core/data-table.js). Tailwind was the
-    # seventh until its runtime compiler was replaced by a pre-built sheet.
-    # An exact count rather than a floor, because a floor is what let eleven
-    # redundant language packs sit here inflating it.
+    # Six: the Lucide subset, marked, highlight.js (lazy), the hljs stylesheet,
+    # and Tabulator's script (lazy) and base stylesheet (core/data-table.js).
+    # Tailwind was the seventh until its runtime compiler was replaced by a
+    # pre-built sheet. An exact count rather than a floor, because a floor is
+    # what let eleven redundant language packs sit here inflating it.
     assert len(references) == 6, f"{len(references)} vendored references: {references}"
 
     for ref in references:
@@ -111,6 +127,9 @@ def test_vendor_chrome_assets_exist() -> None:
         for path in sorted(directory.iterdir()):
             if path.suffix not in {".js", ".css"}:
                 continue  # VENDOR_SOURCES.md records provenance, not code
+            if path.name in GENERATOR_INPUTS:
+                assert path.resolve() not in referenced, f"{path.name} is loaded again"
+                continue
             assert path.resolve() in referenced, (
                 f"{path.name} is vendored but nothing loads it"
             )
@@ -131,3 +150,22 @@ def test_tauri_csp_is_self_only() -> None:
     assert "'unsafe-eval'" not in csp
     assert "script-src 'self'" in csp
     assert "style-src 'self' 'unsafe-inline'" in csp
+
+
+def test_lazy_vendor_scripts_are_metas_not_script_tags() -> None:
+    """highlight.js and Tabulator are parsed only when something needs them.
+
+    Each is named once, by a `bossmod-lazy-script` meta that core/lazy-script.js
+    reads its URL from, and by no script tag — a script tag would put the
+    575 KB the two weigh back on every launch.
+    """
+    html = _html()
+    script_tags = re.findall(r"<script\b[^>]*\bsrc=\"\{\{ static_url\('([^']+)'\) \}\}\"", html)
+    for library, name in LAZY_SCRIPTS.items():
+        meta = (
+            f'<meta name="bossmod-lazy-script" data-library="{library}" '
+            f"content=\"{{{{ static_url('js/vendor/{name}') }}}}\">"
+        )
+        assert html.count(meta) == 1, f"{name} is not declared lazily exactly once"
+        assert f"js/vendor/{name}" not in script_tags, f"{name} is a script tag again"
+        assert html.count(f"js/vendor/{name}") == 1, f"{name} is referenced more than once"

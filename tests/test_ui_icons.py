@@ -56,13 +56,14 @@ def _app_sources() -> dict[str, str]:
 
 
 def test_icons_module_paints_one_scope_once() -> None:
-    """The behaviour, against the real vendored bundle and the shared fake DOM."""
+    """The behaviour, against the shipped icon subset and the shared fake DOM."""
     result = subprocess.run(
         [
             "node", str(HARNESS),
             str(JS / "core" / "icons.js"),
-            str(JS / "vendor" / "lucide.min.js"),
+            str(JS / "vendor" / "lucide.subset.js"),
             str(JS),
+            str(JS / "vendor" / "lucide.min.js"),
         ],
         check=False, capture_output=True, text=True,
     )
@@ -85,7 +86,12 @@ def test_icons_module_paints_one_scope_once() -> None:
         "paintDocumentSweepsAndSettles": True,
         # A missing bundle is a broken build, and says so.
         "missingVendorThrows": True,
-        # Every data-lucide name the app ships resolves in the icon set —
+        # A name outside the shipped subset is console.error'd, not only thrown.
+        "unknownIconIsLogged": True,
+        # The generated subset builds every icon it carries exactly as the
+        # full vendored bundle does, and carries fewer icons than it.
+        "subsetMatchesFullBundle": True,
+        # Every data-lucide name the app ships resolves in the SHIPPED subset —
         # which is what makes throwing on an unknown one safe.
         "everyShippedNameResolves": True,
         "nameConversionMatchesIconSet": True,

@@ -141,6 +141,8 @@ eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModSwitch = BossM
 });
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModSystemSettingsMeta = BossModSystemSettingsMeta;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.SystemSection = SystemSection;\n`);
+// The Advanced section's Retention card (settings-retention.js), last argument.
+eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModRetentionSettings = BossModRetentionSettings;\n`);
 eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.AdvancedSystemSection = AdvancedSystemSection;\n`);
 
 /**
@@ -358,6 +360,7 @@ async function main() {
         setting("diagnostics_retention_days", "7", "advanced"),
         setting("trigger_retention_days", "7", "advanced"),
         // activity_log_retention_days left out: its field must say so.
+        setting("history_prune_interval_minutes", "60", "advanced"),
         setting("cli_max_read_lines", "200", "advanced"),
         setting("desktop_open_folder_handler", "", "advanced"),
         setting("cli_auto_approve_global", "false", "advanced"),
@@ -411,10 +414,10 @@ async function main() {
     };
     const retentionLabels = advancedRoot.querySelectorAll("label")
         .map((label) => label.textContent.trim())
-        .filter((text) => /Retention/.test(text));
+        .filter((text) => /Retention|Prune/.test(text));
     const retention = {
         labels: retentionLabels,
-        values: ["diag-retention-limit", "diag-retention-days", "trigger-retention-days"]
+        values: ["diag-retention-limit", "diag-retention-days", "trigger-retention-days", "history-prune-interval"]
             .map((id) => documentStub.getElementById(id).value),
         zeroDays: await retentionStep("diag-retention-days", "0"),
         fraction: await retentionStep("trigger-retention-days", "1.5"),
@@ -422,6 +425,8 @@ async function main() {
         belowRowMin: await retentionStep("diag-retention-limit", "50"),
         goodDays: await retentionStep("diag-retention-days", "14"),
         goodRows: await retentionStep("diag-retention-limit", "8000"),
+        negativeInterval: await retentionStep("history-prune-interval", "-5"),
+        goodInterval: await retentionStep("history-prune-interval", "30"),
         missing: {
             disabled: documentStub.getElementById("activity-log-retention-days").disabled,
             error: documentStub.getElementById("activity-log-retention-days-error").textContent.trim(),

@@ -27,6 +27,12 @@
  * SVG is built by `lucide.createElement`. This module owns the scope, the
  * idempotency and the failure modes, and nothing else.
  *
+ * `window.lucide` is NOT the full 1,700-icon bundle. index.html loads
+ * js/vendor/lucide.subset.js, which scripts/build_lucide_subset.cjs generates
+ * from it with only the icons the app names (tests/test_lucide_subset.py
+ * keeps the two in step). A name outside the subset is reported with
+ * console.error AND thrown, so it can never become a silently blank glyph.
+ *
  * No `BossModDom.h` here on purpose — h() builds HTML elements through
  * `document.createElement`, and an SVG built in the HTML namespace does not
  * render. The vendor's `createElement` uses `createElementNS`, so it is the
@@ -63,8 +69,8 @@ const BossModIcons = (() => {
     /**
      * The vendored lucide bundle, or a thrown error naming the call site.
      *
-     * `window.lucide` is a vendored file loaded by index.html ahead of every
-     * module that paints, so its absence is a broken build — not a runtime
+     * `window.lucide` is the generated subset loaded by index.html ahead of
+     * every module that paints, so its absence is a broken build — not a runtime
      * state to degrade around. Degrading would leave bare `<i>` placeholders
      * on screen, which read as a CSS bug and send the next person to the
      * stylesheet; throwing names the real cause once, at the first paint.
@@ -78,7 +84,7 @@ const BossModIcons = (() => {
         if (!lucide || !lucide.icons || typeof lucide.createElement !== 'function') {
             throw new Error(
                 `[icons] ${context}: window.lucide is missing or incomplete. `
-                + 'The vendored bundle (js/vendor/lucide.min.js) failed to load — '
+                + 'The icon subset (js/vendor/lucide.subset.js) failed to load — '
                 + 'this is a broken build, not a state to paint around.',
             );
         }
@@ -175,8 +181,8 @@ const BossModIcons = (() => {
      *   "unknown icon" into a fixable report.
      * @returns {number} How many placeholders were replaced.
      * @throws {Error} When `root` is not an element, `context` is missing, the
-     *   lucide bundle is unavailable, an icon name is not in the icon set, or
-     *   a placeholder has no parent to be replaced in.
+     *   icon subset is unavailable, an icon name is not in the subset (also
+     *   console.error'd), or a placeholder has no parent to be replaced in.
      */
     function paint(root, context) {
         if (typeof context !== 'string' || !context) {
@@ -199,11 +205,13 @@ const BossModIcons = (() => {
             resolved.push({ el, name, definition: lucide.icons[key] });
         }
         if (unknown.length) {
-            throw new Error(
-                `[icons] ${context}: no such lucide icon: ${unknown.join(', ')}. `
-                + 'Fix the name at the call site — an icon that does not exist '
-                + 'would otherwise leave an empty placeholder on screen.',
-            );
+            const message = `[icons] ${context}: no such icon in the shipped subset: ${unknown.join(', ')}. `
+                + 'Fix the name at the call site, or, if it is a real lucide icon, re-run '
+                + 'scripts/build_lucide_subset.cjs — otherwise the placeholder stays blank.';
+            // Logged as well as thrown: a caller that catches the throw must not
+            // turn a missing glyph back into a silent one.
+            console.error(message);
+            throw new Error(message);
         }
 
         for (const { el, name, definition } of resolved) {

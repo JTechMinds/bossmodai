@@ -157,11 +157,19 @@ def test_markdown_is_loaded_and_styled() -> None:
     html = _read(HTML)
     assert "static_url('js/core/markdown.js')" in html
     assert "static_url('css/markdown.css')" in html
-    # After the vendored libraries it reads, and before every surface that
-    # renders a message.
-    scripts = re.findall(r"static_url\('([^']+\.js)'\)", html)
+    # After the vendored library it reads and the loader it fetches
+    # highlight.js through, and before every surface that renders a message.
+    scripts = re.findall(r"<script\b[^>]*\bsrc=\"\{\{ static_url\('([^']+\.js)'\) \}\}\"", html)
     assert scripts.index("js/vendor/marked.min.js") < scripts.index("js/core/markdown.js")
-    assert scripts.index("js/vendor/highlight.min.js") < scripts.index("js/core/markdown.js")
+    assert scripts.index("js/core/lazy-script.js") < scripts.index("js/core/markdown.js")
+    # highlight.js is not a script tag: markdown.js loads it on the first
+    # fence that declares a language, from the URL this meta carries.
+    assert "js/vendor/highlight.min.js" not in scripts
+    assert (
+        '<meta name="bossmod-lazy-script" data-library="highlight" '
+        "content=\"{{ static_url('js/vendor/highlight.min.js') }}\">"
+    ) in html
+    assert "BossModLazyScript.load('highlight', 'hljs')" in _read(MARKDOWN)
     assert scripts.index("js/core/markdown.js") < scripts.index("js/conversation/message.js")
     assert scripts.index("js/core/markdown.js") < scripts.index("js/places/files/file-content.js")
 

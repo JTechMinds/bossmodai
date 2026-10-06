@@ -35,6 +35,8 @@ SPLIT_HALVES = {
     "settings/settings-system-ai.js": "BossModSystemAi",
     "settings/settings-runtime-contracts-actions.js": "BossModRuntimeContractActions",
     "settings/settings-system-meta.js": "BossModSystemSettingsMeta",
+    # Phase 4: the Advanced section's Retention card.
+    "settings/settings-retention.js": "BossModRetentionSettings",
 }
 
 REQUIRED_SCRIPTS = [
@@ -60,6 +62,7 @@ REQUIRED_SCRIPTS = [
     "js/settings/settings-system-meta.js",
     "js/settings/settings-system.js",
     "js/settings/settings-prompt-template.js",
+    "js/settings/settings-retention.js",
     "js/settings/settings-advanced.js",
     "js/settings/settings-runtime-contracts-actions.js",
     "js/settings/settings-runtime-contracts.js",
@@ -420,6 +423,9 @@ def test_split_halves_define_their_own_iifes() -> None:
     assert "BossModRuntimeContractActions.bindActions({ onRefresh: () => render(el) })" in contracts
     system = _read("settings/settings-system.js")
     assert "= BossModSystemSettingsMeta;" in system
+    advanced = _read("settings/settings-advanced.js")
+    assert "BossModRetentionSettings.html(settings)" in advanced
+    assert "BossModRetentionSettings.mount(settings);" in advanced
 
 
 def test_all_split_files_exist_and_are_nonempty() -> None:

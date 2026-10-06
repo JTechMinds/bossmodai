@@ -78,6 +78,7 @@ SETTINGS_SCRIPTS = [
     "js/settings/settings-system-meta.js",
     "js/settings/settings-system.js",
     "js/settings/settings-prompt-template.js",
+    "js/settings/settings-retention.js",
     "js/settings/settings-advanced.js",
     "js/settings/settings-runtime-contracts-actions.js",
     "js/settings/settings-runtime-contracts.js",
@@ -92,7 +93,12 @@ def _html() -> str:
 
 
 def _scripts() -> list[str]:
-    return re.findall(r"static_url\('([^']+\.js)'\)", _html())
+    """The scripts index.html loads with a script tag, in load order.
+
+    Script TAGS only: highlight.js and Tabulator are named by
+    `bossmod-lazy-script` metas and loaded on first use, not at startup.
+    """
+    return re.findall(r"<script\b[^>]*\bsrc=\"\{\{ static_url\('([^']+\.js)'\) \}\}\"", _html())
 
 
 def test_no_dock_markup_or_dock_scripts_remain() -> None:
@@ -579,6 +585,30 @@ def test_api_auth_is_the_first_script() -> None:
     assert scripts[-1] == "js/shell/shell.js", (
         "the shell boots last, after every module it wires"
     )
+
+
+def test_every_script_is_external_and_deferred() -> None:
+    """Nothing blocks the first paint, and the dependency order still holds.
+
+    Deferred classic scripts run in document order once parsing ends, before
+    DOMContentLoaded — the event shell.js boots on — so `defer` on every tag
+    keeps the load order the rest of this file pins. The two ways to break that
+    are both refused here: an inline script runs BEFORE every deferred one
+    (ahead of api-auth.js and every BossMod* global), and `async` runs in
+    arrival order.
+    """
+    html = _html()
+    tags = re.findall(r"<script\b[^>]*>", html)
+    assert len(tags) == len(_scripts()), "a script tag the src pattern does not read"
+    assert len(tags) > 200, f"only {len(tags)} script tags found — the pattern broke"
+    for tag in tags:
+        assert re.fullmatch(r"<script defer src=\"\{\{ static_url\('[^']+\.js'\) \}\}\">", tag), (
+            f"not an external, deferred script: {tag}"
+        )
+    # Every opening tag is closed immediately: no inline body anywhere.
+    assert len(re.findall(r"<script\b[^>]*></script>", html)) == len(tags)
+    shell = (ROOT / "ui" / "static" / "js" / "shell" / "shell.js").read_text(encoding="utf-8")
+    assert "document.addEventListener('DOMContentLoaded'" in shell
 
 
 def test_settings_takeover_and_banners_survive() -> None:
