@@ -1324,36 +1324,37 @@ def test_an_empty_conversation_is_not_a_dead_end() -> None:
 
 
 def test_mini_office_is_a_map() -> None:
-    """The concept hardcodes three rooms; ours are whatever `agent.location`
-    says — any names, any count, plus the Unknown bucket.
+    """The summary is the Office map: the canvas's colours, the plan's layout.
 
-    So the rule has to be positional rather than by name: the sort is already
-    stable (alphabetical, Unknown last), the FIRST room spans both columns with
-    the panel background, and every room after it takes the next tint from a
-    fixed ramp. Tint follows sorted position, so a room does not change colour
-    when an agent walks between rooms.
+    It used to be positional — the first room wide with the panel background,
+    the rest cycling a blue/amber/teal/pink ramp — and the operator could not
+    match it to the map beside it. Rooms are now coloured by `room_type` with
+    the tokens office-canvas.js paints those tiles with, and placed on a grid
+    from their bounds; the degraded list keeps two neutral columns.
     """
     css = _read(CSS / "context.css")
     grid = css.split(".mini-office-rooms {", 1)[1].split("}", 1)[0]
     assert "display: grid" in grid
-    assert "grid-template-columns: 1fr 1fr" in grid
-    assert ".mini-office-room:first-child {" in css
-    first = css.split(".mini-office-room:first-child {", 1)[1].split("}", 1)[0]
-    assert "grid-column: 1 / -1" in first
-    assert "background: var(--panel)" in first
+    assert "grid-template-columns" not in grid, "each layout owns its own tracks"
+    plan = css.split('.mini-office-rooms[data-layout="map"] {', 1)[1].split("}", 1)[0]
+    assert "repeat(var(--mini-office-cols), minmax(0, 1fr))" in plan
+    assert "repeat(var(--mini-office-rows), minmax(var(--mini-office-track), auto))" in plan
+    assert "background: var(--office-transit)" in plan
+    listed = css.split('.mini-office-rooms[data-layout="list"] {', 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: 1fr 1fr" in listed
+    assert ".mini-office-room:first-child" not in css
 
-    # blue/amber/teal/pink, not the plan's blue/ok/amber/teal: --ok on --ok-bg
-    # measures 4.33:1 and there is no --ok-ink token, while all four of these
-    # have measured ink pairs in tokens.css (6.20-6.41:1).
+    # The canvas's palette (office-canvas.js PALETTE_TOKENS), keyed by type.
+    for tone, token in (("workspace", "--office-floor"), ("hallway", "--office-transit"),
+                        ("meeting", "--blue"), ("break", "--teal"), ("unplaced", "--panel")):
+        rule = css.split(f'.mini-office-room[data-tone="{tone}"] {{', 1)[1].split("}", 1)[0]
+        assert f"background: var({token})" in rule, tone
     for tone in ("blue", "amber", "teal", "pink"):
-        assert f'.mini-office-room[data-tone="{tone}"]' in css, tone
+        assert f'.mini-office-room[data-tone="{tone}"]' not in css, tone
 
     js = _read(JS / "context/mini-office.js")
-    # Offset by one against the plan's `TONES[index % TONES.length]`: index 0 is
-    # the wide panel room, so that formula would start the ramp at its SECOND
-    # tone and never reach the first until a fifth room existed.
-    assert "TONES[(index - 1) % TONES.length]" in js
-    assert "'data-tone'" in js
+    assert "TONES" not in js, "a room's colour is its type, not its position"
+    assert "'data-tone': room.tone" in js
 
 
 def test_mini_office_keeps_the_one_door_that_is_only_its_own() -> None:

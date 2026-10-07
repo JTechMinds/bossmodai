@@ -103,7 +103,7 @@ const NAMES = [
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
-    "BossModMiniOffice", "BossModOfficeChatter",
+    "BossModFloorPlan", "BossModMiniOffice", "BossModOfficeChatter",
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
     "BossModAgentApi", "BossModAgentTemplatesApi",
     "BossModAgentFields", "BossModAgentFormFields",
@@ -205,16 +205,18 @@ global.BossModMarketplace = {
     },
 };
 
-// The floor plan GET /api/map answers with, trimmed to what the summary reads.
-// The names are core/world/tilemap.py's DEFAULT_ROOMS, because the join between
-// the map and the roster is BY NAME — db.get_world_state() derives
-// `agent.location` from get_room_at(), which returns these same strings.
+// The floor plan GET /api/map answers with, trimmed to what the summary reads:
+// core/world/tilemap.py's DEFAULT_ROOMS, names, types and bounds copied
+// exactly. The join between the map and the roster is BY NAME —
+// db.get_world_state() derives `agent.location` from get_room_at(), which
+// returns these same strings — and the summary places each room at its bounds
+// and colours it by its type, so all three are the contract.
 const MAP_ROOMS = [
-    { id: "workspace_main", name: "Main Workspace", bounds: [1, 1, 12, 8] },
-    { id: "meeting_room", name: "Meeting Room", bounds: [16, 1, 23, 8] },
-    { id: "break_room", name: "Break Room", bounds: [16, 12, 23, 18] },
-    { id: "hallway_main", name: "Hallway", bounds: [13, 1, 15, 18] },
-    { id: "workspace_south", name: "South Workspace", bounds: [1, 12, 12, 19] },
+    { id: "workspace_main", name: "Main Workspace", room_type: "workspace", bounds: [1, 1, 12, 8] },
+    { id: "meeting_room", name: "Meeting Room", room_type: "meeting", bounds: [16, 1, 23, 8] },
+    { id: "break_room", name: "Break Room", room_type: "break", bounds: [16, 12, 23, 19] },
+    { id: "hallway_main", name: "Hallway", room_type: "hallway", bounds: [13, 1, 15, 19] },
+    { id: "workspace_south", name: "South Workspace", room_type: "workspace", bounds: [1, 12, 12, 19] },
 ];
 // The desks GET /api/map answers with: core/world/tilemap.py's DEFAULT_DESKS,
 // trimmed to what the agent form reads (its only desk list).
@@ -227,6 +229,9 @@ const MAP_DESKS = [
 // Flipped part-way through, so a later mini-office is built against a floor
 // plan that will not load and the degraded path is exercised for real.
 let mapFails = false;
+// The rooms the floor plan answers with; swapped for a plan the summary
+// cannot draw, to show it is refused rather than guessed at.
+let mapRooms = MAP_ROOMS;
 // How many times the floor plan was asked for: a floor switch must not ask.
 let mapRequests = 0;
 
@@ -546,7 +551,7 @@ function api(url, init) {
     if (url.startsWith("/api/map")) {
         mapRequests += 1;
         if (mapFails) return jsonResponse({ detail: "unavailable" }, 503);
-        return jsonResponse({ width: 28, height: 20, tiles: [], rooms: MAP_ROOMS, desks: MAP_DESKS });
+        return jsonResponse({ width: 28, height: 20, tiles: [], rooms: mapRooms, desks: MAP_DESKS });
     }
     const oneAgent = String(url).match(/^\/api\/agents\/([^/]+)$/);
     if (oneAgent) {
@@ -696,6 +701,57 @@ async function main() {
         throw new Error(`an empty room must say so, got ${JSON.stringify(emptyLabels())}`);
     }
 
+    // ─── 1a''. The summary is the Office map: its colours, its floor plan ───
+    //
+    // Each room is coloured by its type, with the tokens the canvas paints
+    // those tiles with, and placed at its bounds on a grid whose tracks are the
+    // rooms' bounding box (minX 1, minY 1 for the real plan).
+    const roomsGrid = () => contextEl.querySelector(".mini-office-rooms");
+    const roomBoxes = () => contextEl.querySelectorAll(".mini-office-room");
+    const roomBox = (name) => roomBoxes().find((node) =>
+        node.querySelector(".mini-office-room-name").textContent === name);
+    /** One declaration of a node's inline style, or null. */
+    const inline = (node, property) => {
+        const found = String(node.getAttribute("style") || "").split(";")
+            .map((part) => part.trim()).find((part) => part.startsWith(`${property}:`));
+        return found === undefined ? null : found.slice(property.length + 1).trim();
+    };
+    const tone = (name) => roomBox(name).getAttribute("data-tone");
+    const miniOfficeColoursByRoomType = tone("Meeting Room") === "meeting"
+        && tone("Break Room") === "break"
+        && tone("Hallway") === "hallway"
+        && tone("Main Workspace") === "workspace"
+        && tone("South Workspace") === "workspace";
+    const placed = (name, column, row) => inline(roomBox(name), "grid-column") === column
+        && inline(roomBox(name), "grid-row") === row;
+    const miniOfficePlacesRoomsByBounds = roomsGrid().getAttribute("data-layout") === "map"
+        && inline(roomsGrid(), "--mini-office-cols") === "23"
+        && inline(roomsGrid(), "--mini-office-rows") === "19"
+        && placed("Main Workspace", "1 / 13", "1 / 9")
+        && placed("Hallway", "13 / 16", "1 / 20")
+        && placed("Meeting Room", "16 / 24", "1 / 9")
+        && placed("Break Room", "16 / 24", "12 / 20")
+        && placed("South Workspace", "1 / 13", "12 / 20");
+    const miniOfficeTurnsTallRooms = roomBox("Hallway").getAttribute("data-orient") === "vertical"
+        && !roomBox("Main Workspace").hasAttribute("data-orient");
+    // Ada is off-map: one neutral box across the floor, after every mapped room.
+    const unknownBox = roomBox("Unknown");
+    const miniOfficeUnplacedSpansTheFloor = unknownBox.classList.contains("mini-office-room--unplaced")
+        && unknownBox.getAttribute("data-tone") === "unplaced"
+        && inline(unknownBox, "grid-column") === null
+        && roomBoxes().indexOf(unknownBox) === MAP_ROOMS.length
+        && Boolean(unknownBox.querySelector(".mini-office-seat"));
+    if (!(miniOfficeColoursByRoomType && miniOfficePlacesRoomsByBounds
+        && miniOfficeTurnsTallRooms && miniOfficeUnplacedSpansTheFloor)) {
+        throw new Error("the office summary must be the Office map: " + JSON.stringify({
+            miniOfficeColoursByRoomType, miniOfficePlacesRoomsByBounds,
+            miniOfficeTurnsTallRooms, miniOfficeUnplacedSpansTheFloor,
+            rooms: roomBoxes().map((node) => [node.getAttribute("data-tone"),
+                node.getAttribute("style"), node.getAttribute("data-orient")]),
+            grid: [roomsGrid().getAttribute("data-layout"), roomsGrid().getAttribute("style")],
+        }));
+    }
+
     // A need on an agent pings their seat, silently.
     store.setState({ needs: [{ id: "n1", kind: "blocked", agentId: "a1", conversationId: "a1" }] });
     const jim = seats().filter((seat) => seat.getAttribute("data-agent-id") === "a1")[0];
@@ -749,8 +805,43 @@ async function main() {
         throw new Error(`a failed map must degrade, not blank: rooms ${degraded.join(", ")}`
             + ` seats ${seats().length} error "${degradedError}"`);
     }
-    // Back to a working floor plan for everything below.
     mapFails = false;
+
+    // ─── 1b'. A floor plan it cannot draw is refused, loudly ───
+    //
+    // A room of a type it has no colour for, or with bounds it cannot place,
+    // would have to be guessed at. Neither is: the plan is logged and the
+    // panel takes the same degraded path as a plan that did not load.
+    const realConsoleError = console.error;
+    const undrawable = [
+        MAP_ROOMS.map((room, index) => (index === 1 ? { ...room, room_type: "garage" } : room)),
+        MAP_ROOMS.map((room, index) => (index === 2 ? { ...room, bounds: [16, 12, 9, 19] } : room)),
+    ];
+    const refusals = [];
+    for (const plan of undrawable) {
+        const logged = [];
+        console.error = (...args) => logged.push(args.map(String).join(" "));
+        mapRooms = plan;
+        chat.unmount();
+        chat.mount(placeEl, ctx);
+        await drain();
+        console.error = realConsoleError;
+        const error = contextEl.querySelectorAll(".context-error")
+            .map((node) => node.textContent).join(" ");
+        refusals.push(logged.some((line) => line.includes("could not draw the floor plan"))
+            && error.includes("Could not load the floor plan")
+            && roomsGrid().getAttribute("data-layout") === "list"
+            && roomNames().join("|") === "Main Workspace|Unknown"
+            && roomBoxes().every((node) => node.getAttribute("data-tone") === "unplaced")
+            && seats().length === 3);
+    }
+    mapRooms = MAP_ROOMS;
+    const miniOfficeRejectsAnUndrawablePlan = refusals.length === 2 && refusals.every(Boolean);
+    if (!miniOfficeRejectsAnUndrawablePlan) {
+        throw new Error(`a floor plan it cannot draw must be refused, got ${JSON.stringify(refusals)}`);
+    }
+
+    // Back to a working floor plan for everything below.
     chat.unmount();
     chat.mount(placeEl, ctx);
     await drain();
@@ -2774,6 +2865,11 @@ async function main() {
         drainsOnDestroy,
         rendersUnknownRoom,
         miniOfficeSeatsArePatched,
+        miniOfficeColoursByRoomType,
+        miniOfficePlacesRoomsByBounds,
+        miniOfficeTurnsTallRooms,
+        miniOfficeUnplacedSpansTheFloor,
+        miniOfficeRejectsAnUndrawablePlan,
         miniOfficeSeatsOnlyTheVisibleFloor,
         miniOfficeFollowsTheFloorSwitch,
         miniOfficeSaysTheFloorIsEmpty,

@@ -1,8 +1,19 @@
 /**
  * BossMod AI — the office summary: the whole of Chat's context column.
  *
- * A DOM room summary, not a second canvas renderer. It answers "who is around
- * and who needs me", and hands off to the Office place for the map.
+ * A DOM floor plan, not a second canvas renderer. It answers "who is around
+ * and who needs me", and hands off to the Office place for the full map.
+ *
+ * It must LOOK like that map. It used to be a summary rather than a map — one
+ * wide box over a two-column list, tinted by position — and the operator,
+ * holding the two side by side, could not tell which room was which. So the
+ * operator reversed the "no geometry here" rule: each room now sits on a CSS
+ * grid at its tile `bounds` from GET /api/map, and is coloured by its
+ * `room_type` with the very tokens office-canvas.js paints those tiles with.
+ * What stays out is everything that would make this a renderer: no canvas, no
+ * tiles, no desks, and no agent placed by coordinates — seats still group by
+ * room name. A future floor plan lays itself out with no code change. Reading
+ * the plan and the grid arithmetic are pure, so they live in floor-plan.js.
  *
  * It used to hand off to Metrics as well, with an `Open metrics` link under a
  * line reading `3 on the floor · 3 need you`. Both are gone. The link was a
@@ -35,7 +46,9 @@
  * hired, floor-empty when people are hired but none work on this floor,
  * ready otherwise. The floor plan has a failure state of its own — this
  * module owns that request, so it owns reporting it — and it degrades to the
- * occupied-rooms view rather than to a blank panel.
+ * occupied-rooms view rather than to a blank panel. A plan that loads but
+ * carries a room it cannot draw takes the same path, loudly: a guessed colour
+ * or position would be a map that lies.
  */
 const BossModMiniOffice = (() => {
     const { h } = BossModDom;
@@ -66,21 +79,8 @@ const BossModMiniOffice = (() => {
     const MAP_ERROR_COPY = 'Could not load the floor plan. '
         + 'Showing only the rooms someone is standing in.';
 
-    /**
-     * The tint ramp the rooms after the first cycle through.
-     *
-     * The concept hardcodes three rooms; ours come from the map — five today,
-     * plus the Unknown bucket, and whatever a future floor plan carries. So
-     * the rule is POSITIONAL: rooms keep the map's own order, the first one
-     * gets the panel treatment, and each one after takes the next tone. Map
-     * order does not change when somebody walks, so a room does not change
-     * colour because an agent left it.
-     *
-     * Four tones with measured ink pairs in tokens.css (6.20-6.41:1). `ok` is
-     * deliberately not among them: --ok on --ok-bg measures 4.33:1, which is
-     * under AA, and there is no --ok-ink token to fix it with.
-     */
-    const TONES = Object.freeze(['blue', 'amber', 'teal', 'pink']);
+    /** The neutral tone of a room with no place: Unknown, and the degraded list. */
+    const UNPLACED_TONE = 'unplaced';
 
     /**
      * Build the office summary.
@@ -106,7 +106,13 @@ const BossModMiniOffice = (() => {
         const disposers = [];
         let loaded = store.getState().roster.length > 0;
         let destroyed = false;
-        /** Room names from GET /api/map, in map order. Null until it answers. */
+        /**
+         * The drawable floor plan from GET /api/map: its rooms in map order
+         * and their tile bounding box. Null until it answers, and for good
+         * when it fails or carries a room this view cannot draw.
+         * @type {null|{rooms: Array<{name: string, roomType: string, bounds: number[]}>,
+         *   minX: number, minY: number, cols: number, rows: number}}
+         */
         let floor = null;
 
         const roomsEl = h('div', { class: 'mini-office-rooms' });
@@ -154,8 +160,11 @@ const BossModMiniOffice = (() => {
          * is unreachable: it is less than the whole floor, but it is every
          * person, which is the half the operator cannot do without.
          *
+         * With no plan there is no type or position to draw from, so every
+         * room here is `unplaced` and the grid lays them out as a list.
+         *
          * @param {object[]} roster
-         * @returns {Array<{name: string, agents: object[]}>}
+         * @returns {Array<{name: string, tone: string, agents: object[], place: null}>}
          */
         function byRoom(roster) {
             const rooms = new Map();
@@ -169,28 +178,39 @@ const BossModMiniOffice = (() => {
                 if (b === UNPLACED_ROOM) return -1;
                 return a.localeCompare(b);
             });
-            return names.map((name) => ({ name, agents: rooms.get(name) }));
+            return names.map((name) => ({
+                name, tone: UNPLACED_TONE, agents: rooms.get(name), place: null,
+            }));
         }
 
         /**
          * Every room on the floor, in map order, with who is standing in it.
          *
          * @param {object[]} roster
-         * @returns {Array<{name: string, agents: object[]}>} One entry per
-         *   mapped room whether or not anyone is in it, then a single
-         *   `Unknown` bucket for everyone the map could not account for —
-         *   agents with no location, and the anomaly of a location the floor
-         *   plan does not name. Both are people, so neither is dropped.
+         * @returns {Array<{name: string, tone: string, agents: object[], place: object|null}>}
+         *   One entry per mapped room whether or not anyone is in it, toned
+         *   by its type and placed by its bounds, then a single `Unknown`
+         *   bucket for everyone the map could not account for — agents with
+         *   no location (or on a corridor tile no room covers), and the
+         *   anomaly of a location the floor plan does not name. Both are
+         *   people, so neither is dropped; the bucket has no place on the plan.
          */
         function floorRooms(roster) {
             const occupancy = byRoom(roster);
             const seats = new Map(occupancy.map((room) => [room.name, room.agents]));
-            const rooms = floor.map((name) => ({ name, agents: seats.get(name) || [] }));
-            const mapped = new Set(floor);
+            const rooms = floor.rooms.map((room) => ({
+                name: room.name,
+                tone: room.roomType,
+                agents: seats.get(room.name) || [],
+                place: BossModFloorPlan.place(floor, room.bounds),
+            }));
+            const mapped = new Set(floor.rooms.map((room) => room.name));
             const strays = occupancy
                 .filter((room) => !mapped.has(room.name))
                 .reduce((all, room) => all.concat(room.agents), []);
-            if (strays.length) rooms.push({ name: UNPLACED_ROOM, agents: strays });
+            if (strays.length) {
+                rooms.push({ name: UNPLACED_ROOM, tone: UNPLACED_TONE, agents: strays, place: null });
+            }
             return rooms;
         }
 
@@ -220,21 +240,35 @@ const BossModMiniOffice = (() => {
          * One room's box. Its seats are filled by render() through the keyed
          * list registered here, so a reused room keeps its seat nodes too.
          *
-         * @param {{name: string, tone: string, agents: object[]}} room
+         * Its grid position is inline because it is data — the plan's bounds,
+         * like an avatar's colour is the roster's — not theme.
+         *
+         * @param {{name: string, tone: string, agents: object[], place: object|null}} room
          * @returns {HTMLElement}
          */
         function roomBox(room) {
+            const { place } = room;
             const seats = room.agents.length === 0 ? null : h('div', { class: 'mini-office-seats' });
-            const box = h('div', { class: 'mini-office-room', 'data-tone': room.tone },
+            const box = h('div', {
+                class: room.name === UNPLACED_ROOM
+                    ? 'mini-office-room mini-office-room--unplaced' : 'mini-office-room',
+                'data-tone': room.tone,
+                'data-orient': place && place.vertical ? 'vertical' : null,
+                style: place ? `grid-column: ${place.column}; grid-row: ${place.row}` : null,
+            },
                 h('p', { class: 'mini-office-room-name' }, room.name),
                 seats || h('p', { class: 'mini-office-room-empty' }, EMPTY_ROOM_COPY));
             seatLists.set(box, seats ? BossModDom.createKeyedList(seats) : null);
             return box;
         }
 
-        /** A non-room state: the one line replaces every room. */
+        /**
+         * A non-room state: the one line replaces every room. It is a
+         * sentence, so it drops the layout and is not set on the corridor.
+         */
         function message(className, text) {
             roomRows.reset();
+            delete roomsEl.dataset.layout;
             roomsEl.append(h('p', { class: className }, text));
         }
 
@@ -258,18 +292,16 @@ const BossModMiniOffice = (() => {
             }
 
             const needy = new Set(state.needs.map((need) => need.agentId));
-            const rooms = (floor ? floorRooms(roster) : byRoom(roster)).map((room, index) => ({
-                ...room,
-                // The first room is the wide one and takes the panel treatment
-                // from :first-child; the rest start at the top of the ramp and
-                // cycle. Offset by one, so the ramp's first tone is the first
-                // tint an operator actually sees.
-                tone: index === 0 ? 'main' : TONES[(index - 1) % TONES.length],
-            }));
-            // A room is rebuilt only when its tone or its emptiness changes;
-            // who sits in it is the seat list's business.
+            const rooms = floor ? floorRooms(roster) : byRoom(roster);
+            // `map` places rooms on the plan's tracks, `list` is the degraded
+            // two columns; CSS scopes each to its own value and never mixes them.
+            roomsEl.dataset.layout = floor ? 'map' : 'list';
+            // A room is rebuilt only when its tone, its emptiness or its place
+            // changes; who sits in it is the seat list's business.
             roomRows.sync(rooms, (room) => room.name,
-                (room) => [room.tone, room.agents.length === 0], roomBox);
+                (room) => [room.tone, room.agents.length === 0,
+                    room.place && room.place.column, room.place && room.place.row],
+                roomBox);
             rooms.forEach((room, index) => {
                 const seats = seatLists.get(roomsEl.childNodes[index]);
                 if (!seats) return;
@@ -282,8 +314,9 @@ const BossModMiniOffice = (() => {
          * Read the floor plan once, at construction.
          *
          * @returns {Promise<void>} Never rejects. A floor plan that will not
-         *   load is reported and the panel degrades to the occupied-rooms view
-         *   — blanking it would lose the people as well as the rooms.
+         *   load, or that BossModFloorPlan.read() refuses, is reported
+         *   and the panel degrades to the occupied-rooms view — blanking it
+         *   would lose the people as well as the rooms.
          */
         async function loadFloor() {
             let mapData;
@@ -307,9 +340,19 @@ const BossModMiniOffice = (() => {
                 mapErrorEl.textContent = MAP_ERROR_COPY;
                 return;
             }
-            floor = rooms
-                .map((room) => String((room && room.name) || '').trim())
-                .filter((name) => name !== '');
+            let plan;
+            try {
+                plan = BossModFloorPlan.read(rooms);
+            } catch (err) {
+                console.error('[mini-office] could not draw the floor plan', err);
+                mapErrorEl.textContent = MAP_ERROR_COPY;
+                return;
+            }
+            floor = plan;
+            // The track counts are the plan's, so they are written once, as
+            // data, for context.css's `repeat()`s to read.
+            roomsEl.setAttribute('style',
+                `--mini-office-cols: ${plan.cols}; --mini-office-rows: ${plan.rows}`);
             mapErrorEl.textContent = '';
             render();
         }

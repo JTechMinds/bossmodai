@@ -88,21 +88,40 @@
 
 /* ─── Mini office ───
  *
- * A map, not a list. The rooms come from GET /api/map — every room on the
- * floor, occupied or not — plus an Unknown bucket for anyone the map cannot
- * place, so the layout rule is positional rather than by name: two columns,
- * and the FIRST room in map order spans both. mini-office.js stamps
- * `data-tone` from that same position, and map order does not change when
- * somebody walks, so a room does not change colour because an agent left it.
+ * The Office map, as a floor plan of boxes. mini-office.js places every room
+ * from GET /api/map on a grid whose tracks are the rooms' tile bounding box —
+ * `--mini-office-cols` / `--mini-office-rows`, and each room's `grid-column` /
+ * `grid-row`, are set inline because they are the plan's data, not theme.
+ * Each room is coloured by `data-tone`, its `room_type`, with the token
+ * places/office/office-canvas.js paints that room's tiles with, so the summary
+ * and the map are one floor in one palette. The grid's own background is the
+ * corridor, which shows through between the rooms just as it does on the map.
+ *
+ * `data-layout` scopes the two layouts so they never mix: `map` is the plan,
+ * `list` is the degraded view when the plan did not load — two columns of
+ * neutral `unplaced` rooms, because there is no type or position to draw.
  */
 
 .mini-office-rooms {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
   padding: 12px;
   border-radius: var(--r);
   background: var(--bg);
+}
+
+/* Columns are proportional to tiles; rows grow with their seats, and every
+   room sharing a row grows with it, so the plan stays aligned rather than
+   clipping a crowded room. */
+.mini-office-rooms[data-layout="map"] {
+  grid-template-columns: repeat(var(--mini-office-cols), minmax(0, 1fr));
+  grid-template-rows: repeat(var(--mini-office-rows), minmax(var(--mini-office-track), auto));
+  gap: var(--mini-office-wall-gap);
+  background: var(--office-transit);
+}
+
+.mini-office-rooms[data-layout="list"] {
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
 }
 
 /* The loading and empty states are the grid's only other children, and they
@@ -110,37 +129,50 @@
 .mini-office-rooms > .context-skeleton,
 .mini-office-rooms > .context-empty { grid-column: 1 / -1; }
 
+/* Walled, like the map's rooms. */
 .mini-office-room {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  min-height: 64px;
+  min-width: 0;
   padding: 6px 8px;
+  border: 1px solid var(--office-wall);
   border-radius: 6px;
 }
 
-/* The room the operator is most likely to be looking for gets the width and
-   the panel treatment; everything after it takes a tint. */
-.mini-office-room:first-child {
-  grid-column: 1 / -1;
-  background: var(--panel);
-}
+/* On the plan the tracks give a room its height; a listed room has none. */
+.mini-office-rooms[data-layout="list"] .mini-office-room { min-height: 64px; }
 
-/* Each tone is a tokens.css tint/ink pair, measured at 6.20-6.41:1. The room
-   name is the only text on the tile, so it takes the ink rather than --hint,
-   which measures 3.81-4.05:1 on these tints and would fail AA. */
-.mini-office-room[data-tone="blue"] { background: var(--blue); }
-.mini-office-room[data-tone="blue"] .mini-office-room-name,
-.mini-office-room[data-tone="blue"] .mini-office-room-empty { color: var(--blue-ink); }
-.mini-office-room[data-tone="amber"] { background: var(--amber); }
-.mini-office-room[data-tone="amber"] .mini-office-room-name,
-.mini-office-room[data-tone="amber"] .mini-office-room-empty { color: var(--amber-ink); }
-.mini-office-room[data-tone="teal"] { background: var(--teal); }
-.mini-office-room[data-tone="teal"] .mini-office-room-name,
-.mini-office-room[data-tone="teal"] .mini-office-room-empty { color: var(--teal-ink); }
-.mini-office-room[data-tone="pink"] { background: var(--pink); }
-.mini-office-room[data-tone="pink"] .mini-office-room-name,
-.mini-office-room[data-tone="pink"] .mini-office-room-empty { color: var(--pink-ink); }
+/* Anyone the map cannot place: one box across the floor, on its own row
+   under the plan. */
+.mini-office-room--unplaced { grid-column: 1 / -1; }
+
+/* The canvas's room colours. The room's text takes the ink measured on its
+   fill rather than --hint, which fails AA on these: --muted is 5.29:1 on
+   --office-floor and 5.95:1 on --office-transit; the blue and teal inks are
+   their tints' own pairs in tokens.css. */
+.mini-office-room[data-tone="workspace"] { background: var(--office-floor); }
+.mini-office-room[data-tone="workspace"] .mini-office-room-name,
+.mini-office-room[data-tone="workspace"] .mini-office-room-empty { color: var(--muted); }
+.mini-office-room[data-tone="hallway"] { background: var(--office-transit); }
+.mini-office-room[data-tone="hallway"] .mini-office-room-name,
+.mini-office-room[data-tone="hallway"] .mini-office-room-empty { color: var(--muted); }
+.mini-office-room[data-tone="meeting"] { background: var(--blue); }
+.mini-office-room[data-tone="meeting"] .mini-office-room-name,
+.mini-office-room[data-tone="meeting"] .mini-office-room-empty { color: var(--blue-ink); }
+.mini-office-room[data-tone="break"] { background: var(--teal); }
+.mini-office-room[data-tone="break"] .mini-office-room-name,
+.mini-office-room[data-tone="break"] .mini-office-room-empty { color: var(--teal-ink); }
+.mini-office-room[data-tone="unplaced"] { background: var(--panel); }
+.mini-office-room[data-tone="unplaced"] .mini-office-room-name,
+.mini-office-room[data-tone="unplaced"] .mini-office-room-empty { color: var(--muted); }
+
+/* A room taller than it is wide — the Hallway — reads down its length, and
+   its seats stack the same way. */
+.mini-office-room[data-orient="vertical"] { align-items: center; }
+.mini-office-room[data-orient="vertical"] .mini-office-room-name,
+.mini-office-room[data-orient="vertical"] .mini-office-room-empty { writing-mode: vertical-rl; }
+.mini-office-room[data-orient="vertical"] .mini-office-seats { flex-direction: column; }
 
 .mini-office-room-name {
   margin: 0;
@@ -154,8 +186,8 @@
 .mini-office-seats { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* An empty room reads as an empty room, not as a box that failed to render.
-   It takes the tone's own ink above rather than --hint, which measures
-   3.81-4.05:1 on these tints and would fail AA. */
+   It takes the tone's own ink above rather than --hint, which would fail AA
+   on the room fills. */
 .mini-office-room-empty {
   margin: 0;
   color: var(--hint);

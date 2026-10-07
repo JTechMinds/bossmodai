@@ -77,6 +77,7 @@ CONTEXT_MODULES = [
     JS / "places" / "files" / "file-form.js",
     JS / "places" / "files" / "file-ops.js",
     JS / "places" / "files" / "file-viewer.js",
+    CONTEXT / "floor-plan.js",
     CONTEXT / "mini-office.js",
     CONTEXT / "office-chatter.js",
     CONTEXT / "desk-opener.js",
@@ -201,11 +202,15 @@ def test_context_column_is_torn_down_when_chat_unmounts() -> None:
 
 
 def test_mini_office_groups_by_location_including_unknown() -> None:
-    """An off-map agent still gets a seat (spec 7).
+    """An off-map agent still gets a seat (spec 7), on a summary that is the map.
 
     `agent.location` is a room NAME derived from coordinates, and it is absent
     for an agent the world could not place. Grouping them away rather than
     under a real heading would hide them from the operator completely.
+
+    The summary used to be barred from all geometry. The operator reversed
+    that: it must read as the same floor as the Office map, so rooms take the
+    plan's bounds and types — agents still group by room name.
     """
     payload = _harness()
     assert payload["rendersUnknownRoom"] is True
@@ -218,21 +223,32 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
     assert payload["miniOfficeFollowsTheFloorSwitch"] is True
     assert payload["miniOfficeSaysTheFloorIsEmpty"] is True
     assert payload["miniOfficeSaysTheRosterIsEmpty"] is True
+    # The summary is the Office map: rooms coloured by type with the canvas's
+    # tokens, placed at their bounds, the tall Hallway turned, Unknown across
+    # the floor, and a plan it cannot draw refused rather than guessed at.
+    assert payload["miniOfficeColoursByRoomType"] is True
+    assert payload["miniOfficePlacesRoomsByBounds"] is True
+    assert payload["miniOfficeTurnsTallRooms"] is True
+    assert payload["miniOfficeUnplacedSpansTheFloor"] is True
+    assert payload["miniOfficeRejectsAnUndrawablePlan"] is True
 
     source = _read(CONTEXT / "mini-office.js")
+    plan = _read(CONTEXT / "floor-plan.js")
     assert "UNPLACED_ROOM = 'Unknown'" in source
     assert "agent.location" in source
-    # A summary, not a second canvas. The ban used to include /api/map itself,
-    # which was the right property spelled through the wrong proxy: the room
-    # LIST has to come from the floor plan or the panel only ever draws the
-    # rooms somebody is standing in. What must stay out is the GEOMETRY — the
-    # tiles, the dimensions, the desks, and every coordinate — because that is
-    # what would make this a second renderer instead of a summary.
+    # A floor plan, not a second canvas. The operator reversed the old ban on
+    # geometry: the summary must look like the Office map, so it reads each
+    # room's `bounds` and `room_type` from the plan (floor-plan.js holds that
+    # pure half). What stays out is what would make it a renderer — it never
+    # paints tiles or desks, never uses a canvas, never reads the map's own
+    # dimensions, and never positions agents by coordinates.
     assert "mapData.rooms" in source
-    for forbidden in ("getContext", "'canvas'", "agent.x", "agent.y",
-                      "mapData.tiles", "mapData.width", "mapData.height",
-                      "mapData.desks", "bounds"):
-        assert forbidden not in source, f"the mini office must not render a map ({forbidden})"
+    assert "room_type" in plan
+    for path, text in (("mini-office.js", source), ("floor-plan.js", plan)):
+        for forbidden in ("getContext", "'canvas'", "agent.x", "agent.y",
+                          "mapData.tiles", "mapData.width", "mapData.height",
+                          "mapData.desks"):
+            assert forbidden not in text, f"{path} must not render a map ({forbidden})"
 
 
 def test_desk_notes_read_the_workspace_not_a_column() -> None:
