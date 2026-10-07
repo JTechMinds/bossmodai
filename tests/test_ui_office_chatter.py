@@ -37,7 +37,7 @@ def test_office_chatter_behaviour() -> None:
     payload = _harness()
     failed = sorted(name for name, ok in payload.items() if ok is not True)
     assert failed == [], f"office chatter harness checks failed: {failed}"
-    assert len(payload) == 24
+    assert len(payload) == 25
 
 
 def test_the_list_is_not_a_live_region() -> None:

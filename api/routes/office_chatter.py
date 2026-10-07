@@ -80,7 +80,13 @@ async def get_office_chatter(floor_id: str, before: str | None = None) -> dict[s
             _PAGE_SIZE_SETTING,
             config.get(_PAGE_SIZE_SETTING),
         )
-        raise HTTPException(500, f"Setting {_PAGE_SIZE_SETTING} must be an integer of at least 1")
+        # The detail is shown verbatim in the panel, so it names the setting by
+        # its Settings label; the log line above keeps the key for diagnosis.
+        raise HTTPException(
+            500,
+            "The Office Chatter Page Size setting must be a whole number of at least 1. "
+            "Change it in Settings.",
+        )
 
     # One extra row says whether an older page exists, without a count query.
     rows = db.list_floor_peer_messages(floor_id, page_size + 1, before=cursor)

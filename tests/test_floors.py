@@ -36,6 +36,7 @@ from core.floors import (
     delete_floor,
     keep_one_floor,
     send_home,
+    shared_floor_id,
 )
 from core.messaging import route_human_dm
 from core.models.agent import AgentUpdate
@@ -299,6 +300,50 @@ def test_a_peer_reply_is_announced_whether_or_not_it_wakes_the_sender() -> None:
         assert peer["floor_id"] == LOBBY_ID
         assert db.get_message(peer["message_id"]).floor_id == LOBBY_ID
         assert (peer["from_agent_id"], peer["to_agent_id"]) == (ada.id, bob.id)
+
+
+def test_shared_floor_id_names_the_floor_only_when_both_agents_live_on_it() -> None:
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1)
+    bob = _agent("Bob", 2)
+    cy = _agent("Cy", 3, floor_id=finance.id)
+    away = _agent("Away", 4)
+    send_home(away.id)
+
+    assert shared_floor_id(ada.id, bob.id) == LOBBY_ID
+    assert shared_floor_id(ada.id, cy.id) is None
+    assert shared_floor_id(ada.id, "no-such-agent") is None
+    assert shared_floor_id(ada.id, away.id) is None
+    assert shared_floor_id(ada.id, HUMAN_SENDER_ID) is None
+
+
+async def test_a_peer_dm_is_stamped_with_the_db_floor_not_the_turn_snapshot() -> None:
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1)
+    bob = _agent("Bob", 2, floor_id=finance.id)
+    # Ada moved mid-turn: the DB row is on Finance, the turn's Agent says Lobby.
+    db.update_agent(ada.id, floor_id=finance.id)
+    assert ada.floor_id == LOBBY_ID
+
+    result = await _handle_message(
+        ada, db.get_agent_state(ada.id),
+        {"recipientType": "agent", "agentId": bob.id, "content": "moved up"},
+    )
+    peer = result["peer_message"]
+    assert peer["floor_id"] == finance.id
+    assert db.get_message(peer["message_id"]).floor_id == finance.id
+
+
+def test_a_peer_reply_is_stamped_with_the_db_floor_not_the_turn_snapshot() -> None:
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1)
+    bob = _agent("Bob", 2, floor_id=finance.id)
+    db.update_agent(ada.id, floor_id=finance.id)
+    assert ada.floor_id == LOBBY_ID
+
+    peer = _peer_reply(ada, bob, content="Audit landed.")["peer_message"]
+    assert peer["floor_id"] == finance.id
+    assert db.get_message(peer["message_id"]).floor_id == finance.id
 
 
 def test_soft_block_still_blocks_without_mentioning_another_floor() -> None:

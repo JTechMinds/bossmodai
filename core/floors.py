@@ -92,11 +92,30 @@ def on_floor(agent_id: str | None, floor_id: str | None) -> bool:
     return bool(home) and bool(wanted) and home == wanted
 
 
-def peers_share_floor(left: str | None, right: str | None) -> bool:
-    """True only when both agents have the same known home floor."""
+def shared_floor_id(left: str | None, right: str | None) -> str | None:
+    """Return the home floor two agents share right now, else None.
+
+    Both agents are read fresh from the DB, so a caller that checks the floor
+    and then stamps it on a row uses one read for both and the stamp can never
+    name a floor the check did not confirm.
+
+    Args:
+        left: One agent id. The human sender id or an empty value has no floor.
+        right: The other agent id, with the same rules.
+
+    Returns:
+        The floor id both agents live on, or None when either agent is
+        missing, has no home floor (on vacation), is the human, or the two
+        live on different floors.
+    """
     a = home_floor_id(left)
     b = home_floor_id(right)
-    return bool(a) and a == b
+    return a if a and a == b else None
+
+
+def peers_share_floor(left: str | None, right: str | None) -> bool:
+    """True only when both agents have the same known home floor."""
+    return shared_floor_id(left, right) is not None
 
 
 def require_shared_home(agent_ids: list[str]) -> str:
@@ -450,5 +469,6 @@ __all__ = [
     "require_shared_home",
     "same_floor_agents",
     "send_home",
+    "shared_floor_id",
     "task_floor_id",
 ]

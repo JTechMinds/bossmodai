@@ -134,6 +134,8 @@
   --context-gap: 16px;
   --chatter-gap: 8px;
   --chatter-gap-tight: 4px;
+  /* Keeps about two chatter rows visible under a tall office summary. */
+  --chatter-min-height: 240px;
 
   /* The two horizontal rules that cross the whole window.
    *

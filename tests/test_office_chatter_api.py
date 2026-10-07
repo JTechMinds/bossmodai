@@ -155,7 +155,9 @@ def test_an_invalid_page_size_setting_is_a_500_not_a_clamp(caplog) -> None:
         caplog.clear()
         response = _get(client, headers, floor_id=LOBBY_ID)
         assert response.status_code == 500, bad
-        assert "office_chatter_page_size" in response.json()["detail"]
+        detail = response.json()["detail"]
+        assert "Office Chatter Page Size" in detail
+        assert "office_chatter_page_size" not in detail
         assert any(
             record.levelname == "ERROR" and "office_chatter_page_size" in record.getMessage()
             for record in caplog.records

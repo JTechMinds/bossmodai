@@ -27,8 +27,13 @@
  * the map cannot account for keeps a real `Unknown` bucket rendered last:
  * dropping them would hide people from the operator entirely (spec 7).
  *
+ * It is floor-scoped like every other view of people: it seats only the
+ * agents on the visible floor (`currentFloorId`, BossModFloorScope), so it
+ * agrees with the roster rail and with the Office chatter under it.
+ *
  * States: loading until the roster's first publish, empty when nobody is
- * hired, ready otherwise. The floor plan has a failure state of its own — this
+ * hired, floor-empty when people are hired but none work on this floor,
+ * ready otherwise. The floor plan has a failure state of its own — this
  * module owns that request, so it owns reporting it — and it degrades to the
  * occupied-rooms view rather than to a blank panel.
  */
@@ -40,6 +45,14 @@ const BossModMiniOffice = (() => {
 
     /** A room with nobody in it is still a room, and says which it is. */
     const EMPTY_ROOM_COPY = 'Empty';
+
+    /** Nobody is hired at all, on any floor. */
+    const EMPTY_ROSTER_COPY = 'Nobody is on the roster yet. '
+        + 'Add an agent from the rail and they will take a desk.';
+
+    /** People are hired, just not on the floor the operator is looking at. */
+    const EMPTY_FLOOR_COPY = 'Nobody works on this floor yet. '
+        + 'Add an agent from the rail, or move someone here.';
 
     /** The map link's accessible name and its tooltip: one string, never two. */
     const OPEN_OFFICE_LABEL = 'Open the office';
@@ -73,7 +86,8 @@ const BossModMiniOffice = (() => {
      * Build the office summary.
      *
      * @param {object} deps
-     * @param {object} deps.store  Application store; `roster` and `needs`.
+     * @param {object} deps.store  Application store; `roster`, `needs` and
+     *   `currentFloorId`, which scopes the seats to the visible floor.
      * @param {Function} deps.api  Authenticated fetch helper. Used once, for
      *   the floor plan; who is on it comes from the store.
      * @param {(placeId: string, params?: object) => void} deps.navigate
@@ -226,15 +240,20 @@ const BossModMiniOffice = (() => {
 
         function render() {
             const state = store.getState();
-            const roster = state.roster;
+            const roster = BossModFloorScope.filterPeople(state, state.roster);
 
             if (!loaded) {
                 message('context-skeleton', 'Loading the floor…');
                 return;
             }
+            // The global roster decides which empty state: an office with
+            // nobody hired is a different fix from a floor nobody works on.
+            if (state.roster.length === 0) {
+                message('context-empty', EMPTY_ROSTER_COPY);
+                return;
+            }
             if (roster.length === 0) {
-                message('context-empty',
-                    'Nobody is on the roster yet. Add an agent from the rail and they will take a desk.');
+                message('context-empty', EMPTY_FLOOR_COPY);
                 return;
             }
 
@@ -302,6 +321,8 @@ const BossModMiniOffice = (() => {
             render();
         }));
         disposers.push(store.subscribe((s) => s.needs, render));
+        // The floor plan is the same on every floor, so a switch only re-seats.
+        disposers.push(store.subscribe((s) => s.currentFloorId, render));
 
         render();
         void loadFloor();

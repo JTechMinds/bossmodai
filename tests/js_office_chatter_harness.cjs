@@ -156,6 +156,15 @@ async function main() {
     store.setState({ roster: ROSTER });
     await drain();
 
+    // A floor rename repaints the head's floor name and fetches nothing.
+    const requestsBeforeRename = requests.length;
+    store.setState({ floors: FLOORS.map((floor) => (floor.id === "lobby" ? { ...floor, name: "Ground" } : floor)) });
+    await drain();
+    const floorRenameRepaintsHead = text(".context-meta") === "Ground"
+        && requests.length === requestsBeforeRename && rowsOf().length === 5;
+    store.setState({ floors: FLOORS });
+    await drain();
+
     // ─── A stale page after a floor switch is dropped; an empty floor says so ───
     const stale = hold();
     script.push(stale.promise);
@@ -244,6 +253,7 @@ async function main() {
         whoOpensDesk,
         tickKeepsRows,
         renameRepaints,
+        floorRenameRepaintsHead,
         staleDropped,
         emptyRenders,
         errorRenders,

@@ -145,6 +145,7 @@ async def _handle_message(
             return verbal_host_access_steer(agent)
 
     target = None
+    shared_floor = None
     if recipient_type == "human":
         to_agent_id = HUMAN_SENDER_ID
         to_display = boss_label()
@@ -152,9 +153,10 @@ async def _handle_message(
         target = _resolve_agent_by_id(action.get("agentId"))
         if target is None:
             return {"event": "status_changed", "detail": "Agent not found for provided agentId", "agent_name": agent.name}
-        from core.floors import CROSS_FLOOR_DENY, peers_share_floor
+        from core.floors import CROSS_FLOOR_DENY, shared_floor_id
 
-        if not peers_share_floor(agent.id, target.id):
+        shared_floor = shared_floor_id(agent.id, target.id)
+        if not shared_floor:
             return {
                 "event": "world_feedback",
                 "detail": CROSS_FLOOR_DENY,
@@ -187,8 +189,8 @@ async def _handle_message(
         location_x=state.x,
         location_y=state.y,
         token_count=_count_action_tokens(agent, action, content),
-        # peers_share_floor above guaranteed both agents live on this floor.
-        floor_id=agent.floor_id if target is not None else None,
+        # The stamp is the floor the check above just read from the DB.
+        floor_id=shared_floor if target is not None else None,
     )
 
     result = {

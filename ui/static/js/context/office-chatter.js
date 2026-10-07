@@ -323,6 +323,9 @@ const BossModOfficeChatter = (() => {
             rosterLoaded = true;
             render();
         }));
+        // A rename repaints the head's floor name; floors do not change which
+        // rows are shown, so there is no reload.
+        disposers.push(store.subscribe((s) => s.floors, render));
 
         void reload();
 

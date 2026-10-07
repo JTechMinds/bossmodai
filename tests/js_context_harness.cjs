@@ -227,20 +227,29 @@ const MAP_DESKS = [
 // Flipped part-way through, so a later mini-office is built against a floor
 // plan that will not load and the degraded path is exercised for real.
 let mapFails = false;
+// How many times the floor plan was asked for: a floor switch must not ask.
+let mapRequests = 0;
 
 // Jim and Laura are in one real room, which is the shape that made the old
 // panel look broken: grouping by location drew ONE box for a five-room floor.
 // Ada is off-map — db.get_world_state() gives her no room name — and must
-// still get a seat, or the operator loses sight of her entirely.
+// still get a seat, or the operator loses sight of her entirely. All three
+// work on the Lobby, the floor the store shows by default, because the
+// summary seats only the visible floor's agents.
 const ROSTER = [
     { id: "a1", name: "Jim", role: "Engineer", color: "#3b82f6", status: "idle",
       description: "Keeps the build green.", done_fail_bar: "Good: tests pass. Fail: no evidence.",
-      currentActivityKind: null, location: "Main Workspace" },
+      currentActivityKind: null, location: "Main Workspace", floorId: "lobby" },
     { id: "a2", name: "Laura", role: "Writer", color: "#f59e0b", status: "idle",
-      currentActivityKind: null, location: "Main Workspace" },
+      currentActivityKind: null, location: "Main Workspace", floorId: "lobby" },
     { id: "a3", name: "Ada", role: "Analyst", color: "#10b981", status: "idle",
-      currentActivityKind: null, location: null },
+      currentActivityKind: null, location: null, floorId: "lobby" },
 ];
+// Someone on another floor, for the summary's floor scope.
+const FINANCE_AGENT = {
+    id: "f1", name: "Fay", role: "Accountant", color: "#ec4899", status: "idle",
+    currentActivityKind: null, location: "Meeting Room", floorId: "finance",
+};
 
 // Every desk request the harness saw, so the Notes section can be shown to ask
 // for the workspace folder rather than a column that does not exist.
@@ -535,6 +544,7 @@ function api(url, init) {
         return jsonResponse({ messages: [], has_more: false });
     }
     if (url.startsWith("/api/map")) {
+        mapRequests += 1;
         if (mapFails) return jsonResponse({ detail: "unavailable" }, 503);
         return jsonResponse({ width: 28, height: 20, tiles: [], rooms: MAP_ROOMS, desks: MAP_DESKS });
     }
@@ -743,6 +753,40 @@ async function main() {
     mapFails = false;
     chat.unmount();
     chat.mount(placeEl, ctx);
+    await drain();
+
+    // ─── 1c. The summary seats only the visible floor ───
+    //
+    // The roster holds every floor's agents; the rail, the Office place and
+    // the chatter all narrow it to the visible floor, so this does too.
+    const seatIds = () => seats().map((node) => node.getAttribute("data-agent-id")).sort().join(",");
+    // The chatter under the summary has an empty state of its own, so this
+    // reads the summary's only.
+    const contextEmpty = () => contextEl.querySelector(".mini-office").querySelectorAll(".context-empty")
+        .map((node) => node.textContent).join(" ");
+    store.setState({ roster: ROSTER.concat([FINANCE_AGENT]) });
+    await drain();
+    const miniOfficeSeatsOnlyTheVisibleFloor = seatIds() === "a1,a2,a3";
+    const mapRequestsBeforeSwitch = mapRequests;
+    store.setState({ currentFloorId: "finance" });
+    await drain();
+    const miniOfficeFollowsTheFloorSwitch = seatIds() === "f1"
+        && mapRequests === mapRequestsBeforeSwitch;
+    store.setState({ currentFloorId: "ops", roster: ROSTER });
+    await drain();
+    const miniOfficeSaysTheFloorIsEmpty = seats().length === 0
+        && contextEmpty() === "Nobody works on this floor yet. Add an agent from the rail, or move someone here.";
+    store.setState({ currentFloorId: "lobby", roster: [] });
+    await drain();
+    const miniOfficeSaysTheRosterIsEmpty = seats().length === 0
+        && contextEmpty() === "Nobody is on the roster yet. Add an agent from the rail and they will take a desk.";
+    if (!(miniOfficeSeatsOnlyTheVisibleFloor && miniOfficeFollowsTheFloorSwitch
+        && miniOfficeSaysTheFloorIsEmpty && miniOfficeSaysTheRosterIsEmpty)) {
+        throw new Error("the office summary must seat only the visible floor: "
+            + JSON.stringify({ miniOfficeSeatsOnlyTheVisibleFloor, miniOfficeFollowsTheFloorSwitch,
+                miniOfficeSaysTheFloorIsEmpty, miniOfficeSaysTheRosterIsEmpty }));
+    }
+    store.setState({ roster: ROSTER });
     await drain();
 
     // ─── 2. A seat opens that agent's desk, as a modal ───
@@ -2730,6 +2774,10 @@ async function main() {
         drainsOnDestroy,
         rendersUnknownRoom,
         miniOfficeSeatsArePatched,
+        miniOfficeSeatsOnlyTheVisibleFloor,
+        miniOfficeFollowsTheFloorSwitch,
+        miniOfficeSaysTheFloorIsEmpty,
+        miniOfficeSaysTheRosterIsEmpty,
         drawsEveryMappedRoom,
         emptyRoomsSaySo,
         mapFailureDegradesRatherThanBlanks,

@@ -123,6 +123,7 @@ def _persist_reply(
         return {}
 
     trigger_type = trigger.get("type")
+    shared_floor = None
     if trigger_type in {"task_assigned", "task_follow_up"}:
         return _persist_task_follow_up_reply(agent, state, trigger, decision)
     if trigger_type == "human_chat":
@@ -197,9 +198,10 @@ def _persist_reply(
         from_type = None
         if not target_id:
             return {}
-        from core.floors import peers_share_floor
+        from core.floors import shared_floor_id
 
-        if not peers_share_floor(agent.id, str(target_id)):
+        shared_floor = shared_floor_id(agent.id, str(target_id))
+        if not shared_floor:
             return {}
         message_type = resolve_peer_message_type(state=state, trigger=trigger)
     else:
@@ -212,8 +214,8 @@ def _persist_reply(
         message_type=message_type,
         location_x=state.x,
         location_y=state.y,
-        # The peer branch above just checked peers_share_floor.
-        floor_id=agent.floor_id if trigger_type == "peer_message" else None,
+        # The stamp is the floor the peer branch's check just read from the DB.
+        floor_id=shared_floor if trigger_type == "peer_message" else None,
     )
 
     if trigger_type == "human_chat":

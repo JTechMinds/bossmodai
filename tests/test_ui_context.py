@@ -212,6 +212,12 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
     # Phase 2 (refresh efficiency): one agent's change rebuilds one seat.
     assert payload["miniOfficeSeatsArePatched"] is True
     assert payload["seatOpensDesk"] is True
+    # Floor-scoped: only the visible floor's agents get a seat, a floor switch
+    # re-seats without refetching the plan, and each empty state says which.
+    assert payload["miniOfficeSeatsOnlyTheVisibleFloor"] is True
+    assert payload["miniOfficeFollowsTheFloorSwitch"] is True
+    assert payload["miniOfficeSaysTheFloorIsEmpty"] is True
+    assert payload["miniOfficeSaysTheRosterIsEmpty"] is True
 
     source = _read(CONTEXT / "mini-office.js")
     assert "UNPLACED_ROOM = 'Unknown'" in source
