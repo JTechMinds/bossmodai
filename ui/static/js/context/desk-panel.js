@@ -19,11 +19,12 @@
  * TWO COLUMNS: the work (Tasks, Schedules, Files) in the main column, and who the agent
  * is (About, Details, Notes, Extensions) in the aside. About carries the pack
  * the agent was hired from, and its per-agent update (context/desk-pack.js). The actions on the
- * agent are the HEAD's, as in every other modal: Chat, Memory (a layer,
- * context/desk-memory.js) and Edit role as icon
- * tools, and Diagnostics, Reset runtime and Remove behind the `⋯`
- * (places/tasks/task-detail.js's pattern). Destructive actions belong behind
- * a menu and a confirm, not at the bottom of the reading flow.
+ * agent are the HEAD's, as in every other modal, and all of them sit behind
+ * its one `⋯` (places/tasks/task-detail.js's pattern), so the title bar holds
+ * only the agent and never accumulates icon tools: Open chat, Memory (a layer,
+ * context/desk-memory.js) and Edit role, a divider, then Diagnostics, Reset
+ * runtime and Remove. Destructive actions belong behind a menu and a confirm,
+ * not at the bottom of the reading flow.
  *
  * The done/fail contract is a DISCLOSURE: the agent's role contract is
  * reference material read once, not a standing alert. Editing the role opens
@@ -42,7 +43,7 @@ const BossModDeskPanel = (() => {
     const DONE_BAR_TITLE = 'What done looks like for this agent:';
     const NO_DONE_BAR = 'No done/fail bar set for this agent yet. Edit the role to add one.';
     const CONTRACT_SUMMARY = 'Done/fail contract';
-    /** The head tools' accessible names — and their tooltips: one string each. */
+    /** The `⋯`'s accessible name and tooltip, and its rows' labels: one string each. */
     const LABELS = Object.freeze({
         chat: 'Open chat', memory: 'Memory', edit: 'Edit role', options: 'Desk options',
     });
@@ -68,18 +69,14 @@ const BossModDeskPanel = (() => {
             content);
     }
 
-    /** An icon-only head tool: the frame's icon-button shape. */
-    function tool(id, icon, label, onclick, extra) {
+    /**
+     * A `⋯` row: glyph and label.
+     * @param {{danger?: boolean, disabled?: boolean}} [state]  `danger` marks
+     *   a destructive row; `disabled` withholds one that cannot act yet.
+     */
+    function menuRow(id, icon, label, onclick, { danger = false, disabled = false } = {}) {
         return h('button', {
-            class: 'header-icon-btn', id, type: 'button',
-            'aria-label': label, 'data-tooltip': label, onclick, ...(extra || {}),
-        }, h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }));
-    }
-
-    /** A `⋯` row: glyph and label, `danger` for a destructive one. */
-    function menuRow(id, icon, label, onclick, danger) {
-        return h('button', {
-            class: 'menu-action', id, type: 'button', 'data-tone': danger ? 'danger' : null, onclick,
+            class: 'menu-action', id, type: 'button', 'data-tone': danger ? 'danger' : null, disabled, onclick,
         }, h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }), label);
     }
 
@@ -100,7 +97,7 @@ const BossModDeskPanel = (() => {
      *   from the role form's Delete, or elsewhere while this was open.
      * @param {(name: string) => void} deps.setTitle  The agent was renamed.
      * @param {(id: string, kind: string) => void} deps.openConversation
-     *   Leaves for a conversation: the head's Chat tool (this agent's, kind
+     *   Leaves for a conversation: the `⋯`'s Open chat (this agent's, kind
      *   `agent`) and a task layer's chat (the task's own target). The dialog
      *   hands in one that closes the desk and its layers first.
      * @returns {{ element: HTMLElement, lead: HTMLElement, tools: HTMLElement[],
@@ -181,15 +178,13 @@ const BossModDeskPanel = (() => {
         let shownName = agent() ? String(agent().name) : null;
         let seen = Boolean(agent());
 
-        const optionsBtn = tool('desk-options', 'ellipsis', LABELS.options, () => toggleOptions(),
-            { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' });
-        const editBtn = tool('desk-edit', 'pencil', LABELS.edit, () => openEdit());
-        const tools = [
-            tool('desk-chat', 'message-circle', LABELS.chat, () => openConversation(agentId, 'agent')),
-            tool('desk-memory', 'brain', LABELS.memory, () => memory.open()),
-            editBtn,
-            optionsBtn,
-        ];
+        // The head's one tool, in the frame's icon-button shape.
+        const optionsBtn = h('button', {
+            class: 'header-icon-btn', id: 'desk-options', type: 'button',
+            'aria-label': LABELS.options, 'data-tooltip': LABELS.options,
+            'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: () => toggleOptions(),
+        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
+        const tools = [optionsBtn];
 
         const element = h('div', { class: 'desk' },
             h('div', { class: 'desk-grid' },
@@ -222,9 +217,6 @@ const BossModDeskPanel = (() => {
             const who = agent();
             clear(lead);
             clear(contractEl);
-            // A role form needs the row it edits; until the roster has it,
-            // Edit role is withheld rather than live and doing nothing.
-            editBtn.disabled = !who;
             if (!who) {
                 roleEl.textContent = 'Loading this desk…';
                 pillEl.hidden = true;
@@ -267,13 +259,27 @@ const BossModDeskPanel = (() => {
             menu = BossModMenu.createMenu({
                 anchor: optionsBtn,
                 label: LABELS.options,
-                items: [h('div', { class: 'menu-actions' },
-                    menuRow('desk-diagnostics', 'activity', 'Diagnostics',
-                        pick(() => navigate('log', { agentId }))),
-                    menuRow('desk-reset-runtime', 'rotate-ccw', 'Reset runtime',
-                        pick(() => actions.confirmReset()), true),
-                    menuRow('desk-remove', 'trash-2', 'Remove agent',
-                        pick(() => actions.confirmRemove()), true))],
+                // The agent's own doors, then the operational ones — the
+                // divider is shell/floor-switcher.js's, between two groups.
+                items: [
+                    h('div', { class: 'menu-actions' },
+                        menuRow('desk-chat', 'message-circle', LABELS.chat,
+                            pick(() => openConversation(agentId, 'agent'))),
+                        menuRow('desk-memory', 'brain', LABELS.memory, pick(() => memory.open())),
+                        // A role form needs the row it edits; until the roster
+                        // has it, Edit role is withheld rather than live and
+                        // doing nothing. Read when the menu opens.
+                        menuRow('desk-edit', 'pencil', LABELS.edit, pick(() => openEdit()),
+                            { disabled: !agent() })),
+                    h('hr', { class: 'menu-divider' }),
+                    h('div', { class: 'menu-actions' },
+                        menuRow('desk-diagnostics', 'activity', 'Diagnostics',
+                            pick(() => navigate('log', { agentId }))),
+                        menuRow('desk-reset-runtime', 'rotate-ccw', 'Reset runtime',
+                            pick(() => actions.confirmReset()), { danger: true }),
+                        menuRow('desk-remove', 'trash-2', 'Remove agent',
+                            pick(() => actions.confirmRemove()), { danger: true })),
+                ],
                 container: optionsBtn.closest('.modal-head'),
                 onClose: () => {
                     menu = null;
@@ -291,7 +297,7 @@ const BossModDeskPanel = (() => {
          */
         function openEdit() {
             if (edit) return;
-            // The tool is disabled until the roster has this agent, and
+            // The row is disabled until the roster has this agent, and
             // openAgentModal throws on a missing one rather than creating.
             edit = BossModAgentEdit.openAgentModal({ agent: agent(), onClosed: closeEdit, onDeleted: onRemoved });
         }

@@ -696,6 +696,13 @@ async function main() {
     const deskModal = () => modals().find((node) => node.getAttribute("data-dialog") === "desk");
     /** A node inside the desk modal. */
     const inDesk = (selector) => deskModal().querySelector(selector);
+    /** Every action on the agent is a row of the head's `⋯`: open it, pick one. */
+    const openDeskMenuRow = async (selector) => {
+        await inDesk("#desk-options").dispatchClick();
+        await drain();
+        await inDesk(selector).dispatchClick();
+        await drain();
+    };
     const deskText = (selector) => deskModal().querySelectorAll(selector)
         .map((node) => node.textContent).join(" ");
 
@@ -1069,26 +1076,35 @@ async function main() {
         || sectionActions.filter((entry) => !entry.endsWith(":")).length !== 2) {
         throw new Error(`Tasks owes its header a "See all" and Schedules a "New", got ${sectionActions.join("|")}`);
     }
-    // The actions on the agent are the HEAD's: Chat and Edit role as tools,
-    // and the other three behind the `⋯`, the destructive two marked.
+    // The actions on the agent are the HEAD's, and all of them sit behind its
+    // one `⋯`: the agent's own doors, a divider, then the operational three,
+    // the destructive two marked.
     const head = deskModal().querySelector(".modal-head");
     const headTools = head.querySelector(".modal-tools").querySelectorAll("button")
         .map((node) => node.getAttribute("aria-label"));
-    const toolsAreInTheHead = headTools.join("|") === "Open chat|Memory|Edit role|Desk options"
+    const toolsAreInTheHead = headTools.join("|") === "Desk options"
         && deskModal().querySelector(".modal-body").querySelectorAll(".desk-action").length === 0;
     if (!toolsAreInTheHead) {
-        throw new Error(`the desk's head must carry its tools, got ${headTools.join("|")}`);
+        throw new Error(`the desk's head must carry only its ⋯, got ${headTools.join("|")}`);
     }
     await inDesk("#desk-options").dispatchClick();
     await drain();
     const menuRows = head.querySelectorAll(".menu-action");
-    const optionsMenuHoldsTheRest = menuRows.map((node) => node.textContent).join("|")
-            === "Diagnostics|Reset runtime|Remove agent"
-        && menuRows.map((node) => node.getAttribute("data-tone") || "").join("|") === "|danger|danger"
+    const menuPanel = head.querySelector(".menu");
+    // Exactly one divider, and it sits between Edit role and Diagnostics.
+    const menuParts = menuPanel.children.map((node) => (node.classList.contains("menu-divider")
+        ? "—" : node.querySelectorAll(".menu-action").map((row) => row.textContent).join(",")));
+    const optionsMenuHoldsEveryAction = menuRows.map((node) => node.textContent).join("|")
+            === "Open chat|Memory|Edit role|Diagnostics|Reset runtime|Remove agent"
+        && menuRows.map((node) => node.getAttribute("data-tone") || "").join("|")
+            === "||||danger|danger"
+        && menuPanel.querySelectorAll(".menu-divider").length === 1
+        && menuParts.join("|") === "Open chat,Memory,Edit role|—|Diagnostics,Reset runtime,Remove agent"
+        && inDesk("#desk-edit").disabled === false
         && inDesk("#desk-options").getAttribute("aria-expanded") === "true";
-    if (!optionsMenuHoldsTheRest) {
-        throw new Error(`the ⋯ must hold Diagnostics, Reset runtime and Remove agent, got `
-            + menuRows.map((node) => node.textContent).join("|"));
+    if (!optionsMenuHoldsEveryAction) {
+        throw new Error(`the ⋯ must hold Open chat, Memory, Edit role, a divider, then Diagnostics, `
+            + `Reset runtime and Remove agent, got ${menuParts.join("|")}`);
     }
     // The contract is CLOSED until the operator asks for it.
     if (inDesk(".desk-contract").hasAttribute("open")) {
@@ -1400,7 +1416,7 @@ async function main() {
 
     // ─── The desk's Memory layer (context/desk-memory.js) ───
     //
-    // The head's Memory tool opens a layer over the desk: loading, then one
+    // The `⋯`'s Memory row opens a layer over the desk: loading, then one
     // `n — text` row per memory with its own remove button. Remove asks
     // first, in a layer over this one; Cancel sends nothing; a confirm sends
     // the DELETE by number and re-reads. A 404 (already gone) is a notice, a
@@ -1420,7 +1436,7 @@ async function main() {
     await drain();
     let releaseMemoryRead = null;
     heldMemoryRead = { promise: new Promise((resolve) => { releaseMemoryRead = resolve; }) };
-    await inDesk("#desk-memory").dispatchClick();
+    await openDeskMenuRow("#desk-memory");
     await drain();
     const theMemoryToolOpensALayer = Boolean(memoryLayer()) && memoryTop() === memoryLayer()
         && deskModal().hidden === true
@@ -1486,7 +1502,7 @@ async function main() {
     await drain();
     const memoryBackReturnsToTheDesk = !memoryLayer() && deskModal().hidden === false;
     memoryReadFails = true;
-    await inDesk("#desk-memory").dispatchClick();
+    await openDeskMenuRow("#desk-memory");
     await drain();
     const memoryReadFailureOffersRetry = memoryLayer().querySelectorAll(".context-error")
             .some((node) => node.textContent === "Memory could not be loaded.")
@@ -1501,7 +1517,7 @@ async function main() {
     const closingTheDeskClosesTheMemoryLayer = modals().length === 0;
     desk.open("a3");
     await drain();
-    await inDesk("#desk-memory").dispatchClick();
+    await openDeskMenuRow("#desk-memory");
     await drain();
     const memorySaysNothingSaved = memoryLayer().querySelectorAll(".context-empty")
             .some((node) => node.textContent === "Nothing saved yet")
@@ -1522,16 +1538,16 @@ async function main() {
             + `close ${closingTheDeskClosesTheMemoryLayer} empty ${memorySaysNothingSaved}`);
     }
 
-    // ─── Chat, from the head ───
+    // ─── Chat, from the head's `⋯` ───
     desk.open("a1");
     await drain();
-    await inDesk("#desk-chat").dispatchClick();
+    await openDeskMenuRow("#desk-chat");
     await drain();
     const chatToolOpensTheConversation = modals().length === 0
         && store.getState().conversationId === "a1"
         && store.getState().conversationKind === "agent";
     if (!chatToolOpensTheConversation) {
-        throw new Error("the desk's Chat tool must close the desk and open the conversation");
+        throw new Error("the desk's Open chat must close the desk and open the conversation");
     }
 
     // ─── 3a². Schedules: the rows, their states, the live repaint, the layer ───
@@ -2098,9 +2114,19 @@ async function main() {
 
     // ─── 3c. Hire and Edit are the same centred dialog ───
     //
-    // Driven from the desk's own head tool, because "what the operator
-    // clicks" is the claim.
+    // Driven from the desk's own `⋯`, because "what the operator clicks" is
+    // the claim. The desk opens before the roster names the agent, so Edit
+    // role is withheld first: a role form needs the row it edits.
+    store.setState({ roster: ROSTER.filter((row) => row.id !== "a1") });
+    await drain();
     desk.open("a1");
+    await drain();
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const editIsWithheldBeforeTheRoster = inDesk("#desk-edit").disabled === true;
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    store.setState({ roster: ROSTER });
     await drain();
 
     /** The Edit role layer, known by its name: the desk is a panel too. */
@@ -2141,8 +2167,14 @@ async function main() {
     };
     if (modals().length !== 1) throw new Error("only the desk should be open yet");
 
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
     const editAction = inDesk("#desk-edit");
-    if (!editAction) throw new Error("the desk head must offer Edit role");
+    if (!editAction) throw new Error("the desk's ⋯ must offer Edit role");
+    if (!editIsWithheldBeforeTheRoster || editAction.disabled !== false) {
+        throw new Error(`Edit role must be disabled until the roster has the agent: before `
+            + `${editIsWithheldBeforeTheRoster}, after ${editAction.disabled}`);
+    }
     await editAction.dispatchClick();
     await drain();
 
@@ -2243,7 +2275,7 @@ async function main() {
     // focus trap, and two live `#agent-form`s would let one primary submit the
     // other's draft. The Hire door is the Agents dialog now; it hands back the
     // Edit dialog that holds the one-form slot and builds nothing of its own.
-    await editAction.dispatchClick();
+    await openDeskMenuRow("#desk-edit");
     await drain();
     const first = editModal();
     const handedBack = openAddAgent();
@@ -2460,7 +2492,7 @@ async function main() {
     connectionsFail = true;
     desk.open("a1");
     await drain();
-    await inDesk("#desk-edit").dispatchClick();
+    await openDeskMenuRow("#desk-edit");
     await drain();
     const degradedForm = editModal();
     const feedbackLine = degradedForm.querySelector("#agent-save-feedback");
@@ -2823,7 +2855,7 @@ async function main() {
     updates.length = 0;
     desk.open("a1");
     await drain();
-    await inDesk("#desk-edit").dispatchClick();
+    await openDeskMenuRow("#desk-edit");
     await drain();
     const editing = editModal();
     const editingForm = editing.querySelector("#agent-form");
@@ -3027,7 +3059,7 @@ async function main() {
         oneDeskAtATime,
         deskDrainsOnClose,
         toolsAreInTheHead,
-        optionsMenuHoldsTheRest,
+        optionsMenuHoldsEveryAction,
         taskRowIsAButtonWithTheSharedPill,
         taskRowOpensTheTask,
         aSubtaskPushesAThirdCrumb,

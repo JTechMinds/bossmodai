@@ -257,7 +257,7 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
 
 
 def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
-    """The head's Memory tool: what the agent is shown every turn, prunable.
+    """The `⋯`'s Memory row: what the agent is shown every turn, prunable.
 
     The store sits outside every agent path, so neither Files nor Notes can
     show it. The layer reads GET /api/agents/{id}/memory, lists `n — text`,
@@ -282,10 +282,12 @@ def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
     panel = _read(CONTEXT / "desk-panel.js")
     assert len(panel.splitlines()) < 400
     assert "BossModDeskMemory.createDeskMemory({ api, agentId })" in panel
-    assert "tool('desk-memory', 'brain', LABELS.memory, () => memory.open())" in panel
+    assert "menuRow('desk-memory', 'brain', LABELS.memory, pick(() => memory.open()))" in panel
     assert "memory.destroy()" in panel
-    # Chat, Memory, Edit role: the Memory tool sits between the other two.
-    assert panel.index("tool('desk-chat'") < panel.index("tool('desk-memory'") < panel.index("editBtn,\n")
+    # Open chat, Memory, Edit role, the divider, then the operational rows.
+    assert (panel.index("menuRow('desk-chat'") < panel.index("menuRow('desk-memory'")
+            < panel.index("menuRow('desk-edit'") < panel.index("h('hr', { class: 'menu-divider' })")
+            < panel.index("menuRow('desk-diagnostics'"))
     index = _read(ROOT / "ui" / "templates" / "index.html")
     assert index.index("js/context/desk-memory.js") < index.index("js/context/desk-panel.js")
 
@@ -928,8 +930,8 @@ def test_desk_panel_keeps_role_contract_copy() -> None:
         assert "confirmThen({" in footer.split(runner, 1)[1].split("\n        }\n", 1)[0], runner
     assert "onclick" not in footer
     panel = _read(CONTEXT / "desk-panel.js")
-    assert "pick(() => actions.confirmReset()), true)" in panel
-    assert "pick(() => actions.confirmRemove()), true))" in panel
+    assert "pick(() => actions.confirmReset()), { danger: true })" in panel
+    assert "pick(() => actions.confirmRemove()), { danger: true }))" in panel
     assert "onclick: () => { void removeAgent(); }" not in footer
     assert "onclick: () => { void resetRuntime(); }" not in footer
     # Cancel is last, so it holds focus and Esc and Enter agree.

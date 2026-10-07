@@ -90,7 +90,7 @@ def test_the_committed_subset_is_what_the_generator_writes() -> None:
     """Covers every statically written name, positional arguments included.
 
     The generator takes every quoted literal that is a lucide icon, so this is
-    what catches `tool('desk-edit', 'pencil', …)` — a name no declared-position
+    what catches `menuRow('desk-edit', 'pencil', …)` — a name no declared-position
     pattern can see.
     """
     result = subprocess.run(
