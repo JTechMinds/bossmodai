@@ -254,8 +254,8 @@ def denial_message(raw_path: str) -> str:
     the configured host roots. It points the agent at request_host_access.
     """
     return (
-        f"Path {raw_path!r} is outside /me and /projects and is not an "
-        "operator-allowed host path. Call request_host_access (path + reason) "
+        f"Path {raw_path!r} is outside /me and /projects and is not a "
+        "boss-allowed host path. Call request_host_access (path + reason) "
         "to ask for it."
     )
 

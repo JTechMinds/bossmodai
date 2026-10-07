@@ -194,7 +194,6 @@ async def test_channel_route_system_ai_leaves_the_serve_loop(
         channel_id=channel.id,
         channel_name=channel.name,
         content="Who has the next step?",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )

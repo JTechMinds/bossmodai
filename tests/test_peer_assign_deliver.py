@@ -266,7 +266,7 @@ async def test_host_path_owner_assigns_worker_edits_and_deny_stays_closed(
     )
     assert denied["event"] == "bm_cli_error"
     deny_text = (denied.get("detail") or "") + (denied.get("cli_prompt_content") or "")
-    assert "is not an operator-allowed host path" in deny_text
+    assert "is not a boss-allowed host path" in deny_text
     assert "request_host_access" in deny_text
     assert fixture.read_text(encoding="utf-8") == 'print("after-review")\n'
 
@@ -597,7 +597,7 @@ def test_create_task_api_host_path_outside_roots_is_400(
     )
     assert response.status_code == 400
     detail = response.json()["detail"]
-    assert "is not an operator-allowed host path" in detail
+    assert "is not a boss-allowed host path" in detail
     assert "request_host_access" in detail
     assert db.list_tasks() == []
 
@@ -626,7 +626,7 @@ async def test_delegate_task_host_path_outside_roots_fails_closed(tmp_path: Path
         state,
     )
     assert result["event"] == "world_feedback"
-    assert "is not an operator-allowed host path" in result["detail"]
+    assert "is not a boss-allowed host path" in result["detail"]
     assert db.list_tasks(assigned_to=worker.id) == []
 
 

@@ -166,7 +166,7 @@ def test_schedules_lists_only_the_callers_schedules() -> None:
     assert row["next_run"] and row["last_run"] == format_local_run(NOW)
     assert "Bob's routine" not in result.prompt_content
     line = next(text for text in result.prompt_content.splitlines() if text.startswith(f"{row['id'][:8]} | Ping me |"))
-    assert f"| on | no (ask the operator) | {row['next_run']} | fired {format_local_run(NOW)} | {task.id} (pending)" in line
+    assert f"| on | no (ask the boss) | {row['next_run']} | fired {format_local_run(NOW)} | {task.id} (pending)" in line
 
 
 def test_schedules_with_none_says_so() -> None:

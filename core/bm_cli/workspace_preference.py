@@ -496,7 +496,7 @@ def _result_for_resolved_preference(
         command,
         (
             f"Host writes stay blocked for {prior.path!r}. "
-            "The operator cancelled workspace preference for this path."
+            "The boss cancelled workspace preference for this path."
         ),
         cwd=cwd,
         executor="virtual",

@@ -529,7 +529,6 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
                 await route_human_dm(
                     agent_id=agent.id,
                     content=question,
-                    from_name="Telegram User",
                     broadcast_manager=broadcast_manager,
                     services=services,
                 )
@@ -574,7 +573,6 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             await route_human_dm(
                 agent_id=session.target_agent_id,
                 content=text,
-                from_name="Telegram User",
                 broadcast_manager=broadcast_manager,
                 services=services,
             )
@@ -594,7 +592,6 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             channel_id=session.target_channel_id,
             channel_name=channel.name,
             content=text,
-            from_name="Telegram User",
             broadcast_manager=broadcast_manager,
             services=services,
         )

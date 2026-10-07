@@ -13,7 +13,7 @@ const BossModCommunication = (() => {
         tone: Object.freeze(['precise-but-scannable', 'product-clear', 'direct', 'warm']),
         density: Object.freeze(['scannable', 'compact', 'thorough']),
         jargon: Object.freeze(['none', 'light', 'field']),
-        audience: Object.freeze(['operator', 'implementer', 'mixed']),
+        audience: Object.freeze(['boss', 'implementer', 'mixed']),
     });
     const LABELS = Object.freeze({
         tone: 'Tone',
@@ -24,7 +24,7 @@ const BossModCommunication = (() => {
 
     const AUDITOR = Object.freeze({
         tone: 'precise-but-scannable', density: 'scannable',
-        jargon: 'field', audience: 'operator',
+        jargon: 'field', audience: 'boss',
     });
     const PLANNER = Object.freeze({
         tone: 'product-clear', density: 'scannable',
@@ -34,20 +34,20 @@ const BossModCommunication = (() => {
         review: AUDITOR,
         coordinate: PLANNER,
         write: Object.freeze({
-            tone: 'product-clear', density: 'scannable', jargon: 'none', audience: 'operator',
+            tone: 'product-clear', density: 'scannable', jargon: 'none', audience: 'boss',
         }),
         implement: Object.freeze({
             tone: 'direct', density: 'compact', jargon: 'field', audience: 'implementer',
         }),
         research: Object.freeze({
-            tone: 'precise-but-scannable', density: 'thorough', jargon: 'field', audience: 'operator',
+            tone: 'precise-but-scannable', density: 'thorough', jargon: 'field', audience: 'boss',
         }),
         design: Object.freeze({
-            tone: 'product-clear', density: 'scannable', jargon: 'light', audience: 'operator',
+            tone: 'product-clear', density: 'scannable', jargon: 'light', audience: 'boss',
         }),
     });
     const FALLBACK = Object.freeze({
-        tone: 'direct', density: 'scannable', jargon: 'light', audience: 'operator',
+        tone: 'direct', density: 'scannable', jargon: 'light', audience: 'boss',
     });
 
     const AUDITOR_RE = /\b(auditor|audit|reviewer|review|qa|tester|test)\b/;

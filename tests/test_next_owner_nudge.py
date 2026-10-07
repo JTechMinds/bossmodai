@@ -162,7 +162,9 @@ def test_mentions_need_an_at_and_a_known_name() -> None:
     assert extract_next_owner_mentions(f"{laura.name} should take the next pass.", member_names=names) == []
     assert extract_next_owner_mentions(f"@{jim.name} please review", member_names=names) == [jim.name]
     assert extract_next_owner_mentions("@everyone and @all", member_names=names) == ["everyone", "everyone"]
-    assert extract_next_owner_mentions("@Human the call is yours", member_names=names) == ["Human"]
+    assert extract_next_owner_mentions("@Boss the call is yours", member_names=names) == ["Boss"]
+    # The retired aliases for the human no longer tag anyone.
+    assert extract_next_owner_mentions("@Human or @Operator, the call is yours", member_names=names) == []
 
 
 def test_system_one_liners_are_recognised() -> None:

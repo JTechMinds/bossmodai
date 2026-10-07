@@ -16,6 +16,7 @@ import pytest
 import db
 from tests._connections import model_connection
 from core import config
+from core.boss import boss_label
 from core.agent_loop import activity_runtime
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.dispatcher import TurnDispatcher
@@ -218,7 +219,7 @@ async def test_interlude_is_recorded_with_the_reply(monkeypatch: pytest.MonkeyPa
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), payload)
     snapshot = db.get_work_snapshot(activity.id)
     assert [item.model_dump() for item in snapshot.interludes] == [
-        {"from_name": "Human Operator", "content": "How far along?", "reply": "Checked status; starting fix 1 next."}
+        {"from_name": boss_label(), "content": "How far along?", "reply": "Checked status; starting fix 1 next."}
     ]
     assert any(
         item.trigger_type == "activity_resumed" and item.task_id == task.id
@@ -272,7 +273,7 @@ async def test_approval_result_lands_after_the_restored_transcript(monkeypatch: 
     )
     messages = prompts[0]
     frozen = next(i for i, item in enumerate(messages) if item["content"] == _STATUS_STEP)
-    rejected = next(i for i, item in enumerate(messages) if "rejected by the operator" in item["content"])
+    rejected = next(i for i, item in enumerate(messages) if "rejected by the boss" in item["content"])
     assert frozen < rejected
     assert rejected == len(messages) - 2, "the approval result and its follow-up close the context"
 

@@ -449,7 +449,7 @@ def _consent_message(request: HostPathConsentRequest, *, agent_name: str) -> str
 def _denied_result(command: str, *, cwd: str | None) -> BossModCliResult:
     return error_result(
         command,
-        "Shell Executor is off — the operator denied enable for validate-on-clone.",
+        "Shell Executor is off — the boss denied enable for validate-on-clone.",
         cwd=cwd,
         executor="shell",
         kind="shell_executor_deny",
@@ -472,6 +472,8 @@ def named_shell_executor_block_reason(
         "desk" in blob
         or "shell" in blob
         or "pytest" in blob
+        # Agents now say "the boss"; the old role noun may still appear.
+        or "boss" in blob
         or "operator" in blob
         or "can't" in blob
         or "cannot" in blob

@@ -16,11 +16,11 @@ import db
 from core.agent_loop.activity_scheduler import build_task_follow_up_trigger
 from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.agent_loop.next_owner import (
-    HUMAN_MENTION_NAMES,
     extract_next_owner_mentions,
     mention_names_for_channel,
 )
 from core.agent_loop.task_origin_mirrors import short_reason
+from core.boss import boss_mention_names
 from core.models import Agent
 from core.models.nest_git import NEST_GIT_AMBIGUOUS_CREDS_WHY
 
@@ -456,7 +456,7 @@ def _mentioned_agent(content: str, *, author_name: str) -> Agent | None:
         if author is None or peers_share_floor(author.id, row.id)
     ]
     names = [row.name for row in roster if getattr(row, "name", None)]
-    names.extend(HUMAN_MENTION_NAMES)
+    names.extend(boss_mention_names())
     target_name = _first_next_owner_name(content, names, author_name=author_name)
     if not target_name:
         return None
@@ -474,10 +474,11 @@ def _first_next_owner_name(
     author_name: str,
 ) -> str | None:
     author = (author_name or "").strip().lower()
+    human = {item.lower() for item in boss_mention_names()}
     for mention in extract_next_owner_mentions(content, member_names=member_names):
         if mention == "everyone":
             continue
-        if mention in HUMAN_MENTION_NAMES:
+        if mention.lower() in human:
             continue
         if author and mention.lower() == author:
             continue
@@ -590,7 +591,7 @@ def _line_tags_replier(
         member_names=mention_names_for_channel(channel_id),
     )
     if is_human:
-        human = {item.lower() for item in HUMAN_MENTION_NAMES}
+        human = {item.lower() for item in boss_mention_names()}
         return any(mention.strip().lower() in human for mention in mentions)
     agent = db.get_agent(agent_id) if agent_id else None
     needle = ((agent.name if agent is not None else None) or name or "").strip().lower()

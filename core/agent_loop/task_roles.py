@@ -6,6 +6,7 @@ from typing import Any
 
 import db
 from core.models import Task
+from core.boss import boss_label
 from core.models.message import HUMAN_SENDER_ID
 
 
@@ -147,7 +148,7 @@ def _display_name_for_actor(actor_id: str | None) -> str | None:
     if actor_id is None:
         return None
     if actor_id == HUMAN_SENDER_ID:
-        return "Human Operator"
+        return boss_label()
     agent = db.get_agent(actor_id)
     if agent is None:
         return None

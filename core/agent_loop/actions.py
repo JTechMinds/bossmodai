@@ -190,7 +190,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
         if payload.get("msg") not in (None, ""):
             raise InvalidDecisionEnvelope(
-                'execution turns require a compact "act"; say-only / empty actions is for operator chat'
+                'execution turns require a compact "act"; say-only / empty actions is for chat with the boss'
             )
         raise ValueError('missing "act"')
     extra_root = set(payload) - {"act", "data", "th", "next_owners"}
@@ -362,7 +362,7 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
                 return '"message" to an agent requires a non-empty "agentId"'
         else:
             if action.get("agentId") not in (None, ""):
-                return '"message" to the human operator must not include "agentId"'
+                return '"message" to the boss must not include "agentId"'
         content = action.get("content")
         if not isinstance(content, str) or not content.strip():
             return '"message" requires a non-empty "content"'

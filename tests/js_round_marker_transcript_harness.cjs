@@ -38,7 +38,8 @@ const wire = [
         id: "m1",
         content: "Ship the fix.",
         author_type: "human",
-        author_name: "You",
+        // A legacy row: the stored name is an audit snapshot, never shown.
+        author_name: "Human Operator",
     },
     {
         id: "m2",
@@ -98,6 +99,7 @@ async function main() {
     });
 
     const loaded = await source.load();
+    const humanLoaded = loaded.find((row) => row.text === "Ship the fix.");
     const loadHidesRound = loaded.every((row) => row.text !== "Round 2")
         && loaded.some((row) => row.text === "Ship the fix.")
         && loaded.some((row) => row.text === "On it.")
@@ -121,6 +123,13 @@ async function main() {
     });
     sub.onLiveEvent("channel_message", {
         channel_id: "t1",
+        message_id: "live-human",
+        content: "Any news?",
+        author_type: "human",
+        author_name: "Jordan (the boss)",
+    });
+    sub.onLiveEvent("channel_message", {
+        channel_id: "t1",
         message_id: "live-ok",
         content: "Still here.",
         author_type: "agent",
@@ -131,11 +140,18 @@ async function main() {
 
     const liveHidesRound = painted.every((row) => row.text !== "Round 3")
         && painted.some((row) => row.text === "Still here.");
+    const humanLive = painted.find((row) => row.text === "Any news?");
+    // The human's own lines say "You", whatever name the row stored.
+    const humanRowsSayYou = Boolean(humanLoaded && humanLoaded.authorName === "You"
+        && humanLive && humanLive.authorName === "You");
+    const agentRowKeepsItsName = painted.some((row) => row.text === "Still here." && row.authorName === "Jim");
 
     process.stdout.write(JSON.stringify({
-        ok: loadHidesRound && liveHidesRound,
+        ok: loadHidesRound && liveHidesRound && humanRowsSayYou && agentRowKeepsItsName,
         loadHidesRound,
         liveHidesRound,
+        humanRowsSayYou,
+        agentRowKeepsItsName,
         loadedTexts: loaded.map((row) => row.text),
         paintedTexts: painted.map((row) => row.text),
     }) + "\n");

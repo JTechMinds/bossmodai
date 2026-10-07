@@ -51,6 +51,7 @@ from core.agent_loop.channel_host import (
     shape_follow_up_speak,
 )
 from core.agent_loop.channel_router import RoundPlan, RouterLine, plan_channel_route
+from core.boss import boss_label
 from core.llm.attachment_parts import attachment_route_line
 from core.agent_loop.channel_work_bind import (
     live_work_bind_ids,
@@ -876,6 +877,7 @@ def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str, str,
     """Newest transcript line, skipping round-boundary markers.
 
     Returns ``(text, author_type, author_agent_id, author_name, message_id)``.
+    A human line's name is the current boss label, never the stored name.
     With no such line, returns ``fallback`` and empty author and id fields.
     """
     for row in reversed(db.list_channel_messages(channel_id, limit=12)):
@@ -887,7 +889,7 @@ def _latest_channel_line(channel_id: str, fallback: str) -> tuple[str, str, str,
                 text,
                 str(row.author_type or ""),
                 str(row.author_agent_id or ""),
-                str(row.author_name or ""),
+                boss_label() if row.author_type == "human" else str(row.author_name or ""),
                 str(row.id or ""),
             )
     return fallback, "", "", "", ""
@@ -933,6 +935,7 @@ def router_transcript(channel_id: str, *, exclude_message_id: str | None) -> lis
     ``exclude_message_id`` (the persisted latest line) is dropped; ``None``
     drops nothing, because the latest line is then unpersisted speech or
     trigger content. A system row is a status card. No id reaches the lines.
+    A human row is labelled with the current boss label, not its stored name.
     """
     limit = router_transcript_limit()
     rows = [
@@ -945,9 +948,10 @@ def router_transcript(channel_id: str, *, exclude_message_id: str | None) -> lis
         if row.id != exclude_message_id
     ]
     kept = rows[-limit:] if limit > 0 else []
+    label = boss_label()
     return [
         RouterLine(
-            author=str(row.author_name or ""),
+            author=label if row.author_type == "human" else str(row.author_name or ""),
             text=str(row.content or ""),
             status=row.author_type == "system",
             author_agent_id=str(row.author_agent_id or ""),
@@ -960,7 +964,7 @@ def _author_label(channel_id: str, agent_id: str | None, fallback_name: str) -> 
     """``Name (role)`` for a member agent, otherwise ``fallback_name``.
 
     ``fallback_name`` is the caller's display name for a non-member author,
-    such as "Human Operator" or "BossMod".
+    such as the boss label (``core.boss.boss_label``) or "BossMod".
     """
     token = (agent_id or "").strip()
     if token:
@@ -1078,12 +1082,13 @@ def _wake_trigger(
     meta: dict[str, Any],
 ) -> dict[str, Any]:
     """Build the next ordered channel wake. It is a fresh judgment, not a queue pop."""
+    author_type = trigger.get("author_type", "human")
     payload = {
         "content": trigger.get("content", ""),
         "channel_id": trigger.get("channel_id"),
         "round_id": round_id,
-        "from_name": trigger.get("from_name", "Human Operator"),
-        "author_type": trigger.get("author_type", "human"),
+        "from_name": boss_label() if author_type == "human" else trigger["from_name"],
+        "author_type": author_type,
         "from_agent": trigger.get("from_agent"),
         "source_message_id": trigger.get("source_message_id"),
         "channel_name": trigger.get("channel_name"),

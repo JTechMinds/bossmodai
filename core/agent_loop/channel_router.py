@@ -66,7 +66,7 @@ AGENT_LINE_ROUTE = (
 # Re-route / later slice. Engine facts are Already spoke and Work-bound.
 # Echo versus new substance is the guess. Unsure stays out.
 REROUTE_ECHO_ROUTE = (
-    "Already spoke lists members who already took a turn on this operator message. "
+    "Already spoke lists members who already took a turn on this message from the boss. "
     "Work-bound lists members on live work. "
     "Being work-bound never excludes a member: wake them when the latest line addresses them; "
     "their work resumes after they answer. "
@@ -422,7 +422,7 @@ def build_router_messages(
         "When one handoff needs two related members in sequence (e.g. an author then a reviewer), "
         "name both in that order. "
         "Use the role summary to match the work to who owns it. "
-        "Operator @ members (pending) are already required — keep them first. "
+        "Members the boss @-mentioned (pending) are already required — keep them first. "
         "Reply with only one JSON object and no other text. "
         'The only key is "speak". '
         "Its value is an array of member numbers (integers) from the list below, "

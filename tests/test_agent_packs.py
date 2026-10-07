@@ -1807,7 +1807,7 @@ def test_api_cards_carry_sections_done_and_tools_at_no_extra_fetch(
         "tone": "precise-but-scannable",
         "density": "scannable",
         "jargon": "field",
-        "audience": "operator",
+        "audience": "boss",
     }
     assert card["sections"] == describe_pack(
         card["description"], card["what_done_looks_like"]

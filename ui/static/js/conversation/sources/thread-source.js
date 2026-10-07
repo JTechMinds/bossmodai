@@ -109,7 +109,8 @@ const BossModThreadSource = (() => {
             return {
                 key: isQueue ? `queue-visibility:${queueKey}` : (cardKey || String(raw.message_id || raw.id || '').trim()),
                 author: raw.author_type || 'agent',
-                authorName: raw.author_name || 'Unknown',
+                // The human's stored name is an audit snapshot; the UI says "You".
+                authorName: raw.author_type === 'human' ? 'You' : (raw.author_name || 'Unknown'),
                 authorAgentId: raw.author_agent_id || null,
                 authorColor: colorFor(raw.author_agent_id),
                 showAuthor: true,

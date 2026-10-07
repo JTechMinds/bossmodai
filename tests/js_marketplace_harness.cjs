@@ -105,7 +105,7 @@ const CATALOG = {
                     tools_hint: ["work"],
                     communication: {
                         tone: "precise-but-scannable", density: "scannable",
-                        jargon: "field", audience: "operator",
+                        jargon: "field", audience: "boss",
                     },
                     content_hash: "hash-auditor-v2",
                     pack_author: { name: "JTech Minds", url: "https://github.com/JTechMinds" },

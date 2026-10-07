@@ -13,8 +13,8 @@ import re
 from typing import Iterable
 
 import db
+from core.boss import boss_mention_names
 
-HUMAN_MENTION_NAMES = ("Human", "Operator", "Human Operator")
 _EVERYONE = "everyone"
 # Typed forms of the canonical everyone token. Checked after member names.
 _EVERYONE_ALIASES = ("everyone", "all")
@@ -46,10 +46,12 @@ def is_multi_party_channel(channel_id: str | None) -> bool:
 
 
 def mention_names_for_channel(channel_id: str) -> list[str]:
-    """Return @-mention candidates on this thread's floor, plus the operator.
+    """Return @-mention candidates on this thread's floor, plus the boss.
 
     A member whose home floor is not the thread's floor is not a candidate.
-    A thread with no floor names nobody but the operator.
+    A thread with no floor names nobody but the boss. The boss's names
+    (``core.boss.boss_mention_names``) are read per call, so a rename is
+    live on the next turn.
     """
     from core.floors import channel_floor_id, on_floor
 
@@ -61,7 +63,7 @@ def mention_names_for_channel(channel_id: str) -> list[str]:
             for member in db.list_channel_member_details(channel_id)
             if on_floor(str(member.get("id") or ""), floor_id)
         ]
-    names.extend(HUMAN_MENTION_NAMES)
+    names.extend(boss_mention_names())
     return [name for name in names if name]
 
 

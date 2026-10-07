@@ -40,7 +40,8 @@ const BossModTaskEvents = (() => {
      *   `detail` may be empty; the actor never is.
      */
     function describeEvent(event) {
-        const actor = String(event.author_name || 'System');
+        // A human event is the viewer's own; its stored name is an audit snapshot.
+        const actor = event.author_type === 'human' ? 'You' : String(event.author_name || 'System');
         const content = String(event.content || '').trim();
         if (event.event_type === 'status_update') {
             const match = STATUS_LINE.exec(content);
@@ -83,7 +84,7 @@ const BossModTaskEvents = (() => {
                     BossModFormat.formatRelativeTime(event.created_at)),
                 h('p', { class: 'task-detail-event-text' },
                     BossModAvatar.create({
-                        name: event.author_name,
+                        name: event.author_type === 'human' ? 'You' : event.author_name,
                         color: event.author_agent_id ? colorOf(event.author_agent_id) : undefined,
                         size: 'chip',
                     }),

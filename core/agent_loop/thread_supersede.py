@@ -11,6 +11,7 @@ from typing import Any
 
 import db
 from core.agent_loop.channel_rounds import start_channel_peer_round
+from core.boss import boss_label
 from core.models import Agent
 from core.models.channel import (
     ChannelArchivedError,
@@ -170,7 +171,7 @@ def _ensure_wake_on_latest_tip(
         channel_id=channel_id,
         message_id=latest.id,
         content=latest.content,
-        from_name=latest.author_name,
+        from_name=boss_label() if latest.author_type == "human" else latest.author_name,
         author_type=latest.author_type,
         channel_name=channel_name,
     )

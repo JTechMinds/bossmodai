@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import db
+from core.boss import boss_label
 from core.agent_loop.chat_fade import apply_channel_chat_fade, consider_channel_chat_fade
 from core.agent_loop.sticky_slots import compose_channel_sticky_slots, compose_task_sticky_slots
 from core.agent_loop.task_thread_history import load_task_thread_history
@@ -87,7 +88,7 @@ def _load_conversation_history(
             limit=fetch_limit,
             earliest_ts=policy.earliest_ts_allowed,
         )
-        formatted = db.get_formatted_messages(thread, human_label="Human Operator")
+        formatted = db.get_formatted_messages(thread, human_label=boss_label())
         if trigger_type == "human_chat":
             formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
         return _finish_history(
@@ -106,7 +107,7 @@ def _load_conversation_history(
             limit=fetch_limit,
             earliest_ts=policy.earliest_ts_allowed,
         )
-        formatted = db.get_formatted_messages(thread, human_label="Human Operator")
+        formatted = db.get_formatted_messages(thread, human_label=boss_label())
         formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
         return _finish_history(
             formatted,
@@ -122,6 +123,7 @@ def _load_conversation_history(
         if channel_id:
             thread = db.get_formatted_channel_messages(
                 channel_id,
+                human_label=boss_label(),
                 limit=fetch_limit,
             )
             verbatim = _exclude_source_message(thread, trigger.get("source_message_id"))
@@ -147,6 +149,7 @@ def _load_conversation_history(
         if session_id:
             thread = db.get_formatted_meeting_session_messages(
                 session_id,
+                human_label=boss_label(),
                 limit=fetch_limit,
             )
             thread = _exclude_source_message(thread, trigger.get("source_message_id"))
@@ -166,6 +169,7 @@ def _load_conversation_history(
             if session is not None:
                 thread = db.get_formatted_meeting_session_messages(
                     session.id,
+                    human_label=boss_label(),
                     limit=fetch_limit,
                 )
                 return _finish_history(
@@ -182,7 +186,7 @@ def _load_conversation_history(
                 limit=fetch_limit,
                 earliest_ts=policy.earliest_ts_allowed,
             )
-            formatted = db.get_formatted_messages(thread, human_label="Human Operator")
+            formatted = db.get_formatted_messages(thread, human_label=boss_label())
             return _finish_history(
                 formatted,
                 agent.id,
@@ -239,6 +243,7 @@ def _load_consent_or_approval_history(
     if isinstance(channel_id, str) and channel_id.strip():
         thread = db.get_formatted_channel_messages(
             channel_id.strip(),
+            human_label=boss_label(),
             limit=fetch_limit,
         )
         if thread:
@@ -256,7 +261,7 @@ def _load_consent_or_approval_history(
         limit=fetch_limit,
         earliest_ts=policy.earliest_ts_allowed,
     )
-    formatted = db.get_formatted_messages(thread, human_label="Human Operator")
+    formatted = db.get_formatted_messages(thread, human_label=boss_label())
     return _finish_history(
         formatted,
         agent.id,

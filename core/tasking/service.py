@@ -9,6 +9,7 @@ from typing import Any
 import db
 from core.agent_loop.shared_handoff import is_shared_thread_origin
 from core.agent_loop.task_roles import default_task_owner_id
+from core.boss import boss_label
 from core.bm_cli.filesystem import slugify_name
 from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
@@ -134,7 +135,7 @@ def create_or_bind_task(
             author_type="system",
             author_name="BossMod",
             event_type="system",
-            content="Reused the existing open task chosen by the operator.",
+            content="Reused the existing open task chosen by the boss.",
             source_trigger_id=audit_source_trigger_id,
         )
         return TaskCreateOrBindResult(
@@ -144,7 +145,7 @@ def create_or_bind_task(
                 outcome="bind_existing_task",
                 task=existing,
                 candidates=(existing,),
-                reason="Operator selected an existing task.",
+                reason="The boss selected an existing task.",
             ),
         )
     requested_owner_id = owner_id or default_task_owner_id(
@@ -310,7 +311,7 @@ def cancel_task_as_operator(task_id: str, *, reason: str) -> tuple[Task, dict[st
         reason: Why, in the operator's words. It becomes the task event, the
             status note, the cancelled activities' detail and the origin
             thread's ``Cancelled — <reason>`` line. The board and a thread
-            archive pass ``OPERATOR_CANCEL_REASON``; an agent delete names
+            archive pass ``BOSS_CANCEL_REASON``; an agent delete names
             the deleted owner.
 
     Returns:
@@ -339,7 +340,7 @@ def cancel_task_as_operator(task_id: str, *, reason: str) -> tuple[Task, dict[st
         task.id,
         "cancelled",
         reason=note,
-        actor="Human Operator",
+        actor=boss_label(),
         actor_type="human",
         status_note=note,
         completion_summary=None,

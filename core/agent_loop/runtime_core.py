@@ -13,6 +13,7 @@ not require @.
 from __future__ import annotations
 
 from core.agent_loop.standing_prefs import PREF_KINDS
+from core.boss import boss_label, boss_mention
 from core.models import Agent
 from core.models.host_path_consent import HostPathConsentRequest
 
@@ -47,7 +48,7 @@ AUDIENCE_SOFT_JUDGMENT = (
 
 # Talk / 1:1 status / channel only — bias, not a hard require. Work stays quiet.
 SAY_WITH_ACTIONS = (
-    "When acting on a human ask, include a non-empty say with the actions. "
+    "When acting on an ask from the boss, include a non-empty say with the actions. "
     "Bias only — no essay acks or \"Copy that.\""
 )
 
@@ -58,13 +59,13 @@ NOTES_STORE_RETRIEVE = (
     "Open on demand for how-to. Pointers-first. Never dump. "
     "Never invent Board/Done from note text.\n"
     "Standing prefs (warm): "
-    "on a clear operator statement, record it with `pref set <id> <kind> <source>` "
+    "on a clear statement from the boss, record it with `pref set <id> <kind> <source>` "
     "and the rule in the body as one shorthand sentence: the essence only, no preamble. "
     f"Kinds: {' / '.join(PREF_KINDS)}. "
     "Replace by reusing the id; remove with `pref remove <id>`; see all with `pref list`. "
     "The engine injects them every work turn — "
     "the agent does not re-open prefs for inject. "
-    "Supersede only when the operator replaces. "
+    "Supersede only when the boss replaces. "
     "Optional note pointer for prose — warm inject does not scrape notes. "
     "Invent-key / Board fakes still fail-closed."
 )
@@ -82,23 +83,23 @@ CHAT_FORMATTING = (
 )
 
 LOCKED_WORKSPACE_COPY_STEER = (
-    "Once the operator chooses Branch or workspace-copy, that preference stays locked for the task. "
+    "Once the boss chooses Branch or workspace-copy, that preference stays locked for the task. "
     "Stay on the clone. Do not recommend editing the live host tree. "
-    "Do not park @Operator to reopen it unless the operator explicitly overrides. "
+    "Do not park @Boss to reopen it unless the boss explicitly overrides. "
     "The clone under /me is a real workspace: cd there and validate via cli "
     "(uv run pytest, .venv/bin/pytest, or pytest; local git add/commit). "
     "Do not pip install into the host Python — use uv pip / uv add / .venv/bin/pip "
     "on the clone, or wait for a project-local install card. "
     "Do not invent a desk deny. "
     "Do not invent that the desk cannot shell. "
-    "Do not park @Operator as the test runner or git pusher. "
+    "Do not park @Boss as the test runner or git pusher. "
     "If Shell Executor is off, wait for the in-thread Enable/Deny card; "
-    "do not park @Operator as the shell enabler. "
+    "do not park @Boss as the shell enabler. "
     "If nest git needs credentials, wait for Enable host git or Add PAT/SSH "
     "(Settings → Nest git). Always-allow does not skip auth. "
     "Do not invent that browser or desktop GitHub login is the agent's. "
-    "Do not park @Operator as the git enabler. "
-    "A git push approval card is not a request for the operator to run the command. "
+    "Do not park @Boss as the git enabler. "
+    "A git push approval card is not a request for the boss to run the command. "
     "Do not claim an Approve or consent card is live unless the cli result shows "
     "a request id."
 )
@@ -137,12 +138,13 @@ def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> st
     return (
         f"{_RUNTIME_CORE_TITLE}\n"
         f"You are {name} ({specialty}).\n"
+        f"You work for {boss_label()} — the boss. Tag them as {boss_mention()}.\n"
         f"{desk}\n"
         f"Tools you may use: {tools}.\n"
         "Workspace: /me is your private scratch and /projects is shared "
         "with your floor — prefer them. Other host paths are fine where the "
-        "operator names or allows them: use them in cli, and if one is denied "
-        "call request_host_access (path + reason). Do not ask the operator for "
+        "boss names or allows them: use them in cli, and if one is denied "
+        "call request_host_access (path + reason). Do not ask the boss for "
         "a verbal yes/no. Do not invent access or claim the file exists.\n"
         "Done: complete only with a checkable claim "
         "(artifact path, tests evidence, or allow/deny proof). "

@@ -748,7 +748,7 @@ def _local_body(**overrides) -> dict:
         "description": "Turns a merged PR list into notes an operator can read.",
         "what_done_looks_like": "A dated notes file exists.",
         "communication": {"tone": "direct", "density": "compact", "jargon": "light",
-                          "audience": "operator"},
+                          "audience": "boss"},
     }
     body.update(overrides)
     return body

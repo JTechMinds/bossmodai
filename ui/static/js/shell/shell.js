@@ -295,6 +295,11 @@ const BossModShell = (() => {
         });
         window.addEventListener('beforeunload', () => socket.close());
         socket.connect();
+
+        // Once, after the frame is live: ask the boss's name if never asked.
+        BossModBossNamePrompt.maybeAsk({ api: apiFetch }).catch((err) => {
+            console.error('[shell] could not check whether to ask your name', err);
+        });
     }
 
     return { boot };

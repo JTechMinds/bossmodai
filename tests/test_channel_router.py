@@ -13,6 +13,7 @@ import pytest
 import db
 from tests._connections import model_connection
 from core import config
+from core.boss import boss_label
 from core.agent_loop.channel_round_plan import (
     DISPATCH_FANOUT,
     DISPATCH_ROUNDS,
@@ -406,7 +407,7 @@ def test_router_sees_prior_lines_and_the_latest_author(monkeypatch: pytest.Monke
     expected_lines = [
         "[status] Harley Accepted: Sequence the M2 plan"
         if index == 9
-        else f"Human Operator: prior line {index}"
+        else f"{boss_label()}: prior line {index}"
         for index in range(2, 13)
         if index != 5
     ]
@@ -484,7 +485,7 @@ def test_in_round_speak_route_keeps_the_previous_line(monkeypatch: pytest.Monkey
     assert len(prompts) == 2
     reroute = prompts[1]
     recent = _block(reroute, "Recent thread (oldest first):", "Latest message from")
-    assert recent.splitlines()[-1] == "Human Operator: Where are we on the plan?"
+    assert recent.splitlines()[-1] == f"{boss_label()}: Where are we on the plan?"
     assert "Ada: Fixture is checked in." in recent
     assert _block(reroute, "Latest message from Jim (PM):", "Members:") == "The plan is filed."
     assert reroute.count("The plan is filed.") == 1
@@ -529,7 +530,7 @@ def test_reroute_with_empty_speak_labels_the_actual_latest_line(monkeypatch: pyt
     assert _block(reroute, "Latest message from Jim (PM):", "Members:") == "The plan is filed."
     assert "Latest message from Laura" not in reroute
     recent = _block(reroute, "Recent thread (oldest first):", "Latest message from")
-    assert recent == "Human Operator: Where are we on the plan?"
+    assert recent == f"{boss_label()}: Where are we on the plan?"
 
 
 def test_list_channel_messages_can_exclude_a_notification_kind() -> None:

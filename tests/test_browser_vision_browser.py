@@ -506,7 +506,7 @@ def test_a_bot_check_is_reported_and_the_site_cooled_down(browse, tmp_path) -> N
     blocked = bv(f"bv open {base}/wall")
     lines = blocked.prompt_content.splitlines()
     assert lines[lines.index("BROWSER:") + 1] == (
-        f"BLOCKED: {host} is showing a bot check (HTTP 429). Stop browsing this site and tell the operator; "
+        f"BLOCKED: {host} is showing a bot check (HTTP 429). Stop browsing this site and tell the boss; "
         "do not retry or switch tools to get around it."
     )
     assert "title: Are You a Robot?" in blocked.prompt_content

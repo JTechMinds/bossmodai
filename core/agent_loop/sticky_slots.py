@@ -32,6 +32,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 import db
 from core import config
 from core.agent_loop.chat_fade import FADE_ID_PREFIX
+from core.boss import boss_label
 from core.llm.client import count_tokens
 from core.llm.system_completion import complete_text, system_ai_is_configured
 from db.sticky_slots import (
@@ -388,8 +389,12 @@ def _task_lines(task: Any) -> list[str]:
     if note:
         lines.append(f"status note: {note[:_SOURCE_MESSAGE_CHARS]}")
     events = db.list_task_events(str(task.id), limit=40)
+    label = boss_label()
     for event in events:
-        name = str(getattr(event, "author_name", "") or "Unknown")
+        if getattr(event, "author_type", "") == "human":
+            name = label
+        else:
+            name = str(getattr(event, "author_name", "") or "Unknown")
         content = " ".join(str(getattr(event, "content", "") or "").split())
         lines.append(f"{name}: {content[:_SOURCE_MESSAGE_CHARS]}")
     return lines

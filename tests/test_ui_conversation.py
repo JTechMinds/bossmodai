@@ -211,8 +211,10 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
         "ok": True,
         "loadHidesRound": True,
         "liveHidesRound": True,
+        "humanRowsSayYou": True,
+        "agentRowKeepsItsName": True,
         "loadedTexts": ["Ship the fix.", "On it.", "Thread paused."],
-        "paintedTexts": ["Still here."],
+        "paintedTexts": ["Any news?", "Still here."],
     }
 
 
@@ -362,6 +364,7 @@ def test_conversation_harness() -> None:
         "authorUsesAgentColor": True,
         "faceLowerLeftBesideBubble": True,
         "noOrphanAgentFace": True,
+        "humanFaceSaysYou": True,
         "turnGap": True,
         # The polish round moved the receipts preference out of the action row
         # and behind the header's `⋯`, where later view options go. Its storage

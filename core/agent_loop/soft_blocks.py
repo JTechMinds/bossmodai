@@ -29,6 +29,7 @@ from core.agent_loop.task_origin_mirrors import (
     persist_unbound_status_line,
 )
 from core.agent_loop.work_binding import bound_task_id
+from core.boss import boss_mention
 from core.models import Activity, Agent, Task
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import runtime_events as manager
@@ -216,10 +217,10 @@ def next_owner_mention(agent: Agent) -> str:
     """Return ``@Name`` for the next owner of the agent's bound task.
 
     Precedence: the task's requester, then its owner — each only when it is
-    not the agent itself and shares the agent's floor — else
-    ``@Human Operator``. A teammate who merely shares the thread is never
-    named: they did not ask for the work. The bound task is the turn's
-    (``work_binding``): a detached turn has none, so it names the operator.
+    not the agent itself and shares the agent's floor — else the boss
+    (``core.boss.boss_mention``). A teammate who merely shares the thread is
+    never named: they did not ask for the work. The bound task is the turn's
+    (``work_binding``): a detached turn has none, so it names the boss.
     """
     task_id = bound_task_id(agent.id)
     task = db.get_task(task_id) if task_id else None
@@ -228,11 +229,11 @@ def next_owner_mention(agent: Agent) -> str:
             if not party_id or party_id == agent.id:
                 continue
             if party_id == HUMAN_SENDER_ID:
-                return "@Human Operator"
+                return boss_mention()
             other = db.get_agent(party_id)
             if other is not None and (other.name or "").strip() and _same_home(agent.id, other.id):
                 return f"@{other.name}"
-    return "@Human Operator"
+    return boss_mention()
 
 
 def _same_home(left: str, right: str) -> bool:

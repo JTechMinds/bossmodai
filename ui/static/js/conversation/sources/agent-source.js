@@ -99,8 +99,11 @@ const BossModAgentSource = (() => {
             return {
                 key: isQueue ? `queue-visibility:${agentId}` : (cardKey || String(raw.id || raw.message_id || '').trim()),
                 author,
-                authorName: raw.from_name || raw.author_name
-                    || (author === 'agent' ? agent().name : ''),
+                // The human's own lines are "You"; the name the row carries is
+                // the agent-facing label, not presentation.
+                authorName: author === 'human'
+                    ? 'You'
+                    : (raw.from_name || raw.author_name || (author === 'agent' ? agent().name : '')),
                 authorAgentId,
                 authorColor: colorFor(authorAgentId),
                 showAuthor: author === 'agent',

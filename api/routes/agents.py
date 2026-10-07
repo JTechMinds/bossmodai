@@ -16,6 +16,7 @@ from api.routes._shared import (
 )
 from api.websocket import manager
 from core import config
+from core.boss import boss_label, ensure_agent_name_allowed
 from core.agent_loop import activity_runtime
 from core.agent_pack import agent_is_edited, apply_template_to_agent, template_contract_hash
 from core.agent_repository import agent_repository
@@ -526,7 +527,6 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
             channel_id=channel.id,
             channel_name=channel.name,
             content=content,
-            from_name="Human Operator",
             broadcast_manager=manager,
             services=runtime_services,
             attachment_ids=body.attachment_ids,
@@ -633,7 +633,7 @@ async def save_agent_desk_file(agent_id: str, body: AgentDeskSaveBody) -> dict[s
             raw_path=resolved.virtual_path,
             content=body.content,
             allow_empty=True,
-            reason=f"operator edit {resolved.virtual_path}",
+            reason=f"boss edit {resolved.virtual_path}",
         )
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -821,6 +821,12 @@ async def update_agent(agent_id: str, body: AgentUpdate) -> Agent:
     current = db.get_agent(agent_id)
     if not current:
         raise HTTPException(404, "Agent not found")
+    if "name" in fields:
+        # "Boss" and the boss's own name always tag the human.
+        try:
+            ensure_agent_name_allowed(fields["name"])
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
     if {"connection_id", "thinking_social", "thinking_work"} & fields.keys():
         _validate_ai_choice(
             fields.get("connection_id", current.connection_id),
@@ -1088,7 +1094,7 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     notifications = db.list_notifications(agent_id=agent_id, limit=limit, chat_visible=True)
     notification_links = db.list_notification_links([item.id for item in notifications])
     notifications.reverse()
-    formatted = db.get_formatted_messages(thread, human_label="You")
+    formatted = db.get_formatted_messages(thread, human_label=boss_label())
     formatted.extend(
         [
             {
@@ -1465,7 +1471,6 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
         await route_human_dm(
             agent_id=agent_id,
             content=content,
-            from_name="You",
             broadcast_manager=manager,
             services=runtime_services,
             attachment_ids=attachment_ids,
@@ -1525,7 +1530,7 @@ async def create_agent_meeting_session_message(agent_id: str, body: MeetingMessa
     message = db.create_meeting_session_message(
         session_id=session.id,
         author_type="human",
-        author_name="Human Operator",
+        author_name=boss_label(),
         content=content,
         source_channel="meeting",
     )
@@ -1561,7 +1566,7 @@ async def create_agent_meeting_session_message(agent_id: str, body: MeetingMessa
                 "content": message.content,
                 "session_id": session.id,
                 "round_id": round_record.id,
-                "from_name": "Human Operator",
+                "from_name": boss_label(),
                 "author_type": "human",
                 "source_message_id": message.id,
                 "meeting_title": session.title,
@@ -1610,7 +1615,7 @@ async def reset_agent_runtime(agent_id: str):
 
     await runtime_services.reset_agent_runtime(agent_id)
 
-    reset_note = "Runtime reset by human operator."
+    reset_note = "Runtime reset by the boss."
     blocked_task_ids: list[str] = []
     seen_task_ids: set[str] = set()
     open_work_activities = [
@@ -1630,7 +1635,7 @@ async def reset_agent_runtime(agent_id: str):
                 task.id,
                 "blocked",
                 reason=reset_note,
-                actor="Human Operator",
+                actor=boss_label(),
                 actor_type="human",
                 status_note=reset_note,
                 watchdog_pinged_at=None,

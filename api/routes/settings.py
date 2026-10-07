@@ -11,7 +11,7 @@ from api.routes._shared import (
     _validate_authored_prompt_template,
 )
 from api.websocket import manager
-from core import config
+from core import boss, config
 from core.agent_loop.standing_prefs import WARM_PREFIX_MAX_CHARS, WARM_SECTION_HEADER
 from core.bm_cli.approval_gate import GLOBAL_AUTO_APPROVE_SETTING
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
@@ -44,7 +44,7 @@ def _operator_surfaces_for_setting(key: str, category: str) -> list[str]:
         return ["advanced-system", "chat"]
     if category == "llm" and key.startswith("compaction_"):
         return ["system"]
-    if category in {"simulation", "social", "context", "desk"}:
+    if category in {"profile", "simulation", "social", "context", "desk"}:
         return ["system"]
     if category == "advanced":
         return ["advanced-system"]
@@ -188,6 +188,8 @@ _BOOLEAN_SETTING_LABELS = {
     "channel_idle_check_enabled": "Idle check",
     # The approval gate refuses to guess at any other value.
     GLOBAL_AUTO_APPROVE_SETTING: "Global auto-approve",
+    # Written by the one-time "What should your team call you?" dialog.
+    "boss_name_prompted": "Name prompt answered",
 }
 
 
@@ -281,6 +283,29 @@ def _validate_boolean_setting(key: str, value: str) -> None:
         return
     if value not in {"true", "false"}:
         raise HTTPException(400, f"{label} must be true or false.")
+
+
+def _validate_boss_name_setting(key: str, value: str) -> str:
+    """Validate ``boss_name`` and return the value to store.
+
+    Args:
+        key: Setting key being written. Other keys pass through unchanged.
+        value: Raw value from the request.
+
+    Returns:
+        The trimmed name for ``boss_name`` (``""`` means unset), else ``value``.
+
+    Raises:
+        HTTPException: 400 with the reason from
+            :func:`core.boss.validate_boss_name` (too long, multi-line, ``@``,
+            reserved, or an existing agent's name).
+    """
+    if key != "boss_name":
+        return value
+    try:
+        return boss.validate_boss_name(value, agent_names=[agent.name for agent in db.list_agents()])
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 def _validate_system_ai_thinking(key: str, value: str) -> None:
@@ -381,6 +406,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
     _validate_positive_int_setting(key, value)
     _validate_non_negative_int_setting(key, value)
     _validate_boolean_setting(key, value)
+    value = _validate_boss_name_setting(key, value)
     _validate_system_ai_thinking(key, value)
     _refuse_orphaning_system_ai_thinking(key, value)
     if key == "workspace_host_roots":

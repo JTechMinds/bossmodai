@@ -12,6 +12,7 @@ from typing import Any
 
 import db
 from core import config
+from core.boss import boss_label
 from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.agent_loop.role_contracts import format_role_contract_block, operator_done_claim_guidance
@@ -467,11 +468,16 @@ def _task_context(task: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
+    # The boss is named by type, never from the payload: a DM trigger carries
+    # no from_name, and a stored name is only a write-time snapshot.
+    human_sender = trigger.get("type") == "human_chat" or trigger.get("author_type") == "human"
     return {
         "type": str(trigger.get("type") or ""),
-        "from_name": str(trigger.get("from_name") or ""),
+        "from_name": boss_label() if human_sender else str(trigger.get("from_name") or ""),
         "content": str(trigger.get("content") or ""),
-        "latest_from_name": str(trigger.get("latest_from_name") or ""),
+        "latest_from_name": boss_label()
+        if trigger.get("latest_author_type") == "human"
+        else str(trigger.get("latest_from_name") or ""),
         "latest_content": str(trigger.get("latest_content") or ""),
         "source_channel": str(trigger.get("source_channel") or ""),
         "task_title": str(trigger.get("task_title") or ""),
@@ -987,23 +993,28 @@ def _render_communication_snapshot(
 
 
 def _conversation_speaker(trigger: dict[str, Any]) -> tuple[str, str, str]:
-    """Return speaker metadata for one conversation trigger."""
+    """Return speaker metadata for one conversation trigger.
+
+    A human speaker is always the current boss label, resolved here by
+    type: the trigger's stored ``from_name`` is a write-time snapshot and is
+    never shown for the human.
+    """
     trigger_type = str(trigger.get("type") or "")
     if trigger_type == "human_chat":
-        return "human", "Human Operator", "human"
+        return "human", boss_label(), "human"
     if trigger_type in {"task_assigned", "task_follow_up"}:
         if trigger.get("from_agent"):
             return "agent", str(trigger.get("from_name") or "Coworker"), str(trigger.get("from_agent"))
-        return "human", str(trigger.get("from_name") or "Human Operator"), "human"
+        return "human", boss_label(), "human"
     if trigger_type in {"channel_message", "channel_response"} and trigger.get("latest_content"):
         # The envelope speaker must match the current message the trigger
         # block shows, which is the newest thread line, not the opener.
         if trigger.get("latest_author_type") == "human":
-            return "human", str(trigger.get("latest_from_name") or "Human Operator"), "human"
+            return "human", boss_label(), "human"
         # stamp_channel_latest_line only stamps human or agent lines.
         return "agent", str(trigger.get("latest_from_name") or "Coworker"), str(trigger.get("latest_from_agent") or "")
     if trigger.get("author_type") == "human":
-        return "human", str(trigger.get("from_name") or "Human Operator"), "human"
+        return "human", boss_label(), "human"
     if trigger.get("from_agent"):
         return "agent", str(trigger.get("from_name") or "Coworker"), str(trigger.get("from_agent"))
     return "runtime", str(trigger.get("from_name") or "System"), "runtime"
@@ -1035,7 +1046,7 @@ def _conversation_channel(turn: TurnContext, trigger_type: str) -> tuple[str, st
         counterpart = str(turn.trigger.get("from_name") or "Coworker")
         task_title = str(turn.trigger.get("task_title") or "Task")
         return "task_thread", f'Task Attention: {task_title}', [turn.agent.name, counterpart]
-    return "direct", "Direct Chat", [turn.agent.name, "Human Operator"]
+    return "direct", "Direct Chat", [turn.agent.name, boss_label()]
 
 
 def _conversation_audience(turn: TurnContext, trigger_type: str) -> tuple[str, list[str]]:
@@ -1052,7 +1063,7 @@ def _conversation_audience(turn: TurnContext, trigger_type: str) -> tuple[str, l
         return "direct", [str(turn.trigger.get("from_name") or "Assigning Party")]
     if trigger_type == "task_follow_up":
         return "direct", [str(turn.trigger.get("from_name") or "Coworker")]
-    return "direct", ["Human Operator"]
+    return "direct", [boss_label()]
 
 
 def _conversation_turn_purpose(trigger_type: str) -> str:

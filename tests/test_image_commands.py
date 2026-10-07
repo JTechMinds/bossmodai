@@ -160,5 +160,5 @@ def test_a_view_result_reaches_the_model_as_an_image_or_the_cannot_view_notice()
     }
     assert blind[1] == {
         "type": "text",
-        "text": "[An image was loaded, but your model cannot view images. Tell the operator you can't see it.]",
+        "text": "[An image was loaded, but your model cannot view images. Tell the boss you can't see it.]",
     }

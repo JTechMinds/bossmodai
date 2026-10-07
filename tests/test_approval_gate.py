@@ -17,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from core.boss import boss_label
 from api.auth import LOCAL_API_TOKEN_HEADER, ensure_local_api_token, install_local_api_auth
 from api.routes import router
 from core import config
@@ -541,13 +542,13 @@ def test_context_reads_the_thread_or_the_dm() -> None:
     facts = _facts(agent)
 
     thread = build_review_context(agent, facts, channel_id=channel.id).conversation
-    assert {"speaker": "operator", "text": "please clean up the notes"} in thread
+    assert {"speaker": boss_label(), "text": "please clean up the notes"} in thread
     assert all("dm:" not in line["text"] for line in thread)
 
     dm = build_review_context(agent, facts, channel_id=None).conversation
     # Both rows can share one created_at second, so order is not asserted.
     assert len(dm) == 2
-    assert {"speaker": "operator", "text": "dm: delete the scratch file"} in dm
+    assert {"speaker": boss_label(), "text": "dm: delete the scratch file"} in dm
     assert {"speaker": agent.name, "text": "on it"} in dm
 
 

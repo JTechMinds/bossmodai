@@ -687,7 +687,7 @@ async def test_r3_a_gate_deny_posts_no_blocked_line_on_the_task_thread(monkeypat
     )
 
     # The deny still surfaces, named for the operator, off the task thread.
-    assert "Blocked — host deny. @Human Operator" in str(result.get("origin_status_messages")), result
+    assert "Blocked — host deny. @Boss" in str(result.get("origin_status_messages")), result
     assert result["auto_github"]["task_id"] is None
     assert not any("Blocked —" in (item.content or "") for item in db.list_channel_messages(channel.id))
     assert [event.id for event in db.list_task_events(task.id)] == events_before

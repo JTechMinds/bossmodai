@@ -302,7 +302,7 @@ def test_operator_at_stays_ahead_of_the_blocked_agent(
         channel_id=channel.id,
         author_type="system",
         author_name="BossMod",
-        content="Charles Blocked — no progress. @Human Operator",
+        content="Charles Blocked — no progress. @Boss",
         source_channel="channel",
     )
     ask = db.create_channel_message(

@@ -23,6 +23,7 @@ from core.agent_loop.message_delivery import (
     source_channel_for_message_type,
 )
 from core.agent_loop.work_binding import bound_activity, bound_task_id, is_detached
+from core.boss import boss_label
 from core.default_prompts import render_default_prompt
 from core.models.message import HUMAN_SENDER_ID
 from core.models import Agent, AgentState
@@ -145,7 +146,7 @@ async def _handle_message(
     target = None
     if recipient_type == "human":
         to_agent_id = HUMAN_SENDER_ID
-        to_display = "Human Operator"
+        to_display = boss_label()
     else:
         target = _resolve_agent_by_id(action.get("agentId"))
         if target is None:

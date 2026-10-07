@@ -76,6 +76,8 @@ API_BY_INJECTION = {
     # creation half it was split into, which is what POSTs /api/channels.
     "shell/roster-threads.js",
     "shell/thread-create.js",
+    # The one-time name dialog takes `api` from the shell's boot.
+    "shell/boss-name-prompt.js",
     # The needs modules take `api` from the shell's ctx.
     "needs/needs-store.js",
     "needs/need-shape.js",
@@ -209,6 +211,7 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
     shell = _read("shell/shell.js")
     assert "api: apiFetch" in shell
     for name in ("context/desk-notes.js",
+                 "shell/boss-name-prompt.js",
                  "conversation/conversation.js",
                  "conversation/sources/agent-source.js",
                  "conversation/sources/thread-source.js",

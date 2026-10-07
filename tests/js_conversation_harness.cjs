@@ -347,6 +347,23 @@ async function main() {
         );
     }
 
+    // The human's own line is "You" whatever name the row carries: the
+    // agent-facing label ("Jordan (the boss)") is not presentation.
+    const humanTurn = global.BossModMessage.renderMessage({
+        kind: "message",
+        key: "human-1",
+        author: "human",
+        authorName: "Jordan (the boss)",
+        showAuthor: false,
+        text: "Ship it.",
+        createdAt: "",
+    });
+    const humanFace = humanTurn.querySelector(".msg-face");
+    const humanFaceSaysYou = Boolean(humanFace && humanFace.textContent === "Y");
+    if (!humanFaceSaysYou) {
+        throw new Error(`human face must be "You": face=${humanFace && humanFace.textContent}`);
+    }
+
     // ─── cacheSkipsLoading ───
     // A re-click paints from the cache with no flash of an empty room.
     await conversation.open("b", "agent");
@@ -1280,6 +1297,7 @@ async function main() {
         authorUsesAgentColor,
         faceLowerLeftBesideBubble,
         noOrphanAgentFace,
+        humanFaceSaysYou,
         turnGap,
         titleOpensEditOnEnter,
         saveActionAppearsBesideArchive,

@@ -76,7 +76,7 @@ async def test_dm_links_attachments_and_carries_ids_on_the_trigger() -> None:
     rec = _Recorder()
 
     result = await route_human_dm(
-        agent_id=ada.id, content="look", from_name="You",
+        agent_id=ada.id, content="look",
         broadcast_manager=rec, services=rec, attachment_ids=[a1, a2],
     )
 
@@ -93,7 +93,7 @@ async def test_dm_without_attachments_keeps_the_old_payload() -> None:
     ada = _agent("Ada", 1)
     rec = _Recorder()
     await route_human_dm(
-        agent_id=ada.id, content="plain text", from_name="You",
+        agent_id=ada.id, content="plain text",
         broadcast_manager=rec, services=rec,
     )
     assert rec.broadcasts[0]["attachments"] is None
@@ -107,7 +107,7 @@ async def test_dm_with_unknown_attachment_writes_nothing() -> None:
 
     with pytest.raises(AttachmentLinkError) as excinfo:
         await route_human_dm(
-            agent_id=ada.id, content="hi", from_name="You",
+            agent_id=ada.id, content="hi",
             broadcast_manager=rec, services=rec, attachment_ids=[good, "missing-id"],
         )
 
@@ -125,7 +125,7 @@ async def test_dm_refuses_an_attachment_uploaded_for_another_agent() -> None:
 
     with pytest.raises(AttachmentLinkError):
         await route_human_dm(
-            agent_id=ada.id, content="hi", from_name="You",
+            agent_id=ada.id, content="hi",
             broadcast_manager=rec, services=rec, attachment_ids=[bobs],
         )
     assert db.get_human_chat_thread(ada.id) == []
@@ -140,7 +140,7 @@ async def test_dm_over_the_per_message_cap_writes_nothing() -> None:
 
     with pytest.raises(AttachmentLinkError):
         await route_human_dm(
-            agent_id=ada.id, content="many", from_name="You",
+            agent_id=ada.id, content="many",
             broadcast_manager=rec, services=rec, attachment_ids=ids,
         )
     assert db.get_human_chat_thread(ada.id) == []
@@ -156,7 +156,7 @@ async def test_thread_attachment_only_post_links_and_wakes_with_ids() -> None:
 
     result = await route_human_channel_message(
         channel_id=channel.id, channel_name=channel.name, content="",
-        from_name="Human Operator", broadcast_manager=rec, services=rec,
+        broadcast_manager=rec, services=rec,
         attachment_ids=[att],
     )
 
@@ -174,7 +174,7 @@ async def test_thread_refused_link_leaves_no_message() -> None:
     with pytest.raises(AttachmentLinkError):
         await route_human_channel_message(
             channel_id=channel.id, channel_name=channel.name, content="hi",
-            from_name="Human Operator", broadcast_manager=rec, services=rec,
+            broadcast_manager=rec, services=rec,
             attachment_ids=[dm_upload],
         )
     assert db.list_channel_messages(channel.id) == []

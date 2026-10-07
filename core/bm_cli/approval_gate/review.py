@@ -33,13 +33,13 @@ Decision = Literal["approve", "ask"]
 Basis = Literal[
     "harmless",
     "task_work",
-    "operator_instruction",
+    "boss_instruction",
     "precedent",
     "out_of_scope",
     "remote_mutation",
     "unsure",
 ]
-_APPROVE_BASES = frozenset({"harmless", "task_work", "operator_instruction", "precedent"})
+_APPROVE_BASES = frozenset({"harmless", "task_work", "boss_instruction", "precedent"})
 
 
 class ReviewVerdict(BaseModel):
@@ -47,7 +47,7 @@ class ReviewVerdict(BaseModel):
 
     Validation is strict: no extra keys, no type coercion, a non-blank
     ``why``, and an ``approve`` must name an approving basis (``harmless``,
-    ``task_work``, ``operator_instruction`` or ``precedent``). A
+    ``task_work``, ``boss_instruction`` or ``precedent``). A
     contradictory verdict is not a review.
     """
 

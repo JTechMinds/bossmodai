@@ -132,7 +132,7 @@ def verbal_host_access_steer(agent: Agent) -> dict[str, Any]:
             "Host-path access is not negotiated in chat. "
             "Call request_host_access with data.path and data.why, "
             "or attempt cli on that path. "
-            "The operator decides on the Allow once / Always allow / Deny card."
+            "The boss decides on the Allow once / Always allow / Deny card."
         ),
         "agent_name": agent.name,
         "expected_action": "request_host_access",
@@ -306,7 +306,7 @@ def request_host_path_access(
             label,
             (
                 f"Host-path access denied for {path!r}. "
-                "The operator refused this path for the current task."
+                "The boss refused this path for the current task."
             ),
             cwd=cwd,
             executor="virtual",
@@ -577,7 +577,7 @@ def _current_host_root_setting() -> str:
 
 def _consent_message(request: HostPathConsentRequest) -> str:
     return (
-        f"Host-path access needs operator consent in chat for {request.path!r} "
+        f"Host-path access needs the boss's consent in chat for {request.path!r} "
         f"(grant root {request.grant_root!r}). {request.reason}"
     )
 

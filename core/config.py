@@ -172,6 +172,36 @@ def require(key: str) -> str:
     return val
 
 
+def require_present(key: str) -> str:
+    """Get a setting whose row must exist but whose value may be empty.
+
+    For settings where an empty value is a meaningful choice ("unset"),
+    which :func:`require` would reject. Only a missing row is an error: the
+    seed creates every such row, so its absence means a broken database,
+    never "use a default".
+
+    Args:
+        key: The settings key.
+
+    Returns:
+        The stored value with surrounding whitespace removed; ``""`` when the
+        row holds an empty value.
+
+    Raises:
+        ConfigError: No settings row exists for ``key``.
+    """
+    _ensure_loaded()
+    with _lock:
+        val = _cache.get(key)
+    if val is None:
+        raise ConfigError(
+            f"Required setting '{key}' has no row. "
+            f"It is seeded by db.settings.seed_defaults; reseed settings or "
+            f"PUT /api/settings/{key}"
+        )
+    return val.strip()
+
+
 def get_int(key: str) -> int | None:
     """Get a setting as an integer, or ``None`` if missing or not an int."""
     val = get(key)

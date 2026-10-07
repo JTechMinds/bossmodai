@@ -215,7 +215,6 @@ async def test_human_channel_message_still_wakes_every_member() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Please share findings, then I want feedback.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )
@@ -240,7 +239,6 @@ async def test_human_ask_then_agent_findings_share_gives_peers_a_turn() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Jimothy share the review findings, then I want feedback on how to proceed.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )

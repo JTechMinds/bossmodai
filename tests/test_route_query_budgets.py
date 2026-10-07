@@ -27,6 +27,7 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth, install_settings_refresh
 from api.routes import router
 from core import config
+from core.boss import boss_label
 from core.agent_loop.channel_host import is_thread_paused, pause_thread
 from core.agent_loop.role_contracts import is_auditor_specialty, operator_done_claim_guidance
 from core.bm_cli.approval_gate import global_auto_approve_enabled
@@ -119,7 +120,8 @@ def _seed_board(task_count: int) -> dict[str, str]:
     children with a parent, finished tasks, tasks with several events and
     tasks with none.
     """
-    boss = db.create_agent("Boss", role="Manager", desk_x=1, desk_y=1)
+    # "Boss" is reserved for the human (core.boss); the manager agent is "Lead".
+    boss = db.create_agent("Lead", role="Manager", desk_x=1, desk_y=1)
     worker = db.create_agent("Worker", role="Engineer", done_fail_bar="tests pass", desk_x=2, desk_y=1)
     auditor = db.create_agent("Auditor", role="QA Auditor", desk_x=3, desk_y=1)
     requesters = (HUMAN_SENDER_ID, boss.id, auditor.id, "no-such-agent")
@@ -138,7 +140,7 @@ def _seed_board(task_count: int) -> dict[str, str]:
             db.create_task_event(
                 task_id=task.id,
                 author_type="agent",
-                author_name="Boss",
+                author_name="Lead",
                 event_type="comment",
                 content=f"note {index}.{event}",
             )
@@ -193,7 +195,7 @@ def _legacy_task_row(task) -> dict[str, Any]:
         requester = db.get_agent(task.requester_id)
         requester_name = requester.name if requester is not None else None
     elif task.requester_id == HUMAN_SENDER_ID:
-        requester_name = "Human Operator"
+        requester_name = boss_label()
     events = db.list_task_events(task.id, limit=5)
     latest = events[-1] if events else None
     return {
@@ -336,7 +338,7 @@ def test_the_board_json_is_what_the_row_by_row_reads_produced(scope: str) -> Non
         assert expected["sections"]["recent_completed_tasks"]
         assert any(row["latest_event"] for row in expected["sections"]["my_open_tasks"])
         assert {row["requester_name"] for row in expected["sections"]["my_open_tasks"]} >= {
-            "Human Operator", "Boss", "Auditor", None,
+            boss_label(), "Lead", "Auditor", None,
         }
     else:
         assert expected["assignee_rollup"]

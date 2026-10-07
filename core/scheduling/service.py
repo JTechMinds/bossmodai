@@ -7,7 +7,7 @@ whoever asks, so the rules hold however a change arrives:
   found, so its existence is not leaked;
 - an agent may change a schedule only while ``agent_can_change`` is on, and
   only the operator sets that flag. A locked schedule answers with the
-  ``internal_schedule_locked`` prompt, rendered with the operator's name;
+  ``internal_schedule_locked`` prompt, rendered with the boss label;
 - ``created_by`` records who set it up. Agent-created schedules start
   unlocked; operator-created ones start locked unless the operator says
   otherwise.
@@ -27,6 +27,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 import db
+from core.boss import boss_label
 from core.default_prompts import render_default_prompt
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import AgentSchedule, ScheduleCreate, ScheduleView
@@ -34,7 +35,7 @@ from core.scheduling.recurrence import describe, next_occurrence
 
 RELOAD_COMMAND = "reload_schedules"
 _LOCKED_PROMPT_KEY = "internal_schedule_locked"
-_LOCKED_PROMPT_PATHS = {"operator_name"}
+_LOCKED_PROMPT_PATHS = {"boss"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,7 +52,7 @@ class ScheduleActor:
 
     def __post_init__(self) -> None:
         if (self.kind == "agent") != bool(self.agent_id):
-            raise ValueError("an agent actor needs its agent_id, and the operator has none")
+            raise ValueError("an agent actor needs its agent_id, and the boss has none")
 
 
 OPERATOR = ScheduleActor("operator", None)
@@ -74,19 +75,18 @@ class ScheduleNotFound(ValueError):
 
 
 def render_locked_message() -> str:
-    """The sentence a locked schedule answers an agent with, naming the operator.
+    """The sentence a locked schedule answers an agent with, naming the boss.
 
     Rendered from the file-backed ``internal_schedule_locked`` prompt with
-    ``operator_name`` from ``core.tasking.operator_actions.OPERATOR_NAME``,
-    the one seam a configurable operator name would replace.
+    ``boss`` from :func:`core.boss.boss_label` (``Boss`` or
+    ``<Name> (the boss)``), read at render time so a rename is live.
 
     Raises:
         core.llm.template_engine.TemplateError: The prompt is malformed.
+        core.config.ConfigError: The ``boss_name`` settings row is missing.
     """
-    from core.tasking.operator_actions import OPERATOR_NAME
-
     return render_default_prompt(
-        _LOCKED_PROMPT_KEY, {"operator_name": OPERATOR_NAME}, allowed_paths=_LOCKED_PROMPT_PATHS,
+        _LOCKED_PROMPT_KEY, {"boss": boss_label()}, allowed_paths=_LOCKED_PROMPT_PATHS,
     )
 
 
@@ -115,7 +115,7 @@ def create_schedule(agent_id: str, body: ScheduleCreate, *, actor: ScheduleActor
         if actor.agent_id != agent_id:
             raise ValueError("An agent can only schedule work for itself")
         if "agent_can_change" in body.model_fields_set:
-            raise ValueError("Only the operator can set agent_can_change")
+            raise ValueError("Only the boss can set agent_can_change")
         created_by, agent_can_change = agent_id, True
     else:
         created_by, agent_can_change = HUMAN_SENDER_ID, bool(body.agent_can_change)
@@ -166,7 +166,7 @@ def update_schedule(schedule_id: str, body: BaseModel, *, actor: ScheduleActor) 
     _changeable(schedule_id, actor)
     fields = {name: getattr(body, name) for name in body.model_fields_set}
     if actor.kind == "agent" and "agent_can_change" in fields:
-        raise ValueError("Only the operator can set agent_can_change")
+        raise ValueError("Only the boss can set agent_can_change")
     updated = db.update_schedule(schedule_id, **fields)
     if updated is None:
         raise ScheduleNotFound("Schedule not found")

@@ -18,6 +18,7 @@ from core.llm.context_builder import (
     _render_turn_contract,
     build_context,
 )
+from core.boss import boss_label
 from core.default_prompts import load_default_role_prompt
 from core.llm.template_engine import render_template
 from core.models import Agent, AgentState
@@ -26,7 +27,7 @@ from core.models import Agent, AgentState
 def _preview_trigger(trigger_type: str) -> dict[str, Any]:
     base = {
         "type": trigger_type,
-        "from_name": "Human Operator",
+        "from_name": boss_label(),
         "content": "Can you give me a quick status update?",
         "source_channel": "chat",
         "task_title": "Write API summary",
@@ -50,7 +51,7 @@ def _preview_trigger(trigger_type: str) -> dict[str, Any]:
     if trigger_type in {"channel_message", "channel_response"}:
         base.update({"from_name": "Planning Channel", "content": "Who can summarize next steps?"})
     if trigger_type == "task_assigned":
-        base.update({"content": "", "from_name": "Human Operator"})
+        base.update({"content": "", "from_name": boss_label()})
     if trigger_type == "activity_resumed":
         base.update({"content": "Continue the current work activity.", "activity_kind": "work"})
     if trigger_type == "watchdog_status_ping":
@@ -205,7 +206,7 @@ def _preview_communication_snapshot_json(trigger_type: str) -> str | None:
         "communication": {
             "profile": profile.name,
             "trigger_type": trigger_type,
-            "speaker": "Human Operator" if trigger_type == "human_chat" else "Morgan",
+            "speaker": boss_label() if trigger_type == "human_chat" else "Morgan",
             "author_type": "human" if trigger_type == "human_chat" else "agent",
         },
         "runtime": {

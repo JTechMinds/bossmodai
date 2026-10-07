@@ -10,6 +10,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
+from core.boss import boss_label
 from core.models import Agent
 
 
@@ -135,12 +136,13 @@ def _build_shared_response_trigger(
     binding: SharedRoundBinding,
 ) -> dict[str, Any]:
     """Build the durable trigger for the next queued shared responder."""
+    author_type = trigger.get("author_type", "human")
     payload = {
         "content": trigger.get("content", ""),
         binding.parent_key: trigger.get(binding.parent_key),
         "round_id": trigger.get("round_id"),
-        "from_name": trigger.get("from_name", "Human Operator"),
-        "author_type": trigger.get("author_type", "human"),
+        "from_name": boss_label() if author_type == "human" else trigger["from_name"],
+        "author_type": author_type,
         "from_agent": trigger.get("from_agent"),
         "source_message_id": trigger.get("source_message_id"),
         binding.extra_payload_key: trigger.get(binding.extra_payload_key),

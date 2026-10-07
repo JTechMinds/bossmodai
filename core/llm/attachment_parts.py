@@ -282,7 +282,7 @@ def _attachment_part(att: Attachment, *, model: str, vision: bool, cap: int) -> 
             "type": "text",
             "text": (
                 f"[Image {att.file_name} attached, but your model cannot view images. "
-                "Don't try to open it with the CLI; tell the operator you can't see it. "
+                "Don't try to open it with the CLI; tell the boss you can't see it. "
                 f"It is saved at {_path(att)} if you need to move or reference the file.]"
             ),
         }
@@ -326,7 +326,7 @@ def _cli_image_part(path: str, *, model: str, vision: bool) -> dict[str, Any]:
             "type": "text",
             "text": (
                 "[An image was loaded, but your model cannot view images. "
-                "Tell the operator you can't see it.]"
+                "Tell the boss you can't see it.]"
             ),
         }
     file = Path(path)

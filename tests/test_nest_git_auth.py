@@ -198,7 +198,7 @@ def test_nest_push_without_creds_posts_card() -> None:
     assert NEST_GIT_CARD_COPY in (paused.detail or "")
     assert f"{agent.name} {NEST_GIT_CARD_COPY}" in (paused.detail or "")
     assert "desktop GitHub" in (paused.prompt_content or "")
-    assert "@Operator" in (paused.prompt_content or "")
+    assert "@Boss" in (paused.prompt_content or "")
     assert "Always-allow" in (paused.prompt_content or "")
     assert "Enable host git for nest?" not in json.dumps(card)
     assert "Add PAT/SSH" not in json.dumps(card)

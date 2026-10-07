@@ -437,7 +437,6 @@ async def _resume_by_restarting(channel_id: str, channel_name: str) -> list[dict
         channel_id=channel_id,
         channel_name=channel_name,
         content="Let's pick the design back up.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )

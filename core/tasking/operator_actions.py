@@ -22,6 +22,7 @@ from core.agent_loop.deliverables import build_work_contract
 from core.agent_loop.task_followups import _CHILD_UPDATES_TO_PARENT_EVENT_TYPES
 from core.agent_loop.task_origin_mirrors import mirror_origin_status, mirror_task_completed_by_operator
 from core.agent_loop.task_roles import default_task_owner_id
+from core.boss import boss_label
 from core.floors import assert_assignment
 from core.models import Agent, Task, TaskUpdateRequest, WorkContract
 from core.models.message import HUMAN_SENDER_ID
@@ -32,8 +33,6 @@ from core.tasking.transitions import (
     is_terminal_task_status,
     transition_task,
 )
-
-OPERATOR_NAME = "Human Operator"
 
 # The statuses the "Needs you" queue treats as blocked (api/routes/needs.py
 # BLOCKED_STATUSES): the only ones the operator hands back with Resume.
@@ -163,17 +162,17 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
     append_task_event(
         task_id=task.id,
         author_type="human",
-        author_name=OPERATOR_NAME,
+        author_name=boss_label(),
         event_type="system",
-        content=f"Operator edited the task: {'; '.join(summary_bits)}.",
+        content=f"The boss edited the task: {'; '.join(summary_bits)}.",
     )
 
     trigger_requests: list[dict[str, Any]] = []
     if assignee_changed or ((description_changed or contract_changed) and assignee_id):
         reason = (
-            f"Reassigned to {_agent_label(assignee)} by the operator"
+            f"Reassigned to {_agent_label(assignee)} by the boss"
             if assignee_changed
-            else "Requirements changed by the operator"
+            else "Requirements changed by the boss"
         )
         _re_present(task, reason=reason)
         stored = db.get_task(task.id)
@@ -194,7 +193,7 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
             agent=old_assignee,
             kind="rerouted",
             target_name=assignee.name,
-            reason="Reassigned by the operator",
+            reason="Reassigned by the boss",
         )
         if posted:
             posted_lines.append(posted)
@@ -230,13 +229,13 @@ def resume_task_as_operator(task_id: str) -> OperatorTaskResult:
     if not task.assigned_to or task.status not in OPERATOR_RESUMABLE_STATUSES:
         raise ValueError("Only a blocked or stalled task with an assignee can be resumed")
 
-    _re_present(task, reason="Resumed by the operator")
+    _re_present(task, reason="Resumed by the boss")
     append_task_event(
         task_id=task.id,
         author_type="human",
-        author_name=OPERATOR_NAME,
+        author_name=boss_label(),
         event_type="system",
-        content="Operator resumed the task.",
+        content="The boss resumed the task.",
     )
     stored = db.get_task(task.id)
     if stored is None:
@@ -292,7 +291,7 @@ def complete_task_as_operator(task_id: str, *, summary: str) -> OperatorTaskResu
         task.id,
         "complete",
         reason=note,
-        actor=OPERATOR_NAME,
+        actor=boss_label(),
         actor_type="human",
         completion_summary=note,
         status_note=None,
@@ -305,9 +304,9 @@ def complete_task_as_operator(task_id: str, *, summary: str) -> OperatorTaskResu
     append_task_event(
         task_id=task.id,
         author_type="human",
-        author_name=OPERATOR_NAME,
+        author_name=boss_label(),
         event_type="completion",
-        content=f"Marked complete by the operator: {note}",
+        content=f"Marked complete: {note}",
     )
     updated = db.get_task(task.id)
     if updated is None:
@@ -316,7 +315,7 @@ def complete_task_as_operator(task_id: str, *, summary: str) -> OperatorTaskResu
     trigger_requests: list[dict[str, Any]] = []
     parent = db.get_task(updated.parent_task_id) if updated.parent_task_id else None
     if parent is not None:
-        parent_note = f'Child task "{updated.title}" marked complete by the operator: {note}'
+        parent_note = f'Child task "{updated.title}" marked complete by the boss: {note}'
         parent_event = append_task_event(
             task_id=parent.id,
             author_type="system",
@@ -330,7 +329,7 @@ def complete_task_as_operator(task_id: str, *, summary: str) -> OperatorTaskResu
                     parent,
                     recipient_agent_id=parent.assigned_to,
                     from_agent=None,
-                    from_name=OPERATOR_NAME,
+                    from_name=boss_label(),
                     content=parent_note,
                     attention_kind="completion_report",
                     source_task_event_id=parent_event.id if parent_event is not None else None,
@@ -349,7 +348,7 @@ def _validate_new_assignee(assignee_id: str | None) -> Agent | None:
     if assignee_id is None:
         return None
     if assignee_id == HUMAN_SENDER_ID:
-        raise ValueError("Task assignee must be an agent, not the human operator")
+        raise ValueError("Task assignee must be an agent, not you.")
     agent = db.get_agent(assignee_id)
     if agent is None:
         raise ValueError("Assigned agent not found")
@@ -397,14 +396,14 @@ def _re_present(task: Task, *, reason: str) -> None:
     if task.status != "pending":
         for activity in db.list_activities(task_id=task.id, limit=200):
             if activity.status in {"active", "paused"}:
-                activity_runtime.cancel_activity(activity.id, detail="Operator changed the task")
+                activity_runtime.cancel_activity(activity.id, detail="The boss changed the task")
     db.delete_queued_triggers_for_task(task.id)
     if task.status != "pending":
         transition_task(
             task.id,
             "pending",
             reason=reason,
-            actor=OPERATOR_NAME,
+            actor=boss_label(),
             actor_type="human",
             status_note=reason,
             watchdog_pinged_at=None,

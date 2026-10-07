@@ -143,7 +143,7 @@ def handle_help(
 
     if shell_on:
         lines.append("")
-        lines.append("Additional commands are available. Some may require operator approval.")
+        lines.append("Additional commands are available. Some may require the boss's approval.")
     else:
         lines.append("")
         lines.append("Only built-in commands are currently available.")

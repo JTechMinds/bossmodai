@@ -8,6 +8,7 @@ from typing import Any
 
 import db
 from core import config
+from core.boss import boss_label
 from core.agent_loop.channel_rounds import ROUND_MARKER_KIND
 from core.agent_loop.turn_context import stamp_channel_latest_line
 from core.default_prompts import load_default_prompt
@@ -227,7 +228,7 @@ def test_envelope_speaker_follows_the_latest_line() -> None:
         "author_type": "human",
         "content": "Let's try and continue.",
     }
-    assert context_builder._conversation_speaker(opener) == ("human", "Human Operator", "human")
+    assert context_builder._conversation_speaker(opener) == ("human", boss_label(), "human")
     agent_latest = dict(
         opener,
         latest_from_name="Brad",
@@ -246,7 +247,7 @@ def test_envelope_speaker_follows_the_latest_line() -> None:
         latest_author_type="human",
         latest_from_agent="",
     )
-    assert context_builder._conversation_speaker(human_latest) == ("human", "Human Operator", "human")
+    assert context_builder._conversation_speaker(human_latest) == ("human", boss_label(), "human")
     # Other trigger types ignore latest_* entirely.
     peer = {
         "type": "peer_message",

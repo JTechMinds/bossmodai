@@ -8,6 +8,7 @@ from datetime import datetime
 from typing import Any
 
 import db
+from core.boss import boss_label
 from core.models import Agent, AgentState, Task
 from core.tasking import build_project_summary, build_task_board, serialize_task_board
 
@@ -116,7 +117,7 @@ def build_communication_snapshot(
             "room_id": item["room_id"],
             "messages": [
                 {
-                    "author_name": message["author_name"],
+                    "author_name": boss_label() if message["author_type"] == "human" else message["author_name"],
                     "content": _summarize_text(str(message["content"]), limit=180),
                     "created_at": message["created_at"],
                 }
@@ -126,13 +127,16 @@ def build_communication_snapshot(
         for item in recent_meeting_rows
     ]
 
+    author_type = trigger.get("author_type") or ("human" if trigger.get("type") == "human_chat" else "agent")
     snapshot = {
         "communication": {
             "profile": profile.name if profile else "unknown",
             "trigger_type": trigger.get("type"),
             "source_channel": trigger.get("source_channel"),
-            "speaker": trigger.get("from_name") or trigger.get("author_name") or "Unknown",
-            "author_type": trigger.get("author_type") or ("human" if trigger.get("type") == "human_chat" else "agent"),
+            # The human is resolved by type: DM triggers carry no from_name,
+            # and a stored name is only a write-time snapshot.
+            "speaker": boss_label() if author_type == "human" else (trigger.get("from_name") or trigger.get("author_name") or "Unknown"),
+            "author_type": author_type,
         },
         "runtime": {
             "status": state.status,

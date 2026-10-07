@@ -2519,7 +2519,7 @@ async function main() {
         description: "Reads a diff and reports what is not true.",
         done_fail_bar: "A checkable allow/deny exists.",
         communication: {
-            tone: "direct", density: "compact", jargon: "light", audience: "operator",
+            tone: "direct", density: "compact", jargon: "light", audience: "boss",
         },
         color: "#1d4ed8",
         // Cloud offers Off but not Medium any more.

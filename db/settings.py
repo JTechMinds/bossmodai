@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import secrets
 from datetime import datetime, timezone
@@ -42,6 +43,14 @@ _OBSOLETE_SETTING_KEYS = {
 # Settings that must exist for the application to function.
 # Format: (key, value, category)
 _SEED_SETTINGS: list[tuple[str, str, str]] = [
+    # ── Profile (core/boss.py) ──
+    # The name agents call the human: "<name> (the boss)", or "Boss" when
+    # empty. Validated by the settings API (core.boss.validate_boss_name).
+    ("boss_name", "", "profile"),
+    # Whether the one-time "What should your team call you?" dialog was
+    # answered or dismissed (ui/static/js/shell/boss-name-prompt.js).
+    ("boss_name_prompted", "false", "profile"),
+
     # ── Simulation ──
     ("tick_interval", "0.25", "simulation"),
     ("steps_per_tick", "1", "simulation"),
@@ -328,6 +337,7 @@ def seed_defaults() -> None:
     reconcile_work_commit_resume_prompt()
     reconcile_extension_event_prompt()
     reconcile_specialty_gate_prompt_lines()
+    reconcile_boss_prompt_wording()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -582,6 +592,56 @@ def reconcile_specialty_gate_prompt_lines() -> None:
         set_setting(key, "".join(lines), str(row["category"]))
         logger.info("Removed the retired specialty-gate assign line from prompt setting: %s", key)
     set_setting(_SPECIALTY_GATE_PROMPT_LINES_RECONCILED, "true", "advanced")
+
+
+# The contract rows called the human "the operator". They now say
+# "the boss" / "@Boss". sha256 of each row's shipped default before that
+# rewrite (prompts/<file> at 06e428ad, as load_default_prompt returns it:
+# trailing newlines stripped), so only untouched rows are overwritten.
+_BOSS_WORDING_PRIOR_DEFAULT_SHA256: dict[str, str] = {
+    "runtime_contract_decision": "508a52e6b57f77a2e6859df4b5d248d015032b6765eeee01e1342ab64037b83d",
+    "runtime_contract_execution": "fcfced67cfbb52f664c48c43322740e408eaebebebb8194f786c242413ecca8b",
+    "runtime_block_conversation_envelope": "4d442677ec470d41bc78765163d2e923044a78372651b51f34954a8e527f032e",
+}
+_BOSS_PROMPT_WORDING_RECONCILED = "boss_prompt_wording_reconciled"
+
+
+def reconcile_boss_prompt_wording() -> None:
+    """Move untouched contract rows from "operator" to "boss" wording once.
+
+    Unlike the whole-row reconcilers above, this overwrites a row only when
+    it provably holds the previous shipped default: its sha256 equals the
+    entry in ``_BOSS_WORDING_PRIOR_DEFAULT_SHA256``. Such a row is replaced by
+    the current file-backed default (``load_default_prompt``) and keeps its
+    category. A row already equal to the current default is skipped. Any
+    other row (operator edits, older seeds, or a missing row) is left as
+    stored and logged as a warning naming the key, so the operator can move
+    its wording by hand; edits are never discarded.
+
+    Guarded by a marker row like :func:`reconcile_specialty_gate_prompt_lines`:
+    the first pass records the marker and every later pass is a no-op.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_BOSS_PROMPT_WORDING_RECONCILED],
+    )
+    if seen is not None:
+        return
+    for key, prior_sha256 in _BOSS_WORDING_PRIOR_DEFAULT_SHA256.items():
+        row = query_one("SELECT value, category FROM settings WHERE key = $1", [key])
+        stored = str(row.get("value") or "") if row is not None else None
+        if stored is not None and stored == load_default_prompt(key):
+            continue
+        if stored is not None and hashlib.sha256(stored.encode("utf-8")).hexdigest() == prior_sha256:
+            set_setting(key, load_default_prompt(key), str(row["category"]))
+            logger.info("Reconciled prompt setting to the boss wording: %s", key)
+            continue
+        logger.warning(
+            "Prompt setting '%s' differs from its previous shipped default; it was left as "
+            "stored. Review it by hand: the human is now \"the boss\" (@Boss), not \"the operator\"",
+            key,
+        )
+    set_setting(_BOSS_PROMPT_WORDING_RECONCILED, "true", "advanced")
 
 
 def ensure_local_api_token() -> str:

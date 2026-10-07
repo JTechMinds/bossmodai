@@ -143,7 +143,6 @@ async def test_tip_moved_discards_reply_and_posts_one_skip_line() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Please walk the findings.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )
@@ -151,7 +150,6 @@ async def test_tip_moved_discards_reply_and_posts_one_skip_line() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Wait — use the newer brief instead.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )
@@ -196,7 +194,6 @@ async def test_multiple_skips_collapse_to_one_line_per_tip() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="First ask.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )
@@ -204,7 +201,6 @@ async def test_multiple_skips_collapse_to_one_line_per_tip() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Newer ask.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )
@@ -301,7 +297,6 @@ async def test_new_human_message_cancels_queued_older_rounds_only() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="First ask.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )
@@ -319,7 +314,6 @@ async def test_new_human_message_cancels_queued_older_rounds_only() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Newer ask.",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )

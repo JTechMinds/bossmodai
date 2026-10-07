@@ -320,7 +320,7 @@ class BrowserVisionCommands:
         """
         status = self._setup_status()
         if status.state != "ready":
-            return self._error(ctx, parsed, f"SETUP_REQUIRED: the browser is not set up ({status.state}); the operator can set it up in Add → Extensions")
+            return self._error(ctx, parsed, f"SETUP_REQUIRED: the browser is not set up ({status.state}); the boss can set it up in Add → Extensions")
         model, can_see = self._vision_model(ctx.agent)
         if not can_see:
             return self._error(ctx, parsed, f"MODEL_CANNOT_SEE_IMAGES: {model or 'no model configured'}")
@@ -907,7 +907,7 @@ class BrowserVisionCommands:
         self._cooldowns.block(wall_site, rules.cooldown_minutes)
         return (
             f"BLOCKED: {wall_site} is showing a bot check ({reason}). Stop browsing this site and tell "
-            "the operator; do not retry or switch tools to get around it."
+            "the boss; do not retry or switch tools to get around it."
         )
 
     def _error(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, message: str) -> BossModCliResult:

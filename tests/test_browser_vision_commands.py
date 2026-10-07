@@ -1154,7 +1154,7 @@ def test_a_bot_check_says_blocked_and_cools_down_the_requested_site(env) -> None
     # The BLOCKED line leads the browser section.
     assert lines[lines.index("BROWSER:") + 1] == (
         "BLOCKED: redfin.com is showing a bot check (HTTP 429). Stop browsing this site and tell the "
-        "operator; do not retry or switch tools to get around it."
+        "boss; do not retry or switch tools to get around it."
     )
     assert blocked.data["status_lines"] == ["Blocked by redfin.com's bot check"]
     assert list(_cooldowns(env)) == ["redfin.com"]

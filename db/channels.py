@@ -524,13 +524,21 @@ def list_channel_messages(
     return rows
 
 
-def get_formatted_channel_messages(channel_id: str, *, limit: int = 80) -> list[dict[str, Any]]:
-    """Return channel transcript rows in prompt-history shape."""
+def get_formatted_channel_messages(channel_id: str, *, human_label: str, limit: int = 80) -> list[dict[str, Any]]:
+    """Return channel transcript rows in prompt-history shape.
+
+    Args:
+        channel_id: The thread to read.
+        human_label: Name shown on human rows. A human row's stored
+            ``author_name`` is a write-time snapshot and is never shown, so
+            renames and legacy names render as the caller's current label.
+        limit: Most recent rows to return.
+    """
     return [
         {
             "id": item.id,
             "from_agent": item.author_agent_id or ("__human__" if item.author_type == "human" else "__system__"),
-            "from_name": item.author_name,
+            "from_name": human_label if item.author_type == "human" else item.author_name,
             "to_agent": None,
             "content": item.content,
             "message_type": "channel",

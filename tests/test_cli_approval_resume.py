@@ -17,7 +17,7 @@ from core.bm_cli.approvals import resume_cli_approval
 from core.llm.client import LLMResponse
 
 COMMAND = "curl https://example.invalid/probe"
-_REJECT_MARK = "rejected by the operator"
+_REJECT_MARK = "rejected by the boss"
 _RAN_MARK = "has already run once"
 
 
@@ -153,7 +153,7 @@ async def test_approve_wake_executes_flattened_trigger_without_reask(
     assert prompts
     assert _REJECT_MARK not in prompts[0]
     assert "No reason given." not in prompts[0]
-    assert f"The operator approved `{COMMAND}` and it has already run once" in prompts[0]
+    assert f"The boss approved `{COMMAND}` and it has already run once" in prompts[0]
     assert "Do not send it again" in prompts[0]
     assert db.list_cli_approval_requests(status="pending", agent_id=agent.id) == []
     assert db.get_cli_approval_request(request.id).status == "approved"

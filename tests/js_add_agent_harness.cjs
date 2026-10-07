@@ -128,7 +128,7 @@ function snapshot(overrides) {
         description: "Reads a diff and reports what is not true.",
         done_fail_bar: "A checkable allow/deny exists.",
         communication: {
-            tone: "direct", density: "compact", jargon: "light", audience: "operator",
+            tone: "direct", density: "compact", jargon: "light", audience: "boss",
         },
         prompt_template: "You are terse.", color: "#1d4ed8",
         connection_id: "c1", thinking_social: "default", thinking_work: "default",

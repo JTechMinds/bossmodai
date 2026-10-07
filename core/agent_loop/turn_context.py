@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from core import config
+from core.boss import boss_label
 from core.agent_loop import activity_runtime
 from core.llm import routing
 from core.models import AgentState
@@ -189,7 +190,7 @@ def stamp_channel_latest_line(agent_id: str, trigger: dict[str, Any]) -> None:
             continue
         if row.id == trigger.get("source_message_id"):
             return
-        trigger["latest_from_name"] = row.author_name
+        trigger["latest_from_name"] = boss_label() if row.author_type == "human" else row.author_name
         trigger["latest_content"] = content
         trigger["latest_author_type"] = row.author_type
         trigger["latest_from_agent"] = row.author_agent_id or ""

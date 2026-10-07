@@ -382,7 +382,6 @@ async def test_new_human_message_does_not_stack_two_snapshots() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Where are we?",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )
@@ -390,7 +389,6 @@ async def test_new_human_message_does_not_stack_two_snapshots() -> None:
         channel_id=channel.id,
         channel_name=channel.name,
         content="Where are we now?",
-        from_name="Human Operator",
         broadcast_manager=_SilentBroadcast(),
         services=services,
     )

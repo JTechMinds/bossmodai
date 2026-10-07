@@ -72,7 +72,7 @@ communication:
   tone: Shakespearean
   density: scannable
   jargon: none
-  audience: operator
+  audience: boss
 """
         )
     assert exc.value.code == "invalid_schema"
@@ -120,7 +120,7 @@ def test_parse_communication_fills_partial_mapping() -> None:
     assert contract.tone == "warm"
     assert contract.density == "scannable"
     assert contract.jargon == "field"
-    assert contract.audience == "operator"
+    assert contract.audience == "boss"
 
 
 def test_communication_ignores_say_and_stays_voice_density() -> None:
@@ -137,7 +137,7 @@ def test_communication_ignores_say_and_stays_voice_density() -> None:
         "tone": "direct",
         "density": "scannable",
         "jargon": "none",
-        "audience": "operator",
+        "audience": "boss",
     }
     assert "say" not in contract.as_dict()
 
@@ -159,7 +159,7 @@ def test_role_contract_injects_communication_block() -> None:
     block = format_role_contract_block(auditor)
     assert "Communication:" in block
     assert "- tone: precise-but-scannable" in block
-    assert "- audience: operator" in block
+    assert "- audience: boss" in block
     planner = db.create_agent(
         "Kim",
         role="Feature Planner",
@@ -202,13 +202,13 @@ def test_create_and_patch_agent_persist_communication() -> None:
     agent = db.create_agent(
         "Pat",
         role="Writer",
-        communication={"tone": "warm", "density": "thorough", "jargon": "none", "audience": "operator"},
+        communication={"tone": "warm", "density": "thorough", "jargon": "none", "audience": "boss"},
     )
     assert agent.communication == {
         "tone": "warm",
         "density": "thorough",
         "jargon": "none",
-        "audience": "operator",
+        "audience": "boss",
     }
     updated = db.update_agent(
         agent.id,

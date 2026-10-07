@@ -121,7 +121,7 @@ const EVENTS = [
     { id: "e2", event_type: "status_update", author_name: "Jim", author_agent_id: "a1",
         content: "Status pending → accepted.", created_at: ago(3 * HOUR) },
     { id: "e3", event_type: "system", author_name: "BossMod", author_agent_id: null,
-        content: "Reused the existing open task chosen by the operator.", created_at: ago(4 * HOUR) },
+        content: "Reused the existing open task chosen by the boss.", created_at: ago(4 * HOUR) },
     { id: "e4", event_type: "status_update", author_name: "Debra", author_agent_id: "a2",
         content: "Moved it along by hand", created_at: ago(5 * HOUR) },
 ];
@@ -310,7 +310,11 @@ async function main() {
         && texts[3].includes("Debra · Moved it along by hand")
         && times[0] === "2h ago"
         && JSON.stringify(described)
-            === JSON.stringify({ actor: "Jim", verb: "marked it blocked", detail: "no progress, @Debra" });
+            === JSON.stringify({ actor: "Jim", verb: "marked it blocked", detail: "no progress, @Debra" })
+        // The human's own event is "You"; its stored name is an audit snapshot.
+        && global.BossModTaskEvents.describeEvent({
+            event_type: "system", author_type: "human", author_name: "Human Operator", content: "Edited.",
+        }).actor === "You";
     if (!activityReadsAsSentences) fail(`activity read ${JSON.stringify(texts)} at ${JSON.stringify(times)}`);
 
     // ── pencilIsTheHeadsOnlyTool ────────────────────────────────────────

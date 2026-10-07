@@ -48,7 +48,7 @@ def test_runtime_core_states_notes_store_retrieve_and_pointers_first() -> None:
     assert "Replace by reusing the id; remove with `pref remove <id>`; see all with `pref list`." in block
     assert "The engine injects them every work turn" in block
     assert "the agent does not re-open prefs for inject." in block
-    assert "Supersede only when the operator replaces." in block
+    assert "Supersede only when the boss replaces." in block
     assert "Optional note pointer for prose" in block
     assert "warm inject does not scrape notes." in block
     assert "Invent-key / Board fakes still fail-closed." in block

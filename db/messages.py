@@ -167,11 +167,17 @@ def get_recent_completed_tasks(agent_id: str, limit: int = 5) -> list[dict[str, 
 
 def get_formatted_messages(
     messages: list[Message],
-    human_label: str = "Human Operator",
+    *,
+    human_label: str,
 ) -> list[dict[str, Any]]:
     """Fetch messages with resolved sender names.
 
     Shared helper for chat and direct-message thread rendering.
+
+    Args:
+        messages: Rows to render, oldest first.
+        human_label: Name shown on the human's rows. The caller owns the
+            presentation (``core.boss.boss_label()`` for model prompts).
     """
     from core.models.message import HUMAN_SENDER_ID
     from db.agents import get_agents_by_ids

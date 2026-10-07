@@ -26,7 +26,7 @@ from core.scheduling import service
 from core.scheduling.service import OPERATOR, ScheduleActor, ScheduleLocked, ScheduleNotFound
 
 RULE = {"frequency": "daily", "interval": 1, "times": ["09:00"], "start_date": "2026-09-01"}
-LOCKED = "This schedule does not allow you to modify it. Contact Human Operator if you need help managing this schedule."
+LOCKED = "This schedule does not allow you to modify it. Contact Boss if you need help managing this schedule."
 
 
 def setup_function() -> None:
@@ -88,7 +88,7 @@ def test_an_agent_cannot_create_for_another_or_set_the_lock() -> None:
     bob = db.create_agent("Bob", role="Operator")
     with pytest.raises(ValueError, match="only schedule work for itself"):
         service.create_schedule(bob.id, _create(), actor=_agent_actor(ada.id))
-    with pytest.raises(ValueError, match="Only the operator"):
+    with pytest.raises(ValueError, match="Only the boss"):
         service.create_schedule(ada.id, _create(agent_can_change=True), actor=_agent_actor(ada.id))
 
 
@@ -105,7 +105,7 @@ def test_every_agent_change_to_a_locked_schedule_says_who_to_contact(change: str
         else:
             service.set_enabled(schedule.id, change == "on", actor=actor)
     assert locked.value.message == LOCKED
-    assert "Contact Human Operator" in locked.value.message
+    assert "Contact Boss" in locked.value.message
     assert db.get_schedule(schedule.id).title == "Check GitHub"
 
 
@@ -126,7 +126,7 @@ def test_an_agent_edit_body_cannot_carry_the_lock_or_enabled() -> None:
         assert "Extra inputs are not permitted" in str(refused.value)
     ada = db.create_agent("Ada", role="Operator")
     schedule = service.create_schedule(ada.id, _create(), actor=_agent_actor(ada.id))
-    with pytest.raises(ValueError, match="Only the operator"):
+    with pytest.raises(ValueError, match="Only the boss"):
         service.update_schedule(schedule.id, ScheduleUpdate(agent_can_change=False), actor=_agent_actor(ada.id))
 
 
@@ -253,7 +253,7 @@ def test_list_is_the_default_and_shows_short_ids() -> None:
         ("[1, 2]", "The body must be a JSON object: it is not an object"),
         (json.dumps({"title": "x", "instructions": "y", "recurrence": {**RULE, "frequency": "weekly"}}),
          "recurrence: A weekly schedule needs at least one weekday"),
-        (_add_body(agent_can_change=True), "Only the operator can set agent_can_change"),
+        (_add_body(agent_can_change=True), "Only the boss can set agent_can_change"),
     ],
     ids=["not-json", "not-object", "validation", "lock"],
 )

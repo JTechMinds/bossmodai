@@ -224,13 +224,25 @@ def get_active_meeting_session_for_agent(agent_id: str) -> MeetingSession | None
     return session
 
 
-def get_formatted_meeting_session_messages(session_id: str, *, limit: int = 50) -> list[dict[str, object]]:
-    """Return meeting transcript rows in the same shape as prompt/chat history entries."""
+def get_formatted_meeting_session_messages(
+    session_id: str,
+    *,
+    human_label: str,
+    limit: int = 50,
+) -> list[dict[str, object]]:
+    """Return meeting transcript rows in the same shape as prompt/chat history entries.
+
+    Args:
+        session_id: The meeting session to read.
+        human_label: Name shown on human rows; their stored ``author_name``
+            is a write-time snapshot and is never shown.
+        limit: Most recent rows to return.
+    """
     return [
         {
             "id": item.id,
             "from_agent": item.author_agent_id or ("__human__" if item.author_type == "human" else "__system__"),
-            "from_name": item.author_name,
+            "from_name": human_label if item.author_type == "human" else item.author_name,
             "to_agent": None,
             "content": item.content,
             "message_type": "meeting",

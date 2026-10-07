@@ -11,9 +11,10 @@ import re
 from typing import Any
 
 from core import config
-from core.agent_loop.next_owner import HUMAN_MENTION_NAMES, extract_next_owner_mentions
+from core.agent_loop.next_owner import extract_next_owner_mentions
 from core.agent_loop.runtime_core import ALLOWED_TOOLS
 from core.agent_loop.specialty import work_kind_label
+from core.boss import boss_mention_names
 
 DISPATCH_ROUNDS = "rounds"
 DISPATCH_FANOUT = "fanout"
@@ -51,7 +52,11 @@ _PASS_REPLY = re.compile(
     r"sitting this one out\.?"
     r")\s*$"
 )
-_HUMAN_NAMES = {name.lower() for name in HUMAN_MENTION_NAMES}
+
+
+def _human_names() -> set[str]:
+    """Lower-cased names that tag the boss, read per call so a rename is live."""
+    return {name.lower() for name in boss_mention_names()}
 
 
 def channel_response_round_cap() -> int:
@@ -150,10 +155,11 @@ def classify_channel_dispatch(
         for member in members
         if str(member.get("name") or "").strip() and str(member.get("id") or "").strip()
     }
+    human_names = _human_names()
     agent_mentions = [
         mention
         for mention in mentions
-        if mention.lower() not in _HUMAN_NAMES and mention != _EVERYONE and mention.lower() in by_name
+        if mention.lower() not in human_names and mention != _EVERYONE and mention.lower() in by_name
     ]
     if _PARALLEL.search(content or "") and len(agent_mentions) >= 2:
         return DISPATCH_FANOUT
@@ -175,6 +181,7 @@ def mention_ids_in_order(
         if str(member.get("name") or "").strip() and str(member.get("id") or "").strip()
     }
     ordered: list[str] = []
+    human_names = _human_names()
     for mention in mentions:
         if mention == _EVERYONE:
             for member in members:
@@ -182,7 +189,7 @@ def mention_ids_in_order(
                 if agent_id and agent_id not in ordered:
                     ordered.append(agent_id)
             continue
-        if mention.lower() in _HUMAN_NAMES:
+        if mention.lower() in human_names:
             continue
         agent_id = by_name.get(mention.lower())
         if agent_id and agent_id not in ordered:

@@ -35,6 +35,7 @@ from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_que
 from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
 from core.agent_loop.work_binding import is_detached
 from core.agent_loop.work_snapshot import finish_restored_turn, paused_work_snapshot
+from core.boss import boss_label
 from core.agent_loop.task_origin_mirrors import (
     format_origin_status_line,
     origin_thread_target,
@@ -1127,9 +1128,12 @@ class TurnDispatcher:
         db.append_work_interlude(
             activity.id,
             {
+                # The boss is resolved by type (a DM trigger carries no name).
                 # Runtime pings and some peer wakes carry no speaker name;
                 # the trigger type names the source instead.
-                "from_name": str(trigger.get("from_name") or trigger.get("type")),
+                "from_name": boss_label()
+                if trigger.get("type") == "human_chat" or trigger.get("author_type") == "human"
+                else str(trigger.get("from_name") or trigger.get("type")),
                 "content": str(trigger.get("content") or ""),
                 "reply": str(trigger.get("spoken_text") or ""),
             },

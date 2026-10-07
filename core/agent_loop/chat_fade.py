@@ -25,6 +25,7 @@ from typing import Any
 
 import db
 from core import config
+from core.boss import boss_label
 from core.llm.client import count_tokens
 from core.llm.system_completion import complete_text, system_ai_is_configured
 from db.chat_fade import (
@@ -278,8 +279,12 @@ def _fade_messages(rows: list[Any], prior_summary: str | None) -> list[dict[str,
     lines: list[str] = []
     if prior_summary:
         lines.append(f"Earlier summary: {prior_summary[:_SUMMARY_MAX_CHARS]}")
+    label = boss_label()
     for row in chosen:
-        name = str(getattr(row, "author_name", "") or "Unknown")
+        if getattr(row, "author_type", "") == "human":
+            name = label
+        else:
+            name = str(getattr(row, "author_name", "") or "Unknown")
         content = " ".join(str(getattr(row, "content", "") or "").split())
         lines.append(f"{name}: {content[:_SOURCE_MESSAGE_CHARS]}")
     if omitted:

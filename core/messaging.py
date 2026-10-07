@@ -12,6 +12,7 @@ from typing import Any
 
 import db
 from core import config
+from core.boss import boss_label
 from core.attachments import company_path
 from core.bm_cli.floor_roots import company_root
 from core.floors import AgentOnVacation, agent_id_on_vacation
@@ -83,16 +84,16 @@ async def route_human_dm(
     *,
     agent_id: str,
     content: str,
-    from_name: str,
-    trigger_from_name: str = "Human Operator",
     broadcast_manager: Any,
     services: Any,
     attachment_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Persist a human DM, broadcast to WebSocket clients, enqueue an agent trigger.
 
-    ``from_name`` is displayed to connected UI clients (e.g. "You" for the web UI).
-    ``trigger_from_name`` is what the agent sees in its prompt context.
+    The sender's identity is resolved centrally, so callers never pass a
+    name: the broadcast carries ``core.boss.boss_label()`` (the UI shows
+    "You" for human rows whatever name arrives), and the trigger carries no
+    ``from_name`` because the turn resolves a human speaker by type.
 
     ``attachment_ids`` are pending uploads made for this agent's DM. They
     are linked in the same transaction as the message and their ids ride on
@@ -126,7 +127,7 @@ async def route_human_dm(
         agent_id=agent_id,
         content=content,
         from_type="human",
-        from_name=from_name,
+        from_name=boss_label(),
         message_type="human",
         message_id=human_msg.id,
         created_at=human_msg.created_at,
@@ -139,7 +140,6 @@ async def route_human_dm(
         payload=_with_attachment_ids(
             {
                 "content": content,
-                "from_name": trigger_from_name,
                 "source_message_id": human_msg.id,
             },
             attachments,
@@ -156,12 +156,14 @@ async def route_human_channel_message(
     channel_id: str,
     channel_name: str,
     content: str,
-    from_name: str,
     broadcast_manager: Any,
     services: Any,
     attachment_ids: list[str] | None = None,
 ) -> dict[str, Any]:
     """Persist a human channel message, broadcast, enqueue triggers for all members.
+
+    The row's ``author_name`` is ``core.boss.boss_label()`` at write time, an
+    audit snapshot only: readers resolve human rows by ``author_type``.
 
     ``attachment_ids`` are pending uploads made for this thread; they are
     linked in the same transaction as the message and carried on every wake.
@@ -172,11 +174,12 @@ async def route_human_channel_message(
     when the attachments cannot all be linked.
     """
     # Same ordering as a DM: nothing is broadcast or woken for a refused link.
+    label = boss_label()
     with transaction():
         message = db.create_channel_message(
             channel_id=channel_id,
             author_type="human",
-            author_name=from_name,
+            author_name=label,
             content=content,
             source_channel="channel",
         )
@@ -222,7 +225,7 @@ async def route_human_channel_message(
             channel_id=channel_id,
             message_id=message.id,
             content=message.content,
-            from_name=from_name,
+            from_name=label,
             author_type="human",
             channel_name=channel_name,
             attachment_ids=[a["id"] for a in attachments] if attachments else None,

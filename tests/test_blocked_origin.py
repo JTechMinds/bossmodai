@@ -157,7 +157,7 @@ def test_next_owner_is_requester_then_owner_then_operator() -> None:
 
     operator_task = _thread_task(assignee_id=jim.id, channel_id=channel.id, title="Operator spec")
     activate_work_activity(jim.id, operator_task.task)
-    assert next_owner_mention(jim) == "@Human Operator"
+    assert next_owner_mention(jim) == "@Boss"
 
     owned = _thread_task(
         assignee_id=jim.id,

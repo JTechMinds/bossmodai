@@ -31,7 +31,7 @@ _BLOCKED_SHELL_EXECUTOR_LINE = "Blocked — Shell Executor off — needs enable"
 _BLOCKED_NEST_GIT_LINE = "Blocked — Nest git has no credentials"
 
 
-OPERATOR_CANCEL_REASON = "Operator cancelled"
+BOSS_CANCEL_REASON = "Cancelled by the boss"
 
 
 def origin_thread_target(task: Any | None) -> OriginThread | None:
@@ -443,9 +443,9 @@ def mirror_task_created(task: Any) -> dict[str, Any]:
 def mirror_task_cancelled_by_operator(task: Any, *, reason: str) -> dict[str, Any]:
     """Post ``Cancelled — <reason>`` on the origin thread.
 
-    ``reason`` is the cancel's own reason (``OPERATOR_CANCEL_REASON`` from
+    ``reason`` is the cancel's own reason (``BOSS_CANCEL_REASON`` from
     the board or a thread archive, the deleted owner from an agent delete),
-    so the line never claims an operator cancel that did not happen.
+    so the line never claims a boss cancel that did not happen.
     Returns the posted line, or ``{}`` when the task has no origin thread or
     no live agent to author the line.
     """
@@ -463,7 +463,7 @@ def mirror_task_cancelled_by_operator(task: Any, *, reason: str) -> dict[str, An
 
 
 def mirror_task_completed_by_operator(task: Any, summary: str) -> dict[str, Any]:
-    """Post ``Done — Marked done by the operator: <summary>`` on the origin thread.
+    """Post ``Done — Marked done by the boss: <summary>`` on the origin thread.
 
     Args:
         task: The task the operator just marked complete.
@@ -482,5 +482,5 @@ def mirror_task_completed_by_operator(task: Any, summary: str) -> dict[str, Any]
         task=task,
         agent=agent,
         kind="completion",
-        reason=f"Marked done by the operator: {summary}",
+        reason=f"Marked done by the boss: {summary}",
     )

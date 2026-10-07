@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 import db
+from core.boss import boss_label
 from core.bm_cli.results import success_result, trim
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.default_prompts import load_default_prompt
@@ -479,7 +480,7 @@ def _task_event_lines(events: list[Any]) -> list[str]:
                 [
                     _fmt_time(event.created_at),
                     event.event_type,
-                    event.author_name,
+                    boss_label() if event.author_type == "human" else event.author_name,
                     trim(event.content),
                 ]
             )

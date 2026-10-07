@@ -9,6 +9,7 @@
 
 const BossModSystemSettingsMeta = (() => {
     const CATEGORIES = [
+        { key: 'profile',    label: 'Profile' },
         { key: 'simulation', label: 'Simulation' },
         { key: 'social',     label: 'Social Triggers' },
         { key: 'context',    label: 'Context Window' },
@@ -18,6 +19,7 @@ const BossModSystemSettingsMeta = (() => {
     ];
 
     const CATEGORY_DESCRIPTIONS = {
+        profile: 'How your agents address you.',
         simulation: 'Movement speed, simulation cadence, and recovery behavior for the office runtime.',
         social: 'Controls when idle agents may start optional social behavior based on time and proximity.',
         context: 'Controls how much recent conversation and work history is included in each agent turn.',
@@ -26,7 +28,14 @@ const BossModSystemSettingsMeta = (() => {
         desk: 'Controls Desk preview behavior and filesystem browsing limits.',
     };
 
+    // boss_name_prompted has no entry on purpose: it is the one-time name
+    // dialog's own flag (shell/boss-name-prompt.js), not a setting to edit.
     const SETTING_META = {
+        boss_name: {
+            order: 10,
+            label: 'Your name',
+            description: 'Agents call you "<name> (the boss)". Leave empty to be called "Boss".',
+        },
         tick_interval: {
             order: 20,
             label: 'Tick Interval (seconds)',

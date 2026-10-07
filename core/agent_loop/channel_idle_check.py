@@ -178,7 +178,7 @@ def build_idle_check_messages(
         "and have no task running. Wake a candidate only when the thread shows they committed "
         "to do something, or were given the go-ahead for something they proposed, and it is "
         "neither done nor started. Do not wake for: waiting on someone else, an open question "
-        "to the operator, thanks or acknowledgements, work another member took, or work a "
+        "to the boss, thanks or acknowledgements, work another member took, or work a "
         "status line shows as Accepted, Writing or Done. Reply with only one JSON object: "
         '{"wake": [{"member": <number>, "quote": "<exact words from Recent thread>"}]}. '
         "quote is copied verbatim from a Recent thread line that shows the commitment or the "

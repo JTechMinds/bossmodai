@@ -16,7 +16,7 @@ from core.agent_loop.specialty import specialty_family, tokenize
 Tone = Literal["precise-but-scannable", "product-clear", "direct", "warm"]
 Density = Literal["scannable", "compact", "thorough"]
 Jargon = Literal["none", "light", "field"]
-Audience = Literal["operator", "implementer", "mixed"]
+Audience = Literal["boss", "implementer", "mixed"]
 
 COMMUNICATION_KEYS = ("tone", "density", "jargon", "audience")
 TONE_VALUES: frozenset[str] = frozenset(
@@ -24,7 +24,7 @@ TONE_VALUES: frozenset[str] = frozenset(
 )
 DENSITY_VALUES: frozenset[str] = frozenset({"scannable", "compact", "thorough"})
 JARGON_VALUES: frozenset[str] = frozenset({"none", "light", "field"})
-AUDIENCE_VALUES: frozenset[str] = frozenset({"operator", "implementer", "mixed"})
+AUDIENCE_VALUES: frozenset[str] = frozenset({"boss", "implementer", "mixed"})
 _ENUMS: dict[str, frozenset[str]] = {
     "tone": TONE_VALUES,
     "density": DENSITY_VALUES,
@@ -70,7 +70,7 @@ AUDITOR_DEFAULT = CommunicationContract(
     tone="precise-but-scannable",
     density="scannable",
     jargon="field",
-    audience="operator",
+    audience="boss",
 )
 PLANNER_DEFAULT = CommunicationContract(
     tone="product-clear",
@@ -82,23 +82,23 @@ _FAMILY_DEFAULTS: dict[str, CommunicationContract] = {
     "review": AUDITOR_DEFAULT,
     "coordinate": PLANNER_DEFAULT,
     "write": CommunicationContract(
-        tone="product-clear", density="scannable", jargon="none", audience="operator",
+        tone="product-clear", density="scannable", jargon="none", audience="boss",
     ),
     "implement": CommunicationContract(
         tone="direct", density="compact", jargon="field", audience="implementer",
     ),
     "research": CommunicationContract(
-        tone="precise-but-scannable", density="thorough", jargon="field", audience="operator",
+        tone="precise-but-scannable", density="thorough", jargon="field", audience="boss",
     ),
     "design": CommunicationContract(
-        tone="product-clear", density="scannable", jargon="light", audience="operator",
+        tone="product-clear", density="scannable", jargon="light", audience="boss",
     ),
 }
 FALLBACK_DEFAULT = CommunicationContract(
     tone="direct",
     density="scannable",
     jargon="light",
-    audience="operator",
+    audience="boss",
 )
 
 

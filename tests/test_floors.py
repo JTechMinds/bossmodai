@@ -276,7 +276,7 @@ def test_soft_block_still_blocks_without_mentioning_another_floor() -> None:
     )
     assert result["feedback_code"] == "no_progress_block"
     assert "@Bob" not in result["detail"]
-    assert "@Human Operator" in result["detail"]
+    assert "@Boss" in result["detail"]
     assert db.get_task(created.task.id).status == "blocked"
     assert db.get_agent(bob.id) is not None
     kept = list_sticky_slots([bob.id])
@@ -657,7 +657,6 @@ async def test_a_vacationer_is_hidden_unassignable_and_never_woken() -> None:
         await route_human_dm(
             agent_id=ada.id,
             content="hello",
-            from_name="You",
             broadcast_manager=SimpleNamespace(),
             services=_Services(),
         )

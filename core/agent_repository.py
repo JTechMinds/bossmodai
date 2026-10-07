@@ -18,6 +18,7 @@ import db
 from core.agent_loop import standing_prefs
 from core.agent_loop.meeting_orchestrator import end_meetings_hosted_by, end_meetings_without_host
 from core.bm_cli import filesystem
+from core.boss import ensure_agent_name_allowed
 from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import cancel_tasks_as_operator
@@ -104,8 +105,12 @@ class AgentRepository:
             The created agent, with a storage key the ledger has never issued.
 
         Raises:
-            ValueError: The named floor does not exist.
+            ValueError: The named floor does not exist, or ``name`` is
+                reserved for the boss (``Boss`` or the boss's own name;
+                :func:`core.boss.ensure_agent_name_allowed`).
+            core.config.ConfigError: The ``boss_name`` settings row is missing.
         """
+        ensure_agent_name_allowed(fields["name"])
         return db.create_agent(**fields)
 
     def owned_paths(self, storage_key: str) -> tuple[Path, ...]:

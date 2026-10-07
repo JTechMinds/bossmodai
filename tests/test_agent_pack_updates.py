@@ -65,7 +65,7 @@ CATALOG_WITH_NEW_PACK = CATALOG_YAML + (
     "    title: Software Engineer\n"
 )
 CATALOG_WITHOUT_PLANNER = CATALOG_YAML.split("  - id: feature-planner", 1)[0]
-_COMMUNICATION = {"tone": "direct", "density": "compact", "jargon": "light", "audience": "operator"}
+_COMMUNICATION = {"tone": "direct", "density": "compact", "jargon": "light", "audience": "boss"}
 
 
 def setup_function() -> None:

@@ -14,6 +14,7 @@ from typing import Any
 
 import db
 from core import config
+from core.boss import boss_label
 from core.agent_loop.deliverables import get_work_contract
 from core.agent_loop.work_binding import bound_task_id
 from core.bm_cli.approval_gate.effects import WRITE_NAMES
@@ -27,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 CONTEXT_MESSAGES_SETTING = "cli_auto_approve_context_messages"
 PRECEDENT_LIMIT_SETTING = "cli_auto_approve_precedent_limit"
-OPERATOR_SPEAKER = "operator"
 
 Shape = tuple[str, tuple[str, ...], tuple[str, ...]]
 
@@ -159,19 +159,19 @@ def _bound_task(agent: Agent) -> dict[str, Any] | None:
 def _conversation(agent: Agent, channel_id: str | None) -> list[dict[str, str]]:
     limit = config.require_int(CONTEXT_MESSAGES_SETTING)
     token = (channel_id or "").strip()
+    label = boss_label()
     if token:
+        # get_formatted_channel_messages already names human rows ``label``.
         return [
             {
-                "speaker": OPERATOR_SPEAKER
-                if row["from_agent"] == HUMAN_SENDER_ID
-                else str(row["from_name"] or row["from_agent"]),
+                "speaker": str(row["from_name"] or row["from_agent"]),
                 "text": row["content"],
             }
-            for row in db.get_formatted_channel_messages(token, limit=limit)
+            for row in db.get_formatted_channel_messages(token, human_label=label, limit=limit)
         ]
     return [
         {
-            "speaker": OPERATOR_SPEAKER if message.from_agent == HUMAN_SENDER_ID else agent.name,
+            "speaker": label if message.from_agent == HUMAN_SENDER_ID else agent.name,
             "text": message.content,
         }
         for message in db.get_human_chat_thread(agent.id, limit=limit)

@@ -47,15 +47,15 @@ logger = logging.getLogger(__name__)
 
 CLI_APPROVAL_CHROME_FAIL = (
     "Approval card could not be posted to the conversation. "
-    "The command was not queued for operator review."
+    "The command was not queued for the boss's review."
 )
 CLI_APPROVAL_CREATE_FAIL = (
     "Approval request could not be created. "
-    "The command was not queued for operator review."
+    "The command was not queued for the boss's review."
 )
 CONSENT_CHROME_FAIL = (
     "Consent card could not be posted to the conversation. "
-    "The request was not queued for operator review."
+    "The request was not queued for the boss's review."
 )
 NEVER_ALLOWED_SETTINGS_CUE = "To enable, update CLI Policy in Settings."
 

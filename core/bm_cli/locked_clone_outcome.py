@@ -42,20 +42,20 @@ OutcomeKind = Literal["allow", "rewrite", "approval_required", "never_allowed"]
 LOCKED_CLONE_DEFAULT_STEER = (
     "Stay on the locked clone under /me/host-work. "
     "Use uv run pytest, .venv/bin/pytest, local git, or wait for an in-thread Approve card. "
-    "Do not invent a desk deny. Do not park @Operator as an enablement switch."
+    "Do not invent a desk deny. Do not park @Boss as an enablement switch."
 )
 
 HOST_OUTSIDE_NEST_WHY = (
     "Blocked — host path is outside the locked clone. "
     "Stay on /me/host-work. Host writes stay denied. "
-    "Do not invent a desk deny. Do not park @Operator as an enablement switch."
+    "Do not invent a desk deny. Do not park @Boss as an enablement switch."
 )
 
 PATH_JAIL_STEER = (
     "Shared /projects paths rewrite into the projects artifact root. "
     "Nest paths rewrite under /me/host-work. Stay inside those roots after rewrite. "
     "Host writes outside the jail stay denied. "
-    "Do not invent a desk deny. Do not park @Operator as an enablement switch."
+    "Do not invent a desk deny. Do not park @Boss as an enablement switch."
 )
 
 PATH_JAIL_BLOCKED_WHY = "Blocked — path jail. " + PATH_JAIL_STEER
@@ -63,7 +63,7 @@ PATH_JAIL_BLOCKED_WHY = "Blocked — path jail. " + PATH_JAIL_STEER
 DEFAULT_APPROVAL_MESSAGE = (
     "No matching rule on a locked clone — approval required. "
     "Wait for the in-thread Approve card. "
-    "Do not invent a desk deny. Do not park @Operator as an enablement switch."
+    "Do not invent a desk deny. Do not park @Boss as an enablement switch."
 )
 
 

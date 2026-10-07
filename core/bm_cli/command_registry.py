@@ -429,13 +429,13 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "edit body (JSON): any of title, instructions, recurrence,\n"
             "notification_policy. Use on/off to switch a schedule.\n"
             "\n"
-            "Lock: unless the operator has switched on \"Agent can manage this task\"\n"
+            "Lock: unless the boss has switched on \"Agent can manage this task\"\n"
             "for a schedule, every change to it answers with who to contact.\n"
-            "The operator sees every change you make.\n"
+            "The boss sees every change you make.\n"
             "\n"
             "Examples:\n"
             "  schedules add — every 5 minutes, all day:\n"
-            '    {"title": "Ping the operator", "instructions": "Send a short ping.",\n'
+            '    {"title": "Ping the boss", "instructions": "Send a short ping.",\n'
             '     "recurrence": {"frequency": "daily", "interval": 1, "start_date": "2026-10-01",\n'
             '       "every_minutes": 5, "window_start": "00:00", "window_end": "23:59"}}\n'
             "  schedules add — weekdays at 09:00:\n"
@@ -529,7 +529,7 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
         description="Set, remove, or list your standing prefs.",
         usage_syntax="pref <set|remove|list> [args]",
         help_text=(
-            "Standing prefs are the operator's lasting rules for you. The\n"
+            "Standing prefs are the boss's lasting rules for you. The\n"
             "engine injects them on every work turn. The store is\n"
             "system-owned: manage it only with pref, never with a file.\n"
             "\n"
@@ -549,8 +549,8 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "  store    total text across all prefs is capped (Settings → System → Context Window)\n"
             "\n"
             "Examples:\n"
-            '  pref set uv-envs tool_bias operator-2026-09-22   — with body: "Use uv for Python envs and installs, not pip."\n'
-            '  pref set tone style "operator chat" /me/notes/tone.md   — with body: "Short sentences, no filler."\n'
+            '  pref set uv-envs tool_bias boss-2026-09-22   — with body: "Use uv for Python envs and installs, not pip."\n'
+            '  pref set tone style "boss chat" /me/notes/tone.md   — with body: "Short sentences, no filler."\n'
             "  pref remove uv-envs   — drop that pref\n"
             "  pref list             — every pref in full"
         ),

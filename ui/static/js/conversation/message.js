@@ -198,7 +198,8 @@ const BossModMessage = (() => {
         const label = String(message.authorName || '').trim();
         const withFace = author === 'human' || author === 'agent';
         const showName = Boolean(message.showAuthor) || (withFace && author === 'agent');
-        const faceName = label || (author === 'human' ? 'You' : 'Agent');
+        // The human's own lines are always "You", whatever name the row carries.
+        const faceName = author === 'human' ? 'You' : (label || 'Agent');
         const color = message.authorColor || null;
         const tint = color ? BossModAvatar.tintFor(color) : null;
 

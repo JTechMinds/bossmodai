@@ -371,8 +371,8 @@ def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> Non
     assert LOCKED_WORKSPACE_COPY_STEER in block
     assert "Stay on the clone" in block
     assert "Do not recommend editing the live host tree" in block
-    assert "Do not park @Operator to reopen" in block
-    assert "Do not park @Operator as the test runner or git pusher" in block
+    assert "Do not park @Boss to reopen" in block
+    assert "Do not park @Boss as the test runner or git pusher" in block
     assert "Do not invent a desk deny" in block
     assert "Do not pip install into the host Python" in block
     assert f"Locked workspace copy for {host_path}: work at {dest}." in block
@@ -411,8 +411,8 @@ def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> Non
     assert joined.count(core) == 1
     assert LOCKED_WORKSPACE_COPY_STEER in core
     assert dest in core
-    assert "Do not park @Operator to reopen" in core
-    assert "Do not park @Operator as the test runner or git pusher" in core
+    assert "Do not park @Boss to reopen" in core
+    assert "Do not park @Boss as the test runner or git pusher" in core
 
 
 def test_runtime_core_steers_teammate_off_host_direct_when_task_branch_locked() -> None:
@@ -428,8 +428,8 @@ def test_runtime_core_steers_teammate_off_host_direct_when_task_branch_locked() 
     assert LOCKED_WORKSPACE_COPY_STEER in block
     assert dest in block
     assert "Do not recommend editing the live host tree" in block
-    assert "Do not park @Operator to reopen" in block
-    assert "Do not park @Operator as the test runner or git pusher" in block
+    assert "Do not park @Boss to reopen" in block
+    assert "Do not park @Boss as the test runner or git pusher" in block
 
 
 def test_runtime_core_does_not_inject_clone_dest_for_edit_host() -> None:

@@ -102,7 +102,7 @@ def test_title_only_edit_changes_nothing_else(monkeypatch: pytest.MonkeyPatch) -
     assert body["status"] == "active"
     assert _queued(writer.id, trigger_type="task_assigned", task_id=task["id"]) == []
     events = db.list_task_events(task["id"], limit=50)
-    assert any(item.content == "Operator edited the task: title." for item in events)
+    assert any(item.content == "The boss edited the task: title." for item in events)
 
 
 def test_requirements_change_re_presents_a_stalled_task(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -129,7 +129,7 @@ def test_requirements_change_re_presents_a_stalled_task(monkeypatch: pytest.Monk
     assert db.get_activity(activity.id).status == "cancelled"
     assert len(_queued(writer.id, trigger_type="task_assigned", task_id=task["id"])) == 1
     events = db.list_task_events(task["id"], limit=50)
-    assert any(item.content == "Operator edited the task: requirements (2 files)." for item in events)
+    assert any(item.content == "The boss edited the task: requirements (2 files)." for item in events)
 
 
 def test_reassign_moves_assignee_and_owner_and_posts_rerouted(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -157,7 +157,7 @@ def test_reassign_moves_assignee_and_owner_and_posts_rerouted(monkeypatch: pytes
     assert len(_queued(second.id, trigger_type="task_assigned", task_id=task["id"])) == 1
     assert _queued(first.id, trigger_type="task_assigned", task_id=task["id"]) == []
     lines = [item.content for item in db.list_channel_messages(channel.id, limit=20)]
-    assert "Cap One Rerouted to Cap Two — Reassigned by the operator" in lines
+    assert "Cap One Rerouted to Cap Two — Reassigned by the boss" in lines
 
 
 def test_reassign_of_a_mismatched_specialty_pair_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -242,7 +242,7 @@ def test_operator_complete_closes_the_task_and_is_idempotent(monkeypatch: pytest
     assert body["closed_at"]
     assert body["operator_can_complete"] is False
     events = db.list_task_events(task["id"], limit=50)
-    assert any(item.content == "Marked complete by the operator: Delivered by email." for item in events)
+    assert any(item.content == "Marked complete: Delivered by email." for item in events)
 
     again = client.post(f"/api/tasks/{task['id']}/complete", headers=_headers(), json={"summary": "Again."})
     assert again.status_code == 200
@@ -296,7 +296,7 @@ def test_operator_complete_of_a_child_tells_the_parent_assignee(monkeypatch: pyt
     assert len(updates) == 1
     payload = _payload(updates[0])
     assert payload["attention_kind"] == "completion_report"
-    assert payload["content"] == 'Child task "Write the launch note" marked complete by the operator: Note is in the doc.'
+    assert payload["content"] == 'Child task "Write the launch note" marked complete by the boss: Note is in the doc.'
 
 
 def test_resume_hands_a_stalled_task_back_to_its_assignee(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -320,7 +320,7 @@ def test_resume_hands_a_stalled_task_back_to_its_assignee(monkeypatch: pytest.Mo
     assert db.get_activity(activity.id).status == "cancelled"
     assert len(_queued(writer.id, trigger_type="task_assigned", task_id=task["id"])) == 1
     events = db.list_task_events(task["id"], limit=50)
-    assert any(item.content == "Operator resumed the task." for item in events)
+    assert any(item.content == "The boss resumed the task." for item in events)
 
 
 def test_resume_refuses_an_active_a_closed_or_an_unassigned_task(monkeypatch: pytest.MonkeyPatch) -> None:

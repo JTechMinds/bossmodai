@@ -9,6 +9,7 @@ import db
 from core.agent_loop import activity_runtime
 from core.agent_loop.role_contracts import is_auditor_specialty, operator_done_claim_guidance
 from core.bm_cli.filesystem import slugify_name
+from core.boss import boss_label
 from core.models import Agent, Task, TaskEvent
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.resolution import OPEN_TASK_STATUSES
@@ -388,7 +389,7 @@ def _serialize_task(task: Task, *, agents: dict[str, Agent], latest_event: TaskE
         requester = agents.get(task.requester_id)
         requester_name = requester.name if requester is not None else None
     elif task.requester_id == HUMAN_SENDER_ID:
-        requester_name = "Human Operator"
+        requester_name = boss_label()
 
     has_files = bool(task.work_contract and task.work_contract.deliverables)
     return {

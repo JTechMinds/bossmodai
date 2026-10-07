@@ -1180,7 +1180,7 @@ def test_preview_bundle_injects_role_contract() -> None:
         "Workspace: /me is your private scratch and /projects is shared "
         "with your floor — prefer them."
     ) in core_block
-    assert "Do not ask the operator for a verbal yes/no." in core_block
+    assert "Do not ask the boss for a verbal yes/no." in core_block
     assert "stop and ask in chat" not in core_block
     assert AUDIENCE_SOFT_JUDGMENT in core_block
     assert AUDIENCE_SOFT_JUDGMENT in contents

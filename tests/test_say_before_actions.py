@@ -79,7 +79,7 @@ def test_runtime_core_biases_say_with_actions_on_human_ask() -> None:
     agent = db.create_agent("Core Clerk", role="Engineer")
     block = format_runtime_core_block(agent)
     assert SAY_WITH_ACTIONS in block
-    assert "When acting on a human ask" in SAY_WITH_ACTIONS
+    assert "When acting on an ask from the boss" in SAY_WITH_ACTIONS
     assert "Bias only" in SAY_WITH_ACTIONS
     assert "Copy that" in SAY_WITH_ACTIONS
     assert AUDIENCE_SOFT_JUDGMENT in block

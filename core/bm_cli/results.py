@@ -145,7 +145,7 @@ def consent_required_result(
     if workspace:
         heading = "WORKSPACE PREFERENCE REQUIRED"
         wait = (
-            "Stop and wait. The operator will Clone into workspace, Make a branch, "
+            "Stop and wait. The boss will Clone into workspace, Make a branch, "
             "Edit host directly, or Cancel in chat."
         )
         detail_prefix = "BossMod CLI workspace preference required"
@@ -153,30 +153,30 @@ def consent_required_result(
     elif shell:
         heading = "SHELL EXECUTOR CONSENT REQUIRED"
         wait = (
-            "Stop and wait. The operator will Enable or Deny Shell Executor in chat. "
+            "Stop and wait. The boss will Enable or Deny Shell Executor in chat. "
             "Do not invent that the desk cannot shell. "
-            "Do not park @Operator as the test runner or shell enabler."
+            "Do not park @Boss as the test runner or shell enabler."
         )
         detail_prefix = "BossMod CLI Shell Executor consent required"
         kind = "shell_executor_consent_required"
     elif nest:
         heading = "NEST GIT CONSENT REQUIRED"
         wait = (
-            "Stop and wait. The operator will use this computer’s Git login "
+            "Stop and wait. The boss will use this computer’s Git login "
             "or add a GitHub access token or SSH key in chat "
             "(same as Settings → Nest git). "
             "Always-allow on a command does not skip auth. "
             "Do not invent that browser or desktop GitHub login is the agent's. "
-            "Do not park @Operator as the git enabler."
+            "Do not park @Boss as the git enabler."
         )
         detail_prefix = "BossMod CLI nest git consent required"
         kind = "nest_git_consent_required"
     else:
         heading = "HOST PATH CONSENT REQUIRED"
         wait = (
-            "Stop and wait. The operator will Allow once or Deny in chat."
+            "Stop and wait. The boss will Allow once or Deny in chat."
             if card.get("always_allow") is False
-            else "Stop and wait. The operator will Allow once, Always allow, or Deny in chat."
+            else "Stop and wait. The boss will Allow once, Always allow, or Deny in chat."
         )
         detail_prefix = "BossMod CLI host-path consent required"
         kind = "host_path_consent_required"

@@ -990,8 +990,8 @@ def test_reset_runtime_blocks_all_open_work_activity_tasks(monkeypatch: pytest.M
     refreshed_second = db.get_task(second.id)
     assert refreshed_first is not None and refreshed_first.status == "blocked"
     assert refreshed_second is not None and refreshed_second.status == "blocked"
-    assert "Runtime reset by human operator" in (refreshed_first.status_note or "")
-    assert "Runtime reset by human operator" in (refreshed_second.status_note or "")
+    assert "Runtime reset by the boss" in (refreshed_first.status_note or "")
+    assert "Runtime reset by the boss" in (refreshed_second.status_note or "")
 
     open_activities = [
         activity

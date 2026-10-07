@@ -46,7 +46,7 @@ SECRET_TOKEN_ENV_DUMP_WHY = (
 SECRET_TOKEN_ENV_DUMP_STEER = (
     "Tokens must not enter chat. Use Nest git for push, or open the compare URL. "
     "Do not retry printenv or env dumps of those names. "
-    "Do not invent a desk deny. Do not park @Operator as an enablement switch."
+    "Do not invent a desk deny. Do not park @Boss as an enablement switch."
 )
 SECRET_TOKEN_ENV_DUMP_MESSAGE = (
     f"{SECRET_TOKEN_ENV_DUMP_WHY}. {SECRET_TOKEN_ENV_DUMP_STEER}"

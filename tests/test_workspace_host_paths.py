@@ -183,7 +183,7 @@ def test_resolve_cli_path_denies_outside_host_roots(tmp_path: Path) -> None:
     _set_host_roots(host)
     agent = db.create_agent("Path Reviewer")
 
-    with pytest.raises(PathOutsideRootsError, match="is not an operator-allowed host path"):
+    with pytest.raises(PathOutsideRootsError, match="is not a boss-allowed host path"):
         resolve_cli_path(agent.storage_key, "/me", "/etc/passwd")
     with pytest.raises(PathOutsideRootsError):
         resolve_cli_path(agent.storage_key, "/me", str(tmp_path / "other" / "secret.md"))
@@ -240,7 +240,7 @@ def test_execute_bm_cli_reads_and_writes_named_host_path(tmp_path: Path) -> None
     denied = execute_bm_cli(agent, state, "cat /etc/passwd")
     assert denied.ok is False
     payload = (denied.detail or "") + denied.prompt_content
-    assert "is not an operator-allowed host path" in payload
+    assert "is not a boss-allowed host path" in payload
     assert "request_host_access" in payload
     assert "/me" in payload
     assert str(host.resolve()) not in payload
@@ -388,7 +388,7 @@ def test_execute_bm_cli_uname_and_path_escape(tmp_path: Path) -> None:
     escaped = execute_bm_cli(agent, state, "cat /etc/passwd")
     assert escaped.ok is False
     payload = f"{escaped.detail} {escaped.prompt_content}"
-    assert "Path jail" in payload or "is not an operator-allowed host path" in payload
+    assert "Path jail" in payload or "is not a boss-allowed host path" in payload
     assert "root:" not in payload
 
 

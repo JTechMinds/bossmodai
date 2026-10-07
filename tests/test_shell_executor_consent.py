@@ -430,7 +430,7 @@ async def test_deny_refuses_and_blocked_why_names_the_gate(
     persist_result_triggers(result)
     # The operator requested the task; a teammate who only shares the thread
     # is never the next owner.
-    expected = f"{agent.name} {format_blocked_line(SHELL_EXECUTOR_WHY, '@Human Operator')}"
+    expected = f"{agent.name} {format_blocked_line(SHELL_EXECUTOR_WHY, '@Boss')}"
     contents = [item.content for item in db.list_channel_messages(channel.id)]
     assert expected in contents
     assert not any("desk" in (item or "").lower() and "can't" in (item or "").lower() for item in contents)
@@ -449,8 +449,8 @@ def test_runtime_core_steers_off_desk_cannot_shell() -> None:
     assert LOCKED_WORKSPACE_COPY_STEER in block
     assert "Do not invent that the desk cannot shell" in block
     assert "wait for the in-thread Enable/Deny card" in block
-    assert "do not park @Operator as the shell enabler" in block
-    assert "Do not park @Operator as the test runner or git pusher" in block
+    assert "do not park @Boss as the shell enabler" in block
+    assert "Do not park @Boss as the test runner or git pusher" in block
 
 
 def test_blocked_line_names_shell_executor_gate() -> None:

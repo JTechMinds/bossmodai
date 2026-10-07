@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 import db
+from core.boss import boss_label
 from core.models import TaskEvent
 
 
@@ -29,12 +30,16 @@ def load_task_thread_history(
 
 
 def _format_task_event(event: TaskEvent) -> dict[str, Any]:
-    """Format one TaskEvent into a conversation-history row."""
+    """Format one TaskEvent into a conversation-history row.
+
+    A human event is named with the current boss label; its stored
+    ``author_name`` is a write-time snapshot.
+    """
     content = str(event.content or "").strip()
     return {
         "id": event.id,
         "from_agent": event.author_agent_id,
-        "from_name": event.author_name or "Unknown",
+        "from_name": boss_label() if event.author_type == "human" else (event.author_name or "Unknown"),
         "content": content,
         "created_at": event.created_at.isoformat() if getattr(event, "created_at", None) else None,
         "event_type": event.event_type,

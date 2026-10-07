@@ -51,7 +51,7 @@ _REPLY_USAGE = "mail reply <id> [--all]   (reply in the body)"
 _CONTACTS_USAGE = "mail contacts [list] | mail contacts add <addr>[,<addr>…] [--name <text>] | mail contacts remove <addr>[,<addr>…]"
 # How a folder is named to the agent (the Folder: line, NOT_IN_INBOX).
 _FOLDER_LABELS: dict[str, str] = {"inbox": "Inbox", "archive": "Archive", "sentitems": "Sent"}
-NOT_CONFIGURED = "MAILBOX_NOT_CONFIGURED: no mailbox is set up for you; ask the operator to configure one at your desk"
+NOT_CONFIGURED = "MAILBOX_NOT_CONFIGURED: no mailbox is set up for you; ask the boss to configure one at your desk"
 
 
 class Ms365MailDefaults(BaseModel):

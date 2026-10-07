@@ -23,7 +23,7 @@ PROSE_STATUS_STEER = (
     "Emit the required JSON decision/action shape for this turn "
     "(say plus optional actions). "
     "Prose status is not a valid turn result. "
-    "Do not park @Operator. Do not invent a desk deny."
+    "Do not park @Boss. Do not invent a desk deny."
 )
 
 INVALID_DECISION_STEER = (
@@ -32,7 +32,7 @@ INVALID_DECISION_STEER = (
     "Do not invent approval fields. "
     "Approval comes from approval_required plus a request id from the tool, "
     "not from invented JSON fields. "
-    "Do not park @Operator. Do not invent a desk deny."
+    "Do not park @Boss. Do not invent a desk deny."
 )
 
 # Existing compact keys plus the product aliases. Unknown keys stay fail-closed.

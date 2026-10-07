@@ -13,8 +13,9 @@ from core.agent_loop.role_contracts import (
     operator_done_claim_guidance,
     parse_done_claim_from_text,
 )
-from core.agent_loop.task_origin_mirrors import OPERATOR_CANCEL_REASON, broadcast_origin_line
+from core.agent_loop.task_origin_mirrors import BOSS_CANCEL_REASON, broadcast_origin_line
 from core.agent_loop.task_roles import default_task_owner_id
+from core.boss import boss_label
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.floors import FloorDenied
 from core.models import (
@@ -155,7 +156,7 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
     if requester_id != HUMAN_SENDER_ID and not db.get_agent(requester_id):
         raise HTTPException(404, "Requester agent not found")
     if body.owner_id == HUMAN_SENDER_ID:
-        raise HTTPException(400, "Task owner must be an agent, not the human operator")
+        raise HTTPException(400, "Task owner must be an agent, not you.")
     if body.owner_id and not db.get_agent(body.owner_id):
         raise HTTPException(404, "Owner agent not found")
     if body.assigned_to and not db.get_agent(body.assigned_to):
@@ -207,7 +208,7 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
             source_channel=source_channel,
             notification_policy=notification_policy,
             notification_channel_id=body.notification_channel_id,
-            audit_author_name="Human Operator",
+            audit_author_name=boss_label(),
             audit_author_type="human",
             audit_author_agent_id=None,
             bind_task_id=body.bind_task_id,
@@ -264,7 +265,7 @@ async def get_task_board(agent_id: str, scope: Literal["self", "owned", "delegat
 async def cancel_tasks(body: TaskCancelRequest):
     """Cancel selected tasks. Threads stay open unless the operator archives them."""
     try:
-        tasks, posted_lines = cancel_tasks_as_operator(body.task_ids, reason=OPERATOR_CANCEL_REASON)
+        tasks, posted_lines = cancel_tasks_as_operator(body.task_ids, reason=BOSS_CANCEL_REASON)
     except IllegalTaskTransition as exc:
         raise HTTPException(
             409,
@@ -285,7 +286,7 @@ async def cancel_task(task_id: str):
     The detail repaints in place from the returned row, flags included.
     """
     try:
-        task, posted = cancel_task_as_operator(task_id, reason=OPERATOR_CANCEL_REASON)
+        task, posted = cancel_task_as_operator(task_id, reason=BOSS_CANCEL_REASON)
     except IllegalTaskTransition as exc:
         raise HTTPException(
             409,

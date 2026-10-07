@@ -99,7 +99,7 @@ def test_unflagged_model_gets_an_explicit_notice(tmp_path, caplog):
         assert notice["type"] == "text"
         assert notice["text"] == (
             "[Image pic.png attached, but your model cannot view images. "
-            "Don't try to open it with the CLI; tell the operator you can't see it. "
+            "Don't try to open it with the CLI; tell the boss you can't see it. "
             "It is saved at /projects/.attachments/direct/agent-1/u_pic.png "
             "if you need to move or reference the file.]"
         )
@@ -429,7 +429,7 @@ def test_non_vision_model_gets_the_cannot_view_notice_for_a_cli_image(tmp_path, 
 
     assert out[0]["content"][1] == {
         "type": "text",
-        "text": "[An image was loaded, but your model cannot view images. Tell the operator you can't see it.]",
+        "text": "[An image was loaded, but your model cannot view images. Tell the boss you can't see it.]",
     }
     assert "not marked image-capable" in caplog.text
 

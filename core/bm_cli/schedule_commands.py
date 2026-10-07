@@ -171,7 +171,7 @@ def _changed(
         kind="schedules",
         data=data,
         sections=[(_SECTION, [_HEADER, shown] if verb != "removed" else [shown])],
-        authoritative_note="Saved. The operator has been told about this change.",
+        authoritative_note="Saved. The boss has been told about this change.",
         cwd=context.cwd,
     )
 
@@ -258,7 +258,7 @@ def _line(row: dict[str, Any]) -> str:
         trim(str(row["title"])),
         row["repeats"],
         "on" if row["enabled"] else "off",
-        "yes" if row["agent_can_change"] else "no (ask the operator)",
+        "yes" if row["agent_can_change"] else "no (ask the boss)",
         row["next_run"] or "off",
         last_run,
         last_task,

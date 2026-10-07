@@ -111,7 +111,7 @@ def test_classify_prose_status_vs_invalid_json() -> None:
     steer = parse_failure_steer("prose_status")
     assert PROSE_STATUS_STEER in steer
     assert "say plus optional actions" in steer
-    assert "Do not park @Operator" in steer
+    assert "Do not park @Boss" in steer
     assert "do not invent a desk" in steer.lower()
     assert not steer.startswith("Blocked")
 
@@ -144,7 +144,7 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     assert "approval_required" in steer
     assert "request id" in steer
     assert "invented JSON fields" in steer
-    assert "Do not park @Operator" in steer
+    assert "Do not park @Boss" in steer
     assert "do not invent a desk" in steer.lower()
     assert not steer.startswith("Blocked")
     other = parse_direct_turn_response(
@@ -178,7 +178,7 @@ def test_invented_th2_key_is_invalid_decision_not_schema_key() -> None:
     steer = parse_failure_steer("invalid_decision", parsed.get("_raw_snippet", ""))
     assert INVALID_DECISION_STEER in steer
     assert "Do not invent approval fields" in steer
-    assert "Do not park @Operator" in steer
+    assert "Do not park @Boss" in steer
     assert not steer.startswith("Blocked")
     assert kind_for_schema_error("unexpected top-level keys: th2") == "invalid_decision"
     assert kind_for_schema_error(
@@ -235,7 +235,7 @@ async def test_decision_prose_fail_closes_without_repair_loop(
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
     assert "Emit the required JSON" in detail
-    assert "Do not park @Operator" in detail
+    assert "Do not park @Boss" in detail
     assert not detail.startswith("Blocked")
     assert outcome.result.get("parse_steer") is True
 
@@ -272,7 +272,7 @@ async def test_decision_invented_needs_approval_fail_closes_without_repair(
     assert "Do not invent approval fields" in detail
     assert "approval_required" in detail
     assert "request id" in detail
-    assert "Do not park @Operator" in detail
+    assert "Do not park @Boss" in detail
     assert "do not invent a desk" in detail.lower()
     assert "_needsApproval" in detail
     assert not detail.startswith("Blocked")
@@ -309,7 +309,7 @@ async def test_decision_invented_th2_fail_closes_without_repair(
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
     assert "Do not invent approval fields" in detail
-    assert "Do not park @Operator" in detail
+    assert "Do not park @Boss" in detail
     assert "th2" in detail
     assert not detail.startswith("Blocked")
     assert outcome.result.get("parse_steer") is True
@@ -340,7 +340,7 @@ async def test_execution_prose_fail_closes_without_repair_loop(
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
     assert "Emit the required JSON" in detail
-    assert "Do not park @Operator" in detail
+    assert "Do not park @Boss" in detail
     assert not detail.startswith("Blocked")
 
 
