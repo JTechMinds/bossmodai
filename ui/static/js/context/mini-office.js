@@ -110,8 +110,8 @@ const BossModMiniOffice = (() => {
          * The drawable floor plan from GET /api/map: its rooms in map order
          * and their tile bounding box. Null until it answers, and for good
          * when it fails or carries a room this view cannot draw.
-         * @type {null|{rooms: Array<{name: string, roomType: string, bounds: number[]}>,
-         *   minX: number, minY: number, cols: number, rows: number}}
+         * @type {null|{rooms: Array<{name: string, shortName: string, roomType: string,
+         *   bounds: number[]}>, minX: number, minY: number, cols: number, rows: number}}
          */
         let floor = null;
 
@@ -187,19 +187,20 @@ const BossModMiniOffice = (() => {
          * Every room on the floor, in map order, with who is standing in it.
          *
          * @param {object[]} roster
-         * @returns {Array<{name: string, tone: string, agents: object[], place: object|null}>}
-         *   One entry per mapped room whether or not anyone is in it, toned
-         *   by its type and placed by its bounds, then a single `Unknown`
-         *   bucket for everyone the map could not account for — agents with
-         *   no location (or on a corridor tile no room covers), and the
-         *   anomaly of a location the floor plan does not name. Both are
-         *   people, so neither is dropped; the bucket has no place on the plan.
+         * @returns {Array<{name: string, shortName?: string, tone: string, agents: object[],
+         *   place: object|null}>} One entry per mapped room whether or not anyone
+         *   is in it, toned by its type, labelled by its short name and placed by
+         *   its bounds, then a single `Unknown` bucket for everyone the map could
+         *   not account for — agents with no location (or on a corridor tile no
+         *   room covers), and the anomaly of a location the floor plan does not
+         *   name. Both are people, so neither is dropped; the bucket has no place.
          */
         function floorRooms(roster) {
             const occupancy = byRoom(roster);
             const seats = new Map(occupancy.map((room) => [room.name, room.agents]));
             const rooms = floor.rooms.map((room) => ({
                 name: room.name,
+                shortName: room.shortName,
                 tone: room.roomType,
                 agents: seats.get(room.name) || [],
                 place: BossModFloorPlan.place(floor, room.bounds),
@@ -243,7 +244,11 @@ const BossModMiniOffice = (() => {
          * Its grid position is inline because it is data — the plan's bounds,
          * like an avatar's colour is the roster's — not theme.
          *
-         * @param {{name: string, tone: string, agents: object[], place: object|null}} room
+         * A mapped room shows the plan's `shortName`; screen readers and the
+         * tooltip get the full name. Unknown and the degraded list show the name.
+         *
+         * @param {{name: string, shortName?: string, tone: string, agents: object[],
+         *   place: object|null}} room
          * @returns {HTMLElement}
          */
         function roomBox(room) {
@@ -256,7 +261,11 @@ const BossModMiniOffice = (() => {
                 'data-orient': place && place.vertical ? 'vertical' : null,
                 style: place ? `grid-column: ${place.column}; grid-row: ${place.row}` : null,
             },
-                h('p', { class: 'mini-office-room-name' }, room.name),
+                room.shortName
+                    ? h('p', { class: 'mini-office-room-name', 'data-tooltip': room.name },
+                        h('span', { 'aria-hidden': 'true' }, room.shortName),
+                        h('span', { class: 'visually-hidden' }, room.name))
+                    : h('p', { class: 'mini-office-room-name' }, room.name),
                 seats || h('p', { class: 'mini-office-room-empty' }, EMPTY_ROOM_COPY));
             seatLists.set(box, seats ? BossModDom.createKeyedList(seats) : null);
             return box;

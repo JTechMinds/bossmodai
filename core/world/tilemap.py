@@ -30,37 +30,43 @@ class RoomType(str):
     HALLWAY = "hallway"
 
 
-# ─── Room definitions (id, display_name, type, bounds) ───
+# ─── Room definitions (id, display_name, short_name, type, bounds) ───
+# short_name is the compact label for narrow UI (the office summary); agents never see it.
 # Bounds are (x1, y1, x2, y2) inclusive, top-left origin.
 
 DEFAULT_ROOMS = [
     {
         "id": "workspace_main",
         "name": "Main Workspace",
+        "short_name": "Main WS",
         "room_type": RoomType.WORKSPACE,
         "bounds": (1, 1, 12, 8),
     },
     {
         "id": "meeting_room",
         "name": "Meeting Room",
+        "short_name": "Meeting",
         "room_type": RoomType.MEETING,
         "bounds": (16, 1, 23, 8),
     },
     {
         "id": "break_room",
         "name": "Break Room",
+        "short_name": "Break",
         "room_type": RoomType.BREAK,
         "bounds": (16, 12, 23, 19),
     },
     {
         "id": "hallway_main",
         "name": "Hallway",
+        "short_name": "Hallway",
         "room_type": RoomType.HALLWAY,
         "bounds": (13, 1, 15, 19),
     },
     {
         "id": "workspace_south",
         "name": "South Workspace",
+        "short_name": "South WS",
         "room_type": RoomType.WORKSPACE,
         "bounds": (1, 12, 12, 19),
     },

@@ -1338,7 +1338,10 @@ def test_mini_office_is_a_map() -> None:
     assert "grid-template-columns" not in grid, "each layout owns its own tracks"
     plan = css.split('.mini-office-rooms[data-layout="map"] {', 1)[1].split("}", 1)[0]
     assert "repeat(var(--mini-office-cols), minmax(0, 1fr))" in plan
-    assert "repeat(var(--mini-office-rows), minmax(var(--mini-office-track), auto))" in plan
+    assert "repeat(var(--mini-office-rows), minmax(0, auto))" in plan
+    # No row minimum: the empty corridor rows collapse instead of a blank band.
+    assert "--mini-office-track" not in css
+    assert "--mini-office-track" not in _read(CSS / "tokens.css")
     assert "background: var(--office-transit)" in plan
     listed = css.split('.mini-office-rooms[data-layout="list"] {', 1)[1].split("}", 1)[0]
     assert "grid-template-columns: 1fr 1fr" in listed

@@ -231,6 +231,10 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
     assert payload["miniOfficeTurnsTallRooms"] is True
     assert payload["miniOfficeUnplacedSpansTheFloor"] is True
     assert payload["miniOfficeRejectsAnUndrawablePlan"] is True
+    # Mapped rooms show the plan's short label, with the full name kept for
+    # screen readers and the tooltip; Unknown has no plan entry and keeps its own.
+    assert payload["miniOfficeShowsShortLabels"] is True
+    assert payload["unknownKeepsItsFullLabel"] is True
 
     source = _read(CONTEXT / "mini-office.js")
     plan = _read(CONTEXT / "floor-plan.js")

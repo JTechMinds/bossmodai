@@ -6,11 +6,13 @@
  * on a CSS grid. No DOM, no request, no store — mini-office.js owns those,
  * and it owns reporting a plan this refuses.
  *
- * The summary places rooms by their tile `bounds` and colours them by their
- * `room_type`, the two facts core/world/tilemap.py's DEFAULT_ROOMS carries
- * besides a name. That shape is a UI contract now. Nothing else in the map
- * payload is read: tiles, desks and the map's own dimensions are the canvas
- * renderer's, and this is not one.
+ * The summary places rooms by their tile `bounds`, colours them by their
+ * `room_type` and labels them with their `short_name`, the facts
+ * core/world/tilemap.py's DEFAULT_ROOMS carries besides a name. The short
+ * label is data rather than a text rule here, so a renamed room cannot
+ * silently keep a stale abbreviation. That shape is a UI contract now.
+ * Nothing else in the map payload is read: tiles, desks and the map's own
+ * dimensions are the canvas renderer's, and this is not one.
  */
 const BossModFloorPlan = (() => {
     /**
@@ -23,6 +25,7 @@ const BossModFloorPlan = (() => {
     function drawable(room) {
         const bounds = room && room.bounds;
         return String((room && room.name) || '').trim() !== ''
+            && typeof room.short_name === 'string' && room.short_name.trim() !== ''
             && ROOM_TYPES.includes(room.room_type)
             && Array.isArray(bounds) && bounds.length === 4 && bounds.every(Number.isInteger)
             && bounds[0] <= bounds[2] && bounds[1] <= bounds[3];
@@ -31,17 +34,18 @@ const BossModFloorPlan = (() => {
     /**
      * Read the map's rooms into a plan the summary can draw.
      *
-     * Every room needs a name, a `room_type` in ROOM_TYPES and integer
-     * `bounds` `[x1, y1, x2, y2]` with x1 <= x2 and y1 <= y2. One room short of
-     * that and any colour or position given to it would be a guess, so the
-     * whole plan is refused.
+     * Every room needs a name, a non-empty `short_name` (the summary's
+     * label; the full name stays its accessible name), a `room_type` in
+     * ROOM_TYPES and integer `bounds` `[x1, y1, x2, y2]` with x1 <= x2 and
+     * y1 <= y2. One room short of that and any colour, label or position
+     * given to it would be a guess, so the whole plan is refused.
      *
      * The tracks are the rooms' own bounding box, not the map's width and
      * height, so the void and the outer wall around the floor waste no space.
      *
      * @param {object[]} rooms  `mapData.rooms`, in map order.
-     * @returns {{rooms: Array<{name: string, roomType: string, bounds: number[]}>,
-     *   minX: number, minY: number, cols: number, rows: number}}
+     * @returns {{rooms: Array<{name: string, shortName: string, roomType: string,
+     *   bounds: number[]}>, minX: number, minY: number, cols: number, rows: number}}
      * @throws {Error} When there are no rooms (no box to lay a floor out on),
      *   or naming the first room it cannot draw.
      */
@@ -54,7 +58,10 @@ const BossModFloorPlan = (() => {
             throw new Error(`[floor-plan] a room it cannot draw: ${JSON.stringify(bad)}`);
         }
         const placed = rooms.map((room) => ({
-            name: String(room.name).trim(), roomType: room.room_type, bounds: room.bounds,
+            name: String(room.name).trim(),
+            shortName: room.short_name.trim(),
+            roomType: room.room_type,
+            bounds: room.bounds,
         }));
         const edge = (index, pick) => pick(...placed.map((room) => room.bounds[index]));
         const minX = edge(0, Math.min);

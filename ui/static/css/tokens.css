@@ -136,8 +136,6 @@
   --chatter-gap-tight: 4px;
   /* Keeps about two chatter rows visible under a tall office summary. */
   --chatter-min-height: 240px;
-  /* One floor-plan tile's minimum height in the office summary: 8 tiles = 64px. */
-  --mini-office-track: 8px;
   /* The wall between rooms on the office summary's floor plan. */
   --mini-office-wall-gap: 2px;
 

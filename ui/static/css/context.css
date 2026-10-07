@@ -111,10 +111,12 @@
 
 /* Columns are proportional to tiles; rows grow with their seats, and every
    room sharing a row grows with it, so the plan stays aligned rather than
-   clipping a crowded room. */
+   clipping a crowded room. Rows have no minimum: a row is only as tall as the
+   rooms crossing it, so the corridor rows no room but the Hallway crosses
+   collapse, and the wall gaps alone show the corridor. */
 .mini-office-rooms[data-layout="map"] {
   grid-template-columns: repeat(var(--mini-office-cols), minmax(0, 1fr));
-  grid-template-rows: repeat(var(--mini-office-rows), minmax(var(--mini-office-track), auto));
+  grid-template-rows: repeat(var(--mini-office-rows), minmax(0, auto));
   gap: var(--mini-office-wall-gap);
   background: var(--office-transit);
 }

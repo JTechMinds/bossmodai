@@ -47,3 +47,15 @@ def test_every_desk_has_an_aisle_on_its_far_side() -> None:
             f"{desk['id']}: row {aisle_y} is not an aisle"
         )
         assert DEFAULT_MAP[aisle_y][desk_x] == TileType.FLOOR
+
+
+def test_every_room_has_a_short_label_no_longer_than_its_name() -> None:
+    """The office summary labels rooms with `short_name`, so every room needs one.
+
+    The UI refuses a plan with a room missing it; it must also never be longer
+    than the name it abbreviates, or it is not the compact label it exists for.
+    """
+    for room in DEFAULT_ROOMS:
+        short_name = room.get("short_name")
+        assert isinstance(short_name, str) and short_name.strip(), room["id"]
+        assert len(short_name) <= len(room["name"]), room["id"]

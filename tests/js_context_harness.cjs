@@ -206,17 +206,23 @@ global.BossModMarketplace = {
 };
 
 // The floor plan GET /api/map answers with, trimmed to what the summary reads:
-// core/world/tilemap.py's DEFAULT_ROOMS, names, types and bounds copied
-// exactly. The join between the map and the roster is BY NAME —
+// core/world/tilemap.py's DEFAULT_ROOMS, names, short names, types and bounds
+// copied exactly. The join between the map and the roster is BY NAME —
 // db.get_world_state() derives `agent.location` from get_room_at(), which
-// returns these same strings — and the summary places each room at its bounds
-// and colours it by its type, so all three are the contract.
+// returns these same strings — and the summary places each room at its bounds,
+// colours it by its type and labels it with its short name, so all four are
+// the contract.
 const MAP_ROOMS = [
-    { id: "workspace_main", name: "Main Workspace", room_type: "workspace", bounds: [1, 1, 12, 8] },
-    { id: "meeting_room", name: "Meeting Room", room_type: "meeting", bounds: [16, 1, 23, 8] },
-    { id: "break_room", name: "Break Room", room_type: "break", bounds: [16, 12, 23, 19] },
-    { id: "hallway_main", name: "Hallway", room_type: "hallway", bounds: [13, 1, 15, 19] },
-    { id: "workspace_south", name: "South Workspace", room_type: "workspace", bounds: [1, 12, 12, 19] },
+    { id: "workspace_main", name: "Main Workspace", short_name: "Main WS",
+        room_type: "workspace", bounds: [1, 1, 12, 8] },
+    { id: "meeting_room", name: "Meeting Room", short_name: "Meeting",
+        room_type: "meeting", bounds: [16, 1, 23, 8] },
+    { id: "break_room", name: "Break Room", short_name: "Break",
+        room_type: "break", bounds: [16, 12, 23, 19] },
+    { id: "hallway_main", name: "Hallway", short_name: "Hallway",
+        room_type: "hallway", bounds: [13, 1, 15, 19] },
+    { id: "workspace_south", name: "South Workspace", short_name: "South WS",
+        room_type: "workspace", bounds: [1, 12, 12, 19] },
 ];
 // The desks GET /api/map answers with: core/world/tilemap.py's DEFAULT_DESKS,
 // trimmed to what the agent form reads (its only desk list).
@@ -662,8 +668,14 @@ async function main() {
     // ─── 1. Every agent gets a seat, including the unplaced one ───
 
     const seats = () => contextEl.querySelectorAll(".mini-office-seat");
-    const roomNames = () => contextEl.querySelectorAll(".mini-office-room-name")
-        .map((node) => node.textContent);
+    // A mapped room's label shows its short name and carries the full one in a
+    // `.visually-hidden` span; that full name is the room's name, as a screen
+    // reader hears it. Unknown and the degraded list carry the name alone.
+    const fullName = (label) => {
+        const hidden = label.querySelector(".visually-hidden");
+        return hidden ? hidden.textContent : label.textContent;
+    };
+    const roomNames = () => contextEl.querySelectorAll(".mini-office-room-name").map(fullName);
 
     if (seats().length !== 3) {
         throw new Error(`every agent needs a seat, got ${seats().length}`);
@@ -709,7 +721,7 @@ async function main() {
     const roomsGrid = () => contextEl.querySelector(".mini-office-rooms");
     const roomBoxes = () => contextEl.querySelectorAll(".mini-office-room");
     const roomBox = (name) => roomBoxes().find((node) =>
-        node.querySelector(".mini-office-room-name").textContent === name);
+        fullName(node.querySelector(".mini-office-room-name")) === name);
     /** One declaration of a node's inline style, or null. */
     const inline = (node, property) => {
         const found = String(node.getAttribute("style") || "").split(";")
@@ -749,6 +761,31 @@ async function main() {
             rooms: roomBoxes().map((node) => [node.getAttribute("data-tone"),
                 node.getAttribute("style"), node.getAttribute("data-orient")]),
             grid: [roomsGrid().getAttribute("data-layout"), roomsGrid().getAttribute("style")],
+        }));
+    }
+
+    // ─── 1a'''. Mapped rooms wear the plan's short label; the name stays ───
+    //
+    // The short label is what fits the narrow box, so it is the visible text
+    // and hidden from screen readers; the full name is the accessible name and
+    // the tooltip. Unknown has no plan entry, so it keeps its plain label.
+    const label = (name) => roomBox(name).querySelector(".mini-office-room-name");
+    const mainLabel = label("Main Workspace");
+    const mainShort = mainLabel.querySelector('[aria-hidden="true"]');
+    const mainHidden = mainLabel.querySelector(".visually-hidden");
+    const miniOfficeShowsShortLabels = Boolean(mainShort) && mainShort.textContent === "Main WS"
+        && Boolean(mainHidden) && mainHidden.textContent === "Main Workspace"
+        && mainLabel.getAttribute("data-tooltip") === "Main Workspace";
+    const unknownLabel = label("Unknown");
+    const unknownKeepsItsFullLabel = unknownLabel.textContent === "Unknown"
+        && !unknownLabel.querySelector(".visually-hidden")
+        && !unknownLabel.querySelector('[aria-hidden="true"]')
+        && !unknownLabel.hasAttribute("data-tooltip");
+    if (!(miniOfficeShowsShortLabels && unknownKeepsItsFullLabel)) {
+        throw new Error("mapped rooms show their short label, Unknown its name: " + JSON.stringify({
+            miniOfficeShowsShortLabels, unknownKeepsItsFullLabel,
+            main: [mainLabel.textContent, mainLabel.getAttribute("data-tooltip")],
+            unknown: [unknownLabel.textContent, unknownLabel.getAttribute("data-tooltip")],
         }));
     }
 
@@ -816,6 +853,11 @@ async function main() {
     const undrawable = [
         MAP_ROOMS.map((room, index) => (index === 1 ? { ...room, room_type: "garage" } : room)),
         MAP_ROOMS.map((room, index) => (index === 2 ? { ...room, bounds: [16, 12, 9, 19] } : room)),
+        MAP_ROOMS.map((room, index) => {
+            if (index !== 3) return room;
+            const { short_name: _dropped, ...unlabelled } = room;
+            return unlabelled;
+        }),
     ];
     const refusals = [];
     for (const plan of undrawable) {
@@ -836,7 +878,7 @@ async function main() {
             && seats().length === 3);
     }
     mapRooms = MAP_ROOMS;
-    const miniOfficeRejectsAnUndrawablePlan = refusals.length === 2 && refusals.every(Boolean);
+    const miniOfficeRejectsAnUndrawablePlan = refusals.length === 3 && refusals.every(Boolean);
     if (!miniOfficeRejectsAnUndrawablePlan) {
         throw new Error(`a floor plan it cannot draw must be refused, got ${JSON.stringify(refusals)}`);
     }
@@ -2870,6 +2912,8 @@ async function main() {
         miniOfficeTurnsTallRooms,
         miniOfficeUnplacedSpansTheFloor,
         miniOfficeRejectsAnUndrawablePlan,
+        miniOfficeShowsShortLabels,
+        unknownKeepsItsFullLabel,
         miniOfficeSeatsOnlyTheVisibleFloor,
         miniOfficeFollowsTheFloorSwitch,
         miniOfficeSaysTheFloorIsEmpty,
