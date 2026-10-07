@@ -2,9 +2,10 @@
 
 import asyncio
 import json
+import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -18,6 +19,7 @@ from api.websocket import manager
 from core import config
 from core.boss import boss_label, ensure_agent_name_allowed
 from core.agent_loop import activity_runtime
+from core.agent_loop.standing_prefs import MemoryNotFoundError, list_memories, remove_memory
 from core.agent_pack import agent_is_edited, apply_template_to_agent, template_contract_hash
 from core.agent_repository import agent_repository
 from core.bm_cli.approval_gate import global_auto_approve_enabled
@@ -81,6 +83,7 @@ def _checked_desk(
     return desk
 
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
@@ -587,6 +590,71 @@ async def get_agent_desk(agent_id: str, path: str = "/me"):
         raise HTTPException(404, "Agent not found")
 
     return await asyncio.to_thread(_build_agent_desk_payload, agent, path)
+
+
+@router.get("/agents/{agent_id}/memory")
+async def get_agent_memory(agent_id: str) -> dict[str, list[dict[str, Any]]]:
+    """Return an agent's saved memories, for the desk's Memory layer.
+
+    The store is system-owned and outside every agent path, so the desk's
+    Files and Notes cannot reach it; this is its only read for the operator.
+
+    Args:
+        agent_id: The agent whose memory to read.
+
+    Returns:
+        ``{"memories": [{"id": int, "text": str}, ...]}`` in store order. An
+        agent that never saved one has an empty list.
+
+    Raises:
+        HTTPException: 404 when the agent does not exist; 500 with the
+            store's sentence when the store cannot be read or parsed (never a
+            silent empty list, which would read as "nothing saved").
+    """
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    try:
+        memories = await asyncio.to_thread(list_memories, agent.storage_key)
+    except ValueError as exc:
+        logger.error("agent memory unreadable for agent %s: %s", agent_id, exc)
+        raise HTTPException(500, str(exc)) from exc
+    return {"memories": [memory.model_dump() for memory in memories]}
+
+
+@router.delete("/agents/{agent_id}/memory/{memory_id}")
+async def delete_agent_memory(agent_id: str, memory_id: int = Path(..., ge=1)) -> dict[str, int]:
+    """Remove one of an agent's memories, from the desk.
+
+    The agent stops seeing it on its next turn. The number is never reused,
+    so a remove racing the agent's own ``memory`` command cannot hit a
+    different memory; both writers hold the store's lock.
+
+    Args:
+        agent_id: The agent whose memory to change.
+        memory_id: The memory's number, at least 1.
+
+    Returns:
+        ``{"removed": memory_id}``.
+
+    Raises:
+        HTTPException: 404 "Agent not found" for an unknown agent; 404 with
+            the store's sentence ("no memory #N") when that memory is already
+            gone, so the UI can tell that from a failure; 500 with the
+            store's sentence when the store is corrupt (it is left untouched).
+    """
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    try:
+        await asyncio.to_thread(remove_memory, agent.storage_key, memory_id)
+    except MemoryNotFoundError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        logger.error("agent memory for agent %s could not be changed: %s", agent_id, exc)
+        raise HTTPException(500, str(exc)) from exc
+    logger.info("boss removed memory #%d of agent %s", memory_id, agent_id)
+    return {"removed": memory_id}
 
 
 @router.put("/agents/{agent_id}/desk")

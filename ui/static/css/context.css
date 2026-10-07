@@ -519,6 +519,32 @@
 .desk-ext-wake { font-size: 11px; color: var(--hint); word-break: break-word; }
 .desk-ext-wake[data-tone="alert"] { color: var(--alert-ink); }
 
+/* ─── Desk memory (context/desk-memory.js) ───
+   A layer over the desk: `n — text` rows in the desk rows' card treatment,
+   the remove button at the row's end. The text wraps whole — a memory is one
+   or two sentences and is never clipped here. The number is metadata. */
+.desk-memory { display: flex; flex-direction: column; gap: 8px; }
+.desk-memory-list { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.desk-memory-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+  font-size: 13px;
+  color: var(--ink);
+}
+.desk-memory-id { align-self: start; padding-top: 6px; line-height: 1.5; color: var(--hint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.desk-memory-text { padding: 6px 0; line-height: 1.5; word-break: break-word; }
+.desk-memory-remove { align-self: start; }
+.desk-memory-remove svg { width: 14px; height: 14px; }
+.desk-memory-confirm { display: flex; flex-direction: column; gap: 10px; }
+.desk-memory-confirm p { margin: 0; }
+.desk-memory-quote { color: var(--ink); word-break: break-word; }
+
 .desk-opener-options { display: flex; flex-direction: column; gap: 6px; }
 
 .desk-opener-option {

@@ -119,6 +119,7 @@ CONTEXT_MODULES = [
     CONTEXT / "schedule-layer.js",
     CONTEXT / "desk-schedules.js",
     CONTEXT / "desk-pack.js",
+    CONTEXT / "desk-memory.js",
     CONTEXT / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks
@@ -253,6 +254,40 @@ def test_mini_office_groups_by_location_including_unknown() -> None:
                           "mapData.tiles", "mapData.width", "mapData.height",
                           "mapData.desks"):
             assert forbidden not in text, f"{path} must not render a map ({forbidden})"
+
+
+def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
+    """The head's Memory tool: what the agent is shown every turn, prunable.
+
+    The store sits outside every agent path, so neither Files nor Notes can
+    show it. The layer reads GET /api/agents/{id}/memory, lists `n — text`,
+    and removes by number behind the standard confirm layer.
+    """
+    payload = _harness()
+    for key in (
+        "theMemoryToolOpensALayer", "memorySaysLoading", "memoryListsEachRow",
+        "memoryRemoveAsksFirst", "memoryCancelSendsNothing", "memoryConfirmDeletesAndRefreshes",
+        "memoryAlreadyGoneIsANotice", "memoryFailureKeepsTheRow", "memoryBackReturnsToTheDesk",
+        "memoryReadFailureOffersRetry", "memoryRetryRecovers", "closingTheDeskClosesTheMemoryLayer",
+        "memorySaysNothingSaved",
+    ):
+        assert payload[key] is True, key
+    assert payload["toolsAreInTheHead"] is True
+
+    source = _read(CONTEXT / "desk-memory.js")
+    assert len(source.splitlines()) < 400
+    assert "const loads = BossModGates.createLoadGeneration()" in source
+    assert "BossModOverlays.createModal(" in source
+    assert "innerHTML" not in source
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert len(panel.splitlines()) < 400
+    assert "BossModDeskMemory.createDeskMemory({ api, agentId })" in panel
+    assert "tool('desk-memory', 'brain', LABELS.memory, () => memory.open())" in panel
+    assert "memory.destroy()" in panel
+    # Chat, Memory, Edit role: the Memory tool sits between the other two.
+    assert panel.index("tool('desk-chat'") < panel.index("tool('desk-memory'") < panel.index("editBtn,\n")
+    index = _read(ROOT / "ui" / "templates" / "index.html")
+    assert index.index("js/context/desk-memory.js") < index.index("js/context/desk-panel.js")
 
 
 def test_desk_notes_read_the_workspace_not_a_column() -> None:

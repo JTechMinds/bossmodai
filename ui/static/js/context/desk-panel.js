@@ -19,7 +19,8 @@
  * TWO COLUMNS: the work (Tasks, Schedules, Files) in the main column, and who the agent
  * is (About, Details, Notes, Extensions) in the aside. About carries the pack
  * the agent was hired from, and its per-agent update (context/desk-pack.js). The actions on the
- * agent are the HEAD's, as in every other modal: Chat and Edit role as icon
+ * agent are the HEAD's, as in every other modal: Chat, Memory (a layer,
+ * context/desk-memory.js) and Edit role as icon
  * tools, and Diagnostics, Reset runtime and Remove behind the `⋯`
  * (places/tasks/task-detail.js's pattern). Destructive actions belong behind
  * a menu and a confirm, not at the bottom of the reading flow.
@@ -42,7 +43,9 @@ const BossModDeskPanel = (() => {
     const NO_DONE_BAR = 'No done/fail bar set for this agent yet. Edit the role to add one.';
     const CONTRACT_SUMMARY = 'Done/fail contract';
     /** The head tools' accessible names — and their tooltips: one string each. */
-    const LABELS = Object.freeze({ chat: 'Open chat', edit: 'Edit role', options: 'Desk options' });
+    const LABELS = Object.freeze({
+        chat: 'Open chat', memory: 'Memory', edit: 'Edit role', options: 'Desk options',
+    });
 
     /**
      * One labelled section: a header row, an optional right-aligned action,
@@ -137,6 +140,8 @@ const BossModDeskPanel = (() => {
         const contractEl = h('div', { class: 'callout-body desk-bar' });
         // Hidden for an agent not hired from a pack.
         const pack = BossModDeskPack.createDeskPack({ api, agentId });
+        // What the agent is shown every turn; a layer over the desk.
+        const memory = BossModDeskMemory.createDeskMemory({ api, agentId });
 
         const tasks = BossModDeskTasks.createDeskTasks({
             api, agentId, onOpenTask: (taskId) => { void taskOpener.open(taskId); },
@@ -181,6 +186,7 @@ const BossModDeskPanel = (() => {
         const editBtn = tool('desk-edit', 'pencil', LABELS.edit, () => openEdit());
         const tools = [
             tool('desk-chat', 'message-circle', LABELS.chat, () => openConversation(agentId, 'agent')),
+            tool('desk-memory', 'brain', LABELS.memory, () => memory.open()),
             editBtn,
             optionsBtn,
         ];
@@ -376,6 +382,7 @@ const BossModDeskPanel = (() => {
                 notes.destroy();
                 deskExtensions.destroy();
                 pack.destroy();
+                memory.destroy();
             },
         };
     }

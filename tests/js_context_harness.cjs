@@ -127,6 +127,8 @@ const NAMES = [
     "BossModScheduleFields", "BossModSchedulePreview", "BossModScheduleLayer", "BossModDeskSchedules",
     // The desk's pack line, mounted in About.
     "BossModDeskPack",
+    // The desk head's Memory layer.
+    "BossModDeskMemory",
     "BossModDeskPanel",
     // The desk's task rows wear the Tasks place's status labels and open the
     // task as a layer over the desk through the Tasks place's own loader,
@@ -342,6 +344,24 @@ const UNLINKED_PACK = Object.freeze({
 });
 let packStatus = UNLINKED_PACK;
 const packUpdates = [];
+// What GET /api/agents/{id}/memory answers, per agent. Jim has three, one of
+// them long enough to wrap; Ada has none. A DELETE removes the row and answers
+// `memoryDeleteStatus`: a 404 is a memory already gone (removed here too, as
+// the agent would have), a 500 a corrupt store that keeps it.
+const MEMORIES = {
+    a1: [
+        { id: 1, text: "The boss wants plain English, not jargon." },
+        { id: 2, text: "Acme's contact is now Dana Lee." },
+        { id: 3, text: "Ship on Fridays only." },
+    ],
+    a2: [],
+    a3: [],
+};
+let memoryReadFails = false;
+let heldMemoryRead = null;
+let memoryDeleteStatus = 200;
+// Every DELETE /api/agents/{id}/memory/{n} URL, in order.
+const memoryDeletes = [];
 // The agent snapshots Add agent's Recent lists. Filled by the recreate
 // section; empty everywhere else, so no other section grows a rail row.
 let snapshots = [];
@@ -474,6 +494,25 @@ function api(url, init) {
     // except in the section about the line itself.
     if (/^\/api\/agents\/[^/]+\/pack-status$/.test(String(url))) {
         return jsonResponse(packStatus);
+    }
+    const memoryRead = String(url).match(/^\/api\/agents\/([^/]+)\/memory$/);
+    if (memoryRead) {
+        if (heldMemoryRead) return heldMemoryRead.promise;
+        if (memoryReadFails) return jsonResponse({ detail: "memory store is unreadable: boom" }, 500);
+        return jsonResponse({ memories: (MEMORIES[memoryRead[1]] || []).map((row) => ({ ...row })) });
+    }
+    const memoryDelete = String(url).match(/^\/api\/agents\/([^/]+)\/memory\/(\d+)$/);
+    if (memoryDelete && init && init.method === "DELETE") {
+        memoryDeletes.push(String(url));
+        const rows = MEMORIES[memoryDelete[1]];
+        const id = Number(memoryDelete[2]);
+        if (memoryDeleteStatus === 500) {
+            return jsonResponse({ detail: "memory store is unreadable; refusing to overwrite" }, 500);
+        }
+        const index = rows.findIndex((row) => row.id === id);
+        if (index >= 0) rows.splice(index, 1);
+        if (memoryDeleteStatus === 404) return jsonResponse({ detail: `no memory #${id}` }, 404);
+        return jsonResponse({ removed: id });
     }
     const packUpdate = String(url).match(/^\/api\/agents\/([^/]+)\/pack-update$/);
     if (packUpdate && init && init.method === "POST") {
@@ -1035,7 +1074,7 @@ async function main() {
     const head = deskModal().querySelector(".modal-head");
     const headTools = head.querySelector(".modal-tools").querySelectorAll("button")
         .map((node) => node.getAttribute("aria-label"));
-    const toolsAreInTheHead = headTools.join("|") === "Open chat|Edit role|Desk options"
+    const toolsAreInTheHead = headTools.join("|") === "Open chat|Memory|Edit role|Desk options"
         && deskModal().querySelector(".modal-body").querySelectorAll(".desk-action").length === 0;
     if (!toolsAreInTheHead) {
         throw new Error(`the desk's head must carry its tools, got ${headTools.join("|")}`);
@@ -1357,6 +1396,130 @@ async function main() {
         throw new Error(`the desk pack line: line ${thePackLineNamesThePackAndTheUpdate} `
             + `confirm ${thePackConfirmWarnsAboutEdits} update ${thePackUpdateSendsTheHashItShowed} `
             + `undated ${anUndatedAgentShowsOnlyTheNewDate} unlinked ${anUnlinkedAgentHasNoPackLine}`);
+    }
+
+    // ─── The desk's Memory layer (context/desk-memory.js) ───
+    //
+    // The head's Memory tool opens a layer over the desk: loading, then one
+    // `n — text` row per memory with its own remove button. Remove asks
+    // first, in a layer over this one; Cancel sends nothing; a confirm sends
+    // the DELETE by number and re-reads. A 404 (already gone) is a notice, a
+    // 500 keeps the row and says why, a failed read offers Try again, and an
+    // agent with nothing saved says so.
+    const memoryLayer = () => modals().find((node) => node.getAttribute("aria-label") === "Memory");
+    const memoryRows = () => memoryLayer().querySelectorAll(".desk-memory-row");
+    const memoryRowText = () => memoryRows().map((row) => row.querySelector(".desk-memory-id").textContent
+        + " " + row.querySelector(".desk-memory-text").textContent);
+    const removeButtonOf = (id) => memoryRows()
+        .find((row) => row.getAttribute("data-memory-id") === String(id))
+        .querySelector(".desk-memory-remove");
+    const memoryTop = () => modals()[modals().length - 1];
+    const actionNamed = (layer, label) => layer.querySelectorAll(".modal-action")
+        .find((button) => button.textLabel === label);
+    desk.open("a1");
+    await drain();
+    let releaseMemoryRead = null;
+    heldMemoryRead = { promise: new Promise((resolve) => { releaseMemoryRead = resolve; }) };
+    await inDesk("#desk-memory").dispatchClick();
+    await drain();
+    const theMemoryToolOpensALayer = Boolean(memoryLayer()) && memoryTop() === memoryLayer()
+        && deskModal().hidden === true
+        && memoryLayer().querySelector(".modal-trail").textContent.includes("Jim")
+        && memoryLayer().querySelector(".modal-trail").textContent.includes("Memory");
+    const memorySaysLoading = memoryLayer().querySelectorAll(".context-skeleton")
+        .some((node) => node.textContent === "Loading memory…");
+    heldMemoryRead = null;
+    releaseMemoryRead(jsonResponse({ memories: MEMORIES.a1.map((row) => ({ ...row })) }));
+    await drain();
+    const memoryListsEachRow = memoryRowText().join("|")
+        === "1 — The boss wants plain English, not jargon.|2 — Acme's contact is now Dana Lee.|3 — Ship on Fridays only."
+        && removeButtonOf(2).getAttribute("aria-label") === "Remove memory #2"
+        && removeButtonOf(2).getAttribute("data-tooltip") === "Remove memory #2";
+    // Remove asks first; Cancel sends nothing and comes back to the list.
+    await removeButtonOf(2).dispatchClick();
+    await drain();
+    const memoryConfirm = memoryTop();
+    const memoryRemoveAsksFirst = memoryConfirm.getAttribute("aria-label") === "Remove memory?"
+        && memoryConfirm.textContent.includes("“Acme's contact is now Dana Lee.”")
+        && memoryConfirm.textContent.includes("The agent will no longer see it.")
+        && actionNamed(memoryConfirm, "Remove").getAttribute("class").includes("danger")
+        && memoryLayer().hidden === true
+        && memoryDeletes.length === 0;
+    await actionNamed(memoryConfirm, "Cancel").dispatchClick();
+    await drain();
+    const memoryCancelSendsNothing = memoryDeletes.length === 0
+        && memoryTop() === memoryLayer() && memoryLayer().hidden === false
+        && memoryRows().length === 3;
+    // Confirmed: the DELETE goes by number and the list is re-read.
+    await removeButtonOf(2).dispatchClick();
+    await drain();
+    await memoryTop().querySelector("#desk-memory-confirm").dispatchClick();
+    await drain();
+    const memoryConfirmDeletesAndRefreshes = memoryDeletes.join("|") === "/api/agents/a1/memory/2"
+        && memoryTop() === memoryLayer()
+        && memoryRowText().join("|")
+            === "1 — The boss wants plain English, not jargon.|3 — Ship on Fridays only.";
+    // Already gone: a notice above the rows, and the list re-read.
+    memoryDeleteStatus = 404;
+    await removeButtonOf(3).dispatchClick();
+    await drain();
+    await memoryTop().querySelector("#desk-memory-confirm").dispatchClick();
+    await drain();
+    const memoryAlreadyGoneIsANotice = memoryLayer().querySelectorAll(".callout")
+            .some((node) => node.textContent === "That memory was already removed.")
+        && memoryLayer().querySelectorAll(".context-error").length === 0
+        && memoryRowText().join("|") === "1 — The boss wants plain English, not jargon.";
+    // A failure keeps the row and says why.
+    memoryDeleteStatus = 500;
+    await removeButtonOf(1).dispatchClick();
+    await drain();
+    await memoryTop().querySelector("#desk-memory-confirm").dispatchClick();
+    await drain();
+    const memoryFailureKeepsTheRow = memoryLayer().querySelectorAll(".context-error")
+            .some((node) => node.textContent === "memory store is unreadable; refusing to overwrite")
+        && memoryRows().length === 1
+        && removeButtonOf(1).disabled === false
+        && memoryDeletes.length === 3;
+    memoryDeleteStatus = 200;
+    // ‹ back to the desk, then a failed read offers Try again.
+    await memoryLayer().querySelector(".modal-back").dispatchClick();
+    await drain();
+    const memoryBackReturnsToTheDesk = !memoryLayer() && deskModal().hidden === false;
+    memoryReadFails = true;
+    await inDesk("#desk-memory").dispatchClick();
+    await drain();
+    const memoryReadFailureOffersRetry = memoryLayer().querySelectorAll(".context-error")
+            .some((node) => node.textContent === "Memory could not be loaded.")
+        && Boolean(memoryLayer().querySelector("#desk-memory-retry-btn"));
+    memoryReadFails = false;
+    await memoryLayer().querySelector("#desk-memory-retry-btn").dispatchClick();
+    await drain();
+    const memoryRetryRecovers = memoryRows().length === 1
+        && memoryLayer().querySelectorAll(".context-error").length === 0;
+    desk.close();
+    await drain();
+    const closingTheDeskClosesTheMemoryLayer = modals().length === 0;
+    desk.open("a3");
+    await drain();
+    await inDesk("#desk-memory").dispatchClick();
+    await drain();
+    const memorySaysNothingSaved = memoryLayer().querySelectorAll(".context-empty")
+            .some((node) => node.textContent === "Nothing saved yet")
+        && memoryLayer().querySelectorAll(".context-hint").some((node) => node.textContent
+            === "Agents save small, lasting facts and preferences here as you talk with them.")
+        && memoryRows().length === 0;
+    desk.close();
+    await drain();
+    if (!theMemoryToolOpensALayer || !memorySaysLoading || !memoryListsEachRow || !memoryRemoveAsksFirst
+        || !memoryCancelSendsNothing || !memoryConfirmDeletesAndRefreshes || !memoryAlreadyGoneIsANotice
+        || !memoryFailureKeepsTheRow || !memoryBackReturnsToTheDesk || !memoryReadFailureOffersRetry
+        || !memoryRetryRecovers || !closingTheDeskClosesTheMemoryLayer || !memorySaysNothingSaved) {
+        throw new Error(`the desk memory layer: open ${theMemoryToolOpensALayer} loading ${memorySaysLoading} `
+            + `rows ${memoryListsEachRow} asks ${memoryRemoveAsksFirst} cancel ${memoryCancelSendsNothing} `
+            + `confirm ${memoryConfirmDeletesAndRefreshes} gone ${memoryAlreadyGoneIsANotice} `
+            + `failure ${memoryFailureKeepsTheRow} back ${memoryBackReturnsToTheDesk} `
+            + `readFailure ${memoryReadFailureOffersRetry} retry ${memoryRetryRecovers} `
+            + `close ${closingTheDeskClosesTheMemoryLayer} empty ${memorySaysNothingSaved}`);
     }
 
     // ─── Chat, from the head ───
@@ -2847,6 +3010,19 @@ async function main() {
         thePackConfirmWarnsAboutEdits,
         thePackUpdateSendsTheHashItShowed,
         anUnlinkedAgentHasNoPackLine,
+        theMemoryToolOpensALayer,
+        memorySaysLoading,
+        memoryListsEachRow,
+        memoryRemoveAsksFirst,
+        memoryCancelSendsNothing,
+        memoryConfirmDeletesAndRefreshes,
+        memoryAlreadyGoneIsANotice,
+        memoryFailureKeepsTheRow,
+        memoryBackReturnsToTheDesk,
+        memoryReadFailureOffersRetry,
+        memoryRetryRecovers,
+        closingTheDeskClosesTheMemoryLayer,
+        memorySaysNothingSaved,
         columnHoldsOfficeAndChatter,
         oneDeskAtATime,
         deskDrainsOnClose,

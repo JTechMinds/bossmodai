@@ -158,13 +158,13 @@ const BossModSystemSettingsMeta = (() => {
         },
         standing_prefs_line_max_chars: {
             order: 30,
-            label: 'Standing Pref Line Limit (chars)',
-            description: 'Longest standing pref text an agent can save; that text is always shown whole in the prompt. Lowering it never hides existing prefs: longer ones are cut in the prompt and shown whole by pref list. Default 400.',
+            label: 'Memory Line Limit (chars)',
+            description: 'Longest memory an agent can save. Agents are asked to aim for about 120 characters; this is the hard stop. Lowering it never hides existing memories: longer ones are cut in the prompt and shown whole by memory list. Default 400.',
         },
         standing_prefs_section_max_chars: {
             order: 40,
-            label: 'Standing Prefs Section Limit (chars)',
-            description: 'Most characters of standing prefs injected into one agent turn, and the most total pref text one agent can store. Prefs past it are listed as \'more: N not shown\'. Must leave room for at least one full pref line. Default 4000.',
+            label: 'Memory Section Limit (chars)',
+            description: 'Most characters of memory injected into one agent turn, and the most total memory text one agent can store. Memories past it are listed as \'more: N not shown\'. Must leave room for at least one full memory line. Default 4000.',
         },
         default_max_tokens: {
             order: 10,

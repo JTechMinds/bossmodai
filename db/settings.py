@@ -339,6 +339,7 @@ def seed_defaults() -> None:
     reconcile_extension_event_prompt()
     reconcile_specialty_gate_prompt_lines()
     reconcile_boss_prompt_wording()
+    reconcile_memory_prompt_lines()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -643,6 +644,95 @@ def reconcile_boss_prompt_wording() -> None:
             key,
         )
     set_setting(_BOSS_PROMPT_WORDING_RECONCILED, "true", "advanced")
+
+
+# Agent memory: three shipped lines told the model CLI is for lookups only and
+# that durable output needs a work commitment, which steered it away from
+# saving what it was told. (old line, new line), each without its newline,
+# copied verbatim from the shipped files before and after the edit.
+_MEMORY_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_decision": (
+        (
+            "- If the snapshot already answers the question, reply directly instead of using CLI.",
+            "- If the snapshot already answers the question, reply directly instead of looking it up "
+            "with CLI. Saving to memory is not a lookup.",
+        ),
+        (
+            "Use CLI only when the snapshot and surrounding turn context still lack an internal fact "
+            "you genuinely need before making the final conversation decision.",
+            "Use CLI lookups only when the snapshot and surrounding turn context still lack an internal "
+            "fact you genuinely need before making the final conversation decision. Saving what you were "
+            "just told (`memory add`, or adding to a project's project_knowledge.md) is not a lookup: do "
+            "it in this turn with `cli`, then give your final conversation decision.",
+        ),
+    ),
+    "system_prompt_template": (
+        (
+            "- Durable work output can only be produced while a work commitment is active and you are "
+            "in a workspace.",
+            "- Durable work output (task deliverables) can only be produced while a work commitment is "
+            "active and you are in a workspace. Saving to memory or adding to a project's "
+            "project_knowledge.md is not work output; do it in any turn.",
+        ),
+    ),
+}
+_MEMORY_PROMPT_LINES_RECONCILED = "memory_prompt_lines_reconciled"
+
+
+def reconcile_memory_prompt_lines() -> None:
+    """Swap the three memory-blocking prompt lines for their new wording, once.
+
+    Line-level, like :func:`reconcile_specialty_gate_prompt_lines`: stored
+    prompt rows drift from the shipped defaults (older seeds, operator
+    edits), so overwriting a row would discard text this pass has no
+    business touching. For each ``(old, new)`` pair in
+    ``_MEMORY_PROMPT_LINE_EDITS``, the first whole line equal to ``old`` is
+    replaced by ``new`` (its line ending kept); every other byte stays as
+    stored, and the row keeps its category. A row already equal to the
+    shipped default (``load_default_prompt``) is skipped. A row without one
+    of the old lines is left alone for that line, and a warning names the key
+    and the line, so the operator can review that prompt by hand; operator
+    edits are never discarded.
+
+    Guarded by a marker row: the first pass records the marker and every
+    later pass is a no-op.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_MEMORY_PROMPT_LINES_RECONCILED],
+    )
+    if seen is not None:
+        return
+    for key, pairs in _MEMORY_PROMPT_LINE_EDITS.items():
+        row = query_one("SELECT value, category FROM settings WHERE key = $1", [key])
+        if row is None:
+            logger.warning("Prompt setting '%s' is missing; the memory prompt lines were not applied", key)
+            continue
+        stored = str(row.get("value") or "")
+        if stored == load_default_prompt(key):
+            continue
+        lines = stored.splitlines(keepends=True)
+        changed = False
+        for old_line, new_line in pairs:
+            index = next(
+                (i for i, line in enumerate(lines) if line.rstrip("\r\n") == old_line),
+                None,
+            )
+            if index is None:
+                logger.warning(
+                    "Prompt setting '%s': the line %r was not found; review that prompt by hand "
+                    "for the agent-memory wording",
+                    key,
+                    old_line,
+                )
+                continue
+            ending = lines[index][len(old_line):]
+            lines[index] = new_line + ending
+            changed = True
+        if changed:
+            set_setting(key, "".join(lines), str(row["category"]))
+            logger.info("Applied the agent-memory prompt lines to prompt setting: %s", key)
+    set_setting(_MEMORY_PROMPT_LINES_RECONCILED, "true", "advanced")
 
 
 def ensure_local_api_token() -> str:

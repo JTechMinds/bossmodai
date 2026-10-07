@@ -13,13 +13,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from core.agent_loop.standing_prefs import (
-    ID_MAX_CHARS,
-    PREF_KINDS,
-    SOURCE_MAX_CHARS,
-    SOURCES_MAX,
-)
-
 
 @dataclass(frozen=True, slots=True)
 class VirtualCommandMeta:
@@ -47,11 +40,12 @@ VIRTUAL_CATEGORIES: dict[str, str] = {
     "extensions": "Commands added by enabled extensions",
 }
 
-# The pref forms, shared with the handler's usage errors so they cannot drift.
-PREF_FORMS: tuple[str, ...] = (
-    "pref set <id> <kind> <source> [<source> …]   — with body: the rule as one line",
-    "pref remove <id>",
-    "pref list",
+# The memory forms, shared with the handler's usage errors so they cannot drift.
+MEMORY_FORMS: tuple[str, ...] = (
+    "memory add                — with body: the memory, 1–2 short sentences",
+    "memory replace <n>        — with body: the new sentence for memory <n>",
+    "memory remove <n>",
+    "memory list",
 )
 
 SCHEDULE_FORMS: tuple[str, ...] = (
@@ -523,38 +517,32 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "  task 1234         — inspect task 1234 and its thread"
         ),
     ),
-    "pref": VirtualCommandMeta(
-        name="pref",
+    "memory": VirtualCommandMeta(
+        name="memory",
         category="agent",
-        description="Set, remove, or list your standing prefs.",
-        usage_syntax="pref <set|remove|list> [args]",
+        description="Save, replace, remove, or list your memories.",
+        usage_syntax="memory <add|replace|remove|list> [n]",
         help_text=(
-            "Standing prefs are the boss's lasting rules for you. The\n"
-            "engine injects them on every work turn. The store is\n"
-            "system-owned: manage it only with pref, never with a file.\n"
+            "Small guidance thoughts shown to you every turn: important, broadly\n"
+            "useful facts and preferences, not project details. Aim for 1–2 short\n"
+            "sentences (about 120 characters). The system numbers each memory.\n"
             "\n"
             "Forms:\n"
-            + "".join(f"  {form}\n" for form in PREF_FORMS)
+            + "".join(f"  {form}\n" for form in MEMORY_FORMS)
             + "\n"
-            "set adds a pref, or replaces the pref with the same id.\n"
-            "Quote a source that has spaces.\n"
-            "\n"
-            f"Kinds: {', '.join(PREF_KINDS)}\n"
             "Limits:\n"
-            f"  id       1 to {ID_MAX_CHARS} letters, digits, \".\", \"_\" or \"-\"\n"
-            "  text     one shorthand sentence (the body)\n"
-            f"  sources  1 to {SOURCES_MAX}, each up to {SOURCE_MAX_CHARS} characters\n"
-            # No number: the store cap is an operator setting and this help
-            # is a module-level constant, so a live value can't be put in it.
-            "  store    total text across all prefs is capped (Settings → System → Context Window)\n"
+            # No numbers: both limits are operator settings and this help is a
+            # module-level constant, so a live value can't be put in it.
+            "  text   one line; the longest is set in Settings → System → Context Window\n"
+            "  store  total text across all memories is capped (same place)\n"
             "\n"
             "Examples:\n"
-            '  pref set uv-envs tool_bias boss-2026-09-22   — with body: "Use uv for Python envs and installs, not pip."\n'
-            '  pref set tone style "boss chat" /me/notes/tone.md   — with body: "Short sentences, no filler."\n'
-            "  pref remove uv-envs   — drop that pref\n"
-            "  pref list             — every pref in full"
+            '  memory add         — with body: "The boss wants plain English, not jargon."\n'
+            '  memory replace 3   — with body: "Acme\'s contact is now Dana Lee."\n'
+            "  memory remove 3    — drop memory 3\n"
+            "  memory list        — every memory in full"
         ),
-        discovery_hint="body = the rule as one line; id, kind, and sources are args",
+        discovery_hint="body = the memory, 1–2 short sentences; the number is assigned for you",
     ),
 
     # ── world ─────────────────────────────────────────────────────────────

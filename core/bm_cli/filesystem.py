@@ -67,7 +67,7 @@ def standing_prefs_root() -> Path:
     agent. It is never agent-visible: no virtual mount maps it (``/me`` is
     ``agents/<key>``, ``/projects`` is the floor folder) and it is not a
     path-jail root, so neither the virtual CLI nor the shell can reach it.
-    Agents manage their prefs only through the ``pref`` command.
+    Agents manage their memory only through the ``memory`` command.
     """
     root = _SYSTEM_ROOT / "standing_prefs"
     root.mkdir(parents=True, exist_ok=True)

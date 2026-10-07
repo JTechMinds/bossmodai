@@ -24,7 +24,7 @@ from core import config
 from core.agent_loop import standing_prefs
 from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.outcomes import TurnOutcome
-from core.agent_loop.standing_prefs import StandingPref, render_warm_section
+from core.agent_loop.standing_prefs import Memory, render_warm_section
 
 
 def _db_path() -> Path:
@@ -214,10 +214,10 @@ def test_the_request_middleware_refreshes_once_per_request(monkeypatch: pytest.M
 
 
 def test_a_prefs_limit_written_on_a_second_connection_reaches_the_next_render() -> None:
-    pref = StandingPref(id="tone", kind="style", text="t" * 200, sources=["operator"])
-    before = render_warm_section([pref])
+    memory = Memory(id=1, text="t" * 200)
+    before = render_warm_section([memory])
     assert before is not None
-    assert before.splitlines()[1] == f"- style tone — {'t' * 200} sources: operator"
+    assert before.splitlines()[1] == f"- 1 — {'t' * 200}"
 
     # db.set_setting on another thread uses that thread's own connection.
     writer = threading.Thread(
@@ -228,6 +228,6 @@ def test_a_prefs_limit_written_on_a_second_connection_reaches_the_next_render() 
 
     assert config.refresh_if_changed() is True
     assert standing_prefs.line_max_chars() == 100
-    after = render_warm_section([pref])
+    after = render_warm_section([memory])
     assert after is not None
-    assert after.splitlines()[1] == f"- style tone — {'t' * 97}..."
+    assert after.splitlines()[1] == f"- 1 — {'t' * 97}..."

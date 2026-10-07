@@ -17,7 +17,7 @@ from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.agent_loop.role_contracts import format_role_contract_block, operator_done_claim_guidance
 from core.agent_loop.runtime_core import format_runtime_core_block, workspace_preference_context
-from core.agent_loop.standing_prefs import read_standing_prefs, render_warm_section
+from core.agent_loop.standing_prefs import read_memories, render_warm_section
 from core.agent_loop.turn_context import _determine_mode
 from core.agent_loop.work_snapshot import paused_work_snapshot, render_paused_work_view
 from core.bm_cli.filesystem import slugify_name
@@ -342,14 +342,14 @@ def _current_cli_cwd(agent_id: str) -> str:
 
 
 def _standing_prefs_warm_message(turn: TurnContext) -> dict[str, str] | None:
-    """Inject standing prefs on work turns. Social turns and an empty store stay quiet.
+    """Inject the agent's memory on work turns. Social turns and an empty store stay quiet.
 
-    The reader opens the system prefs store (``standing_prefs.standing_prefs_file``) only.
+    The reader opens the system memory store (``standing_prefs.standing_prefs_file``) only.
     Note files are not scraped.
     """
     if _determine_mode(turn.trigger) != "work":
         return None
-    section = render_warm_section(read_standing_prefs(turn.agent.storage_key))
+    section = render_warm_section(read_memories(turn.agent.storage_key))
     if not section:
         return None
     return {"role": "system", "content": section}

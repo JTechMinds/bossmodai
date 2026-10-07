@@ -39,7 +39,7 @@ import logging
 from dataclasses import dataclass
 
 import db
-from core.agent_loop.standing_prefs import read_standing_prefs
+from core.agent_loop.standing_prefs import read_memories
 from core.llm.system_completion import complete_text, system_ai_is_configured
 
 logger = logging.getLogger(__name__)
@@ -478,7 +478,7 @@ def _fact_lines(
 
 
 def short_sticky_context(members: list[dict[str, str]]) -> str:
-    """A short sticky clip: a few standing prefs.
+    """A short sticky clip: the first memory of a few members.
 
     This is router input only. It is not the warm section injected on an
     agent turn, and it does not read note bodies.
@@ -494,7 +494,7 @@ def short_sticky_context(members: list[dict[str, str]]) -> str:
         agent = db.get_agent(agent_id)
         if agent is None:
             continue
-        prefs = read_standing_prefs(agent.storage_key)
+        prefs = read_memories(agent.storage_key)
         if not prefs:
             continue
         text = " ".join(prefs[0].text.split())

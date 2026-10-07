@@ -556,6 +556,7 @@ CONTEXT_MODULES = [
     JS / "context" / "schedule-layer.js",
     JS / "context" / "desk-schedules.js",
     JS / "context" / "desk-pack.js",
+    JS / "context" / "desk-memory.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks

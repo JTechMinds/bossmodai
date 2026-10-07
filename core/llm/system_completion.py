@@ -1,7 +1,7 @@
 """Short completion on the System AI connection.
 
 This is not an agent turn. It does not select an identity model, build a
-turn context, or inject standing-pref warm text into a member prompt.
+turn context, or inject agent-memory warm text into a member prompt.
 Channel routing uses it for one small JSON completion. A missing model
 or a failed call returns ``None`` so the caller can fall back. An unset
 id, or a saved id that no longer names a connection, uses the first

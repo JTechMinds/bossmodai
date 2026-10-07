@@ -259,8 +259,8 @@ def _put_setting(key: str, value: str, category: str):
 POSITIVE_INT_KEYS = (
     ("system_ai_max_tokens", "llm", "System AI max output tokens", "6144"),
     ("system_ai_timeout_seconds", "llm", "System AI timeout", "180"),
-    ("standing_prefs_line_max_chars", "context", "Standing Pref Line Limit", "400"),
-    ("standing_prefs_section_max_chars", "context", "Standing Prefs Section Limit", "4000"),
+    ("standing_prefs_line_max_chars", "context", "Memory Line Limit", "400"),
+    ("standing_prefs_section_max_chars", "context", "Memory Section Limit", "4000"),
 )
 
 
@@ -276,15 +276,15 @@ def test_settings_put_rejects_a_bad_positive_int_for_every_key(
     assert config.get(key) == default
 
 
-# Room one full pref line needs beyond the line limit: the longest label plus
-# the warm header and its newline.
+# Room one full memory line needs beyond the line limit: the longest number
+# prefix plus the warm header and its newline.
 PREFS_SECTION_ROOM = WARM_PREFIX_MAX_CHARS + len(WARM_SECTION_HEADER) + 1
 
 
 def _pair_error(section: int, line: int) -> str:
     return (
-        f"Standing Prefs Section Limit ({section}) must be at least {line + PREFS_SECTION_ROOM}: "
-        f"the line limit plus room for one pref's label (Standing Pref Line Limit is {line})."
+        f"Memory Section Limit ({section}) must be at least {line + PREFS_SECTION_ROOM}: "
+        f"the line limit plus room for one memory's number (Memory Line Limit is {line})."
     )
 
 
@@ -385,18 +385,19 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
     ]
     rows = _by_key(payload["context"])
     line = rows["standing_prefs_line_max_chars"]
-    assert line["label"] == "Standing Pref Line Limit (chars)"
+    assert line["label"] == "Memory Line Limit (chars)"
     assert line["value"] == "400"
     assert line["category"] == "context"
     assert line["paragraphs"][0].startswith(
-        "Longest standing pref text an agent can save; that text is always shown whole in the prompt."
+        "Longest memory an agent can save. Agents are asked to aim for about 120 characters; "
+        "this is the hard stop."
     )
     assert "Default 400." in line["paragraphs"][0]
     section = rows["standing_prefs_section_max_chars"]
-    assert section["label"] == "Standing Prefs Section Limit (chars)"
+    assert section["label"] == "Memory Section Limit (chars)"
     assert section["value"] == "4000"
     assert section["category"] == "context"
-    assert "Must leave room for at least one full pref line." in section["paragraphs"][0]
+    assert "Must leave room for at least one full memory line." in section["paragraphs"][0]
     assert "Default 4000." in section["paragraphs"][0]
     for row in (line, section):
         assert "restart" not in row["paragraphs"][0].lower()

@@ -387,8 +387,8 @@ async def test_skipped_turn_counts_toward_the_gap_and_returns() -> None:
 
 def test_runner_stays_off_standing_prefs_notes_and_soft_blocks() -> None:
     source = (ROOT / "core" / "agent_loop" / "chat_fade.py").read_text(encoding="utf-8")
-    assert "read_standing_prefs" not in source
-    assert "standing_prefs.json" not in source
+    assert "read_memories" not in source
+    assert "standing_prefs" not in source
     assert "soft_blocks" not in source
     assert "sticky_slot" not in source
     prompt_history = (ROOT / "core" / "agent_loop" / "prompt_history.py").read_text(encoding="utf-8")

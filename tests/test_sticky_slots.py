@@ -624,15 +624,9 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
     pref_text = "keep launch lines short"
     document = json.dumps(
         {
-            "schema_version": 1,
-            "prefs": [
-                {
-                    "id": "tone",
-                    "kind": "preference",
-                    "text": pref_text,
-                    "sources": ["operator"],
-                }
-            ],
+            "schema_version": 2,
+            "next_id": 2,
+            "memories": [{"id": 1, "text": pref_text}],
         }
     )
     path.write_text(document, encoding="utf-8")
@@ -661,7 +655,7 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
     assert spine[0].startswith("[Work spine]:")
     assert "standing_prefs" not in spine[0]
     assert "/me/notes" not in spine[0]
-    assert "# Standing prefs" in prefs[0]
+    assert "# Your memory" in prefs[0]
     assert path.read_text(encoding="utf-8") == document
     assert not notes.exists()
     assert db.get_agent_state(agent.id).status == "blocked"
@@ -679,8 +673,8 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
     assert all(blocker.id not in item["content"] for item in human)
 
     source = (ROOT / "core" / "agent_loop" / "sticky_slots.py").read_text(encoding="utf-8")
-    assert "read_standing_prefs" not in source
-    assert "standing_prefs.json" not in source
+    assert "read_memories" not in source
+    assert "standing_prefs" not in source
     assert "soft_blocks" not in source
     assert "/me/notes" not in source
     prompt_history = (ROOT / "core" / "agent_loop" / "prompt_history.py").read_text(encoding="utf-8")

@@ -1881,10 +1881,10 @@ def init_db() -> None:
     from db.agent_storage import normalize_agent_personal_storage_roots
     normalize_agent_personal_storage_roots()
 
-    # After the storage-key normalization above, so a legacy agent-written
-    # /me/standing_prefs.json sits under agents/<storage_key>. Idempotent.
-    from core.agent_loop.standing_prefs import migrate_workspace_standing_prefs
-    migrate_workspace_standing_prefs()
+    # Converts each v1 agent memory store (the retired pref shape) to v2.
+    # Idempotent: a v2 store is skipped.
+    from core.agent_loop.standing_prefs import migrate_standing_prefs_v1
+    migrate_standing_prefs_v1()
 
     # After the floors migration: every floor gets its company folder. This is
     # also where a retired BOSSMOD_PROJECTS_ROOT stops startup.

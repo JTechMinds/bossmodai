@@ -1,166 +1,169 @@
-"""Agent-scoped standing prefs: a system-owned store.
+"""Agent memory: a small, system-owned store shown to the agent on every turn.
 
-Each agent's prefs live in ``<artifacts>/system/standing_prefs/<storage_key>.json``
-(``schema_version`` 1), outside every agent path: no virtual mount and no
+Each agent's memory lives in ``<artifacts>/system/standing_prefs/<storage_key>.json``
+(``schema_version`` 2), outside every agent path: no virtual mount and no
 shell path-jail root reaches it. Only this module reads or writes the file.
-Agents change it only through the ``pref`` CLI command, which calls the typed
-operations here (``set_standing_pref``, ``remove_standing_pref``,
-``list_standing_prefs``); work-turn assembly reads it with
-``read_standing_prefs``. ``/me/notes`` stays cold how-to and is never opened here.
+The file and settings keep their ``standing_prefs`` names: they are storage
+identifiers, and renaming them would need a data migration for no gain.
 
-A set adds a new id or replaces that same id. Other ids stay. The store is
-not compacted and prefs are not dropped to make room. Writes are atomic.
+Agents change their memory only through the ``memory`` CLI command
+(``add_memory``, ``replace_memory``, ``remove_memory``, ``list_memories``);
+the operator removes one from the desk (``remove_memory`` via the API).
+Work-turn assembly and the channel router read it with ``read_memories``.
+
+A memory is ``{id, text}``. The system assigns the id from the document's
+``next_id``: ids only grow and are never reused, so removing #2 never turns
+#3 into #2, and an agent acting on a list it read a few turns ago cannot hit
+the wrong memory. Replace keeps the id and the position. The store is not
+compacted and memories are not dropped to make room. Writes are atomic.
+
+Two processes write the store (the runtime worker for the agent's ``memory``
+command, the app for the desk's remove), so every read-modify-write holds an
+exclusive ``fcntl.flock`` on a sidecar ``<storage_key>.lock`` in the same
+root. Atomic replace alone prevents torn files but not lost updates. Reads
+take no lock: ``os.replace`` already guarantees they see a whole document.
 
 Fixed invariants, enforced on every parse (including a stored document):
 
-- pref text: non-empty, one line
-- id: a short token, 1 to 64 characters
-- sources: 1 to 4, each at most 80 characters
+- memory text: non-empty, one line (one line still holds two sentences)
+- id: an integer of at least 1, unique in the document
+- ``next_id``: greater than every id
 
 Operator limits (Settings → System → Context Window), read live on each save
 and render, never on parse:
 
-- ``standing_prefs_line_max_chars``: the longest pref text ``set`` accepts,
-  and the most of one pref's text the warm line shows. It limits the text
-  only; the ``- kind id — `` prefix never counts, so a saved text always
-  shows whole. The `` sources: …`` suffix is shown only when text plus
-  suffix fits the limit (the rule is the payload, sources are provenance).
+- ``standing_prefs_line_max_chars``: the longest memory text ``add`` and
+  ``replace`` accept, and the most of one memory's text the warm line shows.
+  It limits the text only; the ``- n — `` prefix never counts, so a saved
+  text always shows whole.
 - ``standing_prefs_section_max_chars``: the most characters of the rendered
-  warm section (whole lines, prefix included), and the cap on total pref
+  warm section (whole lines, prefix included), and the cap on total memory
   text, in characters, across one agent's store at save time.
 
-Lowering a limit never hides a stored pref: the document still parses and
-the pref is still injected. A text longer than a lowered line limit is cut
-with ``...`` in the warm line only; ``set`` refuses new text over the limit,
-and ``pref list`` still shows every pref whole.
+Lowering a limit never hides a stored memory: the document still parses and
+the memory is still injected. A text longer than a lowered line limit is cut
+with ``...`` in the warm line only; saves refuse new text over the limit, and
+``memory list`` still shows every memory whole.
 
-``migrate_workspace_standing_prefs`` moves a valid legacy agent-written
-``/me/standing_prefs.json`` into the store once, at startup.
+``migrate_standing_prefs_v1`` converts each ``schema_version`` 1 file (the
+retired ``pref`` store: ids, kinds and sources) to v2 once, at startup.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import logging
 import os
-import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Literal, get_args
+from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
 
 logger = logging.getLogger(__name__)
 
-# The legacy agent-written file name inside ``/me``. Only the startup
-# migration looks for it; nothing reads it as a store.
-STANDING_PREFS_FILENAME = "standing_prefs.json"
-SCHEMA_VERSION = 1
-
-ID_MAX_CHARS = 64
-SOURCE_MAX_CHARS = 80
-SOURCES_MAX = 4
+SCHEMA_VERSION = 2
 
 LINE_MAX_CHARS_SETTING = "standing_prefs_line_max_chars"
 SECTION_MAX_CHARS_SETTING = "standing_prefs_section_max_chars"
 
-PrefKind = Literal["preference", "constraint", "style", "tool_bias"]
-PREF_KINDS: tuple[str, ...] = get_args(PrefKind)
-_ID_RE = re.compile(rf"^[A-Za-z0-9][A-Za-z0-9._-]{{0,{ID_MAX_CHARS - 1}}}$")
+# The most digits a memory number is budgeted in the warm line prefix. Used
+# only for the Settings section minimum (``WARM_PREFIX_MAX_CHARS``).
+MEMORY_ID_MAX_DIGITS = 6
 
 # The first line of the rendered warm section. ``render_warm_section`` uses
 # it, and Settings counts it (plus its newline) in the section minimum.
-WARM_SECTION_HEADER = "# Standing prefs (manage with pref)"
-# The longest ``- {kind} {id} — `` prefix a warm line can carry: the line
-# limit counts text only, so the section limit needs this much more room to
-# hold one full line. Computed from the kinds and the id limit, not written
-# as a number, so adding a longer kind or raising the id limit moves it too.
-WARM_PREFIX_MAX_CHARS = len("- ") + max(len(k) for k in PREF_KINDS) + len(" ") + ID_MAX_CHARS + len(" — ")
+WARM_SECTION_HEADER = "# Your memory (shown every turn; manage with memory)"
+# The longest ``- n — `` prefix a warm line can carry: the line limit counts
+# text only, so the section limit needs this much more room to hold one full
+# line.
+WARM_PREFIX_MAX_CHARS = len("- ") + MEMORY_ID_MAX_DIGITS + len(" — ")
 
 
-class StandingPref(BaseModel):
-    """One typed pref. ``sources`` are ids or paths, not note bodies.
+class MemoryNotFoundError(ValueError):
+    """No memory has the requested id. Distinct from a corrupt store."""
 
-    Each validator raises one sentence that names the field and its limit;
-    the ``pref`` command shows that sentence to the agent unchanged.
+
+class Memory(BaseModel):
+    """One memory: a system-assigned id and one line of text.
+
+    Each validator raises one sentence; the ``memory`` command shows that
+    sentence to the agent unchanged.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    # Strict: a stored ``true`` or ``"3"`` is a corrupt id, not a coercion.
+    model_config = ConfigDict(extra="forbid", strict=True)
 
-    id: str
-    kind: PrefKind
+    id: int
     text: str
-    sources: list[str]
 
     @field_validator("id")
     @classmethod
-    def _id_token(cls, value: str) -> str:
-        token = value.strip()
-        if _ID_RE.fullmatch(token) is None:
-            raise ValueError(
-                f'pref id "{token}" must be a short token: 1 to {ID_MAX_CHARS} letters, digits, '
-                '".", "_" or "-", starting with a letter or digit'
-            )
-        return token
-
-    @field_validator("kind", mode="before")
-    @classmethod
-    def _known_kind(cls, value: Any) -> Any:
-        # Before the Literal check, so the agent reads the allowed list, not pydantic's wording.
-        if value not in PREF_KINDS:
-            raise ValueError(f'kind "{value}" is not one of: {", ".join(PREF_KINDS)}')
+    def _positive_id(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError(f"memory id {value} must be at least 1")
         return value
 
     @field_validator("text")
     @classmethod
-    def _short_text(cls, value: str) -> str:
+    def _one_line(cls, value: str) -> str:
         # No length check here: this runs on every parse of the stored
         # document, and the length limit is an operator setting. Checking it
         # here would make a lowered limit fail the whole store and silently
-        # drop every pref. ``set_standing_pref`` enforces it at save time.
+        # drop every memory. Saves enforce it (``_checked_text``).
         text = value.strip()
         if not text:
-            raise ValueError("pref text is empty; give the rule as one line")
+            raise ValueError("memory text is empty; give it as one line")
         if "\n" in text or "\r" in text:
-            raise ValueError("pref text has a line break; the rule must be one line")
+            raise ValueError("memory text has a line break; keep it to one line")
         return text
 
-    @field_validator("sources")
-    @classmethod
-    def _source_pointers(cls, value: list[str]) -> list[str]:
-        if not value or len(value) > SOURCES_MAX:
-            raise ValueError(f"pref needs 1 to {SOURCES_MAX} sources; got {len(value)}")
-        cleaned: list[str] = []
-        for index, item in enumerate(value, start=1):
-            token = str(item).strip()
-            if not token:
-                raise ValueError(f"source {index} is empty; each source is one pointer up to {SOURCE_MAX_CHARS} characters")
-            if "\n" in token or "\r" in token:
-                raise ValueError(f"source {index} has a line break; each source is one line up to {SOURCE_MAX_CHARS} characters")
-            if len(token) > SOURCE_MAX_CHARS:
-                raise ValueError(f"source {index} is {len(token)} characters; the limit is {SOURCE_MAX_CHARS}")
-            cleaned.append(token)
-        return cleaned
+
+class MemoryDocument(BaseModel):
+    """On-disk document (v2). Unknown keys are rejected."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    schema_version: Literal[2]
+    next_id: int
+    memories: list[Memory]
+
+    @model_validator(mode="after")
+    def _ids_consistent(self) -> MemoryDocument:
+        ids = [item.id for item in self.memories]
+        if len(ids) != len(set(ids)):
+            raise ValueError("memory ids must be unique")
+        if self.next_id < 1:
+            raise ValueError(f"next_id {self.next_id} must be at least 1")
+        if ids and self.next_id <= max(ids):
+            raise ValueError(f"next_id {self.next_id} must be greater than every memory id")
+        return self
 
 
-class StandingPrefsDocument(BaseModel):
-    """On-disk document. Unknown keys and kinds are rejected."""
+class _V1Pref(BaseModel):
+    """One retired v1 pref, read only by ``migrate_standing_prefs_v1``."""
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    id: str
+    kind: str
+    text: str
+    sources: list[str]
+
+
+class _V1Document(BaseModel):
+    """The retired v1 document, read only by ``migrate_standing_prefs_v1``."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     schema_version: Literal[1]
-    prefs: list[StandingPref]
-
-    @field_validator("prefs")
-    @classmethod
-    def _unique_ids(cls, value: list[StandingPref]) -> list[StandingPref]:
-        ids = [item.id for item in value]
-        if len(ids) != len(set(ids)):
-            raise ValueError("pref ids must be unique")
-        return value
+    prefs: list[_V1Pref]
 
 
 def standing_prefs_file(storage_key: str) -> Path:
-    """Return the system-owned prefs file for one agent.
+    """Return the system-owned memory file for one agent.
 
     Creates the shared ``standing_prefs`` root when missing, never the file.
 
@@ -176,16 +179,16 @@ def standing_prefs_file(storage_key: str) -> Path:
 
     key = (storage_key or "").strip()
     if not key or key in {".", ".."} or "/" in key or "\\" in key:
-        raise ValueError("standing prefs require an agent storage key")
+        raise ValueError("agent memory requires an agent storage key")
     return filesystem.standing_prefs_root() / f"{key}.json"
 
 
 def line_max_chars() -> int:
-    """Return the operator's pref text limit, read live from Settings.
+    """Return the operator's memory text limit, read live from Settings.
 
-    ``standing_prefs_line_max_chars`` is the longest text ``set`` accepts and
-    the most of one pref's text the warm line shows. It limits the text only;
-    the ``- kind id — `` prefix never counts.
+    ``standing_prefs_line_max_chars`` is the longest text a save accepts and
+    the most of one memory's text the warm line shows. It limits the text
+    only; the ``- n — `` prefix never counts.
 
     Raises:
         config.ConfigError: The setting is missing, not an integer, or below 1.
@@ -197,7 +200,7 @@ def section_max_chars() -> int:
     """Return the operator's warm section and store cap, read live from Settings.
 
     ``standing_prefs_section_max_chars`` caps the rendered warm section
-    (whole lines) and, at save time, the total characters of pref text in
+    (whole lines) and, at save time, the total characters of memory text in
     one agent's store.
 
     Raises:
@@ -219,38 +222,38 @@ def _positive_int_setting(key: str) -> int:
     return value
 
 
-def parse_standing_prefs_document(raw: str) -> StandingPrefsDocument:
-    """Parse one prefs document. Invalid JSON or schema raises ValueError."""
+def parse_memory_document(raw: str) -> MemoryDocument:
+    """Parse one v2 memory document. Invalid JSON or schema raises ValueError."""
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ValueError("standing prefs must be a JSON object") from exc
+        raise ValueError("memory store must be a JSON object") from exc
     if not isinstance(payload, dict):
-        raise ValueError("standing prefs must be a JSON object")
+        raise ValueError("memory store must be a JSON object")
     try:
-        return StandingPrefsDocument.model_validate(payload)
+        return MemoryDocument.model_validate(payload)
     except ValidationError as exc:
-        raise ValueError(f"standing prefs schema rejected: {_brief_validation(exc)}") from exc
+        raise ValueError(f"memory store schema rejected: {_brief_validation(exc)}") from exc
 
 
-def read_standing_prefs(storage_key: str) -> list[StandingPref]:
-    """Load prefs for the warm inject and the channel sticky context.
+def read_memories(storage_key: str) -> list[Memory]:
+    """Load memories for the warm inject and the channel sticky context.
 
-    Missing is empty. Only the system writes the store, so an unreadable file
-    is a real defect: it logs a warning naming the key, the path and the
-    reason, and returns empty so the turn still runs. Does not open
-    ``/me/notes`` or any other file.
+    Lenient: missing is empty. Only the system writes the store, so an
+    unreadable file is a real defect: it logs a warning naming the key, the
+    path and the reason, and returns empty so the turn still runs. Does not
+    open ``/me/notes`` or any other file.
     """
     try:
         path = standing_prefs_file(storage_key)
     except ValueError:
-        logger.warning("standing prefs skipped: missing storage key")
+        logger.warning("agent memory skipped: missing storage key")
         return []
     try:
-        return _load_store(path)
+        return list(_load_document(path).memories)
     except ValueError as exc:
         logger.warning(
-            "standing prefs unreadable for %s at %s; warm inject skipped: %s",
+            "agent memory unreadable for %s at %s; warm inject skipped: %s",
             storage_key,
             path,
             exc,
@@ -258,141 +261,162 @@ def read_standing_prefs(storage_key: str) -> list[StandingPref]:
         return []
 
 
-def list_standing_prefs(storage_key: str) -> list[StandingPref]:
-    """Return every stored pref in order, for ``pref list``.
+def list_memories(storage_key: str) -> list[Memory]:
+    """Return every stored memory in order, for ``memory list`` and the desk.
 
-    Unlike ``read_standing_prefs`` this is strict: the agent asked to see the
+    Unlike ``read_memories`` this is strict: the caller asked to see the
     store, so an unreadable store is an error, not an empty list.
 
     Raises:
         ValueError: Bad storage key, or the store cannot be read or parsed.
     """
-    return _load_store(standing_prefs_file(storage_key))
+    return list(_load_document(standing_prefs_file(storage_key)).memories)
 
 
-def set_standing_pref(
-    storage_key: str,
-    *,
-    pref_id: str,
-    kind: str,
-    text: str,
-    sources: list[str],
-) -> StandingPref:
-    """Add a pref, or replace the pref with the same id, and save the store.
-
-    The new pref keeps the position of the one it replaces; a new id goes last.
+def add_memory(storage_key: str, text: str) -> Memory:
+    """Save a new memory under the next id and append it to the store.
 
     Args:
         storage_key: The agent's storage key.
-        pref_id: Short token, 1 to ``ID_MAX_CHARS`` characters.
-        kind: One of ``PREF_KINDS``.
-        text: The rule, one line up to ``line_max_chars()`` characters.
-        sources: 1 to ``SOURCES_MAX`` pointers, each up to ``SOURCE_MAX_CHARS``.
+        text: One line, at most ``line_max_chars()`` characters after strip.
 
     Returns:
-        The validated pref as stored.
+        The memory as stored, carrying its assigned id.
 
     Raises:
-        ValueError: One sentence naming the failed rule: a field limit, the
-            text limit, growth past the ``section_max_chars()`` store cap, or a
-            corrupt current store (which is never overwritten). The store is
-            unchanged.
+        ValueError: One sentence naming the failed rule: empty text, a line
+            break, the text limit, growth past the ``section_max_chars()``
+            store cap, or a corrupt current store (which is never
+            overwritten). The store is unchanged.
         config.ConfigError: A limit setting is missing or invalid.
-        OSError: The atomic write failed. The previous store is intact.
+        OSError: The lock or the atomic write failed. The previous store is
+            intact.
     """
-    try:
-        pref = StandingPref.model_validate(
-            {"id": pref_id, "kind": kind, "text": text, "sources": list(sources)}
-        )
-    except ValidationError as exc:
-        raise ValueError(_first_error_sentence(exc)) from exc
-    # The operator limit applies at save time only; parsing never checks it.
-    limit = line_max_chars()
-    if len(pref.text) > limit:
-        raise ValueError(f"pref text is {len(pref.text)} characters; the limit is {limit} on one line")
-    existing = _read_existing_for_write(storage_key)
-    merged = _merge_prefs(existing, [pref])
-    _enforce_store_cap(existing, merged)
-    _write_store(standing_prefs_file(storage_key), merged)
-    return pref
+    clean = _checked_text(text)
+    path = standing_prefs_file(storage_key)
+    with _store_lock(storage_key):
+        document = _read_existing_for_write(path)
+        memory = Memory(id=document.next_id, text=clean)
+        merged = [*document.memories, memory]
+        _enforce_store_cap(document.memories, merged)
+        _write_store(path, _document(next_id=document.next_id + 1, memories=merged))
+    return memory
 
 
-def remove_standing_pref(storage_key: str, pref_id: str) -> None:
-    """Remove one pref by id and save the store.
+def replace_memory(storage_key: str, memory_id: int, text: str) -> Memory:
+    """Replace one memory's text, keeping its id and its position.
 
     Raises:
-        ValueError: No pref has that id, or the current store is corrupt
-            (and is left untouched).
-        OSError: The atomic write failed. The previous store is intact.
+        MemoryNotFoundError: No memory has ``memory_id``.
+        ValueError: The text or store-cap rules from ``add_memory``, or a
+            corrupt current store (never overwritten).
+        config.ConfigError: A limit setting is missing or invalid.
+        OSError: The lock or the atomic write failed.
     """
-    token = pref_id.strip()
-    existing = _read_existing_for_write(storage_key)
-    remaining = [item for item in existing if item.id != token]
-    if len(remaining) == len(existing):
-        raise ValueError(f'no pref with id "{token}"')
-    _write_store(standing_prefs_file(storage_key), remaining)
+    clean = _checked_text(text)
+    path = standing_prefs_file(storage_key)
+    with _store_lock(storage_key):
+        document = _read_existing_for_write(path)
+        index = _index_of(document.memories, memory_id)
+        memory = Memory(id=memory_id, text=clean)
+        merged = list(document.memories)
+        merged[index] = memory
+        _enforce_store_cap(document.memories, merged)
+        _write_store(path, _document(next_id=document.next_id, memories=merged))
+    return memory
 
 
-def migrate_workspace_standing_prefs() -> None:
-    """Move legacy agent-written ``/me/standing_prefs.json`` files into the store.
+def remove_memory(storage_key: str, memory_id: int) -> Memory:
+    """Remove one memory by id. ``next_id`` is untouched, so the id is never reused.
 
-    Runs at startup and is idempotent. For each
-    ``agents/<storage_key>/standing_prefs.json``:
+    Returns:
+        The memory that was removed, so the caller can say what went.
 
-    - no system file yet and it parses: written atomically to
-      ``standing_prefs_file(key)``, then the workspace copy is deleted;
-    - it does not parse: left in place, untouched, with a warning. It is
-      never read again; the operator has the agent re-record with ``pref set``;
-    - a system file already exists: the workspace copy is left, with a warning.
+    Raises:
+        MemoryNotFoundError: No memory has ``memory_id``.
+        ValueError: The current store is corrupt (and is left untouched).
+        OSError: The lock or the atomic write failed.
+    """
+    path = standing_prefs_file(storage_key)
+    with _store_lock(storage_key):
+        document = _read_existing_for_write(path)
+        index = _index_of(document.memories, memory_id)
+        remaining = list(document.memories)
+        removed = remaining.pop(index)
+        _write_store(path, _document(next_id=document.next_id, memories=remaining))
+    return removed
 
-    Nothing is repaired and no ids are invented.
+
+def migrate_standing_prefs_v1() -> None:
+    """Convert each v1 store (the retired ``pref`` shape) to v2 once.
+
+    Runs at startup and is idempotent. For each ``standing_prefs/*.json``:
+
+    - ``schema_version`` 2: skipped;
+    - ``schema_version`` 1 and it parses: ids 1..n in stored order, each
+      ``text`` kept exactly, ``kind`` and ``sources`` dropped, ``next_id =
+      n + 1``, written atomically under the store lock;
+    - anything else (bad JSON, an unknown version, a v1 that does not parse):
+      left untouched, with a warning naming the key and the path. Nothing is
+      invented or repaired.
     """
     # Call-time import: see ``standing_prefs_file`` for the import cycle.
     from core.bm_cli import filesystem
 
-    for legacy in sorted(filesystem.agents_artifact_root().glob(f"*/{STANDING_PREFS_FILENAME}")):
-        key = legacy.parent.name
-        target = standing_prefs_file(key)
-        if target.exists():
-            logger.warning(
-                "legacy standing prefs for %s left at %s: the system store %s already exists",
-                key,
-                legacy,
-                target,
-            )
-            continue
-        try:
-            document = parse_standing_prefs_document(legacy.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, ValueError) as exc:
-            logger.warning(
-                "legacy standing prefs for %s at %s not migrated and never read: %s",
-                key,
-                legacy,
-                exc,
-            )
-            continue
-        _write_store(target, list(document.prefs))
-        legacy.unlink()
-        logger.info("standing prefs for %s moved into the system store", key)
+    for path in sorted(filesystem.standing_prefs_root().glob("*.json")):
+        key = path.stem
+        with _store_lock(key):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                logger.warning("agent memory for %s at %s not migrated: unreadable: %s", key, path, exc)
+                continue
+            version = payload.get("schema_version") if isinstance(payload, dict) else None
+            if version == SCHEMA_VERSION:
+                continue
+            if version != 1:
+                logger.warning(
+                    "agent memory for %s at %s not migrated: schema_version %r is not 1 or 2",
+                    key,
+                    path,
+                    version,
+                )
+                continue
+            try:
+                legacy = _V1Document.model_validate(payload)
+                memories = [
+                    Memory(id=index, text=pref.text) for index, pref in enumerate(legacy.prefs, start=1)
+                ]
+                document = _document(next_id=len(memories) + 1, memories=memories)
+            except ValidationError as exc:
+                logger.warning(
+                    "agent memory for %s at %s not migrated: v1 schema rejected: %s",
+                    key,
+                    path,
+                    _brief_validation(exc),
+                )
+                continue
+            _write_store(path, document)
+            logger.info("agent memory for %s converted from v1 to v2 (%d memories)", key, len(memories))
 
 
-def render_warm_section(prefs: list[StandingPref]) -> str | None:
+def render_warm_section(memories: list[Memory]) -> str | None:
     """Render the warm section, or None when there is nothing to inject.
 
     Reads ``line_max_chars()`` and ``section_max_chars()`` at render time, so
     a Settings change applies to the next turn. Whole lines are kept in store
     order until the section cap; the rest are counted in a ``more:`` line that
-    points at ``pref list``.
+    points at ``memory list``.
 
     Raises:
         config.ConfigError: A limit setting is missing or invalid.
     """
-    if not prefs:
+    if not memories:
         return None
     line_limit = line_max_chars()
     section_limit = section_max_chars()
     header = WARM_SECTION_HEADER
-    lines = [_sticky_line(pref, line_limit) for pref in prefs]
+    lines = [_warm_line(memory, line_limit) for memory in memories]
     kept: list[str] = []
     for line in lines:
         if len(_compose(header, kept + [line], more=None)) <= section_limit:
@@ -413,67 +437,99 @@ def render_warm_section(prefs: list[StandingPref]) -> str | None:
     return rendered[:section_limit].rstrip()
 
 
-def _load_store(path: Path) -> list[StandingPref]:
-    """Missing is empty. Unreadable raises ValueError carrying the reason."""
+@contextmanager
+def _store_lock(storage_key: str) -> Iterator[None]:
+    """Hold an exclusive, blocking ``flock`` on ``<storage_key>.lock`` until exit.
+
+    The lock file sits beside the store and is created when missing; deleting
+    the whole root (reset, delete-all) removes it with the store.
+    """
+    lock_path = standing_prefs_file(storage_key).with_suffix(".lock")
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    finally:
+        os.close(fd)
+
+
+def _checked_text(text: str) -> str:
+    """Validate a text for a save: the parse invariants, then the live limit."""
+    try:
+        clean = Memory(id=1, text=text).text
+    except ValidationError as exc:
+        raise ValueError(_first_error_sentence(exc)) from exc
+    # The operator limit applies at save time only; parsing never checks it.
+    limit = line_max_chars()
+    if len(clean) > limit:
+        raise ValueError(
+            f"memory is {len(clean)} characters; the limit is {limit}. Keep it to 1–2 short sentences."
+        )
+    return clean
+
+
+def _index_of(memories: list[Memory], memory_id: int) -> int:
+    for index, memory in enumerate(memories):
+        if memory.id == memory_id:
+            return index
+    raise MemoryNotFoundError(f"no memory #{memory_id}")
+
+
+def _document(*, next_id: int, memories: list[Memory]) -> MemoryDocument:
+    return MemoryDocument(schema_version=SCHEMA_VERSION, next_id=next_id, memories=memories)
+
+
+def _load_document(path: Path) -> MemoryDocument:
+    """Missing is an empty document. Unreadable raises ValueError carrying the reason."""
     if not path.exists():
-        return []
+        return _document(next_id=1, memories=[])
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        raise ValueError(f"standing prefs store is unreadable: {exc}") from exc
+        raise ValueError(f"memory store is unreadable: {exc}") from exc
     try:
-        document = parse_standing_prefs_document(raw)
+        return parse_memory_document(raw)
     except ValueError as exc:
-        raise ValueError(f"standing prefs store is unreadable: {exc}") from exc
-    return list(document.prefs)
+        raise ValueError(f"memory store is unreadable: {exc}") from exc
 
 
-def _read_existing_for_write(storage_key: str) -> list[StandingPref]:
-    path = standing_prefs_file(storage_key)
+def _read_existing_for_write(path: Path) -> MemoryDocument:
     if not path.exists():
-        return []
+        return _document(next_id=1, memories=[])
     if not path.is_file():
-        raise ValueError("standing prefs path is not a file; refusing to overwrite")
+        raise ValueError("memory store path is not a file; refusing to overwrite")
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        raise ValueError("standing prefs store is unreadable; refusing to overwrite") from exc
+        raise ValueError("memory store is unreadable; refusing to overwrite") from exc
     try:
-        document = parse_standing_prefs_document(raw)
+        return parse_memory_document(raw)
     except ValueError as exc:
-        raise ValueError("standing prefs store is unreadable; refusing to overwrite") from exc
-    return list(document.prefs)
+        raise ValueError("memory store is unreadable; refusing to overwrite") from exc
 
 
-def _merge_prefs(existing: list[StandingPref], incoming: list[StandingPref]) -> list[StandingPref]:
-    by_id = {item.id: item for item in existing}
-    order = [item.id for item in existing]
-    for item in incoming:
-        if item.id not in by_id:
-            order.append(item.id)
-        by_id[item.id] = item
-    return [by_id[item_id] for item_id in order]
-
-
-def _enforce_store_cap(existing: list[StandingPref], merged: list[StandingPref]) -> None:
+def _enforce_store_cap(existing: list[Memory], merged: list[Memory]) -> None:
     # Characters, not bytes: the cap is the section cap, which counts characters.
     cap = section_max_chars()
     old_total = sum(len(item.text) for item in existing)
     new_total = sum(len(item.text) for item in merged)
     # Only growth past the cap is refused. After the operator lowers the
     # section limit below a store's total, a save that shrinks or keeps the
-    # total must still pass, or the agent could not tidy its prefs without
+    # total must still pass, or the agent could not tidy its memory without
     # removing some first.
     if new_total > cap and new_total > old_total:
         raise ValueError(
-            f"standing prefs would grow to {new_total} characters of text; the limit is {cap}. "
-            "Shorten or remove a pref first."
+            f"memory would grow to {new_total} characters; the limit is {cap}. "
+            "Replace or remove a memory first."
         )
 
 
-def _write_store(path: Path, prefs: list[StandingPref]) -> None:
+def _write_store(path: Path, document: MemoryDocument) -> None:
     """Write the whole document atomically: a same-directory temp file, then ``os.replace``."""
-    payload = _dump(StandingPrefsDocument(schema_version=SCHEMA_VERSION, prefs=prefs))
+    payload = _dump(document)
     partial = path.with_name(f"{path.name}.tmp")
     try:
         partial.write_text(payload, encoding="utf-8")
@@ -484,32 +540,27 @@ def _write_store(path: Path, prefs: list[StandingPref]) -> None:
         raise
 
 
-def _dump(document: StandingPrefsDocument) -> str:
+def _dump(document: MemoryDocument) -> str:
     payload = document.model_dump()
     return json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
 
 
-def _sticky_line(pref: StandingPref, limit: int) -> str:
+def _warm_line(memory: Memory, limit: int) -> str:
     # ``limit`` bounds the text only. The prefix never counts, so a text that
-    # saved under the limit always shows whole, however long the id.
-    prefix = f"- {pref.kind} {pref.id} — "
-    text = pref.text
+    # saved under the limit always shows whole.
+    prefix = f"- {memory.id} — "
+    text = memory.text
     if len(text) > limit:
-        # Only after the operator lowered the limit below a stored pref: the
-        # pref still shows, cut, and ``pref list`` shows it whole.
+        # Only after the operator lowered the limit below a stored memory:
+        # it still shows, cut, and ``memory list`` shows it whole.
         if limit <= 3:
             return f"{prefix}{text[:limit]}"
         return f"{prefix}{text[: limit - 3].rstrip()}..."
-    # The rule is the payload and sources are provenance, so provenance is
-    # what drops; ``pref list`` still shows the sources.
-    suffix = f" sources: {', '.join(pref.sources)}"
-    if len(text) + len(suffix) <= limit:
-        return f"{prefix}{text}{suffix}"
     return f"{prefix}{text}"
 
 
 def _more_line(omitted: int) -> str:
-    return f"more: {omitted} not shown — run pref list"
+    return f"more: {omitted} not shown — run memory list"
 
 
 def _compose(header: str, lines: list[str], *, more: str | None) -> str:
@@ -532,11 +583,11 @@ def _error_sentence(error: Any) -> str:
 def _first_error_sentence(exc: ValidationError) -> str:
     errors = exc.errors()
     if not errors:
-        return "invalid pref"
+        return "invalid memory"
     first = errors[0]
     if first.get("type") == "value_error":
         return _error_sentence(first)
-    loc = ".".join(str(part) for part in first.get("loc", ())) or "pref"
+    loc = ".".join(str(part) for part in first.get("loc", ())) or "memory"
     return f"{loc}: {_error_sentence(first)}"
 
 

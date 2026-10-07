@@ -94,6 +94,7 @@ API_BY_INJECTION = {
     "context/desk-opener.js",
     "context/desk-panel.js",
     "context/desk-pack.js",
+    "context/desk-memory.js",
     "context/desk-tasks.js",
     "context/desk-actions.js",
     # The desk's Schedules section and its layer take the desk's `api` and

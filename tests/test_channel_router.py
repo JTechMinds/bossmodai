@@ -1188,15 +1188,9 @@ def test_sticky_context_is_short_and_skips_note_bodies(
     path.write_text(
         json.dumps(
             {
-                "schema_version": 1,
-                "prefs": [
-                    {
-                        "id": "notes",
-                        "kind": "preference",
-                        "text": pref_text,
-                        "sources": ["operator"],
-                    }
-                ],
+                "schema_version": 2,
+                "next_id": 2,
+                "memories": [{"id": 1, "text": pref_text}],
             }
         ),
         encoding="utf-8",

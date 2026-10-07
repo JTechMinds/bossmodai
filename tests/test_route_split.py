@@ -42,6 +42,8 @@ EXPECTED_ROUTES = {
     (("POST",), "/api/channels/{channel_id}/members", "seat_channel_member"),
     (("GET",), "/api/agents/{agent_id}/prompt-history-policy", "get_agent_prompt_history_policy"),
     (("GET",), "/api/agents/{agent_id}/desk", "get_agent_desk"),
+    (("GET",), "/api/agents/{agent_id}/memory", "get_agent_memory"),
+    (("DELETE",), "/api/agents/{agent_id}/memory/{memory_id}", "delete_agent_memory"),
     (("PUT",), "/api/agents/{agent_id}/desk", "save_agent_desk_file"),
     (("GET",), "/api/agents/{agent_id}/desk/raw", "get_agent_desk_file_raw"),
     (("POST",), "/api/agents/{agent_id}/desk/open-folder", "open_agent_desk_folder"),
@@ -181,7 +183,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 157
+    assert len(got) == 159
 
 
 def test_from_api_routes_import_router_still_works() -> None:

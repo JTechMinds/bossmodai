@@ -170,8 +170,8 @@ POSITIVE_INT_SETTINGS = frozenset({
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
     "system_ai_timeout_seconds": "System AI timeout",
-    "standing_prefs_line_max_chars": "Standing Pref Line Limit",
-    "standing_prefs_section_max_chars": "Standing Prefs Section Limit",
+    "standing_prefs_line_max_chars": "Memory Line Limit",
+    "standing_prefs_section_max_chars": "Memory Section Limit",
     "channel_response_round_cap": "Round cap per message",
     "channel_idle_check_delay_seconds": "Idle check delay",
     "channel_idle_check_interval_seconds": "Idle check scan interval",
@@ -197,8 +197,8 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
     """Reject a value for a ``POSITIVE_INT_SETTINGS`` key that is not a whole number ≥ 1.
 
     ``system_ai_max_tokens``, ``system_ai_timeout_seconds`` and the two
-    standing-prefs limits are read with
-    ``config.require_int``: System AI completions, and every standing-prefs
+    agent memory limits are read with
+    ``config.require_int``: System AI completions, and every memory
     save and warm render. A bad value (``6k``, ``0``) would fail all of them,
     so it is rejected here, at the write boundary, instead. The thread keys
     (``channel_response_round_cap`` and the ``channel_idle_check_*``
@@ -208,11 +208,11 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
     with ``config.require_int`` by the runtime worker's schedule watch,
     which refuses to run on a bad value.
 
-    For the prefs limits it also requires section ≥ line +
+    For the memory limits it also requires section ≥ line +
     ``WARM_PREFIX_MAX_CHARS`` + the warm header and its newline, reading the
-    other limit from ``config``. The line limit counts pref text only, but
+    other limit from ``config``. The line limit counts memory text only, but
     the section counts whole rendered lines, so this is the least room that
-    always holds one full-limit pref with the longest kind and id.
+    always holds one full-limit memory with the longest number.
 
     Args:
         key: Setting key being written. Other keys are not checked.
@@ -221,8 +221,8 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
     Raises:
         HTTPException: 400 when the stripped value is not a base-10 integer
             of at least 1, naming the setting's label; or 400 naming both
-            prefs limits and the required minimum when the section limit
-            could not hold one full pref line.
+            memory limits and the required minimum when the section limit
+            could not hold one full memory line.
     """
     if key not in POSITIVE_INT_SETTINGS:
         return
@@ -241,8 +241,8 @@ def _validate_positive_int_setting(key: str, value: str) -> None:
     if section < minimum:
         raise HTTPException(
             400,
-            f"Standing Prefs Section Limit ({section}) must be at least {minimum}: "
-            f"the line limit plus room for one pref's label (Standing Pref Line Limit is {line}).",
+            f"Memory Section Limit ({section}) must be at least {minimum}: "
+            f"the line limit plus room for one memory's number (Memory Line Limit is {line}).",
         )
 
 

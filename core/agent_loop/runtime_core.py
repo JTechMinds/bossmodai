@@ -2,9 +2,9 @@
 
 Hire stays short (Name / Specialty / Description). Role-specific quality
 bars live in Description. This block is the shared operational contract:
-identity, desk/``/me``, cold notes, standing prefs, allowed tools, host-path
-consent, workspace preference, checkable done, audience soft-judgment,
-and chat formatting.
+identity, desk/``/me``, memory, project knowledge and notes, allowed tools,
+host-path consent, workspace preference, checkable done, audience
+soft-judgment, and chat formatting.
 Channel discuss wakes run in rounds. System AI may choose who is woken
 before this prompt runs. This prompt is not that route, and a pass does
 not require @.
@@ -12,7 +12,7 @@ not require @.
 
 from __future__ import annotations
 
-from core.agent_loop.standing_prefs import PREF_KINDS
+from core.agent_loop import standing_prefs
 from core.boss import boss_label, boss_mention
 from core.models import Agent
 from core.models.host_path_consent import HostPathConsentRequest
@@ -52,23 +52,49 @@ SAY_WITH_ACTIONS = (
     "Bias only — no essay acks or \"Copy that.\""
 )
 
-# Cold notes stay on demand. Standing prefs are a separate warm store.
-NOTES_STORE_RETRIEVE = (
-    "Notes (cold): Personal: /me/notes. "
-    "Project: /projects/<project>/. "
-    "Open on demand for how-to. Pointers-first. Never dump. "
-    "Never invent Board/Done from note text.\n"
-    "Standing prefs (warm): "
-    "on a clear statement from the boss, record it with `pref set <id> <kind> <source>` "
-    "and the rule in the body as one shorthand sentence: the essence only, no preamble. "
-    f"Kinds: {' / '.join(PREF_KINDS)}. "
-    "Replace by reusing the id; remove with `pref remove <id>`; see all with `pref list`. "
-    "The engine injects them every work turn — "
-    "the agent does not re-open prefs for inject. "
-    "Supersede only when the boss replaces. "
-    "Optional note pointer for prose — warm inject does not scrape notes. "
-    "Invent-key / Board fakes still fail-closed."
-)
+# The size memory guidance asks for. Prompt copy only, never enforced: the
+# agent judges, and the system enforces only the operator's hard limit
+# (``standing_prefs.line_max_chars``).
+MEMORY_SOFT_TARGET_CHARS = 120
+
+
+def format_memory_guidance() -> str:
+    """Render where the agent keeps what it is told: memory, project knowledge, notes.
+
+    Memory is the only home shown on every turn, so it is the only one that
+    must stay small. The hard limit is read live from Settings, so the number
+    the prompt states and the number a save enforces cannot drift.
+
+    Returns:
+        The guidance paragraph for the runtime core.
+
+    Raises:
+        config.ConfigError: ``standing_prefs_line_max_chars`` is missing,
+            not an integer, or below 1.
+    """
+    hard = standing_prefs.line_max_chars()
+    return (
+        "Memory: the few things you must never forget. Your memory is shown to you on every "
+        "turn, so keep it to small guidance thoughts — important, broadly useful facts about "
+        "the boss, the company, clients, systems, and how the boss wants things done. "
+        "Not project details.\n"
+        f"- Keep each memory to 1–2 short sentences (about {MEMORY_SOFT_TARGET_CHARS} characters; "
+        f"at most {hard}).\n"
+        "- When someone tells you something like that, save it in this turn, before you reply: "
+        "`memory add` with the sentence in the body. The system numbers it.\n"
+        "- When it changes or stops being true: `memory replace <n>` with the new sentence in "
+        "the body, or `memory remove <n>`. `memory list` shows everything.\n"
+        "- Project knowledge (decisions, requirements, contacts, facts about one project) goes "
+        "in /projects/<project>/project_knowledge.md. Add to it; don't overwrite unless you "
+        "mean to. Your floor reads it. Read it before working on that project. This is not "
+        "task work; do it in any turn.\n"
+        "- /me/notes is for things you need rarely but long term: a preferred process, a "
+        "how-to, scratch work. Not shown automatically; open it when you need it.\n"
+        "Save what lasts; skip small talk, one-off instructions for the current task, and "
+        "anything already saved. When you save, say so in a few words. Saving is never task "
+        "progress or Done."
+    )
+
 
 CHAT_FORMATTING = (
     "Chat replies must emit this shape.\n"
@@ -153,7 +179,7 @@ def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> st
         "Thread-origin work: Done must point at a path peers can open "
         "(a /projects path, or the host path the task itself names). "
         "/me is desk-private scratch, not a handoff.\n"
-        f"{NOTES_STORE_RETRIEVE}\n"
+        f"{format_memory_guidance()}\n"
         f"{LOCKED_WORKSPACE_COPY_STEER}\n"
         f"{dest_suffix}"
         f"{AUDIENCE_SOFT_JUDGMENT}\n"
