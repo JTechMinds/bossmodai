@@ -196,6 +196,46 @@ class ConnectionManager:
             },
         })
 
+    async def broadcast_peer_message(
+        self,
+        *,
+        message_id: str,
+        from_agent_id: str,
+        to_agent_id: str,
+        content: str,
+        message_type: str,
+        created_at: str,
+        floor_id: str,
+    ) -> None:
+        """Broadcast one new agent-to-agent message for the Office chatter panel.
+
+        The keywords are exactly the row built by
+        ``core.agent_loop.message_delivery.peer_message_event``, which
+        ``GET /api/office/chatter`` also returns, so a live row and a loaded
+        row have one shape. Clients keep only rows for the floor they show.
+
+        Args:
+            message_id: The persisted ``messages.id``.
+            from_agent_id: The sending agent.
+            to_agent_id: The receiving agent.
+            content: The message body (untrusted markdown).
+            message_type: The persisted message type.
+            created_at: ISO 8601 send time.
+            floor_id: The floor the conversation happened on.
+        """
+        await self.broadcast({
+            "type": "peer_message",
+            "data": {
+                "message_id": message_id,
+                "from_agent_id": from_agent_id,
+                "to_agent_id": to_agent_id,
+                "content": content,
+                "message_type": message_type,
+                "created_at": created_at,
+                "floor_id": floor_id,
+            },
+        })
+
     async def broadcast_channel_message(
         self,
         *,

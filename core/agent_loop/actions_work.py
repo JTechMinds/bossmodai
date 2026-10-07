@@ -19,6 +19,7 @@ from core.agent_loop.actions_shared import (
 )
 from core.agent_loop.deliverables import missing_deliverables, summarize_deliverable
 from core.agent_loop.message_delivery import (
+    peer_message_event,
     resolve_peer_message_type,
     source_channel_for_message_type,
 )
@@ -186,6 +187,8 @@ async def _handle_message(
         location_x=state.x,
         location_y=state.y,
         token_count=_count_action_tokens(agent, action, content),
+        # peers_share_floor above guaranteed both agents live on this floor.
+        floor_id=agent.floor_id if target is not None else None,
     )
 
     result = {
@@ -204,6 +207,7 @@ async def _handle_message(
             "created_at": msg.created_at,
         }
     elif target:
+        result["peer_message"] = peer_message_event(msg)
         result["trigger_requests"] = [_build_trigger_request(
             agent_id=target.id,
             trigger_type="peer_message",

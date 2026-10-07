@@ -101,6 +101,11 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Thought Bubble Duration (ms)',
             description: 'How long agent thought bubbles display above agents on the canvas. Set to 0 to disable.',
         },
+        office_chatter_page_size: {
+            order: 81,
+            label: 'Office Chatter Page Size',
+            description: 'How many agent-to-agent messages the Office chatter panel in Chat loads at a time. Must be at least 1.',
+        },
         // Stored under 'advanced' (db/settings.py); shown with the runtime cadence settings.
         runtime_command_fallback_poll_seconds: {
             order: 82,

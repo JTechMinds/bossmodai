@@ -185,9 +185,11 @@ from db.messages import (
     get_agent_direct_thread,
     get_formatted_messages,
     get_human_chat_thread,
+    get_message,
     get_recent_authored_messages,
     get_recent_work_artifacts,
     get_recent_completed_tasks,
+    list_floor_peer_messages,
 )
 from db.meeting_sessions import (
     create_meeting_session,
@@ -525,9 +527,11 @@ __all__ = [
     "get_agent_direct_thread",
     "get_formatted_messages",
     "get_human_chat_thread",
+    "get_message",
     "get_recent_authored_messages",
     "get_recent_work_artifacts",
     "get_recent_completed_tasks",
+    "list_floor_peer_messages",
     "create_meeting_session",
     "create_meeting_session_message",
     "create_meeting_response_candidate",

@@ -17,6 +17,7 @@ const BossModBus = (() => {
         'chat_message',
         'chat_reset',
         'meeting_message',
+        'peer_message',
         'channel_message',
         'channel_presence',
         'agent_presence',

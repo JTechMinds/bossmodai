@@ -103,7 +103,7 @@ const NAMES = [
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
-    "BossModMiniOffice",
+    "BossModMiniOffice", "BossModOfficeChatter",
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
     "BossModAgentApi", "BossModAgentTemplatesApi",
     "BossModAgentFields", "BossModAgentFormFields",
@@ -529,6 +529,11 @@ function api(url, init) {
     if (url.startsWith("/api/needs")) {
         return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve([]) });
     }
+    // The office chatter under the summary: an empty floor. Its own subject
+    // is tests/js_office_chatter_harness.cjs; here it only has to mount.
+    if (url.startsWith("/api/office/chatter")) {
+        return jsonResponse({ messages: [], has_more: false });
+    }
     if (url.startsWith("/api/map")) {
         if (mapFails) return jsonResponse({ detail: "unavailable" }, 503);
         return jsonResponse({ width: 28, height: 20, tiles: [], rooms: MAP_ROOMS, desks: MAP_DESKS });
@@ -754,16 +759,17 @@ async function main() {
         throw new Error("clicking a seat must open that agent's desk as a panel modal");
     }
 
-    // ─── 3. The column holds the office summary and nothing else ───
+    // ─── 3. The column holds the office summary and the office chatter ───
     //
     // The desk used to be the column's second view. It is a modal over the
-    // app now, so opening one leaves the summary where it is.
+    // app now, so opening one leaves the two views where they are.
 
-    const columnHoldsOnlyTheOffice = contextEl.querySelectorAll(".mini-office").length === 1
+    const columnHoldsOfficeAndChatter = contextEl.querySelectorAll(".mini-office").length === 1
+        && contextEl.querySelectorAll(".office-chatter").length === 1
         && contextEl.querySelectorAll(".desk").length === 0
         && contextEl.querySelectorAll(".modal-panel").length === 0;
-    if (!columnHoldsOnlyTheOffice) {
-        throw new Error("the context column must hold only the office summary");
+    if (!columnHoldsOfficeAndChatter) {
+        throw new Error("the context column must hold the office summary and the office chatter");
     }
     // One desk at a time: opening another closes the first rather than
     // stacking a second modal.
@@ -2664,7 +2670,7 @@ async function main() {
         thePackConfirmWarnsAboutEdits,
         thePackUpdateSendsTheHashItShowed,
         anUnlinkedAgentHasNoPackLine,
-        columnHoldsOnlyTheOffice,
+        columnHoldsOfficeAndChatter,
         oneDeskAtATime,
         deskDrainsOnClose,
         toolsAreInTheHead,

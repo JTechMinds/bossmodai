@@ -56,6 +56,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("steps_per_tick", "1", "simulation"),
     ("movement_tiles_per_second", "4", "simulation"),
     ("thought_bubble_duration_ms", "4000", "simulation"),
+    ("office_chatter_page_size", "30", "simulation"),
 
     # ── Social triggers ──
     ("social_idle_threshold_minutes", "5", "social"),

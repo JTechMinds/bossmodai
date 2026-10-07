@@ -16,6 +16,8 @@ from api.routes import router
 from core import config
 from core.agent_loop.actions_lifecycle import _queue_named_next_work
 from core.agent_loop.actions_work import _handle_message
+from core.agent_loop.decision_contract import ConversationDecision
+from core.agent_loop.decision_replies import _persist_reply
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import assignment_wake_trigger, persist_result_triggers
 from core.agent_loop.dispatcher import TurnDispatcher
@@ -250,6 +252,53 @@ async def test_peer_dm_denies_cross_floor_and_allows_the_operator() -> None:
         {"recipientType": "human", "content": "operator"},
     )
     assert allowed["detail"] != CROSS_FLOOR_DENY
+
+
+async def test_a_peer_dm_is_stamped_with_the_shared_floor_and_announced() -> None:
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    bob = _agent("Bob", 2, floor_id=finance.id)
+    state = db.get_agent_state(ada.id)
+
+    result = await _handle_message(
+        ada, state, {"recipientType": "agent", "agentId": bob.id, "content": "spec split?"},
+    )
+    peer = result["peer_message"]
+    stored = db.get_message(peer["message_id"])
+    assert stored is not None and stored.floor_id == finance.id
+    assert peer["floor_id"] == finance.id
+    assert (peer["from_agent_id"], peer["to_agent_id"], peer["content"]) == (ada.id, bob.id, "spec split?")
+    assert result["trigger_requests"][0]["payload"]["source_message_id"] == stored.id
+
+    to_boss = await _handle_message(ada, state, {"recipientType": "human", "content": "status"})
+    assert "peer_message" not in to_boss
+    assert db.get_message(to_boss["chat_message"]["message_id"]).floor_id is None
+
+
+def _peer_reply(ada, bob, *, content: str) -> dict:
+    return _persist_reply(
+        ada,
+        db.get_agent_state(ada.id),
+        {"type": "peer_message", "from_agent": bob.id, "content": content,
+         "message_type": "social", "reply_chain_depth": 0},
+        ConversationDecision(decision="answer", intentKind="other", reply="On it.", workCommit=False),
+    )
+
+
+def test_a_peer_reply_is_announced_whether_or_not_it_wakes_the_sender() -> None:
+    ada = _agent("Ada", 1)
+    bob = _agent("Bob", 2)
+
+    woken = _peer_reply(ada, bob, content="Can you take the audit?")
+    assert [request["agent_id"] for request in woken["trigger_requests"]] == [bob.id]
+    quiet = _peer_reply(ada, bob, content="Audit landed.")
+    assert set(quiet) == {"peer_message"}
+
+    for result in (woken, quiet):
+        peer = result["peer_message"]
+        assert peer["floor_id"] == LOBBY_ID
+        assert db.get_message(peer["message_id"]).floor_id == LOBBY_ID
+        assert (peer["from_agent_id"], peer["to_agent_id"]) == (ada.id, bob.id)
 
 
 def test_soft_block_still_blocks_without_mentioning_another_floor() -> None:

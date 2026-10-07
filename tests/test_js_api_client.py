@@ -86,6 +86,9 @@ API_BY_INJECTION = {
     # GET /api/map — the floor plan, not the roster — while who is standing in
     # each room still comes from the store.
     "context/mini-office.js",
+    # The office chatter under it pages GET /api/office/chatter with the same
+    # injected `api`.
+    "context/office-chatter.js",
     "context/desk-files.js",
     "context/desk-notes.js",
     "context/desk-opener.js",

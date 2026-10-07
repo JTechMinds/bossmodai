@@ -637,6 +637,8 @@ async def _run_execution_turn(
                 desk_path=chat_message.get("desk_path"),
                 task_id=chat_message.get("task_id"),
             )
+        if result.get("peer_message"):
+            await manager.broadcast_peer_message(**result["peer_message"])
         meeting_message = result.get("meeting_message")
         if meeting_message:
             await manager.broadcast_meeting_message(

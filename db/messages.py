@@ -6,10 +6,10 @@ from datetime import datetime
 from typing import Any
 
 from core.models import Message
-from db.crud import execute, fetch_all, insert_returning, query_one
+from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
 
 _MESSAGE_COLUMNS = (
-    "id, from_agent, to_agent, content, message_type, "
+    "id, from_agent, to_agent, content, message_type, floor_id, "
     "location_x, location_y, token_count, created_at"
 )
 
@@ -22,16 +22,85 @@ def create_message(
     location_x: int = 0,
     location_y: int = 0,
     token_count: int = 0,
+    floor_id: str | None = None,
 ) -> Message:
-    """Insert a new message."""
+    """Insert a new message.
+
+    ``floor_id`` is set only for agent↔agent messages: the floor the two
+    agents shared at send time. Human↔agent DMs and work outputs leave it
+    ``None``.
+    """
     return insert_returning(
         f"""
         INSERT INTO messages (from_agent, to_agent, content, message_type,
-                              location_x, location_y, token_count)
-        VALUES ($1, $2, $3, $4, $5, $6, $7)
+                              location_x, location_y, token_count, floor_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING {_MESSAGE_COLUMNS}
         """,
-        [from_agent, to_agent, content, message_type, location_x, location_y, token_count],
+        [from_agent, to_agent, content, message_type, location_x, location_y, token_count, floor_id],
+        Message,
+    )
+
+
+def get_message(message_id: str) -> Message | None:
+    """Return one message by id, or ``None`` when no such row exists."""
+    return fetch_one(
+        f"SELECT {_MESSAGE_COLUMNS} FROM messages WHERE id = $1",
+        [message_id],
+        Message,
+    )
+
+
+def list_floor_peer_messages(
+    floor_id: str,
+    limit: int,
+    before: tuple[datetime, str] | None = None,
+) -> list[Message]:
+    """Return one page of a floor's agent↔agent messages, newest first.
+
+    Only rows stamped with ``floor_id`` at send time (or by the one-time
+    backfill) are listed, so a conversation stays on the floor it happened
+    on. Human↔agent rows are excluded even if one carried a floor.
+
+    Args:
+        floor_id: The floor whose conversations are listed.
+        limit: Maximum rows returned. The caller asks for one more than a
+            page to learn whether older rows exist.
+        before: Keyset cursor ``(created_at, id)`` of the oldest row already
+            shown; only strictly older rows (by ``created_at``, then ``id``)
+            are returned. ``None`` returns the newest page.
+
+    Returns:
+        Messages ordered by ``created_at`` then ``id``, both descending.
+    """
+    from core.models.message import HUMAN_SENDER_ID
+
+    conditions = [
+        "floor_id = $1",
+        "to_agent IS NOT NULL",
+        "from_agent <> $2",
+        "to_agent <> $2",
+    ]
+    params: list[Any] = [floor_id, HUMAN_SENDER_ID]
+    if before is not None:
+        before_at, before_id = before
+        params.extend([before_at, before_id])
+        # julianday() on both sides: stored defaults read "YYYY-MM-DD HH:MM:SS"
+        # but a bound datetime is adapted with a "+00:00" suffix, so a raw
+        # text comparison would rank the cursor row itself as older.
+        at, mid = len(params) - 1, len(params)
+        conditions.append(
+            f"(julianday(created_at) < julianday(${at}) "
+            f"OR (julianday(created_at) = julianday(${at}) AND id < ${mid}))"
+        )
+    params.append(limit)
+    return fetch_all(
+        f"""
+        SELECT {_MESSAGE_COLUMNS} FROM messages
+        WHERE {' AND '.join(conditions)}
+        ORDER BY created_at DESC, id DESC LIMIT ${len(params)}
+        """,
+        params,
         Message,
     )
 

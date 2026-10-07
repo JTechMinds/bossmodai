@@ -16,7 +16,6 @@ const BossModChatPlace = (() => {
 
     let store = null;
     let conversation = null;
-    let miniOffice = null; // The context column's one view: the office summary.
     let contextEl = null;
     let bodyEl = null;
     let container = null;
@@ -73,7 +72,7 @@ const BossModChatPlace = (() => {
          * @param {HTMLElement} el
          * @param {object} ctx  `{ store, bus, api, needs, contextEl, openDesk,
          *   navigate }` from the shell. Chat alone fills `ctx.contextEl`, with
-         *   the office summary; `openDesk` is the one desk modal.
+         *   the office summary and chatter; `openDesk` is the one desk modal.
          * @returns {void}
          */
         mount(el, ctx) {
@@ -105,12 +104,17 @@ const BossModChatPlace = (() => {
                 browserView: BossModExtensionsLive.headerCapability(),
             });
 
-            // The column's one view: the desk that was its second is a modal.
+            // The column's two views; the desk is a modal. Their destroyers drain
+            // with `disposers`, before unmount clears the column they live in.
             clear(contextEl);
-            miniOffice = BossModMiniOffice.createMiniOffice({
+            const miniOffice = BossModMiniOffice.createMiniOffice({
                 store: ctx.store, api: ctx.api, navigate: ctx.navigate, openDesk: ctx.openDesk,
             });
-            contextEl.append(miniOffice.element);
+            const officeChatter = BossModOfficeChatter.createOfficeChatter({
+                store: ctx.store, bus: ctx.bus, api: ctx.api, openDesk: ctx.openDesk,
+            });
+            contextEl.append(miniOffice.element, officeChatter.element);
+            disposers.push(() => miniOffice.destroy(), () => officeChatter.destroy());
 
             disposers.push(store.subscribe((s) => s.conversationId, applyConversation));
             disposers.push(store.subscribe((s) => s.conversationKind, applyConversation));
@@ -130,10 +134,6 @@ const BossModChatPlace = (() => {
             if (conversation) conversation.destroy();
             conversation = null;
             if (typeof BossModMentions !== 'undefined') BossModMentions.configure(null);
-            // The summary must not survive a navigation away from Chat: the
-            // shell hides the element, but the subscriptions would leak.
-            if (miniOffice) miniOffice.destroy();
-            miniOffice = null;
             if (contextEl) clear(contextEl);
             contextEl = null;
             if (container) clear(container);

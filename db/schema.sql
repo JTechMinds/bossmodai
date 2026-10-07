@@ -122,6 +122,12 @@ CREATE TABLE IF NOT EXISTS messages (
     content       TEXT    NOT NULL,
     message_type  VARCHAR DEFAULT 'work'
                       CHECK (message_type IN ('work', 'social', 'human', 'meeting')),
+    -- Set for agent↔agent messages only: the floor the conversation happened
+    -- on, stamped at send. NULL for human↔agent DMs and work outputs.
+    -- Agent↔agent rows written before this column existed were backfilled
+    -- with the sender's (else the recipient's) floor at migration time, which
+    -- is a best guess.
+    floor_id      VARCHAR,
     location_x    INTEGER,
     location_y    INTEGER,
     token_count   INTEGER DEFAULT 0,

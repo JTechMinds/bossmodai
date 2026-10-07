@@ -43,6 +43,8 @@ class Message(BaseModel):
     to_agent: str | None = None
     content: str
     message_type: MessageType = "work"
+    # The floor an agent↔agent conversation happened on; None otherwise.
+    floor_id: str | None = None
     location_x: int = 0
     location_y: int = 0
     token_count: int = 0

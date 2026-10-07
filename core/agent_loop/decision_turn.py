@@ -786,6 +786,8 @@ async def _run_decision_turn(
                 message_id=meeting_message.get("message_id"),
                 created_at=meeting_message.get("created_at"),
             )
+        if result.get("peer_message"):
+            await manager.broadcast_peer_message(**result["peer_message"])
         if result.get("round_marker"):
             round_marker = result["round_marker"]
             await manager.broadcast_channel_message(

@@ -679,13 +679,12 @@ body[data-view="settings"] #main-layout { display: none; }
 .responsive-panel .app-roster,
 .responsive-panel .app-context {
   display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   border: 0;
   overflow: auto;
 }
-
-.responsive-panel .app-context { display: block; }
 
 /* ─── 768–1199px — the context column becomes an overlay; the roster stays ─── */
 

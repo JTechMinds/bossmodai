@@ -161,6 +161,7 @@ CONTEXT_MODULES = [
     JS / "places" / "files" / "file-ops.js",
     JS / "places" / "files" / "file-viewer.js",
     JS / "context" / "mini-office.js",
+    JS / "context" / "office-chatter.js",
     JS / "context" / "desk-opener.js",
     JS / "context" / "desk-files.js",
     JS / "context" / "desk-notes.js",

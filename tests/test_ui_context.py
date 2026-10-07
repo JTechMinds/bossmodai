@@ -78,6 +78,7 @@ CONTEXT_MODULES = [
     JS / "places" / "files" / "file-ops.js",
     JS / "places" / "files" / "file-viewer.js",
     CONTEXT / "mini-office.js",
+    CONTEXT / "office-chatter.js",
     CONTEXT / "desk-opener.js",
     CONTEXT / "desk-files.js",
     CONTEXT / "desk-notes.js",
@@ -166,19 +167,21 @@ def test_context_column_is_torn_down_when_chat_unmounts() -> None:
     but never clears it. If Chat did not destroy the column, its subscriptions
     would survive every navigation away and accumulate one set per visit.
 
-    The column holds the office summary and nothing else: the desk that used
-    to be its second view is a modal, one at a time, which drains everything
-    it subscribed to when it closes.
+    The column holds the office summary and the office chatter under it: the
+    desk that used to be a second view is a modal, one at a time, which
+    drains everything it subscribed to when it closes.
     """
     payload = _harness()
     assert payload["drainsOnDestroy"] is True
-    assert payload["columnHoldsOnlyTheOffice"] is True
+    assert payload["columnHoldsOfficeAndChatter"] is True
     assert payload["oneDeskAtATime"] is True
     assert payload["deskDrainsOnClose"] is True
 
     place = _read(JS / "places" / "chat" / "chat-place.js")
     assert "BossModMiniOffice.createMiniOffice(" in place
     assert "miniOffice.destroy()" in place
+    assert "BossModOfficeChatter.createOfficeChatter(" in place
+    assert "officeChatter.destroy()" in place
     # The view switcher is gone with the second view it switched to.
     assert not (CONTEXT / "context-column.js").exists()
     assert "BossModContextColumn" not in place
@@ -194,6 +197,7 @@ def test_context_column_is_torn_down_when_chat_unmounts() -> None:
     # own applyContextColumn only toggles the column from place.hasContext.)
     assert "BossModContextColumn" not in shell
     assert "BossModMiniOffice" not in shell
+    assert "BossModOfficeChatter" not in shell
 
 
 def test_mini_office_groups_by_location_including_unknown() -> None:

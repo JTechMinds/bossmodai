@@ -45,6 +45,8 @@ class EventSink(Protocol):
 
     async def broadcast_meeting_message(self, **data: Any) -> None: ...
 
+    async def broadcast_peer_message(self, **data: Any) -> None: ...
+
     async def broadcast_channel_message(self, **data: Any) -> None: ...
 
     async def broadcast_channel_presence(self, **data: Any) -> None: ...
@@ -573,6 +575,9 @@ class RuntimeServices:
             return
         if kind == "meeting_message":
             await sink.broadcast_meeting_message(**data)
+            return
+        if kind == "peer_message":
+            await sink.broadcast_peer_message(**data)
             return
         if kind == "channel_message":
             await sink.broadcast_channel_message(**data)

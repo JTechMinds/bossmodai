@@ -415,6 +415,8 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         "INTEGER NOT NULL DEFAULT 0",
     )
     _ensure_floors(con)
+    # After _ensure_floors: the one-time backfill reads agents.floor_id.
+    _ensure_message_floors(con)
     _add_column_if_missing(
         con, "cli_approval_requests", "review_note", "TEXT",
     )
@@ -882,6 +884,77 @@ def _ensure_floors(con: SQLiteCompatConnection) -> None:
     con.execute(
         "UPDATE channels SET floor_id = $1 WHERE floor_id IS NULL OR floor_id = ''",
         ["lobby"],
+    )
+
+
+_MESSAGE_FLOOR_INDEX_SQL = (
+    "CREATE INDEX IF NOT EXISTS idx_messages_floor_created "
+    "ON messages (floor_id, created_at, id)"
+)
+
+
+def _ensure_message_floors(con: SQLiteCompatConnection) -> None:
+    """Add ``messages.floor_id``, backfill it once, and ensure its index.
+
+    The column records the floor an agent↔agent conversation happened on,
+    stamped at send time, so the conversation stays on that floor when an
+    agent later moves.
+
+    Run-once rule: there is no migration-tracking table, so the column itself
+    is the done-marker. When ``PRAGMA table_info(messages)`` already lists
+    ``floor_id`` (every fresh database gets it from schema.sql, and every
+    database this has run on has it), only the index is ensured; no row is
+    read or rewritten. The index is created here, not in schema.sql, because
+    schema.sql runs before the migrations and an existing table would not
+    have the column yet.
+
+    When the column is missing (exactly one boot per existing database), the
+    column is added and every agent↔agent row gets its sender's current
+    floor, else its recipient's. That is a best guess accepted by the
+    operator: no history of floor moves exists. ``NULL`` rule: rows where
+    neither participant has a floor (on vacation, or deleted) stay ``NULL``
+    for good, and human↔agent rows are never stamped. The add, backfill and
+    index run in one transaction, so a crash cannot leave the marker column
+    in place with the backfill unrun; the next boot retries instead.
+
+    Raises ``sqlite3.Error`` from whichever statement failed, after rolling
+    the transaction back.
+    """
+    columns = {row[1] for row in con.execute("PRAGMA table_info(messages)").fetchall()}
+    if "floor_id" in columns:
+        con.execute(_MESSAGE_FLOOR_INDEX_SQL)
+        return
+    from core.models.message import HUMAN_SENDER_ID
+
+    con.execute("BEGIN IMMEDIATE")
+    try:
+        con.execute("ALTER TABLE messages ADD COLUMN floor_id VARCHAR")
+        matched = con.execute(
+            """
+            UPDATE messages SET floor_id = COALESCE(
+                (SELECT NULLIF(s.floor_id, '') FROM agents s WHERE s.id = messages.from_agent),
+                (SELECT NULLIF(r.floor_id, '') FROM agents r WHERE r.id = messages.to_agent)
+            )
+            WHERE to_agent IS NOT NULL AND from_agent <> $1 AND to_agent <> $1
+            """,
+            [HUMAN_SENDER_ID],
+        ).rowcount
+        con.execute(_MESSAGE_FLOOR_INDEX_SQL)
+        floorless = con.execute(
+            "SELECT COUNT(*) FROM messages "
+            "WHERE floor_id IS NULL AND to_agent IS NOT NULL "
+            "AND from_agent <> $1 AND to_agent <> $1",
+            [HUMAN_SENDER_ID],
+        ).fetchone()[0]
+        con.execute("COMMIT")
+    except BaseException:
+        con.execute("ROLLBACK")
+        raise
+    logger.info(
+        "Migration: added messages.floor_id; backfilled %d agent-to-agent rows, "
+        "%d left without a floor",
+        matched - floorless,
+        floorless,
     )
 
 

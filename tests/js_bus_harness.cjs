@@ -14,7 +14,7 @@ const { createBus, KNOWN_TOPICS } = BossModBus;
 // Every server message type from api/websocket.py, plus the client-side resync.
 const REQUIRED = [
     "world_update", "runtime_state", "chat_message", "chat_reset",
-    "meeting_message", "channel_message", "channel_presence", "channel_updated",
+    "meeting_message", "peer_message", "channel_message", "channel_presence", "channel_updated",
     "diagnostic", "agent_thought", "activity", "activity_update",
     "unified_feed", "floors_updated", "operator_invalidate", "resync",
 ];

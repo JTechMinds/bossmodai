@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 import db
+from api.websocket import ConnectionManager
+from core.agent_loop.message_delivery import peer_message_event
+from core.agent_loop.say_before_actions import merge_say_artifacts, say_already_posted
+from core.models.message import Message
 from core.runtime.events import NullRuntimeEventSink, RuntimeEventProxy, TransportRuntimeEventSink
 from core.runtime.services import RuntimeServices
 
@@ -42,6 +47,9 @@ class _RecordingSink:
 
     async def broadcast_meeting_message(self, **data: Any) -> None:
         self.calls.append(("meeting_message", data))
+
+    async def broadcast_peer_message(self, **data: Any) -> None:
+        self.calls.append(("peer_message", data))
 
     async def broadcast_channel_message(self, **data: Any) -> None:
         self.calls.append(("channel_message", data))
@@ -239,3 +247,70 @@ async def test_a_normal_stop_announces_every_extension_changed_once() -> None:
     assert sink.calls == []
     await services._stop_unlocked()
     assert sink.calls == [("extension_live", {"extension_id": None, "agent_id": None})]
+
+
+# ─── peer_message (Office chatter) ───
+
+
+def _peer_row(**overrides: Any) -> Message:
+    fields = {
+        "id": "m1", "from_agent": "a1", "to_agent": "a2", "content": "verdict: SHIP",
+        "message_type": "social", "floor_id": "lobby",
+        "created_at": datetime(2026, 10, 7, 9, 30, tzinfo=timezone.utc),
+    }
+    fields.update(overrides)
+    return Message(**fields)
+
+
+_PEER = {
+    "message_id": "m1", "from_agent_id": "a1", "to_agent_id": "a2", "content": "verdict: SHIP",
+    "message_type": "social", "created_at": "2026-10-07T09:30:00+00:00", "floor_id": "lobby",
+}
+
+
+def test_the_peer_event_is_the_persisted_row_and_refuses_a_floorless_one() -> None:
+    assert peer_message_event(_peer_row()) == _PEER
+    for missing in (None, ""):
+        with pytest.raises(ValueError, match="no floor_id"):
+            peer_message_event(_peer_row(floor_id=missing))
+
+
+def test_a_peer_message_is_merged_but_is_not_operator_say() -> None:
+    result: dict[str, Any] = {}
+    merge_say_artifacts(result, {"peer_message": _PEER})
+    assert result["peer_message"] == _PEER
+    assert say_already_posted(result) is False
+
+
+@pytest.mark.asyncio
+async def test_peer_message_crosses_every_sink_layer() -> None:
+    transport = _RecordingTransport()
+    await TransportRuntimeEventSink(transport).broadcast_peer_message(**_PEER)
+    assert transport.envelopes == [{"type": "event", "payload": {"kind": "peer_message", "data": _PEER}}]
+
+    proxy = RuntimeEventProxy()
+    sink = _RecordingSink()
+    proxy.set_sink(sink)
+    await proxy.broadcast_peer_message(**_PEER)
+    assert sink.calls == [("peer_message", _PEER)]
+    proxy.set_sink(NullRuntimeEventSink())
+    await proxy.broadcast_peer_message(**_PEER)
+
+    services = RuntimeServices()
+    routed = _RecordingSink()
+    services.set_event_sink(routed)
+    await services._dispatch_event(transport.envelopes[0]["payload"])
+    assert routed.calls == [("peer_message", _PEER)]
+
+
+@pytest.mark.asyncio
+async def test_the_connection_manager_broadcasts_peer_message(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = ConnectionManager()
+    sent: list[dict[str, Any]] = []
+
+    async def record(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    monkeypatch.setattr(manager, "broadcast", record)
+    await manager.broadcast_peer_message(**_PEER)
+    assert sent == [{"type": "peer_message", "data": _PEER}]

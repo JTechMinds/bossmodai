@@ -17,6 +17,7 @@ from core.agent_loop.channel_rounds import (
 from core.agent_loop.decision_contract import ConversationDecision
 from core.agent_loop.meeting_rounds import begin_session_response, finalize_session_response, observe_session_message
 from core.agent_loop.message_delivery import (
+    peer_message_event,
     resolve_peer_message_type,
     source_channel_for_message_type,
 )
@@ -211,6 +212,8 @@ def _persist_reply(
         message_type=message_type,
         location_x=state.x,
         location_y=state.y,
+        # The peer branch above just checked peers_share_floor.
+        floor_id=agent.floor_id if trigger_type == "peer_message" else None,
     )
 
     if trigger_type == "human_chat":
@@ -226,6 +229,9 @@ def _persist_reply(
             }
         }
 
+    # Only the peer branch reaches here; the operator sees the row whether or
+    # not the recipient is woken.
+    artifacts: dict[str, Any] = {"peer_message": peer_message_event(message)}
     if trigger_type == "peer_message":
         incoming_type = str(trigger.get("message_type") or "").strip().lower()
         incoming_content = str(trigger.get("content") or "")
@@ -243,26 +249,25 @@ def _persist_reply(
         if incoming_type == "social" and incoming_depth > 0 and should_wake:
             should_wake = False
         if not should_wake:
-            return {}
+            return artifacts
 
-    return {
-        "trigger_requests": [
-            {
-                "agent_id": target_id,
-                "trigger_type": "peer_message",
-                "source_channel": source_channel_for_message_type(message_type),
-                "payload": {
-                    "content": message.content,
-                    "from_agent": agent.id,
-                    "from_name": agent.name,
-                    "message_type": message.message_type,
-                    "source_message_id": message.id,
-                    "in_reply_to_message_id": trigger.get("source_message_id"),
-                    "reply_chain_depth": incoming_depth + 1 if trigger_type == "peer_message" else 0,
-                },
-            }
-        ]
-    }
+    artifacts["trigger_requests"] = [
+        {
+            "agent_id": target_id,
+            "trigger_type": "peer_message",
+            "source_channel": source_channel_for_message_type(message_type),
+            "payload": {
+                "content": message.content,
+                "from_agent": agent.id,
+                "from_name": agent.name,
+                "message_type": message.message_type,
+                "source_message_id": message.id,
+                "in_reply_to_message_id": trigger.get("source_message_id"),
+                "reply_chain_depth": incoming_depth + 1 if trigger_type == "peer_message" else 0,
+            },
+        }
+    ]
+    return artifacts
 
 def _task_turn_requires_response(
     *,

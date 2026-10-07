@@ -39,6 +39,7 @@ class RuntimeEventSink(Protocol):
         message_id: str | None = None,
         created_at: Any = None,
     ) -> None: ...
+    async def broadcast_peer_message(self, **data: Any) -> None: ...
     async def broadcast_channel_message(
         self,
         *,
@@ -107,6 +108,9 @@ class NullRuntimeEventSink:
     async def broadcast_meeting_message(self, **_: Any) -> None:
         return None
 
+    async def broadcast_peer_message(self, **_: Any) -> None:
+        return None
+
     async def broadcast_channel_message(self, **_: Any) -> None:
         return None
 
@@ -164,6 +168,9 @@ class TransportRuntimeEventSink:
 
     async def broadcast_meeting_message(self, **kwargs: Any) -> None:
         await self._emit("meeting_message", kwargs)
+
+    async def broadcast_peer_message(self, **kwargs: Any) -> None:
+        await self._emit("peer_message", kwargs)
 
     async def broadcast_channel_message(self, **kwargs: Any) -> None:
         await self._emit("channel_message", kwargs)
@@ -231,6 +238,9 @@ class RuntimeEventProxy:
 
     async def broadcast_meeting_message(self, **kwargs: Any) -> None:
         await self._sink.broadcast_meeting_message(**kwargs)
+
+    async def broadcast_peer_message(self, **kwargs: Any) -> None:
+        await self._sink.broadcast_peer_message(**kwargs)
 
     async def broadcast_channel_message(self, **kwargs: Any) -> None:
         if db.is_channel_archived(kwargs.get("channel_id")):

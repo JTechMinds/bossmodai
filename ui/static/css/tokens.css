@@ -127,6 +127,13 @@
   /* One day in the date field's month grid (core/date-field.js): a square
    * target comfortably over the 24px floor (SC 2.5.8). */
   --date-cell: 32px;
+  /* Chat's context column holds two views — the office summary and the
+   * office chatter under it — and this is the space between them. The two
+   * below it are the chatter's own rhythm: between its rows, and inside one
+   * row's head (a name chip, the arrow, the time). */
+  --context-gap: 16px;
+  --chatter-gap: 8px;
+  --chatter-gap-tight: 4px;
 
   /* The two horizontal rules that cross the whole window.
    *

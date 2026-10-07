@@ -62,6 +62,9 @@ def merge_say_artifacts(result: dict[str, Any], artifacts: dict[str, Any]) -> No
         result["meeting_message"] = artifacts["meeting_message"]
     if artifacts.get("channel_message"):
         result["channel_message"] = artifacts["channel_message"]
+    # Not counted by say_already_posted: a peer DM is not operator-visible say.
+    if artifacts.get("peer_message"):
+        result["peer_message"] = artifacts["peer_message"]
     result.setdefault("trigger_requests", []).extend(artifacts.get("trigger_requests") or [])
 
 

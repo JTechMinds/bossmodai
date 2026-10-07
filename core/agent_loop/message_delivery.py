@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from core.models import AgentState
+from core.models import AgentState, Message
 
 
 def resolve_peer_message_type(
@@ -39,3 +39,35 @@ def resolve_peer_message_type(
 def source_channel_for_message_type(message_type: str) -> str:
     """Return the trigger source channel that matches one persisted message type."""
     return "chat" if str(message_type).strip().lower() == "social" else "work"
+
+
+def peer_message_event(message: Message) -> dict[str, Any]:
+    """Return the one row shape of an agent↔agent message for the operator.
+
+    Shared by the ``peer_message`` runtime event and ``GET /office/chatter``,
+    so the Office chatter panel reads live and loaded rows identically.
+
+    Args:
+        message: A persisted agent↔agent row.
+
+    Returns:
+        ``message_id``, ``from_agent_id``, ``to_agent_id``, ``content``,
+        ``message_type``, ``created_at`` (ISO 8601, serialized as
+        ``db.get_formatted_messages`` does for the chat history route) and
+        ``floor_id`` (read from the persisted row).
+
+    Raises:
+        ValueError: The row has no floor. A peer row without one is a bug at
+            the send site, not something to show.
+    """
+    if not message.floor_id:
+        raise ValueError(f"Peer message {message.id} has no floor_id")
+    return {
+        "message_id": message.id,
+        "from_agent_id": message.from_agent,
+        "to_agent_id": message.to_agent,
+        "content": message.content,
+        "message_type": message.message_type,
+        "created_at": message.created_at.isoformat(),
+        "floor_id": message.floor_id,
+    }
