@@ -185,6 +185,22 @@
   color: var(--hint);
 }
 
+/* The full room name behind a short label, on the shared bubble (controls.css).
+   The bubble is this label's pseudo-element, so it inherits the label's text
+   styling unless told otherwise. The empty alternative text after the `/`
+   keeps the bubble out of the accessible name: the label's `.visually-hidden`
+   span already speaks the full name, and this label carries no aria-label to
+   win the name computation the way the shared rule assumes. Case and tracking
+   are reset so the bubble reads "Main Workspace", like every other tooltip,
+   not the label's uppercase; writing-mode is reset so the vertical Hallway's
+   bubble still runs horizontally. */
+.mini-office-room-name[data-tooltip]::after {
+  content: attr(data-tooltip) / "";
+  text-transform: none;
+  letter-spacing: normal;
+  writing-mode: horizontal-tb;
+}
+
 .mini-office-seats { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* An empty room reads as an empty room, not as a box that failed to render.

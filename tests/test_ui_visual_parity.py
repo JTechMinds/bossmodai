@@ -1342,6 +1342,13 @@ def test_mini_office_is_a_map() -> None:
     # No row minimum: the empty corridor rows collapse instead of a blank band.
     assert "--mini-office-track" not in css
     assert "--mini-office-track" not in _read(CSS / "tokens.css")
+    # The room label's tooltip is its pseudo-element: it must not inherit the
+    # label's uppercase or the Hallway's vertical writing-mode, and its text
+    # must not double the visually-hidden full name for screen readers.
+    bubble = css.split(".mini-office-room-name[data-tooltip]::after {", 1)[1].split("}", 1)[0]
+    assert 'content: attr(data-tooltip) / ""' in bubble
+    assert "text-transform: none" in bubble
+    assert "writing-mode: horizontal-tb" in bubble
     assert "background: var(--office-transit)" in plan
     listed = css.split('.mini-office-rooms[data-layout="list"] {', 1)[1].split("}", 1)[0]
     assert "grid-template-columns: 1fr 1fr" in listed
