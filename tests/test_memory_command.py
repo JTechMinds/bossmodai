@@ -46,6 +46,23 @@ def _run(ada, command: str, content: str | None = None):
     return execute_bm_cli(agent, state, command, content=content)
 
 
+def _split_chrome(result) -> tuple[dict, dict]:
+    """The result's data without its ``origin_chrome``, and that chrome."""
+    data = dict(result.data)
+    return data, data.pop("origin_chrome")
+
+
+def _assert_dm_note(chrome: dict, agent, content: str, memory_id: int | None) -> None:
+    """The declared chrome is the persisted DM note: the agent's, system-authored, with its number."""
+    assert chrome["agent_id"] == agent.id
+    assert chrome["content"] == content
+    assert chrome["from_type"] == "system"
+    assert chrome["notification_kind"] == "memory"
+    assert chrome["memory_id"] == memory_id
+    notes = db.list_notifications(agent_id=agent.id, limit=20)
+    assert any(note.id == chrome["message_id"] and note.content == content for note in notes)
+
+
 def _assert_lists_forms(result) -> None:
     assert result.ok is False
     for form in MEMORY_FORMS:
@@ -57,10 +74,13 @@ def test_add_saves_the_body_and_names_the_assigned_number(ada) -> None:
     assert result.ok is True
     assert result.kind == "memory"
     assert result.detail == "Ada saved memory #1"
-    assert result.data == {
+    data, chrome = _split_chrome(result)
+    assert data == {
         "action": "add",
         "memory": {"id": 1, "text": "The boss wants plain English, not jargon."},
     }
+    _assert_dm_note(chrome, ada[0], "Ada saved a memory", 1)
+    assert "The boss can see it." in result.prompt_content
     assert "MEMORY:" in result.prompt_content
     assert "1 — The boss wants plain English, not jargon." in result.prompt_content
     second = _run(ada, "memory add", content="Acme's contact is Dana Lee.")
@@ -78,7 +98,9 @@ def test_replace_keeps_the_number_and_list_shows_every_memory_in_full(ada) -> No
     replaced = _run(ada, "memory replace 1", content="Plain words.")
     assert replaced.ok is True
     assert replaced.detail == "Ada saved memory #1"
-    assert replaced.data == {"action": "replace", "memory": {"id": 1, "text": "Plain words."}}
+    data, chrome = _split_chrome(replaced)
+    assert data == {"action": "replace", "memory": {"id": 1, "text": "Plain words."}}
+    _assert_dm_note(chrome, ada[0], "Ada updated a memory", 1)
     listed = _run(ada, "memory list")
     assert listed.ok is True
     assert listed.kind == "memory"
@@ -96,7 +118,10 @@ def test_remove_then_list_says_no_memories_saved_and_the_number_is_not_reused(ad
     assert _run(ada, "memory add", content="Short sentences.").ok
     removed = _run(ada, "memory remove 1")
     assert removed.ok is True
-    assert removed.data == {"action": "remove", "memory": {"id": 1, "text": "Short sentences."}}
+    data, chrome = _split_chrome(removed)
+    assert data == {"action": "remove", "memory": {"id": 1, "text": "Short sentences."}}
+    _assert_dm_note(chrome, ada[0], "Ada removed a memory: “Short sentences.”", None)
+    assert "The boss can see it." in removed.prompt_content
     assert "removed 1 — Short sentences." in removed.prompt_content
     listed = _run(ada, "memory list")
     assert listed.ok is True

@@ -408,6 +408,11 @@ class FakeEl {
         if (this.ownerDocument) this.ownerDocument._activeElement = this;
     }
 
+    /** No layout to scroll: records the options, so a harness can assert the call. */
+    scrollIntoView(options) {
+        this.scrolledIntoView = options === undefined ? {} : options;
+    }
+
     querySelector(selector) {
         return this.querySelectorAll(selector)[0] || null;
     }

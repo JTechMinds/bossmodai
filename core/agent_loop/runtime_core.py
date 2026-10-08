@@ -92,9 +92,9 @@ def format_memory_guidance() -> str:
         "- /me/notes is for things you need rarely but long term: a preferred process, a "
         "how-to, scratch work. Not shown automatically; open it when you need it.\n"
         "Save what lasts; skip small talk, one-off instructions for the current task, and "
-        "anything already saved. When you save, say so in a few words. Saving is never task "
-        "progress or Done. A correction to how you do your work, including a recurring job, is "
-        "lasting, not a one-off."
+        "anything already saved. The boss is told automatically when you save; you don't need "
+        "to mention it. Saving is never task progress or Done. A correction to how you do "
+        "your work, including a recurring job, is lasting, not a one-off."
     )
 
 

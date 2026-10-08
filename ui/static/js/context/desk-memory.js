@@ -8,7 +8,10 @@
  * cannot reach it; GET /api/agents/{id}/memory is its one read. The desk
  * head's Memory tool (context/desk-panel.js) opens this as a LAYER in the
  * modal frame, so the trail reads `‹ <Agent> › Memory` and ‹ comes back to
- * the desk.
+ * the desk. A chat line about a memory the agent saved or updated
+ * (conversation/event-cards.js, through context/desk-dialog.js `openMemory`)
+ * opens the same layer over that agent's desk with that memory's row
+ * highlighted; if the agent has removed it since, a notice says so.
  *
  * Each row is `n — text`: the number is the store's, assigned by the system
  * and never reused, which is why a remove is sent by number — a list read a
@@ -34,6 +37,7 @@ const BossModDeskMemory = (() => {
         cancel: 'Cancel',
         alreadyRemoved: 'That memory was already removed.',
         removeFailed: 'That memory could not be removed.',
+        noLongerSaved: 'That memory is no longer saved.',
     });
 
     /** The remove button's accessible name and tooltip: one string. */
@@ -57,10 +61,12 @@ const BossModDeskMemory = (() => {
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper.
      * @param {string}   deps.agentId
-     * @returns {{ open: () => void, destroy: () => void }} `open` puts the
-     *   layer up over whatever modal is on screen (one at a time) and reads
-     *   the memory; `destroy` closes an open confirm and the layer, and drops
-     *   an in-flight read.
+     * @returns {{ open: (focusId?: number) => void, destroy: () => void }}
+     *   `open` puts the layer up over whatever modal is on screen (one at a
+     *   time) and reads the memory; with `focusId`, the row with that number
+     *   is highlighted and scrolled into view once the read lands, or a notice
+     *   says the memory is no longer saved when no row has it. `destroy`
+     *   closes an open confirm and the layer, and drops an in-flight read.
      * @throws {Error} When a dependency is missing.
      */
     function createDeskMemory(deps) {
@@ -80,6 +86,11 @@ const BossModDeskMemory = (() => {
         let notice = null;
         /** The memory number whose DELETE is in flight, or null. */
         let removing = null;
+        /** The number `open` was asked to show, until the first read lands; then null. */
+        let pendingFocus = null;
+        /** The highlighted row's number, or null; and its element, once rendered. */
+        let focused = null;
+        let focusedRow = null;
         let destroyed = false;
 
         function renderNotice() {
@@ -93,7 +104,11 @@ const BossModDeskMemory = (() => {
 
         function renderRow(memory) {
             const label = removeLabel(memory.id);
-            return h('li', { class: 'desk-memory-row', 'data-memory-id': String(memory.id) },
+            const isFocused = memory.id === focused;
+            const row = h('li', {
+                class: isFocused ? 'desk-memory-row is-focused' : 'desk-memory-row',
+                'data-memory-id': String(memory.id),
+            },
                 h('span', { class: 'desk-memory-id' }, `${memory.id} —`),
                 h('span', { class: 'desk-memory-text' }, memory.text),
                 h('button', {
@@ -103,10 +118,13 @@ const BossModDeskMemory = (() => {
                     disabled: removing !== null,
                     onclick: () => confirmRemove(memory),
                 }, h('i', { 'data-lucide': 'trash-2', 'aria-hidden': 'true' })));
+            if (isFocused) focusedRow = row;
+            return row;
         }
 
         function render() {
             clear(body);
+            focusedRow = null;
             const top = renderNotice();
             if (top) body.append(top);
             if (loadError) {
@@ -158,7 +176,16 @@ const BossModDeskMemory = (() => {
             if (destroyed || !loads.isCurrent(loadId)) return;
             memories = next;
             loadError = '';
+            const wanted = pendingFocus;
+            pendingFocus = null;
+            if (wanted !== null) {
+                // Asked for once, on the read that answers the open: a later
+                // re-read (after a remove) must not re-announce it.
+                focused = memories.some((memory) => memory.id === wanted) ? wanted : null;
+                if (focused === null) notice = { tone: 'info', text: COPY.noLongerSaved };
+            }
             render();
+            if (wanted !== null && focusedRow) focusedRow.scrollIntoView({ block: 'nearest' });
         }
 
         async function runRemove(id) {
@@ -201,11 +228,23 @@ const BossModDeskMemory = (() => {
         }
 
         return {
-            open() {
+            /**
+             * Put the Memory layer up and read the memory.
+             * @param {number} [focusId]  A memory's number to highlight.
+             * @returns {void}
+             * @throws {Error} When `focusId` is given and is not a positive
+             *   whole number: a link carrying a bad number is a producer bug.
+             */
+            open(focusId) {
+                if (focusId !== undefined && !(Number.isInteger(focusId) && focusId >= 1)) {
+                    throw new Error(`[desk-memory] focusId must be a memory number, got ${focusId}`);
+                }
                 if (layer || destroyed) return;
                 memories = null;
                 loadError = '';
                 notice = null;
+                pendingFocus = focusId === undefined ? null : focusId;
+                focused = null;
                 render();
                 layer = BossModOverlays.createModal({
                     title: COPY.title,

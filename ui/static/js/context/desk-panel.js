@@ -100,8 +100,8 @@ const BossModDeskPanel = (() => {
      *   Leaves for a conversation: the `⋯`'s Open chat (this agent's, kind
      *   `agent`) and a task layer's chat (the task's own target). The dialog
      *   hands in one that closes the desk and its layers first.
-     * @returns {{ element: HTMLElement, lead: HTMLElement, tools: HTMLElement[],
-     *   measure: () => void, destroy: () => void }} `lead` is the avatar for
+     * @returns {{ element: HTMLElement, lead: HTMLElement, tools: HTMLElement[], measure: () => void,
+     *   openMemory: (memoryId: number) => void, destroy: () => void }} `lead` is the avatar for
      *   the title row (decorative: the name is the title). `measure` decides
      *   the description's clamp and must be called once the body is mounted.
      *   `destroy` also closes any task layer the desk opened.
@@ -366,6 +366,8 @@ const BossModDeskPanel = (() => {
                 mounted = true;
                 if (clamp) clamp.measure();
             },
+
+            openMemory: (memoryId) => memory.open(memoryId), // Memory, that row highlighted.
 
             /**
              * Drain this desk and its sections, and close what it opened.

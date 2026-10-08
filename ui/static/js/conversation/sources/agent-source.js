@@ -115,6 +115,7 @@ const BossModAgentSource = (() => {
                 card,
                 deskPath: raw.desk_path || null,
                 taskId: raw.task_id || null,
+                memoryId: raw.memory_id ?? null,
                 // History rows and live echoes both carry the linked files;
                 // a row without any has none, which the renderer skips.
                 attachments: Array.isArray(raw.attachments) ? raw.attachments : null,

@@ -3,7 +3,8 @@
 The save sits between validation and ``apply_decision``: a refused sentence
 takes a repair round with nothing posted, an exhausted repair budget posts
 the reply without the memory and reports it, and a configuration defect
-fails the turn.
+fails the turn. A saved memory also posts one system line in the boss's DM,
+broadcast with the memory's number; a refused one posts none.
 """
 
 from __future__ import annotations
@@ -94,6 +95,22 @@ def _record_activity(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
     return seen
 
 
+def _record_chat(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    seen: list[dict[str, Any]] = []
+    original = decision_turn.manager.broadcast_chat_message
+
+    async def _recording(**kwargs: Any) -> None:
+        seen.append(kwargs)
+        await original(**kwargs)
+
+    monkeypatch.setattr(decision_turn.manager, "broadcast_chat_message", _recording)
+    return seen
+
+
+def _memory_notes(agent_id: str) -> list[str]:
+    return [note.content for note in db.list_notifications(agent_id=agent_id, limit=20) if note.kind == "memory"]
+
+
 def _script(
     monkeypatch: pytest.MonkeyPatch,
     contents: list[str],
@@ -127,7 +144,7 @@ def _limit_decision_repairs(attempts: int) -> None:
 @pytest.mark.asyncio
 async def test_a_reply_with_remember_saves_before_the_reply_posts(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, state = _agent()
-    _script(monkeypatch, [_reply("Got it — tables from now on. Saved to memory.", _SAVED)])
+    _script(monkeypatch, [_reply("Got it — tables from now on.", _SAVED)])
     activity = _record_activity(monkeypatch)
     at_apply: dict[str, Any] = {}
     original_apply = decision_turn.apply_decision
@@ -146,7 +163,7 @@ async def test_a_reply_with_remember_saves_before_the_reply_posts(monkeypatch: p
     assert outcome.result.get("event") == "decision_applied"
     assert outcome.result.get("memory_saved") == {"id": 1, "text": _SAVED}
     assert [m.text for m in standing_prefs.list_memories(agent.storage_key)] == [_SAVED]
-    assert any("Saved to memory" in reply for reply in _agent_replies(agent.id))
+    assert any("tables from now on" in reply for reply in _agent_replies(agent.id))
     assert "memory_add" in outcome.action_summary
     saved = [item for item in activity if item.get("event") == "memory_saved"]
     assert saved == [{"event": "memory_saved", "detail": "Jim saved memory #1", "agent_name": "Jim"}]
@@ -169,8 +186,8 @@ async def test_an_over_limit_remember_takes_one_repair_round_with_nothing_posted
     calls = _script(
         monkeypatch,
         [
-            _reply("Got it. Saved to memory.", too_long),
-            _reply("Got it. Saved to memory.", _SAVED),
+            _reply("Got it.", too_long),
+            _reply("Got it.", _SAVED),
         ],
         on_call=_on_call,
     )
@@ -188,6 +205,8 @@ async def test_an_over_limit_remember_takes_one_repair_round_with_nothing_posted
     assert [m.text for m in standing_prefs.list_memories(agent.storage_key)] == [_SAVED]
     assert outcome.result.get("memory_saved") == {"id": 1, "text": _SAVED}
     assert len(_agent_replies(agent.id)) == 1
+    # One save, one note: the refused first attempt posted nothing.
+    assert _memory_notes(agent.id) == ["Jim saved a memory"]
 
 
 @pytest.mark.asyncio
@@ -219,12 +238,47 @@ async def test_an_exhausted_repair_budget_posts_the_reply_without_the_memory(
         }
     ]
     assert "memory_add" not in outcome.action_summary
+    assert _memory_notes(agent.id) == []
+    assert not [
+        line for line in outcome.result.get("origin_status_messages") or []
+        if line.get("notification_kind") == "memory"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_saved_memory_posts_one_dm_note_broadcast_with_its_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, state = _agent()
+    _script(monkeypatch, [_reply("Got it — tables from now on.", _SAVED)])
+    chat = _record_chat(monkeypatch)
+
+    outcome = await run_turn(agent, state, _human_chat())
+
+    assert _memory_notes(agent.id) == ["Jim saved a memory"]
+    notes = [
+        line for line in outcome.result.get("origin_status_messages") or []
+        if line.get("notification_kind") == "memory"
+    ]
+    assert len(notes) == 1
+    assert notes[0]["content"] == "Jim saved a memory"
+    assert notes[0]["memory_id"] == 1
+    broadcast = [item for item in chat if item.get("notification_kind") == "memory"]
+    assert len(broadcast) == 1
+    assert broadcast[0]["agent_id"] == agent.id
+    assert broadcast[0]["content"] == "Jim saved a memory"
+    assert broadcast[0]["memory_id"] == 1
+    assert broadcast[0]["from_type"] == "system"
+    # The reply itself still posts once, and carries no memory number.
+    replies = [item for item in chat if item.get("from_type") == "agent"]
+    assert [item["content"] for item in replies] == ["Got it — tables from now on."]
+    assert all(item.get("memory_id") is None for item in replies)
 
 
 @pytest.mark.asyncio
 async def test_a_config_error_fails_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, state = _agent()
-    _script(monkeypatch, [_reply("Got it. Saved to memory.", _SAVED)])
+    _script(monkeypatch, [_reply("Got it.", _SAVED)])
 
     def _broken_add(storage_key: str, text: str) -> standing_prefs.Memory:
         raise config.ConfigError("Setting 'standing_prefs_section_max_chars' must be at least 1: 0")
@@ -258,6 +312,7 @@ async def test_a_corrupt_store_reports_without_a_repair_round(
     assert outcome.result.get("memory_not_saved") == reason
     assert store.read_text(encoding="utf-8") == "{not json"
     assert any("tables from now on" in reply for reply in _agent_replies(agent.id))
+    assert _memory_notes(agent.id) == []
     not_saved = [item for item in activity if item.get("event") == "memory_not_saved"]
     assert not_saved == [
         {"event": "memory_not_saved", "detail": f"Jim could not save a memory: {reason}", "agent_name": "Jim"}

@@ -541,6 +541,11 @@
 .desk-memory-text { padding: 6px 0; line-height: 1.5; word-break: break-word; }
 .desk-memory-remove { align-self: start; }
 .desk-memory-remove svg { width: 14px; height: 14px; }
+/* The row a chat memory line opened: the selection treatment of
+   places.css .task-card.is-selected. --hint measures 4.19:1 on --accent-bg
+   and fails AA there, so the number steps to --muted (5.67:1). */
+.desk-memory-row.is-focused { border-color: var(--accent); background: var(--accent-bg); }
+.desk-memory-row.is-focused .desk-memory-id { color: var(--muted); }
 .desk-memory-confirm { display: flex; flex-direction: column; gap: 10px; }
 .desk-memory-confirm p { margin: 0; }
 .desk-memory-quote { color: var(--ink); word-break: break-word; }

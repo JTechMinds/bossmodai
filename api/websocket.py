@@ -139,11 +139,14 @@ class ConnectionManager:
         cli_approval: dict[str, Any] | None = None,
         task_id: str | None = None,
         attachments: list[dict[str, Any]] | None = None,
+        memory_id: int | None = None,
     ) -> None:
         """Broadcast a chat message to all connected clients.
 
         Does NOT persist to activity log — chat messages live in the messages table.
         The ``agent_id`` tells the frontend which agent's chat panel this belongs to.
+        ``memory_id`` is set on an agent's memory note (add / replace): the
+        number the line opens in the desk's Memory layer.
         """
         await self.broadcast({
             "type": "chat_message",
@@ -160,6 +163,7 @@ class ConnectionManager:
                 "host_path_consent": host_path_consent,
                 "cli_approval": cli_approval,
                 "task_id": task_id,
+                "memory_id": memory_id,
                 "attachments": attachments,
             },
         })

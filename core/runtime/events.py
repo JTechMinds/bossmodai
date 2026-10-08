@@ -27,6 +27,7 @@ class RuntimeEventSink(Protocol):
         host_path_consent: dict[str, Any] | None = None,
         cli_approval: dict[str, Any] | None = None,
         task_id: str | None = None,
+        memory_id: int | None = None,
     ) -> None: ...
     async def broadcast_meeting_message(
         self,

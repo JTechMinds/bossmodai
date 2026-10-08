@@ -16,6 +16,7 @@ from core.agent_loop.decision_contract import (
     validate_decision_for_trigger,
 )
 from core.agent_loop.decision_memory import memory_repair_error, save_decision_memory
+from core.agent_loop.memory_notices import note_memory_change
 from core.agent_loop.standing_prefs import MemoryStoreUnreadableError
 from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
@@ -749,6 +750,8 @@ async def _run_decision_turn(
         # sentence can still be repaired in this turn with nothing posted.
         memory_outcome: dict[str, Any] = {}
         memory_not_saved: str | None = None
+        # The boss's DM line for a saved memory, broadcast with the origin lines.
+        memory_note: dict[str, Any] | None = None
         if decision.remember:
             try:
                 memory = await off_request_loop(save_decision_memory, agent, decision.remember)
@@ -803,6 +806,8 @@ async def _run_decision_turn(
             else:
                 executed_actions.append("memory_add")
                 memory_outcome = {"memory_saved": memory.model_dump()}
+                posted = await off_request_loop(note_memory_change, agent, "add", memory)
+                memory_note = posted["chat_message"]
                 await manager.broadcast_activity(
                     event="memory_saved",
                     detail=f"{agent.name} saved memory #{memory.id}",
@@ -821,6 +826,10 @@ async def _run_decision_turn(
         )
         if memory_outcome:
             result = {**result, **memory_outcome}
+        if memory_note is not None:
+            # broadcast_origin_status_messages below sends it; emit_chat_notifications
+            # skips any line whose content is already listed here.
+            result["origin_status_messages"] = [*result.get("origin_status_messages", []), memory_note]
         executed_actions.append(summarize_decision(decision.model_dump()))
 
         await manager.broadcast_world_state()

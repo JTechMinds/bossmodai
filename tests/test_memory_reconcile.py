@@ -5,8 +5,10 @@ runtime_contract_decision.md and system_prompt.md reach an existing database
 only through this line-level, marker-guarded pass.
 
 The shipped decision contract has since moved on: the ``remember`` pass
-(``reconcile_memory_remember_prompt_lines``) rewrote two of these new lines.
-This pass's target is the shipped default with that second pass undone.
+(``reconcile_memory_remember_prompt_lines``) rewrote two of these new lines,
+and the memory notice pass (``reconcile_memory_notice_prompt_lines``) then
+rewrote two lines the remember pass inserted. This pass's target is the
+shipped default with both later passes undone, newest first.
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from core.default_prompts import load_default_prompt, prompt_file_path
 _MARKER = "memory_prompt_lines_reconciled"
 _EDITS = settings_db._MEMORY_PROMPT_LINE_EDITS
 _LATER_EDITS = settings_db._MEMORY_REMEMBER_PROMPT_LINE_EDITS
+_LATEST_EDITS = settings_db._MEMORY_NOTICE_PROMPT_LINE_EDITS
 
 
 def setup_function() -> None:
@@ -49,8 +52,11 @@ def _stored(key: str) -> tuple[str, str]:
 
 
 def _first_pass_default(key: str) -> str:
-    """The shipped default as this pass left it: the later remember pass undone."""
+    """The shipped default as this pass left it: the notice pass, then the remember pass, undone."""
     text = load_default_prompt(key)
+    for old_line, new_line in _LATEST_EDITS.get(key, ()):
+        assert text.count(new_line) == 1, (key, new_line)
+        text = text.replace(new_line, old_line)
     for old_line, new_line in _LATER_EDITS.get(key, ()):
         assert text.count(new_line) == 1, (key, new_line)
         text = text.replace(new_line, old_line)

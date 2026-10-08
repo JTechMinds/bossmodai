@@ -34,10 +34,13 @@ const BossModDeskDialog = (() => {
      *   shell's navigate. Resolved at call time by the caller, because the
      *   navigator is built after this.
      * @returns {{ open: (agentId: string, path?: string) => void,
+     *   openMemory: (agentId: string, memoryId: number) => void,
      *   close: () => void }} `open` shows one agent's desk — closing any desk
      *   already open, and whatever was stacked on it, since only one exists at
-     *   a time — with the file browser at `path` (default `/me`). `close`
-     *   closes the open desk and every layer over it, if one is open.
+     *   a time — with the file browser at `path` (default `/me`).
+     *   `openMemory` opens that desk with its Memory layer on top and one
+     *   memory highlighted. `close` closes the open desk and every layer over
+     *   it, if one is open.
      * @throws {Error} When any dependency is missing: a desk door that fails at
      *   the click is worse than a boot that fails at once.
      */
@@ -119,7 +122,24 @@ const BossModDeskDialog = (() => {
             entry.panel.measure();
         }
 
-        return { open, close };
+        /**
+         * Open one agent's desk with its Memory layer on top, one row
+         * highlighted: where a chat line about a saved memory leads. The trail
+         * reads `‹ <Agent> › Memory` and ‹ comes back to the desk, as when
+         * Memory is opened from the desk's own `⋯`.
+         *
+         * @param {string} agentId
+         * @param {number} memoryId  The memory's number, as the line carries it.
+         * @returns {void}
+         * @throws {Error} On an empty agent id (a desk needs an owner), or a
+         *   `memoryId` that is not a memory number (context/desk-memory.js).
+         */
+        function openMemory(agentId, memoryId) {
+            open(agentId);
+            current.panel.openMemory(memoryId);
+        }
+
+        return { open, openMemory, close };
     }
 
     return { createDeskDialog };

@@ -698,7 +698,7 @@ CREATE TABLE IF NOT EXISTS notifications (
     task_id           VARCHAR REFERENCES tasks(id),
     activity_id       VARCHAR REFERENCES activities(id),
     kind              VARCHAR NOT NULL
-                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'cli_approval', 'queue_visibility')),
+                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'cli_approval', 'queue_visibility', 'memory')),
     content           TEXT NOT NULL,
     source_channel    VARCHAR NOT NULL,
     policy            VARCHAR NOT NULL
@@ -711,7 +711,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 CREATE TABLE IF NOT EXISTS notification_links (
     notification_id VARCHAR PRIMARY KEY REFERENCES notifications(id),
     target_kind     VARCHAR NOT NULL
-                       CHECK (target_kind IN ('desk', 'host_path_consent', 'cli_approval')),
+                       CHECK (target_kind IN ('desk', 'host_path_consent', 'cli_approval', 'memory')),
     target_path     VARCHAR NOT NULL,
     label           VARCHAR NOT NULL DEFAULT 'Open in Desk',
     created_at      TIMESTAMP DEFAULT current_timestamp

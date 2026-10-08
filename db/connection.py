@@ -247,6 +247,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _ensure_notification_link_target_kinds(con)
     _ensure_meeting_host_nullable(con)
     _ensure_cli_approval_origin_schema(con)
+    _ensure_memory_notification_schema(con)
     _ensure_runtime_command_types(con)
     _add_column_if_missing(
         con, "agent_triggers", "retry_count",
@@ -1494,6 +1495,98 @@ def _ensure_cli_approval_origin_schema(con: SQLiteCompatConnection) -> None:
             con.execute("DROP TABLE notification_links")
             con.execute("ALTER TABLE notification_links__new RENAME TO notification_links")
             logger.info("Migration: rebuilt notification_links to add cli_approval")
+        finally:
+            con.execute("PRAGMA foreign_keys = ON")
+
+
+def _ensure_memory_notification_schema(con: SQLiteCompatConnection) -> None:
+    """Allow a ``memory`` notification kind and a ``memory`` link target.
+
+    An agent's add / replace / remove of a memory posts a system line in its
+    DM (core/agent_loop/memory_notices.py); add and replace link it to the
+    memory's number. SQLite cannot widen a CHECK in place, so each table
+    whose DDL does not yet name ``'memory'`` is rebuilt: a new table with the
+    current schema.sql columns, every row copied as it is, the old table
+    dropped, the new one renamed. It only adds an allowed value, so no stored
+    row can fail the new CHECK.
+
+    Idempotent: a table whose DDL already names ``'memory'`` (every fresh
+    database, and any database this has already run on) is left alone. The
+    notifications index is recreated after its rebuild because schema.sql,
+    which created it on the old table, runs before the migrations.
+    """
+    notifications_sql = _table_sql(con, "notifications")
+    if "'memory'" not in notifications_sql:
+        con.execute("PRAGMA foreign_keys = OFF")
+        try:
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notifications__new (
+                    id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                    agent_id          VARCHAR NOT NULL REFERENCES agents(id),
+                    task_id           VARCHAR REFERENCES tasks(id),
+                    activity_id       VARCHAR REFERENCES activities(id),
+                    kind              VARCHAR NOT NULL
+                                         CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'cli_approval', 'queue_visibility', 'memory')),
+                    content           TEXT NOT NULL,
+                    source_channel    VARCHAR NOT NULL,
+                    policy            VARCHAR NOT NULL
+                                         CHECK (policy IN ('none', 'completion_blocked', 'all')),
+                    chat_visible      BOOLEAN DEFAULT TRUE,
+                    prompt_visibility BOOLEAN DEFAULT FALSE,
+                    created_at        TIMESTAMP DEFAULT current_timestamp
+                )
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO notifications__new (
+                    id, agent_id, task_id, activity_id, kind, content,
+                    source_channel, policy, chat_visible, prompt_visibility, created_at
+                )
+                SELECT
+                    id, agent_id, task_id, activity_id, kind, content,
+                    source_channel, policy, chat_visible, prompt_visibility, created_at
+                FROM notifications
+                """
+            )
+            con.execute("DROP TABLE notifications")
+            con.execute("ALTER TABLE notifications__new RENAME TO notifications")
+            con.execute(
+                "CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at)"
+            )
+            logger.info("Migration: rebuilt notifications to add memory")
+        finally:
+            con.execute("PRAGMA foreign_keys = ON")
+
+    links_sql = _table_sql(con, "notification_links")
+    if "'memory'" not in links_sql:
+        con.execute("PRAGMA foreign_keys = OFF")
+        try:
+            con.execute(
+                """
+                CREATE TABLE IF NOT EXISTS notification_links__new (
+                    notification_id VARCHAR PRIMARY KEY REFERENCES notifications(id),
+                    target_kind     VARCHAR NOT NULL
+                                       CHECK (target_kind IN ('desk', 'host_path_consent', 'cli_approval', 'memory')),
+                    target_path     VARCHAR NOT NULL,
+                    label           VARCHAR NOT NULL DEFAULT 'Open in Desk',
+                    created_at      TIMESTAMP DEFAULT current_timestamp
+                )
+                """
+            )
+            con.execute(
+                """
+                INSERT INTO notification_links__new (
+                    notification_id, target_kind, target_path, label, created_at
+                )
+                SELECT notification_id, target_kind, target_path, label, created_at
+                FROM notification_links
+                """
+            )
+            con.execute("DROP TABLE notification_links")
+            con.execute("ALTER TABLE notification_links__new RENAME TO notification_links")
+            logger.info("Migration: rebuilt notification_links to add memory")
         finally:
             con.execute("PRAGMA foreign_keys = ON")
 

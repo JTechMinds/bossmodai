@@ -1180,6 +1180,11 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
                     else None
                 ),
                 "task_id": item.task_id,
+                "memory_id": (
+                    int(notification_links[item.id].target_path)
+                    if item.id in notification_links and notification_links[item.id].target_kind == "memory"
+                    else None
+                ),
                 "host_path_consent": (
                     db.get_consent_request(notification_links[item.id].target_path).as_card()
                     if item.id in notification_links
@@ -1227,6 +1232,7 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
             "notification_kind": msg.get("notification_kind"),
             "desk_path": msg.get("desk_path"),
             "task_id": msg.get("task_id"),
+            "memory_id": msg.get("memory_id"),
             "host_path_consent": msg.get("host_path_consent"),
             "cli_approval": msg.get("cli_approval"),
             "attachments": [_serialize_attachment(att) for att in attachments[msg["id"]]],

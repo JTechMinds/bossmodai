@@ -341,6 +341,7 @@ def seed_defaults() -> None:
     reconcile_boss_prompt_wording()
     reconcile_memory_prompt_lines()
     reconcile_memory_remember_prompt_lines()
+    reconcile_memory_notice_prompt_lines()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -761,6 +762,49 @@ def reconcile_memory_remember_prompt_lines() -> None:
         _MEMORY_REMEMBER_PROMPT_LINES_RECONCILED,
         missing_row_label="memory remember",
         missing_line_label="agent-memory remember",
+    )
+
+
+# Agent memory, third pass: the system now posts a line in the boss's DM when
+# an agent changes its memory (core/agent_loop/memory_notices.py), so the
+# agent is no longer told to announce a save. Two line swaps, (old, new),
+# each without its newline, copied verbatim from the shipped file before and
+# after the edit; both old lines are lines the remember pass inserted.
+_MEMORY_NOTICE_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_decision": (
+        (
+            '- `remember` is optional: one sentence (one line) the system adds to your memory before your reply posts. Use it when the message tells you something lasting about the boss, the company, clients, systems, or how the boss wants your work done — including a correction to how you do a recurring job. Leave it out for small talk and one-off details. Say in a few words that you saved it.',
+            "- `remember` is optional: one sentence (one line) the system adds to your memory before your reply posts. Use it when the message tells you something lasting about the boss, the company, clients, systems, or how the boss wants your work done — including a correction to how you do a recurring job. Leave it out for small talk and one-off details. The boss is told automatically; you don't need to mention it.",
+        ),
+        (
+            '- Example: the boss says "stop sending me paragraphs, I want the weekly report as a table" → `{"say":"Got it — tables from now on. Saved to memory.","remember":"The boss wants the weekly report as a table, not paragraphs.","actions":[],"work_commit":false}`.',
+            '- Example: the boss says "stop sending me paragraphs, I want the weekly report as a table" → `{"say":"Got it — tables from now on.","remember":"The boss wants the weekly report as a table, not paragraphs.","actions":[],"work_commit":false}`.',
+        ),
+    ),
+}
+_MEMORY_NOTICE_PROMPT_LINES_RECONCILED = "memory_notice_prompt_lines_reconciled"
+
+
+def reconcile_memory_notice_prompt_lines() -> None:
+    """Stop telling the stored decision contract to announce memory saves, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_memory_prompt_lines`, driven by
+    ``_MEMORY_NOTICE_PROMPT_LINE_EDITS``: the ``remember`` field note's
+    "Say in a few words that you saved it." becomes "The boss is told
+    automatically; you don't need to mention it.", and the example reply
+    drops "Saved to memory.". A row equal to the shipped default is skipped.
+    A row missing an old line keeps that line as stored, and a warning names
+    the key and the line, so the operator can review it by hand.
+
+    Must run after :func:`reconcile_memory_remember_prompt_lines`: both old
+    lines are lines that pass inserts.
+    """
+    _reconcile_prompt_lines(
+        _MEMORY_NOTICE_PROMPT_LINE_EDITS,
+        _MEMORY_NOTICE_PROMPT_LINES_RECONCILED,
+        missing_row_label="memory notice",
+        missing_line_label="agent-memory notice",
     )
 
 

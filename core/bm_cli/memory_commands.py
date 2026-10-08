@@ -9,6 +9,9 @@ writes only the sentence; the store assigns the number.
 
 from __future__ import annotations
 
+from typing import Any
+
+from core.agent_loop.memory_notices import MemoryChange, note_memory_change
 from core.agent_loop.standing_prefs import (
     Memory,
     add_memory,
@@ -40,7 +43,10 @@ def handle_memory(context: CliExecutionContext, parsed: ParsedCliCommand, conten
             refused for ``remove`` and ``list``.
 
     Returns:
-        A ``success_result`` of kind ``memory``, or an ``error_result``. A
+        A ``success_result`` of kind ``memory``, or an ``error_result``. An
+        add, replace or remove also posts one system line in the boss's DM
+        with the agent and declares it as ``data["origin_chrome"]`` for the
+        turn to broadcast (see core/agent_loop/cli_turn_result.py). A
         malformed call lists the four forms; a store rejection (text over the
         limit, a line break, an unknown number, the store cap, an unreadable
         store) carries the store's sentence as the error.
@@ -107,9 +113,9 @@ def _handle_remove(context: CliExecutionContext, parsed: ParsedCliCommand, conte
         command=parsed.raw,
         detail=f"{context.agent.name} removed memory #{memory.id}",
         kind="memory",
-        data={"action": "remove", "memory": memory.model_dump()},
+        data=_noted_data(context, "remove", memory),
         sections=[("MEMORY", [f"removed {_memory_line(memory)}"])],
-        authoritative_note="Removed. It is no longer shown to you.",
+        authoritative_note="Removed. It is no longer shown to you. The boss can see it.",
         cwd=context.cwd,
     )
 
@@ -133,16 +139,28 @@ def _handle_list(context: CliExecutionContext, parsed: ParsedCliCommand, content
     )
 
 
-def _saved(context: CliExecutionContext, parsed: ParsedCliCommand, action: str, memory: Memory) -> BossModCliResult:
+def _saved(
+    context: CliExecutionContext, parsed: ParsedCliCommand, change: MemoryChange, memory: Memory,
+) -> BossModCliResult:
     return success_result(
         command=parsed.raw,
         detail=f"{context.agent.name} saved memory #{memory.id}",
         kind="memory",
-        data={"action": action, "memory": memory.model_dump()},
+        data=_noted_data(context, change, memory),
         sections=[("MEMORY", [_memory_line(memory)])],
-        authoritative_note="Saved. It is shown to you on every turn.",
+        authoritative_note="Saved. It is shown to you on every turn. The boss can see it.",
         cwd=context.cwd,
     )
+
+
+def _noted_data(context: CliExecutionContext, change: MemoryChange, memory: Memory) -> dict[str, Any]:
+    """Post the boss's DM note for one change and return the result's ``data``.
+
+    The note is declared as ``origin_chrome`` for the turn to broadcast: this
+    handler runs off the event loop.
+    """
+    posted = note_memory_change(context.agent, change, memory)
+    return {"action": change, "memory": memory.model_dump(), "origin_chrome": posted["chat_message"]}
 
 
 def _memory_number(token: str) -> int | None:

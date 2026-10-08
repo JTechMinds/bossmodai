@@ -30,6 +30,7 @@ NotificationKind = Literal[
     "host_path_consent",
     "cli_approval",
     "queue_visibility",
+    "memory",
 ]
 
 _DESTINATION_LABELS = {
@@ -76,6 +77,7 @@ class ChatNotification:
     consent_id: str | None = None
     approval_id: str | None = None
     channel_id: str | None = None
+    memory_id: int | None = None
 
 
 def project_chat_notifications(
@@ -222,6 +224,7 @@ async def broadcast_origin_status_messages(result: dict[str, Any], *, agent: Age
                 notification_kind=extra.get("notification_kind"),
                 desk_path=extra.get("desk_path"),
                 task_id=extra.get("task_id"),
+                memory_id=extra.get("memory_id"),
             )
 
 
@@ -265,6 +268,13 @@ def persist_chat_notification(agent: Agent, notification: ChatNotification) -> d
             target_kind="cli_approval",
             target_path=notification.approval_id,
             label="CLI approval",
+        )
+    if notification.memory_id is not None:
+        db.create_notification_link(
+            notification_id=stored.id,
+            target_kind="memory",
+            target_path=str(notification.memory_id),
+            label="Memory",
         )
 
     return _chat_notification_payload(agent, notification, stored)
@@ -334,6 +344,7 @@ def _chat_notification_payload(
         "notification_kind": notification.kind,
         "desk_path": notification.desk_path,
         "task_id": stored.task_id,
+        "memory_id": notification.memory_id,
         "host_path_consent": (
             db.get_consent_request(notification.consent_id).as_card()
             if notification.consent_id and db.get_consent_request(notification.consent_id)

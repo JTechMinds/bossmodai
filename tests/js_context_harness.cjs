@@ -1538,6 +1538,54 @@ async function main() {
             + `close ${closingTheDeskClosesTheMemoryLayer} empty ${memorySaysNothingSaved}`);
     }
 
+    // ─── A chat memory line's link: desk.openMemory(agentId, memoryId) ───
+    //
+    // The desk opens with its Memory layer on top, the named row highlighted
+    // and brought into view; ‹ comes back to the desk. A number the agent has
+    // since removed opens the layer with a notice and no highlight.
+    MEMORIES.a1 = [
+        { id: 4, text: "The boss wants plain English, not jargon." },
+        { id: 5, text: "Ship on Fridays only." },
+    ];
+    const focusedRows = () => memoryRows().filter((row) => row.getAttribute("class").includes("is-focused"));
+    desk.openMemory("a1", 5);
+    await drain();
+    const aMemoryLinkOpensTheLayerOverTheDesk = Boolean(memoryLayer()) && memoryTop() === memoryLayer()
+        && deskModal().hidden === true
+        && memoryLayer().querySelector(".modal-trail").textContent.includes("Jim")
+        && memoryLayer().querySelector(".modal-trail").textContent.includes("Memory");
+    const aMemoryLinkHighlightsItsRow = focusedRows().length === 1
+        && focusedRows()[0].getAttribute("data-memory-id") === "5"
+        && JSON.stringify(focusedRows()[0].scrolledIntoView) === JSON.stringify({ block: "nearest" })
+        && memoryLayer().querySelectorAll(".callout").length === 0;
+    await memoryLayer().querySelector(".modal-back").dispatchClick();
+    await drain();
+    const aMemoryLinkBackReturnsToTheDesk = !memoryLayer() && deskModal().hidden === false;
+    desk.close();
+    await drain();
+    desk.openMemory("a1", 9);
+    await drain();
+    const aRemovedMemoryLinkSaysSo = memoryLayer().querySelectorAll(".callout")
+            .some((node) => node.textContent === "That memory is no longer saved.")
+        && focusedRows().length === 0
+        && memoryRows().length === 2;
+    desk.close();
+    await drain();
+    let aBadMemoryNumberThrows = false;
+    try {
+        desk.openMemory("a1", "5");
+    } catch (err) {
+        aBadMemoryNumberThrows = /focusId must be a memory number/.test(String(err && err.message));
+    }
+    desk.close();
+    await drain();
+    if (!aMemoryLinkOpensTheLayerOverTheDesk || !aMemoryLinkHighlightsItsRow || !aMemoryLinkBackReturnsToTheDesk
+        || !aRemovedMemoryLinkSaysSo || !aBadMemoryNumberThrows) {
+        throw new Error(`the memory link: layer ${aMemoryLinkOpensTheLayerOverTheDesk} `
+            + `highlight ${aMemoryLinkHighlightsItsRow} back ${aMemoryLinkBackReturnsToTheDesk} `
+            + `removed ${aRemovedMemoryLinkSaysSo} badNumber ${aBadMemoryNumberThrows}`);
+    }
+
     // ─── Chat, from the head's `⋯` ───
     desk.open("a1");
     await drain();
@@ -3055,6 +3103,11 @@ async function main() {
         memoryRetryRecovers,
         closingTheDeskClosesTheMemoryLayer,
         memorySaysNothingSaved,
+        aMemoryLinkOpensTheLayerOverTheDesk,
+        aMemoryLinkHighlightsItsRow,
+        aMemoryLinkBackReturnsToTheDesk,
+        aRemovedMemoryLinkSaysSo,
+        aBadMemoryNumberThrows,
         columnHoldsOfficeAndChatter,
         oneDeskAtATime,
         deskDrainsOnClose,

@@ -274,6 +274,9 @@ def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
         "memoryAlreadyGoneIsANotice", "memoryFailureKeepsTheRow", "memoryBackReturnsToTheDesk",
         "memoryReadFailureOffersRetry", "memoryRetryRecovers", "closingTheDeskClosesTheMemoryLayer",
         "memorySaysNothingSaved",
+        # A chat memory line's link: the layer over the desk, its row highlighted.
+        "aMemoryLinkOpensTheLayerOverTheDesk", "aMemoryLinkHighlightsItsRow",
+        "aMemoryLinkBackReturnsToTheDesk", "aRemovedMemoryLinkSaysSo", "aBadMemoryNumberThrows",
     ):
         assert payload[key] is True, key
     assert payload["toolsAreInTheHead"] is True

@@ -102,6 +102,7 @@ const BossModShell = (() => {
             needs,
             contextEl: contextElement,
             openDesk: desk.open,
+            openMemory: desk.openMemory,
         });
         const navigate = (placeId, params) => shell.navigate(placeId, params);
 

@@ -61,6 +61,11 @@ def test_memory_guidance_names_the_three_homes() -> None:
     # Personal how-to stays cold.
     assert lines[5].startswith("- /me/notes is for things you need rarely but long term")
     assert "Not shown automatically; open it when you need it." in lines[5]
+    # The system tells the boss about a save; the agent does not announce it.
+    assert (
+        "The boss is told automatically when you save; you don't need to mention it." in lines[6]
+    )
+    assert "say so in a few words" not in guidance
     assert lines[6].endswith(
         "Saving is never task progress or Done. A correction to how you do your work, "
         "including a recurring job, is lasting, not a one-off."

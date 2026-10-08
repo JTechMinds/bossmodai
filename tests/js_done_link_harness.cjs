@@ -3,6 +3,8 @@
  * Quiet chrome: glyph on the left, blue-link text. No Open pill.
  * Done opens a real file (path only). Created/Accepted open the bound task in Tasks.
  * A Done link whose open rejects marks itself failed and carries the reason.
+ * A memory line (saved / updated) with a number opens the author's Memory
+ * layer through ctx.openMemory; a removed memory's line is plain text.
  * Invoked by tests/test_ui_conversation.py. Not a browser bundle.
  */
 const fs = require("fs");
@@ -17,10 +19,12 @@ eval(`${fs.readFileSync(paths[1], "utf8")}\n;global.BossModEventCards = BossModE
 
 const opened = [];
 const navigated = [];
+const memoriesOpened = [];
 const ctx = {
     api: async () => ({ ok: true, async json() { return {}; } }),
     openDeliverable: (path, agentId) => { opened.push({ path, agentId }); },
     navigate: (place, params) => { navigated.push({ place, params }); },
+    openMemory: (agentId, memoryId) => { memoriesOpened.push({ agentId, memoryId }); },
 };
 
 function note(text, deskPath, extra) {
@@ -125,6 +129,21 @@ const failing = global.BossModEventCards.renderEventCard(
 const failingLink = link(failing);
 if (failingLink) failingLink.click();
 
+const memorySaved = global.BossModEventCards.renderEventCard(
+    note("Tyler saved a memory", "", { memoryId: 4 }),
+    ctx,
+);
+const memoryRemoved = global.BossModEventCards.renderEventCard(
+    note("Tyler removed a memory: “Ship on Fridays only.”", "", { memoryId: null }),
+    ctx,
+);
+const memoryNoOpener = global.BossModEventCards.renderEventCard(
+    note("Tyler saved a memory", "", { memoryId: 4 }),
+    { api: ctx.api, navigate: ctx.navigate },
+);
+const memoryLink = link(memorySaved);
+if (memoryLink) memoryLink.click();
+
 const createdLink = link(created);
 if (createdLink) createdLink.click();
 const acceptedLink = link(accepted);
@@ -191,6 +210,20 @@ setTimeout(() => {
         navigated,
         failedLinkClass: failingLink ? String(failingLink.className || "") : "",
         failedLinkTitle: failingLink ? failingLink.getAttribute("title") : null,
+        memoryKind: memorySaved.getAttribute("data-open-kind"),
+        memoryGlyph: glyph(memorySaved),
+        memoryGlyphOnLeft: glyphOnLeft(memorySaved),
+        memoryGlyphHidden: walk(memorySaved, (node) => node.getAttribute("data-lucide") === "brain")[0]
+            .getAttribute("aria-hidden"),
+        memoryLink: memoryLink ? String(memoryLink.textContent || "") : "",
+        memoryLinkTag: memoryLink ? memoryLink.tagName : "",
+        memoryLinkType: memoryLink ? memoryLink.getAttribute("type") : null,
+        memoriesOpened,
+        memoryRemovedHasLink: Boolean(link(memoryRemoved)),
+        memoryRemovedHasGlyph: Boolean(glyph(memoryRemoved)),
+        memoryRemovedText: textOf(memoryRemoved),
+        memoryNoOpenerHasLink: Boolean(link(memoryNoOpener)),
+        memoryNoOpenerHasGlyph: Boolean(glyph(memoryNoOpener)),
     };
 
     process.stdout.write(`${JSON.stringify(payload)}\n`);

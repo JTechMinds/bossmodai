@@ -25,11 +25,15 @@ const BossModNavigator = (() => {
      * @param {(agentId: string, path?: string) => void} options.openDesk  Opens
      *   one agent's desk modal (context/desk-dialog.js). Handed to every place
      *   as `ctx.openDesk`, so each door into a desk is the same one.
+     * @param {(agentId: string, memoryId: number) => void} [options.openMemory]
+     *   Opens that desk with its Memory layer on one memory
+     *   (context/desk-dialog.js); handed on as `ctx.openMemory` for Chat's
+     *   memory lines, which render as plain text without it.
      * @returns {{ navigate: (id: string, params?: object) => void, getCtx: () => object }}
      * @throws {Error} When openDesk is not a function: a place would otherwise
      *   render a desk door that fails only when clicked.
      */
-    function createNavigator({ store, bus, container, api, needs, contextEl, openDesk }) {
+    function createNavigator({ store, bus, container, api, needs, contextEl, openDesk, openMemory }) {
         if (typeof openDesk !== 'function') throw new Error('[navigator] openDesk is required');
         let current = null;
 
@@ -40,6 +44,7 @@ const BossModNavigator = (() => {
             needs,
             contextEl,
             openDesk,
+            openMemory,
             navigate: (id, params) => navigate(id, params),
         };
 

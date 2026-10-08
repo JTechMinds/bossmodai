@@ -582,6 +582,9 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
 def test_done_link_harness() -> None:
     """Origin Done tints and links the claim path; prose-only has no chrome.
 
+    A memory line with a number links to the author's Memory layer; a removed
+    memory's line stays plain text.
+
     Created/Accepted use the Tasks task glyph and blue-link the one-liner.
     Done uses the doc glyph and blue-links the path only. No Open pill.
     A Created line must not invent a document link.
@@ -656,6 +659,23 @@ def test_done_link_harness() -> None:
         ],
         "failedLinkClass": "note-link is-failed",
         "failedLinkTitle": "Path not found",
+        # A saved/updated memory line opens the author's Memory layer on that
+        # number: a real button, the brain glyph decorative on its left.
+        "memoryKind": "memory",
+        "memoryGlyph": "brain",
+        "memoryGlyphOnLeft": True,
+        "memoryGlyphHidden": "true",
+        "memoryLink": "Tyler saved a memory",
+        "memoryLinkTag": "BUTTON",
+        "memoryLinkType": "button",
+        "memoriesOpened": [{"agentId": "agent-1", "memoryId": 4}],
+        # A removed memory has nothing to open: plain text, its words inline.
+        "memoryRemovedHasLink": False,
+        "memoryRemovedHasGlyph": False,
+        "memoryRemovedText": "Tyler removed a memory: “Ship on Fridays only.”",
+        # Without the opener the line does not pretend to be a link.
+        "memoryNoOpenerHasLink": False,
+        "memoryNoOpenerHasGlyph": False,
     }
 
 

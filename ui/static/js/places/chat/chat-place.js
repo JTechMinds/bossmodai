@@ -71,8 +71,8 @@ const BossModChatPlace = (() => {
         /**
          * @param {HTMLElement} el
          * @param {object} ctx  `{ store, bus, api, needs, contextEl, openDesk,
-         *   navigate }` from the shell. Chat alone fills `ctx.contextEl`, with
-         *   the office summary and chatter; `openDesk` is the one desk modal.
+         *   openMemory, navigate }` from the shell. Chat alone fills
+         *   `ctx.contextEl`, with the office summary and chatter; `openDesk` is the one desk modal.
          * @returns {void}
          */
         mount(el, ctx) {
@@ -98,8 +98,8 @@ const BossModChatPlace = (() => {
                 navigate: ctx.navigate,
                 needs: ctx.needs,
                 drafts, cache: transcriptCache,
-                // `(agentId, path?)`: the lamp, and a deliverable's desk.
-                openDesk: ctx.openDesk,
+                // The lamp and a deliverable's desk; a memory line's Memory layer.
+                openDesk: ctx.openDesk, openMemory: ctx.openMemory,
                 // The Browser Vision screen button in an agent's header.
                 browserView: BossModExtensionsLive.headerCapability(),
             });

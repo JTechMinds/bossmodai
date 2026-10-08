@@ -4,6 +4,10 @@ Prompt rows are seeded once and never overwritten, so the shipped edits that
 teach the decision contract the ``remember`` envelope field reach an existing
 database only through this line-level, marker-guarded pass. It runs after
 the first memory pass, whose new lines are its old lines.
+
+The shipped decision contract has since moved on: the memory notice pass
+(``reconcile_memory_notice_prompt_lines``) rewrote two of the lines this pass
+inserts. This pass's target is the shipped default with that pass undone.
 """
 
 from __future__ import annotations
@@ -17,13 +21,15 @@ import pytest
 import db
 import db.settings as settings_db
 from core import config
-from core.default_prompts import load_default_prompt, prompt_file_path
+from core.default_prompts import load_default_prompt
 
 _MARKER = "memory_remember_prompt_lines_reconciled"
 _FIRST_MARKER = "memory_prompt_lines_reconciled"
 _KEY = "runtime_contract_decision"
 _EDITS = settings_db._MEMORY_REMEMBER_PROMPT_LINE_EDITS
 _FIRST_EDITS = settings_db._MEMORY_PROMPT_LINE_EDITS
+_LATER_EDITS = settings_db._MEMORY_NOTICE_PROMPT_LINE_EDITS
+_LATER_MARKER = "memory_notice_prompt_lines_reconciled"
 
 
 def setup_function() -> None:
@@ -47,9 +53,18 @@ def _stored(key: str) -> tuple[str, str]:
     return str(row["value"]), str(row["category"])
 
 
+def _remember_pass_default(key: str) -> str:
+    """The shipped default as this pass left it: the later notice pass undone."""
+    text = load_default_prompt(key)
+    for old_line, new_line in _LATER_EDITS.get(key, ()):
+        assert text.count(new_line) == 1, (key, new_line)
+        text = text.replace(new_line, old_line)
+    return text
+
+
 def _prior_default(key: str) -> str:
     """The shipped default as it was before the remember edit: every new line swapped back."""
-    text = load_default_prompt(key)
+    text = _remember_pass_default(key)
     for old_line, new_line in _EDITS[key]:
         assert text.count(new_line) == 1, (key, new_line)
         text = text.replace(new_line, old_line)
@@ -66,7 +81,7 @@ def test_only_the_decision_contract_is_edited() -> None:
 
 
 def test_the_shipped_file_carries_the_new_lines_and_not_the_swapped_old_ones() -> None:
-    text = prompt_file_path(_KEY).read_text(encoding="utf-8")
+    text = _remember_pass_default(_KEY) + "\n"
     lines = text.splitlines()
     for old_line, new_line in _EDITS[_KEY]:
         assert text.count(new_line + "\n") == 1, new_line
@@ -92,7 +107,7 @@ def test_a_row_holding_the_prior_default_gets_the_new_lines_and_keeps_its_catego
     with caplog.at_level(logging.WARNING, logger="db.settings"):
         _rerun()
     value, stored_category = _stored(_KEY)
-    assert value == load_default_prompt(_KEY)
+    assert value == _remember_pass_default(_KEY)
     assert stored_category == settings_db.get_seed_setting_default(_KEY)[1]
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
     assert _stored(_MARKER)[0] == "true"
@@ -108,10 +123,12 @@ def test_a_row_from_before_both_memory_passes_reaches_the_current_default(
     db.set_setting(_KEY, oldest, "advanced")
     db.execute("DELETE FROM settings WHERE key = $1", [_FIRST_MARKER])
     db.execute("DELETE FROM settings WHERE key = $1", [_MARKER])
+    db.execute("DELETE FROM settings WHERE key = $1", [_LATER_MARKER])
     with caplog.at_level(logging.WARNING, logger="db.settings"):
         # The order seed_defaults runs them in.
         settings_db.reconcile_memory_prompt_lines()
         settings_db.reconcile_memory_remember_prompt_lines()
+        settings_db.reconcile_memory_notice_prompt_lines()
     assert _stored(_KEY)[0] == load_default_prompt(_KEY)
     assert [
         r for r in caplog.records
@@ -162,7 +179,7 @@ def test_the_second_run_is_a_no_op() -> None:
     settings_db.reconcile_memory_remember_prompt_lines()
     assert _stored(_KEY)[0] == prior
     _rerun()
-    assert _stored(_KEY)[0] == load_default_prompt(_KEY)
+    assert _stored(_KEY)[0] == _remember_pass_default(_KEY)
     db.set_setting(_KEY, prior, "advanced")
     settings_db.reconcile_memory_remember_prompt_lines()
     assert _stored(_KEY)[0] == prior

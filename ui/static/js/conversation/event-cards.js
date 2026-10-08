@@ -2,8 +2,8 @@
  * BossMod AI — the visual treatment for every non-message row.
  *
  * Three kinds, two producers. A conversation SOURCE produces `request` (a
- * host-path consent or CLI approval ask) and `note` (a task-lifecycle receipt),
- * and nothing else. `event.*` is produced by needs/needs-bar.js, which renders
+ * host-path consent or CLI approval ask) and `note` (a task-lifecycle receipt,
+ * or an agent's memory change), and nothing else. `event.*` is produced by needs/needs-bar.js, which renders
  * its cards through here rather than owning a second look for them.
  *
  * That split is spec 4.3 as reconciled: one renderer, one appearance per need.
@@ -75,11 +75,24 @@ const BossModEventCards = (() => {
         return String((message && message.deskPath) || '').trim();
     }
 
+    /**
+     * The decorative glyph on a linked note's left.
+     * @param {'task'|'memory'|'file'} kind  What the link opens.
+     * @returns {HTMLElement}
+     */
     function originGlyph(kind) {
         if (kind === 'task') {
             return h('i', {
                 class: 'note-glyph',
                 'data-lucide': 'list-todo',
+                'aria-hidden': 'true',
+            });
+        }
+        if (kind === 'memory') {
+            // The desk's Memory tool glyph: the line opens that layer.
+            return h('i', {
+                class: 'note-glyph',
+                'data-lucide': 'brain',
                 'aria-hidden': 'true',
             });
         }
@@ -129,6 +142,12 @@ const BossModEventCards = (() => {
      *   Same Tasks open path blocked needs use: `navigate('tasks', { taskId })`.
      *   Created/Accepted notes render a task glyph and blue-link text only
      *   when this arrives.
+     * @param {(agentId: string, memoryId: number) => void} [ctx.openMemory]
+     *   The author's desk with its Memory layer on one memory. A note that
+     *   carries `memoryId` (an agent saved or updated a memory) renders the
+     *   brain glyph and blue-links its text only when this arrives and the
+     *   note has an author; a removed memory's note carries none and stays
+     *   plain text.
      * @returns {HTMLElement}
      * @throws {Error} When ctx is missing, on a kind with no renderer, on a
      *   `request` or `event` with no card, or on an `event` whose tone has no
@@ -156,6 +175,7 @@ const BossModEventCards = (() => {
         }
 
         if (message.kind === 'note') {
+            const memoryId = message.memoryId;
             const deskPath = String(message.deskPath || '').trim();
             const taskId = originTaskOpenId(message);
             const filePath = originFileOpenPath(message);
@@ -177,9 +197,18 @@ const BossModEventCards = (() => {
                 || (typeof ctx.openDesk === 'function' && Boolean(noteAgentId))
             );
             const canOpenTask = Boolean(taskId) && typeof ctx.navigate === 'function';
-            const openKind = canOpenTask ? 'task' : (canOpenFile ? 'file' : '');
+            const canOpenMemory = memoryId != null && typeof ctx.openMemory === 'function'
+                && Boolean(noteAgentId);
+            const openKind = canOpenMemory ? 'memory' : (canOpenTask ? 'task' : (canOpenFile ? 'file' : ''));
             if (openKind) note.setAttribute('data-open-kind', openKind);
-            if (openKind === 'task') {
+            if (openKind === 'memory') {
+                note.append(
+                    originGlyph('memory'),
+                    h('p', { class: 'note-text' }, originLink(text, () => {
+                        ctx.openMemory(noteAgentId, memoryId);
+                    })),
+                );
+            } else if (openKind === 'task') {
                 note.append(
                     originGlyph('task'),
                     h('p', { class: 'note-text' }, originLink(text, () => {
