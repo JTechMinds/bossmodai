@@ -23,7 +23,7 @@ const NAMES = [
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
-    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConversation",
+    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -205,7 +205,7 @@ async function flowCases() {
     await settle();
     const doneButton = documentStub.body.querySelector("#chat-rewind-done");
     const unremovedFilesShowWarning = dialogEl() !== null
-        && statusText() === "Rewound. 2 attachment files could not be deleted; see the log."
+        && statusText() === "Rewound, but 2 attached files couldn't be deleted."
         && doneButton && doneButton.textContent === "Close" && confirmBtn() === null;
     check(unremovedFilesShowWarning, `warning state: ${statusText()}`);
     await doneButton.dispatchClick();
@@ -233,7 +233,7 @@ async function dialogCases() {
     });
     const honesty = documentStub.body.querySelector(".chat-rewind-note").textContent;
     const loadingState = statusText() === "Loading messages…" && confirmBtn().disabled === true
-        && honesty.includes("what Ada sees") && honesty.includes("Attachments on removed messages are deleted.")
+        && honesty.includes("Anything Ada has already done") && honesty.includes("Only this conversation is rewound.")
         && documentStub.activeElement === cancelBtn();
     check(loadingState, `loading: ${statusText()} / focus on ${documentStub.activeElement && documentStub.activeElement.id}`);
 
@@ -256,7 +256,7 @@ async function dialogCases() {
     const restoreNote = () => documentStub.body.querySelectorAll(".chat-rewind-note")[1];
     check(restoreNote().hidden === true, "an agent row restores nothing, so the restore note is hidden");
     choose("m3");
-    check(restoreNote().hidden === false, "an own row says it goes back into the composer");
+    check(restoreNote().hidden === false, "an own row says it goes back in the message box");
 
     // Enter in the group confirms; a rejection keeps the dialog with its reason.
     const list = documentStub.body.querySelector(".chat-rewind-list");
@@ -273,9 +273,9 @@ async function dialogCases() {
     // Confirming again with a warning switches to the done state.
     await confirmBtn().dispatchClick();
     await settle();
-    resolveConfirm.resolve({ warning: "Rewound. 1 attachment file could not be deleted; see the log." });
+    resolveConfirm.resolve({ warning: "Rewound, but 1 attached file couldn't be deleted." });
     await settle();
-    const warningShowsDoneState = statusText().startsWith("Rewound. 1 attachment file")
+    const warningShowsDoneState = statusText().startsWith("Rewound, but 1 attached file")
         && documentStub.body.querySelector("#chat-rewind-done") !== null
         && documentStub.activeElement === documentStub.body.querySelector("#chat-rewind-done");
     check(warningShowsDoneState, "a warning must leave a done state with Close focused");

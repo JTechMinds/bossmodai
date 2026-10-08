@@ -101,7 +101,7 @@ const NAMES = [
     "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeedCoalesce", "BossModNeeds", "BossModNeedsBar",
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
-    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConversation", "BossModPlaces",
+    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
     "BossModFloorPlan", "BossModMiniOffice", "BossModOfficeChatter",
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",

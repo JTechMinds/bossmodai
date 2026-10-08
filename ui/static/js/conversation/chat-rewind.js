@@ -102,8 +102,8 @@ const BossModChatRewind = (() => {
             const unremoved = result && result.unremoved_files;
             return {
                 warning: unremoved > 0
-                    ? `Rewound. ${unremoved} attachment ${unremoved === 1 ? 'file' : 'files'} `
-                        + 'could not be deleted; see the log.'
+                    ? `Rewound, but ${unremoved} attached ${unremoved === 1 ? 'file' : 'files'} `
+                        + 'couldn\'t be deleted.'
                     : '',
             };
         }

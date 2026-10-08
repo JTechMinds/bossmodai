@@ -72,6 +72,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "conversation-focus-invalidate.js",
     CONVERSATION / "chat-rewind-dialog.js",
     CONVERSATION / "chat-rewind.js",
+    CONVERSATION / "consent-activity.js",
     CONVERSATION / "conversation.js",
     JS / "shell" / "places.js",
     # The shared viewer the desk browser opens, with the two modules it is

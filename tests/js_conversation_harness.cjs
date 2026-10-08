@@ -27,7 +27,7 @@ const NAMES = [
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
-    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConversation",
+    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);

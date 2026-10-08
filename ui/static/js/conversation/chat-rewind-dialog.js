@@ -15,13 +15,12 @@ const BossModChatRewindDialog = (() => {
     const { h, clear } = BossModDom;
 
     /** What a rewind does and does not undo, said before every cut. */
-    const HONESTY_COPY = (name) => `Removes the selected message and everything after it from this chat `
-        + `and from what ${name} sees. If ${name} is replying right now, that reply stops. Anything `
-        + `${name} already did (tasks, files, memory, approvals, messages sent elsewhere) stays. `
-        + 'Attachments on removed messages are deleted.';
+    const HONESTY_COPY = (name) => 'Rewind this conversation to an earlier message. '
+        + `Only this conversation is rewound. Anything ${name} has already done `
+        + '(tasks, files, memory, approvals, other messages) stays as it is.';
     /** Shown while the selected row is the operator's own. */
-    const RESTORE_COPY = 'Your message goes back into the composer so you can edit and resend it. '
-        + 'Attachments are not restored.';
+    const RESTORE_COPY = 'Your message goes back in the message box so you can edit it. '
+        + 'Attachments aren\'t kept.';
     const EMPTY_COPY = 'Nothing to rewind yet.';
     const LOADING_COPY = 'Loading messages…';
     const REMOVED_MARK = 'Will be removed';

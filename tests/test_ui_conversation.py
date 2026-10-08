@@ -57,6 +57,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "conversation-focus-invalidate.js",
     CONVERSATION / "chat-rewind-dialog.js",
     CONVERSATION / "chat-rewind.js",
+    CONVERSATION / "consent-activity.js",
     CONVERSATION / "conversation.js",
 ]
 
@@ -464,6 +465,40 @@ def test_chat_rewind_harness() -> None:
         "errorCardOffersRewind": True,
         "cardRewindRestoresAndAcknowledges": True,
         "menuOmitsRewindOnThreads": True,
+    }
+
+
+def test_consent_activity_settled_cards() -> None:
+    """Which inline consent or approval cards an `activity` broadcast settles.
+
+    Shell Executor enable prefers the server's own consent card; each CLI
+    approval event maps to one card with its status and empty-string defaults;
+    anything else settles nothing.
+    """
+    result = subprocess.run(
+        [
+            "node",
+            str(Path(__file__).resolve().parent / "js_consent_activity_harness.cjs"),
+            str(CONVERSATION / "consent-activity.js"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "shellUsesHostPathConsent": True,
+        "shellBuildsCardWithoutConsent": True,
+        "approvedTakesEntryStatus": True,
+        "approvedDefaultsToApproved": True,
+        "rejectedIsAlwaysRejected": True,
+        "resolvedTakesEntryStatus": True,
+        "resolvedDefaultsToApproved": True,
+        "approvalFieldsDefaultToEmpty": True,
+        "unrelatedEventSettlesNothing": True,
+        "missingEntrySettlesNothing": True,
     }
 
 

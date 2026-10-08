@@ -111,27 +111,25 @@ const BossModConversation = (() => {
 
         // Directly above the composer: what needs the operator where they are
         // already looking. Everything else goes to the toast.
-        const needsBar = BossModNeedsBar.createNeedsBar({ store, needs, navigate, needActions: (need) => (rewind ? rewind.cardActions(need) : []) });
+        const needsBar = BossModNeedsBar.createNeedsBar({
+            store,
+            needs,
+            navigate,
+            needActions: (need) => (rewind ? rewind.cardActions(need) : []),
+        });
 
         const element = h('div', { class: 'conversation' },
-            chrome.element, transcript.element, needsBar.element, composer.element);
+            chrome.element,
+            transcript.element,
+            needsBar.element,
+            composer.element);
 
         function applyChrome() {
             const view = source ? source.chrome() : null;
-            if (view) chrome.apply(rewind ? { ...view, actions: [...view.actions, rewind.menuAction()] } : view);
-        }
-
-        function shellExecutorActivityCard(entry) {
-            const event = String((entry && entry.event) || '');
-            if (event === 'shell_executor_enabled') {
-                return entry.host_path_consent || {
-                    status: 'enabled',
-                    kind: 'shell_executor',
-                    grant_root: 'cli_shell_enabled',
-                    decision_note: entry.detail,
-                };
-            }
-            return null;
+            if (!view) return;
+            chrome.apply(rewind
+                ? { ...view, actions: [...view.actions, rewind.menuAction()] }
+                : view);
         }
 
         // ── Painting ──
@@ -293,8 +291,16 @@ const BossModConversation = (() => {
             currentKind = kind;
             cardCtx.agentId = kind === 'agent' ? id : null;
             source = buildSource(id, kind);
-            rewind = kind === 'agent' ? BossModChatRewind.createChatRewind({ source, agentName: () => source.chrome().title, composer, needs }) : null;
-            needsBar.refresh();  // the bar rendered on the switch before this conversation's Rewind existed
+            rewind = kind === 'agent'
+                ? BossModChatRewind.createChatRewind({
+                    source,
+                    agentName: () => source.chrome().title,
+                    composer,
+                    needs,
+                })
+                : null;
+            // The bar rendered on the switch before this conversation's Rewind existed.
+            needsBar.refresh();
             pendingLive = [];
             const live = source.subscribe(handlers);
             unsubscribe = live.dispose;
@@ -353,21 +359,8 @@ const BossModConversation = (() => {
             () => { if (currentId) transcript.renderPresence(currentId); }));
 
         disposers.push(bus.subscribe('activity', (entry) => {
-            const card = shellExecutorActivityCard(entry);
-            if (card) BossModConsentCard.collapseGrantedConsentCards(card);
-            const event = String((entry && entry.event) || '');
-            if (event === 'cli_approval_approved' || event === 'cli_approval_rejected'
-                || event === 'cli_approval_resolved') {
-                BossModConsentCard.collapseGrantedConsentCards({
-                    kind: 'cli_approval',
-                    status: event === 'cli_approval_rejected'
-                        ? 'rejected'
-                        : ((entry && entry.status) || 'approved'),
-                    command: (entry && entry.command) || '',
-                    cwd: (entry && entry.cwd) || '',
-                    decision_note: (entry && entry.decision_note) || '',
-                });
-            }
+            BossModConsentActivity.settledCards(entry)
+                .forEach((card) => BossModConsentCard.collapseGrantedConsentCards(card));
         }));
 
         disposers.push(store.subscribe(

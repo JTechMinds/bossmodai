@@ -511,6 +511,7 @@ CONTEXT_MODULES = [
     JS / "conversation" / "conversation-focus-invalidate.js",
     JS / "conversation" / "chat-rewind-dialog.js",
     JS / "conversation" / "chat-rewind.js",
+    JS / "conversation" / "consent-activity.js",
     JS / "conversation" / "conversation.js",
     JS / "shell" / "places.js",
     JS / "places" / "files" / "file-content.js",
