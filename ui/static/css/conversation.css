@@ -909,6 +909,58 @@ span.mention-pill { cursor: default; }
 .event-card-action.quiet { color: var(--muted); }
 .event-card-action:disabled { opacity: 0.55; pointer-events: none; }
 
+/* ─── Rewind dialog (conversation/chat-rewind-dialog.js) ───
+   A default-size modal: the copy, then the DM's messages newest first as a
+   radio group. Choosing one marks it and every newer row "Will be removed":
+   the words carry the meaning and the alert tint only reinforces it, so the
+   marking does not rest on colour alone (SC 1.4.1). */
+
+.chat-rewind { display: flex; flex-direction: column; gap: 10px; }
+.chat-rewind-note { margin: 0; font-size: 13px; line-height: 1.45; }
+.chat-rewind-status { margin: 0; font-size: 13px; color: var(--ink); }
+.chat-rewind-status.is-warning { color: var(--alert-ink); font-weight: 500; }
+.chat-rewind-error { margin: 0; font-size: 13px; font-weight: 500; color: var(--alert-ink); }
+.chat-rewind-error:empty { display: none; }
+
+.chat-rewind-list { display: flex; flex-direction: column; gap: 4px; }
+/* An author `display` outranks the UA's [hidden]; the empty and error states hide it. */
+.chat-rewind-list[hidden] { display: none; }
+
+/* --line-control, not --line: the row's edge is the control's boundary on
+   white (3.10:1, SC 1.4.11), as .event-card explains. */
+.chat-rewind-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-control);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.chat-rewind-row:hover { background: var(--btn-face); }
+.chat-rewind-row.is-removed { border-color: var(--alert-line); background: var(--alert-bg); }
+.chat-rewind-row.is-selected { border-color: var(--alert); }
+
+/* The radio is the row's focus target; its ring is the app's one ring. */
+.chat-rewind-radio { flex: 0 0 auto; margin: 2px 0 0; accent-color: var(--alert); }
+.chat-rewind-radio:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.chat-rewind-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 auto; }
+.chat-rewind-meta { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.chat-rewind-who { font-weight: 600; color: var(--ink); }
+.chat-rewind-time { color: var(--muted); }
+.chat-rewind-mark { margin-left: auto; font-weight: 600; color: var(--alert-ink); white-space: nowrap; }
+.chat-rewind-excerpt {
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ink);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 /* ─── Needs bar: the open conversation's share of the queue ─── */
 
 .needs-bar {

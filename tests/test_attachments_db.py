@@ -69,14 +69,26 @@ def test_get_attachment_by_id_found(db):
     assert fetched.id == created.id
 
 
-def test_delete_attachments_for_message(db):
+def test_delete_attachments_for_messages(db):
     mid = f"m-{uuid.uuid4().hex[:8]}"
-    att_db.create_attachment(mid, "a.png", 1, "image/png", "/a", "image", **_CTX)
-    att_db.create_attachment(mid, "b.png", 1, "image/png", "/b", "image", **_CTX)
-    att_db.create_attachment("other", "c.png", 1, "image/png", "/c", "image", **_CTX)
-    removed = att_db.delete_attachments_for_message(mid)
-    assert removed == 2
-    assert len(att_db.get_attachments_for_message(mid)) == 0
+    mid2 = f"m-{uuid.uuid4().hex[:8]}"
+    a = att_db.create_attachment(mid, "a.png", 1, "image/png", "/a", "image", **_CTX)
+    b = att_db.create_attachment(mid, "b.png", 1, "image/png", "/b", "image", **_CTX)
+    d = att_db.create_attachment(mid2, "d.png", 1, "image/png", "/d", "image", **_CTX)
+    other = att_db.create_attachment("other", "c.png", 1, "image/png", "/c", "image", **_CTX)
+    removed = att_db.delete_attachments_for_messages([mid, mid2, mid])
+    assert sorted(row.id for row in removed) == sorted([a.id, b.id, d.id])
+    assert all(isinstance(row, Attachment) for row in removed)
+    assert {row.storage_path for row in removed} == {"/a", "/b", "/d"}
+    assert att_db.get_attachments_for_message(mid) == []
+    assert att_db.get_attachments_for_message(mid2) == []
+    assert att_db.get_attachment_by_id(other.id) is not None
+
+
+def test_delete_attachments_for_no_messages_is_a_no_op(db):
+    kept = att_db.create_attachment("keep", "k.png", 1, "image/png", "/k", "image", **_CTX)
+    assert att_db.delete_attachments_for_messages([]) == []
+    assert att_db.get_attachment_by_id(kept.id) is not None
 
 
 def _pending(name: str = "a.png", **ctx: str) -> Attachment:
@@ -160,5 +172,6 @@ def test_fk_cascade_on_message_delete(db):
     att_db.create_attachment(msg.id, "b.png", 1, "image/png", "/b", "image", **_CTX)
     assert len(att_db.get_attachments_for_message(msg.id)) == 2
     # App-level cascade: delete attachments when the message is deleted
-    att_db.delete_attachments_for_message(msg.id)
+    removed = att_db.delete_attachments_for_messages([msg.id])
+    assert {row.file_name for row in removed} == {"a.png", "b.png"}
     assert len(att_db.get_attachments_for_message(msg.id)) == 0

@@ -101,6 +101,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/agents/{agent_id}/meeting-session", "get_agent_meeting_session"),
     (("POST",), "/api/agents/{agent_id}/meeting-session/messages", "create_agent_meeting_session_message"),
     (("DELETE",), "/api/agents/{agent_id}/chat-history", "clear_agent_chat_history"),
+    (("POST",), "/api/agents/{agent_id}/chat-rewind", "rewind_agent_chat"),
     (("POST",), "/api/agents/{agent_id}/reset-runtime", "reset_agent_runtime"),
     (("GET",), "/api/diagnostics", "list_diagnostics"),
     (("GET",), "/api/diagnostics/{diagnostic_id}", "get_diagnostic_detail"),
@@ -183,7 +184,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 159
+    assert len(got) == 160
 
 
 def test_from_api_routes_import_router_still_works() -> None:

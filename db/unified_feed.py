@@ -22,7 +22,7 @@ from db.notification_links import list_notification_links
 _ACTIVITY_LOG_AGENT_EVENTS = frozenset({
     "agent_created", "agent_updated", "agent_deleted", "agent_moved",
     "agent_prompt_history_policy_updated", "agent_runtime_reset",
-    "chat_history_cleared",
+    "chat_history_cleared", "chat_rewound",
 })
 _ACTIVITY_LOG_TASK_EVENTS = frozenset({
     "task_created", "task_updated", "task_stalled", "task_cancelled", "world_feedback",

@@ -22,8 +22,8 @@ const NAMES = [
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentSource",
-    "BossModConversationFocus", "BossModConversation",
+    "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
+    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -122,6 +122,8 @@ function actionLabels(root) {
     const needsStub = {
         refresh: () => Promise.resolve(),
         resolve: () => Promise.resolve(),
+        // The agent DM's Rewind clears an error card through this.
+        acknowledge: () => {},
         getError: () => "",
         subscribeError: () => () => {},
         destroy: () => {},

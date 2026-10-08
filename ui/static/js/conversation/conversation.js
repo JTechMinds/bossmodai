@@ -40,6 +40,7 @@ const BossModConversation = (() => {
         let liveSink = null;
         let currentId = null;
         let currentKind = null;
+        let rewind = null;  // the open agent DM's Rewind flow (chat-rewind.js); null on threads
         // Live messages that land between subscribing and the first paint are
         // buffered rather than dropped; setMessages would otherwise erase them.
         let pendingLive = null;
@@ -110,16 +111,14 @@ const BossModConversation = (() => {
 
         // Directly above the composer: what needs the operator where they are
         // already looking. Everything else goes to the toast.
-        const needsBar = BossModNeedsBar.createNeedsBar({ store, needs, navigate });
+        const needsBar = BossModNeedsBar.createNeedsBar({ store, needs, navigate, needActions: (need) => (rewind ? rewind.cardActions(need) : []) });
 
         const element = h('div', { class: 'conversation' },
-            chrome.element,
-            transcript.element,
-            needsBar.element,
-            composer.element);
+            chrome.element, transcript.element, needsBar.element, composer.element);
 
         function applyChrome() {
-            if (source) chrome.apply(source.chrome());
+            const view = source ? source.chrome() : null;
+            if (view) chrome.apply(rewind ? { ...view, actions: [...view.actions, rewind.menuAction()] } : view);
         }
 
         function shellExecutorActivityCard(entry) {
@@ -250,6 +249,7 @@ const BossModConversation = (() => {
             unsubscribe = null;
             liveSink = null;
             source = null;
+            rewind = null;
         }
 
         function buildSource(id, kind) {
@@ -293,6 +293,8 @@ const BossModConversation = (() => {
             currentKind = kind;
             cardCtx.agentId = kind === 'agent' ? id : null;
             source = buildSource(id, kind);
+            rewind = kind === 'agent' ? BossModChatRewind.createChatRewind({ source, agentName: () => source.chrome().title, composer, needs }) : null;
+            needsBar.refresh();  // the bar rendered on the switch before this conversation's Rewind existed
             pendingLive = [];
             const live = source.subscribe(handlers);
             unsubscribe = live.dispose;

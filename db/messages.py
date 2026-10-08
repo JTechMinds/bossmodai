@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.models import Message
-from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
+from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
 
 _MESSAGE_COLUMNS = (
     "id, from_agent, to_agent, content, message_type, floor_id, "
@@ -106,7 +106,13 @@ def list_floor_peer_messages(
 
 
 def get_human_chat_thread(agent_id: str, limit: int = 50, earliest_ts: datetime | None = None) -> list[Message]:
-    """Return the authored direct human <-> agent chat thread (oldest first)."""
+    """Return the authored direct human <-> agent chat thread (oldest first).
+
+    Ordered by ``(created_at, rowid)``: ``created_at`` has second precision,
+    and ``rowid`` is insertion order, so rows written in the same second keep
+    the order they were sent in. ``delete_human_chat_from`` cuts on the same
+    order, so the transcript, the prompt and a rewind agree.
+    """
     from core.models.message import HUMAN_SENDER_ID
 
     conditions = [
@@ -121,7 +127,7 @@ def get_human_chat_thread(agent_id: str, limit: int = 50, earliest_ts: datetime 
         f"""
         SELECT {_MESSAGE_COLUMNS} FROM messages
         WHERE {' AND '.join(conditions)}
-        ORDER BY created_at DESC LIMIT ${len(params)}
+        ORDER BY created_at DESC, rowid DESC LIMIT ${len(params)}
         """,
         params,
         Message,
@@ -213,6 +219,55 @@ def delete_human_chat_thread(agent_id: str) -> int:
         [agent_id, HUMAN_SENDER_ID],
     )
     return count
+
+
+def delete_human_chat_from(agent_id: str, from_message_id: str) -> list[str]:
+    """Delete one DM message and every later message of the same DM.
+
+    This is the one definition of a rewind cut. "Later" is the thread's own
+    order, ``(created_at, rowid)`` (see ``get_human_chat_thread``):
+    ``julianday()`` compares the timestamps as instants rather than as text,
+    as ``list_floor_peer_messages`` does, and ``rowid`` breaks a same-second
+    tie in insertion order. Only rows of this agent's human DM pair are
+    touched. Notifications live in their own table and are never cut.
+
+    Must run inside the caller's ``transaction()``: the lookup and the delete
+    are two statements, and the caller also removes the triggers and
+    attachments that belong to the removed rows.
+
+    Args:
+        agent_id: The agent whose DM with the operator is rewound.
+        from_message_id: The first message to remove.
+
+    Returns:
+        The ids of the removed messages, in no particular order.
+
+    Raises:
+        LookupError: ``from_message_id`` does not exist, or is not a message
+            of this agent's DM with the operator. Nothing is deleted.
+    """
+    from core.models.message import HUMAN_SENDER_ID
+
+    pair = "((from_agent = $1 AND to_agent = $2) OR (from_agent = $2 AND to_agent = $1))"
+    cut = query_one(
+        f"SELECT rowid AS cut_rowid, julianday(created_at) AS cut_day FROM messages WHERE id = $3 AND {pair}",
+        [agent_id, HUMAN_SENDER_ID, from_message_id],
+    )
+    if cut is None:
+        raise LookupError(
+            f"Message {from_message_id!r} is not in the DM between {agent_id!r} and the operator"
+        )
+    rows = query(
+        f"""
+        DELETE FROM messages
+        WHERE {pair}
+          AND (julianday(created_at) > $3
+               OR (julianday(created_at) = $3 AND rowid >= $4))
+        RETURNING id
+        """,
+        [agent_id, HUMAN_SENDER_ID, cut["cut_day"], cut["cut_rowid"]],
+    )
+    return [str(row["id"]) for row in rows]
 
 
 def get_recent_completed_tasks(agent_id: str, limit: int = 5) -> list[dict[str, Any]]:

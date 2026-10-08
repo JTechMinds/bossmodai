@@ -106,6 +106,8 @@ API_BY_INJECTION = {
     "conversation/conversation.js",
     "conversation/message.js",
     "conversation/sources/agent-source.js",
+    # The agent source's Rewind requests, with the source's injected `api`.
+    "conversation/sources/agent-requests.js",
     "conversation/sources/thread-source.js",
     "conversation/sources/thread-requests.js",
     "conversation/sources/thread-archive.js",

@@ -181,6 +181,7 @@ from db.channel_response_rounds import (
 # Messages
 from db.messages import (
     create_message,
+    delete_human_chat_from,
     delete_human_chat_thread,
     get_agent_direct_thread,
     get_formatted_messages,
@@ -271,6 +272,7 @@ from db.agent_triggers import (
     retry_agent_trigger,
     prune_finished_triggers,
     requeue_stale_triggers,
+    take_open_human_chat_triggers,
     update_queued_trigger_payload,
 )
 from db.runtime_control import (
@@ -523,6 +525,7 @@ __all__ = [
     "list_notifications",
     # Messages
     "create_message",
+    "delete_human_chat_from",
     "delete_human_chat_thread",
     "get_agent_direct_thread",
     "get_formatted_messages",
@@ -591,6 +594,7 @@ __all__ = [
     "retry_agent_trigger",
     "prune_finished_triggers",
     "requeue_stale_triggers",
+    "take_open_human_chat_triggers",
     "update_queued_trigger_payload",
     "claim_runtime_command",
     "complete_runtime_command",

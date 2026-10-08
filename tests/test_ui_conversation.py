@@ -52,8 +52,11 @@ CONVERSATION_MODULES = [
     SOURCES / "thread-requests.js",
     CONVERSATION / "auto-approve-switch.js",
     SOURCES / "thread-source.js",
+    SOURCES / "agent-requests.js",
     SOURCES / "agent-source.js",
     CONVERSATION / "conversation-focus-invalidate.js",
+    CONVERSATION / "chat-rewind-dialog.js",
+    CONVERSATION / "chat-rewind.js",
     CONVERSATION / "conversation.js",
 ]
 
@@ -109,13 +112,14 @@ def test_agent_source_mention_scope_is_the_full_roster_without_everyone() -> Non
     """A direct chat has no group: no Everyone, and no member filter."""
     script = (
         "const fs = require('fs');"
+        "eval(fs.readFileSync(process.argv[2], 'utf8') + ';global.BossModAgentRequests = BossModAgentRequests;');"
         "eval(fs.readFileSync(process.argv[1], 'utf8') + ';global.BossModAgentSource = BossModAgentSource;');"
         "const source = BossModAgentSource.createAgentSource('joey', {"
         " api: async () => ({ ok: true }), bus: {}, store: { getState: () => ({ roster: [] }) }, presence: {} });"
         "console.log(JSON.stringify(source.mentionScope()));"
     )
     result = subprocess.run(
-        ["node", "-e", script, str(SOURCES / "agent-source.js")],
+        ["node", "-e", script, str(SOURCES / "agent-source.js"), str(SOURCES / "agent-requests.js")],
         check=False,
         capture_output=True,
         text=True,
@@ -414,6 +418,52 @@ def test_conversation_harness() -> None:
         "renameActionsAreIconOnly": True,
         "renameActionsAbsentAtRest": True,
         "cancelActionRestoresLikeEsc": True,
+    }
+
+
+def test_chat_rewind_harness() -> None:
+    """The agent DM's Rewind: its flow, its dialog, and where it is offered.
+
+    The flow runs on fake source, composer and needs, because its promise is
+    the order it calls them in; the dialog and the conversation are real.
+    """
+    result = subprocess.run(
+        ["node", str(Path(__file__).resolve().parent / "js_chat_rewind_harness.cjs")]
+        + [str(path) for path in CONVERSATION_MODULES],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        # chat-rewind.js, with fakes.
+        "refusesHalfSource": True,
+        "menuActionShape": True,
+        "cardActionsOnlyForThisAgentsErrors": True,
+        "ownMessageFillsEmptyComposer": True,
+        "ownMessagePrependsToTyping": True,
+        "agentMessageLeavesComposer": True,
+        "cardAcknowledgesAfterSuccess": True,
+        "rejectedRewindTouchesNothing": True,
+        "unremovedFilesShowWarning": True,
+        # chat-rewind-dialog.js.
+        "loadingState": True,
+        "emptyState": True,
+        "loadErrorState": True,
+        "preselectsNewestHuman": True,
+        "choosingMarksNewerRows": True,
+        "rejectedConfirmKeepsModal": True,
+        "warningShowsDoneState": True,
+        # conversation.js: the `⋯` on agent DMs (thinking included), never on
+        # threads, and the open agent's error card, in the chat place's order
+        # (the bar renders before the conversation opens).
+        "menuOffersRewindOnAgentDm": True,
+        "menuOffersRewindWhileThinking": True,
+        "errorCardOffersRewind": True,
+        "cardRewindRestoresAndAcknowledges": True,
+        "menuOmitsRewindOnThreads": True,
     }
 
 

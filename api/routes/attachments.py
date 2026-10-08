@@ -19,6 +19,7 @@ from core.attachments import (
     detect_preview_tier,
     get_file_extension,
     is_blocklisted,
+    remove_attachment_file,
     sanitize_file_name,
     storage_dir,
 )
@@ -222,11 +223,8 @@ async def delete_attachment(attachment_id: str) -> Response:
     if removed is None:
         raise HTTPException(409, {"error": "Attachment was already sent", "code": "ALREADY_LINKED"})
     try:
-        os.remove(removed.storage_path)
-    except FileNotFoundError:
-        logger.warning("Pending attachment %s had no file at %s", removed.id, removed.storage_path)
+        remove_attachment_file(removed)
     except OSError as exc:
-        logger.error("Could not remove attachment file %s: %s", removed.storage_path, exc)
         raise HTTPException(
             500, {"error": "The file could not be removed", "code": "DELETE_FAILED"},
         ) from exc

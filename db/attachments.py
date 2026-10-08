@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from core.models import Attachment
-from db.crud import execute, fetch_all, insert_returning, query
+from db.crud import execute, fetch_all, insert_returning
 
 _ATTACHMENT_COLUMNS = (
     "id, message_id, file_name, file_size, mime_type, "
@@ -222,10 +222,28 @@ def list_stale_pending(older_than: datetime) -> list[Attachment]:
     )
 
 
-def delete_attachments_for_message(message_id: str) -> int:
-    """Remove all attachment rows for a message. Returns rows deleted."""
-    rows = query(
-        "DELETE FROM attachments WHERE message_id = $1 RETURNING id",
-        [message_id],
+def delete_attachments_for_messages(message_ids: list[str]) -> list[Attachment]:
+    """Remove every attachment row of the given messages and return the rows.
+
+    The rows come back so the caller can remove their files once its
+    transaction has committed; this touches the database only.
+
+    Args:
+        message_ids: Message ids whose attachments are removed. Duplicates are
+            fine. An empty list deletes nothing and runs no query.
+
+    Returns:
+        The deleted rows, in no particular order.
+    """
+    unique = list(dict.fromkeys(message_ids))
+    if not unique:
+        return []
+    return fetch_all(
+        f"""
+        DELETE FROM attachments
+        WHERE message_id IN ({_placeholders(len(unique))})
+        RETURNING {_ATTACHMENT_COLUMNS}
+        """,
+        unique,
+        Attachment,
     )
-    return len(rows)

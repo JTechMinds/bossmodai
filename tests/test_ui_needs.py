@@ -107,6 +107,12 @@ def test_needs_harness() -> None:
         "nestGitGroupIsLabeled": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
+        # The agent DM's Rewind rides on the error card through needActions;
+        # without them the bar is unchanged, and acknowledge() clears an
+        # error need the operator dealt with by rewinding.
+        "barWithoutNeedActionsUnchanged": True,
+        "needActionsSitBeforeShowMe": True,
+        "acknowledgeClearsErrorNeed": True,
     }
 
 

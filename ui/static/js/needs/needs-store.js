@@ -42,6 +42,7 @@ const BossModNeeds = (() => {
      * @param {Function} deps.api  Authenticated fetch helper.
      * @returns {{ refresh: () => Promise<void>,
      *             resolve: (need: object, action: object) => Promise<void>,
+     *             acknowledge: (need: object) => void,
      *             getError: () => string,
      *             subscribeError: (fn: (message: string) => void) => (() => void),
      *             destroy: () => void }}
@@ -316,6 +317,29 @@ const BossModNeeds = (() => {
         return {
             refresh,
             resolve,
+
+            /**
+             * Clear a client-held error need the operator dealt with outside
+             * the card's own actions (a chat Rewind of the turn that failed).
+             *
+             * Error needs are not on the server list, so `resolve()` is the
+             * only other thing that ever clears one; this is that clearing
+             * without the HTTP call. Every diagnostic a coalesced card stands
+             * for goes with it.
+             *
+             * @param {object} need  An `error` need from `store.needs`.
+             * @returns {void}
+             * @throws {Error} For any other kind: server-held needs leave
+             *   only when the server says so.
+             */
+            acknowledge(need) {
+                if (!need || need.kind !== 'error') {
+                    throw new Error('[needs] acknowledge() takes an error need');
+                }
+                const ids = (need.groupedIds && need.groupedIds.length) ? need.groupedIds : [need.id];
+                ids.forEach((id) => errorNeeds.delete(id));
+                recompute();
+            },
 
             /**
              * The last refresh failure, or '' when the queue is healthy.

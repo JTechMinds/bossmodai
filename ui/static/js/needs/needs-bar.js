@@ -50,14 +50,23 @@ const BossModNeedsBar = (() => {
      * @param {(placeId: string, params?: object) => void} deps.navigate  Where
      *   a card's "Show me" goes. Injected, so the bar knows no place ids of
      *   its own — the destination comes from the need's target.
-     * @returns {{ element: HTMLElement, destroy: () => void }}
-     * @throws {Error} When store, needs, or navigate is missing.
+     * @param {(need: object) => object[]} [deps.needActions]  Optional: extra
+     *   event-card actions the host offers on a card (the conversation's
+     *   Rewind on an error card), appended after the server's actions and
+     *   before "Show me". The bar still names no conversation kind and no
+     *   endpoint; absent, nothing is appended.
+     * @returns {{ element: HTMLElement, refresh: () => void, destroy: () => void }}
+     * @throws {Error} When store, needs, or navigate is missing, or
+     *   needActions is given but is not a function.
      */
     function createNeedsBar(deps) {
-        const { store, needs, navigate } = deps || {};
+        const { store, needs, navigate, needActions } = deps || {};
         if (!store) throw new Error('[needs-bar] deps.store is required');
         if (!needs) throw new Error('[needs-bar] deps.needs is required');
         if (typeof navigate !== 'function') throw new Error('[needs-bar] deps.navigate is required');
+        if (needActions !== undefined && typeof needActions !== 'function') {
+            throw new Error('[needs-bar] deps.needActions must be a function');
+        }
 
         const disposers = [];
         /** Need ids with a resolution in flight; their buttons stay disabled. */
@@ -165,6 +174,11 @@ const BossModNeedsBar = (() => {
                 disabled: inFlight.has(need.id),
                 onSelect: () => { void run(need, action); },
             }));
+            if (needActions) {
+                const extra = needActions(need);
+                if (!Array.isArray(extra)) throw new Error('[needs-bar] needActions must return a list');
+                actions.push(...extra);
+            }
             if (showMe) actions.push(showMe);
             return {
                 tone: BAR_CARDS[need.kind] || FALLBACK_CARDS[need.kind],
@@ -232,6 +246,14 @@ const BossModNeedsBar = (() => {
 
         return {
             element,
+
+            /**
+             * Re-render now. For a host whose `needActions` answer changed
+             * without any store change the bar watches (a conversation that
+             * was just opened builds its actions after the bar has rendered).
+             * @returns {void}
+             */
+            refresh: render,
 
             /**
              * Drain every subscription this bar created.

@@ -7,7 +7,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.routes._desk import _build_agent_desk_payload
 from api.routes._shared import (
@@ -18,6 +18,7 @@ from api.routes._shared import (
 from api.websocket import manager
 from core import config
 from core.boss import boss_label, ensure_agent_name_allowed
+from core.chat_rewind import rewind_human_chat
 from core.agent_loop import activity_runtime
 from core.agent_loop.standing_prefs import MemoryNotFoundError, list_memories, remove_memory
 from core.agent_pack import agent_is_edited, apply_template_to_agent, template_contract_hash
@@ -1667,6 +1668,60 @@ async def clear_agent_chat_history(agent_id: str):
         "status": "ok",
         "deleted_messages": deleted,
         "deleted_notifications": deleted_notifications,
+    }
+
+
+class ChatRewindBody(BaseModel):
+    """The message a DM rewind starts at; it and everything after it go."""
+
+    from_message_id: str = Field(min_length=1)
+
+
+@router.post("/agents/{agent_id}/chat-rewind")
+async def rewind_agent_chat(agent_id: str, body: ChatRewindBody):
+    """Rewind the operator's DM with an agent to before one message.
+
+    Deletes the message and every later DM message with their attachments,
+    stops the agent's reply in this DM if one is running, and queues again
+    any operator message that still stands. See
+    ``core.chat_rewind.rewind_human_chat`` for the ordering.
+
+    Returns:
+        ``{status, removed_messages, removed_attachments, unremoved_files,
+        stopped_turn, requeued}``.
+
+    Raises:
+        HTTPException: 404 when the agent is missing or the message is not in
+            this DM; 503 when the live turn could not be stopped (the
+            operator's queued messages were put back, nothing was deleted).
+    """
+    agent = db.get_agent(agent_id)
+    if not agent:
+        raise HTTPException(404, "Agent not found")
+    try:
+        result = await rewind_human_chat(agent_id, body.from_message_id, services=runtime_services)
+    except LookupError as exc:
+        raise HTTPException(404, "Message not found in this conversation") from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, f"Could not stop {agent.name}'s reply: {exc}") from exc
+
+    removed = len(result.removed_message_ids)
+    await manager.broadcast_chat_reset(agent_id)
+    await manager.broadcast_activity(
+        event="chat_rewound",
+        detail=(
+            f'Chat rewound for "{agent.name}" ({removed} messages removed'
+            f'{", reply stopped" if result.stopped_turn else ""})'
+        ),
+        agent_name=agent.name,
+    )
+    return {
+        "status": "ok",
+        "removed_messages": removed,
+        "removed_attachments": result.removed_attachments,
+        "unremoved_files": result.unremoved_files,
+        "stopped_turn": result.stopped_turn,
+        "requeued": result.requeued,
     }
 
 

@@ -1,16 +1,25 @@
-"""BossMod AI — Attachment core logic (pure, no I/O).
+"""BossMod AI — Attachment core logic.
 
 Provides storage path derivation, file name sanitization, preview tier
-detection, MIME type detection, and blocklist enforcement.
+detection, MIME type detection, and blocklist enforcement, all pure. The one
+exception is ``remove_attachment_file``, which deletes a stored file: it lives
+here so every caller that removes attachments logs a failure the same way.
 """
 
 from __future__ import annotations
 
+import logging
 import mimetypes
 import os
 import re
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    # core.models.attachment imports ContextType from this module.
+    from core.models import Attachment
+
+logger = logging.getLogger(__name__)
 
 # The two real conversation kinds an upload can belong to: an agent DM and a
 # shared thread (channel).
@@ -210,3 +219,27 @@ def get_file_extension(filename: str) -> str:
     """Extract the lowercased extension (including dot) from a filename."""
     _, ext = os.path.splitext(filename)
     return ext.lower()
+
+
+def remove_attachment_file(attachment: Attachment) -> None:
+    """Delete one attachment's stored file from disk.
+
+    Callers remove the database row first; this removes what it pointed at.
+    What a failure means is the caller's to decide (an HTTP 500, or a count
+    reported back to the operator), so this only logs and re-raises.
+
+    Args:
+        attachment: The row whose ``storage_path`` is removed.
+
+    Raises:
+        OSError: The file exists but could not be removed. Logged at ERROR
+            with the path before it is re-raised. A file that is already gone
+            is not an error: it is logged at WARNING and this returns.
+    """
+    try:
+        os.remove(attachment.storage_path)
+    except FileNotFoundError:
+        logger.warning("Attachment %s had no file at %s", attachment.id, attachment.storage_path)
+    except OSError as exc:
+        logger.error("Could not remove attachment file %s: %s", attachment.storage_path, exc)
+        raise

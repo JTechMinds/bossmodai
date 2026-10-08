@@ -885,6 +885,52 @@ def get_latest_trigger(
     )
 
 
+_OPEN_TRIGGER_STATUSES = frozenset({"queued", "claimed"})
+
+
+def take_open_human_chat_triggers(
+    agent_id: str,
+    *,
+    statuses: tuple[str, ...],
+) -> list[AgentTrigger]:
+    """Delete an agent's open ``human_chat`` triggers and return them.
+
+    One statement deletes and returns, so a caller that decides afterwards
+    which of them to queue again (a chat rewind) does so with the exact rows
+    it removed, inside the same transaction that removed them.
+
+    Args:
+        agent_id: The agent whose DM wakes are taken.
+        statuses: Which open rows to take: ``("queued",)``, ``("claimed",)``
+            or both. A claimed row is a turn that is running, or one that was
+            cancelled and left behind.
+
+    Returns:
+        The removed rows, payloads included, oldest first.
+
+    Raises:
+        ValueError: ``statuses`` is empty or names a status that is not open.
+    """
+    if not statuses or not set(statuses) <= _OPEN_TRIGGER_STATUSES:
+        raise ValueError(f"statuses must be a non-empty subset of {sorted(_OPEN_TRIGGER_STATUSES)}: {statuses!r}")
+    wanted = list(dict.fromkeys(statuses))
+    placeholders = ", ".join(f"${i + 2}" for i in range(len(wanted)))
+    rows = query(
+        f"""
+        DELETE FROM agent_triggers
+        WHERE agent_id = $1
+          AND trigger_type = 'human_chat'
+          AND status IN ({placeholders})
+        RETURNING {_TRIGGER_COLUMNS}
+        """,
+        [agent_id, *wanted],
+    )
+    triggers = [AgentTrigger.model_validate(row) for row in rows]
+    # RETURNING has no ORDER BY; oldest first is the order they were sent in.
+    triggers.sort(key=lambda trigger: (trigger.created_at, trigger.id))
+    return triggers
+
+
 def delete_open_triggers(agent_id: str) -> int:
     """Delete queued or claimed triggers for an agent and return rows removed."""
     row = query_one(

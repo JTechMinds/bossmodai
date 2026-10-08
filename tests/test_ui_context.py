@@ -67,8 +67,11 @@ CONTEXT_MODULES = [
     CONVERSATION / "sources" / "thread-requests.js",
     CONVERSATION / "auto-approve-switch.js",
     CONVERSATION / "sources" / "thread-source.js",
+    CONVERSATION / "sources" / "agent-requests.js",
     CONVERSATION / "sources" / "agent-source.js",
     CONVERSATION / "conversation-focus-invalidate.js",
+    CONVERSATION / "chat-rewind-dialog.js",
+    CONVERSATION / "chat-rewind.js",
     CONVERSATION / "conversation.js",
     JS / "shell" / "places.js",
     # The shared viewer the desk browser opens, with the two modules it is

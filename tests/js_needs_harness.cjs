@@ -1101,6 +1101,84 @@ async function main() {
         throw new Error(`bus2 leak: ${bus2.subscriberCount()} subscriptions left`);
     }
 
+    // ─── 14c. A host's extra card actions, and acknowledging an error ───
+    // The conversation adds Rewind to its agent's error card through
+    // `needActions`; a bar built without it renders exactly what it did.
+
+    const store4 = BossModStore.createStore({
+        needs: [],
+        conversationId: "a7",
+        conversationKind: "agent",
+        needsBarEnabled: true,
+        needsBarDismissed: false,
+        inlineNeedIds: [],
+    });
+    const bus4 = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    const offBus4Invalidate = BossModOperatorInvalidate.attach({ bus: bus4 });
+    const api4 = (url) => {
+        if (url.startsWith("/api/needs")) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve([blockedRow("k1", "a7")]) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve("") });
+    };
+    const needs4 = BossModNeeds.createNeedsStore({ store: store4, bus: bus4, api: api4 });
+    const plainBar = BossModNeedsBar.createNeedsBar({ store: store4, needs: needs4, navigate: () => {} });
+    const asked = [];
+    const hostBar = BossModNeedsBar.createNeedsBar({
+        store: store4,
+        needs: needs4,
+        navigate: () => {},
+        needActions: (need) => {
+            asked.push(need.kind);
+            return [{ label: `Extra for ${need.kind}`, tone: "quiet", onSelect() {} }];
+        },
+    });
+    await drain();
+    bus4.publish("diagnostic", {
+        id: "d7", agent_id: "a7", agent_name: "Ada", status: "success",
+        error: "Connection refused", created_at: "2026-09-07T14:00:00Z",
+    });
+    await drain();
+    const cardLabels = (bar) => bar.element.querySelectorAll(".event-card").map((card) => card
+        .querySelectorAll("button").map((btn) => btn.textContent).join("|"));
+    const plainCards = cardLabels(plainBar).sort().join(" / ");
+    const hostCards = cardLabels(hostBar).sort().join(" / ");
+    if (plainCards !== "Open diagnostics|Show me / Open task|Show me") {
+        throw new Error(`a bar without needActions must render as before, got ${plainCards}`);
+    }
+    if (hostCards !== "Open diagnostics|Extra for error|Show me / Open task|Extra for blocked|Show me") {
+        throw new Error(`needActions go after the server's actions and before Show me, got ${hostCards}`);
+    }
+    if (!asked.includes("error") || !asked.includes("blocked")) {
+        throw new Error("needActions is asked about every card the bar shows");
+    }
+    const barWithoutNeedActionsUnchanged = true;
+    const needActionsSitBeforeShowMe = true;
+
+    const errorCard = store4.getState().needs.find((item) => item.kind === "error");
+    needs4.acknowledge(errorCard);
+    await drain();
+    if (store4.getState().needs.some((item) => item.kind === "error")) {
+        throw new Error("acknowledge must remove the error need");
+    }
+    if (cardLabels(hostBar).join(" / ") !== "Open task|Extra for blocked|Show me") {
+        throw new Error("the bar must drop an acknowledged error card");
+    }
+    let refusesServerNeed = false;
+    try {
+        needs4.acknowledge(store4.getState().needs[0]);
+    } catch (err) {
+        refusesServerNeed = true;
+    }
+    if (!refusesServerNeed || store4.getState().needs.length !== 1) {
+        throw new Error("acknowledge must refuse a need the server holds");
+    }
+    const acknowledgeClearsErrorNeed = true;
+    plainBar.destroy();
+    hostBar.destroy();
+    needs4.destroy();
+    offBus4Invalidate();
+
     // ─── 15. Disposers drain ───
 
     needs.destroy();
@@ -1144,6 +1222,9 @@ async function main() {
         nestGitGroupIsLabeled,
         targetsNavigate,
         openFocusNeedTableHolds,
+        barWithoutNeedActionsUnchanged,
+        needActionsSitBeforeShowMe,
+        acknowledgeClearsErrorNeed,
     }));
 }
 

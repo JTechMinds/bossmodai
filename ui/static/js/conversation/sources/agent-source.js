@@ -4,7 +4,9 @@
  * Adapts `/api/agents/{id}/messages` and `/api/agents/{id}/activate` plus the
  * `chat_*` and `meeting_message` broadcasts to the one Message shape, and
  * `/api/agents/{id}` (plus its `/cli-auto-approve`) to the DM's auto-approve
- * switch. Like every source it is a data adapter and never touches the DOM.
+ * switch, and exports the Rewind calls (`/messages`, `/chat-rewind`; see
+ * agent-requests.js). Like every source it is a data adapter and never
+ * touches the DOM.
  *
  * An agent's meeting turns render inline in their conversation rather than in a
  * separate sub-view: the operator asked one person a question and the answer is
@@ -193,6 +195,8 @@ const BossModAgentSource = (() => {
             return text || fallback;
         }
 
+        const requests = BossModAgentRequests.createAgentRequests({ api, agentId, toMessage, refusal });
+
         /**
          * Wake the agent with a message.
          *
@@ -364,6 +368,8 @@ const BossModAgentSource = (() => {
             kind: 'agent',
             load,
             send,
+            rewindPoints: requests.rewindPoints,
+            rewind: requests.rewind,
             context,
             subscribe,
             chrome,
