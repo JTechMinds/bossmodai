@@ -2,9 +2,9 @@
  * BossMod AI — session persistence.
  *
  * Restores where the operator was, so a reload does not dump them at square
- * one. Restore is validated against live data, never trusted: a persisted
- * conversation whose agent has since been removed silently pointing at nothing
- * is worse than starting clean.
+ * one. Restore is validated, never trusted: a corrupt or malformed value is
+ * dropped and logged rather than applied. Whether a floor's remembered chat
+ * still exists is shell/floor-chat.js's check, once the live lists load.
  */
 const BossModSession = (() => {
     const STORAGE_KEY = 'bossmod_ui';
@@ -14,16 +14,16 @@ const BossModSession = (() => {
      * does transient UI: the desk is a modal (context/desk-dialog.js), and a
      * reload that reopened one would be side-panel behaviour the modal
      * standard retired. An old blob's `contextMode` is simply not read.
+     * Neither is its global `conversationId`/`conversationKind`: each floor
+     * now remembers its own chat in `conversationByFloor`.
      */
     const PERSISTED_KEYS = Object.freeze([
-        'place', 'conversationId', 'conversationKind', 'railCollapsed',
-        'currentFloorId',
+        'place', 'conversationByFloor', 'railCollapsed', 'currentFloorId',
     ]);
 
     const DEFAULTS = Object.freeze({
         place: 'chat',
-        conversationId: null,
-        conversationKind: null,
+        conversationByFloor: {},
         railCollapsed: false,
         currentFloorId: 'lobby',
     });
@@ -78,10 +78,37 @@ const BossModSession = (() => {
     }
 
     /**
+     * Keep only well-formed `{ [floorId]: {id, kind} }` entries.
+     *
+     * @param {*} map  The restored value.
+     * @returns {object} A fresh map; a non-object becomes `{}`. Anything
+     *   dropped is logged, never silently discarded.
+     */
+    function sanitizeConversationByFloor(map) {
+        if (!map || typeof map !== 'object' || Array.isArray(map)) {
+            console.warn('[session] discarding a malformed per-floor chat map');
+            return {};
+        }
+        const clean = {};
+        let dropped = 0;
+        for (const floorId of Object.keys(map)) {
+            const entry = map[floorId];
+            const valid = floorId !== ''
+                && entry && typeof entry === 'object'
+                && typeof entry.id === 'string' && entry.id !== ''
+                && (entry.kind === 'agent' || entry.kind === 'thread');
+            if (valid) clean[floorId] = { id: entry.id, kind: entry.kind };
+            else dropped += 1;
+        }
+        if (dropped > 0) console.warn(`[session] dropped ${dropped} malformed per-floor chat entries`);
+        return clean;
+    }
+
+    /**
      * Reconcile a restored session against what actually exists now.
      *
      * @param {object} restored
-     * @param {{places: string[], agentIds: string[], threadIds: string[]}} live
+     * @param {{places: string[]}} live  The registered place ids.
      * @returns {object} a session safe to apply
      */
     function validate(restored, live) {
@@ -91,14 +118,7 @@ const BossModSession = (() => {
             result.place = DEFAULTS.place;
         }
 
-        if (result.conversationId !== null) {
-            const pool = result.conversationKind === 'thread' ? live.threadIds : live.agentIds;
-            const known = Array.isArray(pool) && pool.indexOf(result.conversationId) !== -1;
-            if (!known) {
-                result.conversationId = null;
-                result.conversationKind = null;
-            }
-        }
+        result.conversationByFloor = sanitizeConversationByFloor(result.conversationByFloor);
 
         result.railCollapsed = result.railCollapsed === true;
         if (typeof result.currentFloorId !== 'string' || !result.currentFloorId) {

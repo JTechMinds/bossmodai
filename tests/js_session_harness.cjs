@@ -17,12 +17,13 @@ eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModSession = Boss
 
 const S = BossModSession;
 const PLACES = ["chat", "office", "tasks", "files", "metrics", "log"];
-const ctx = { places: PLACES, agentIds: ["a1"], threadIds: ["t1"] };
+const ctx = { places: PLACES };
 
-// Only the five allowed keys persist. `contextMode` is not one of them any
+// Only the four allowed keys persist. `contextMode` is not one of them any
 // more: the desk is a modal, and transient UI does not survive a reload.
 S.save({
-    place: "tasks", conversationId: "a1", conversationKind: "agent",
+    place: "tasks", conversationByFloor: { lobby: { id: "a1", kind: "agent" } },
+    conversationId: "a1", conversationKind: "agent",
     contextMode: "desk", railCollapsed: true,
     currentFloorId: "lobby",
     roster: [1, 2, 3], needs: ["secret"],
@@ -30,47 +31,64 @@ S.save({
 const raw = JSON.parse(global.localStorage.getItem("bossmod_ui"));
 if ("roster" in raw || "needs" in raw) throw new Error("only whitelisted keys may persist");
 if ("contextMode" in raw) throw new Error("the desk's old column mode must not persist");
+if ("conversationId" in raw) throw new Error("the open conversation is per floor, not global");
 if (Object.keys(raw).sort().join(",") !==
-    "conversationId,conversationKind,currentFloorId,place,railCollapsed") {
+    "conversationByFloor,currentFloorId,place,railCollapsed") {
     throw new Error(`unexpected persisted keys: ${Object.keys(raw).join(",")}`);
 }
 
 // A valid round-trip survives.
 let restored = S.validate(S.load(), ctx);
-if (restored.place !== "tasks" || restored.conversationId !== "a1") {
+if (restored.place !== "tasks" || restored.conversationByFloor.lobby.id !== "a1"
+    || restored.conversationByFloor.lobby.kind !== "agent") {
     throw new Error("valid session must round-trip");
 }
 
-// A conversation for a deleted agent falls back to the empty state.
-S.save({ place: "chat", conversationId: "ghost", conversationKind: "agent",
-         railCollapsed: false });
+// A malformed per-floor chat map becomes empty, and bad entries are dropped
+// while good ones survive — each with a warning, never silently.
+const warnings = [];
+const realWarn = console.warn;
+console.warn = (...args) => { warnings.push(args.join(" ")); };
+S.save({ place: "chat", conversationByFloor: ["a1"], railCollapsed: false });
 restored = S.validate(S.load(), ctx);
-if (restored.conversationId !== null) throw new Error("stale agent id must be dropped");
-if (restored.conversationKind !== null) throw new Error("kind must clear with the id");
-
-// A thread that no longer exists is dropped too.
-S.save({ place: "chat", conversationId: "t9", conversationKind: "thread",
-         railCollapsed: false });
+if (JSON.stringify(restored.conversationByFloor) !== "{}") {
+    throw new Error("a non-object map must become {}");
+}
+if (warnings.length !== 1) throw new Error(`expected one warning, got ${warnings.length}`);
+S.save({ place: "chat", railCollapsed: false, conversationByFloor: {
+    lobby: { id: "a1", kind: "agent" },
+    fin: { id: "t1", kind: "thread" },
+    "": { id: "a2", kind: "agent" },
+    ops: { id: "", kind: "agent" },
+    hr: { id: "a3", kind: "desk" },
+    eng: "a4",
+} });
 restored = S.validate(S.load(), ctx);
-if (restored.conversationId !== null) throw new Error("stale thread id must be dropped");
+console.warn = realWarn;
+if (JSON.stringify(restored.conversationByFloor) !==
+    JSON.stringify({ lobby: { id: "a1", kind: "agent" }, fin: { id: "t1", kind: "thread" } })) {
+    throw new Error(`bad entries must drop, good ones stay: ${JSON.stringify(restored.conversationByFloor)}`);
+}
+if (warnings.length !== 2 || warnings[1].indexOf("4") === -1) {
+    throw new Error(`one warning must name the dropped count: ${warnings.join(" | ")}`);
+}
 
 // An unknown place falls back to chat.
-S.save({ place: "nowhere", conversationId: null, conversationKind: null,
-         railCollapsed: false });
+S.save({ place: "nowhere", railCollapsed: false });
 restored = S.validate(S.load(), ctx);
 if (restored.place !== "chat") throw new Error("unknown place must fall back to chat");
 
 // Corrupt JSON is discarded whole, never partially applied.
 global.localStorage.setItem("bossmod_ui", "{not json");
 const afterCorrupt = S.validate(S.load(), ctx);
-if (afterCorrupt.place !== "chat" || afterCorrupt.conversationId !== null) {
+if (afterCorrupt.place !== "chat" || JSON.stringify(afterCorrupt.conversationByFloor) !== "{}") {
     throw new Error("corrupt blob must yield clean defaults");
 }
 
 // A partial object gets full defaults, not undefined holes.
 global.localStorage.setItem("bossmod_ui", JSON.stringify({ place: "log" }));
 const partial = S.validate(S.load(), ctx);
-for (const key of ["place", "conversationId", "conversationKind", "railCollapsed", "currentFloorId"]) {
+for (const key of ["place", "conversationByFloor", "railCollapsed", "currentFloorId"]) {
     if (!(key in partial)) throw new Error(`restored object missing ${key}`);
 }
 // A blob saved before the desk became a modal still carries `contextMode`;
@@ -83,7 +101,7 @@ if (partial.place !== "log") throw new Error("valid partial key must survive");
 process.stdout.write(JSON.stringify({
     ok: true,
     whitelistsKeys: true,
-    dropsStaleConversation: true,
+    sanitizesFloorConversations: true,
     fallsBackOnUnknownPlace: true,
     discardsCorruptBlob: true,
     fillsDefaults: true,

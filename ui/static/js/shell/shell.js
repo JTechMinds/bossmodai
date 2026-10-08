@@ -25,6 +25,8 @@ const BossModShell = (() => {
         placeParams: {},
         conversationId: null,
         conversationKind: null,
+        // Each floor's last chat; shell/floor-chat.js keeps it in step.
+        conversationByFloor: {},
         roster: [],
         threads: [],
         rosterQuery: '',
@@ -62,6 +64,7 @@ const BossModShell = (() => {
         const restored = BossModSession.load();
         const store = BossModStore.createStore(Object.assign({}, INITIAL_STATE));
         if (typeof BossModFloorScope !== 'undefined') BossModFloorScope.attach(store);
+        const floorChat = BossModFloorChat.attach({ store });
         const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
         const offOperatorInvalidate = BossModOperatorInvalidate.attach({ bus });
         // Browser Vision's live-view status re-reads on server pushes, not a
@@ -216,12 +219,11 @@ const BossModShell = (() => {
         // server data, so the operator lands where they left off immediately.
         const startup = BossModSession.validate(restored, {
             places: BossModPlaces.PLACE_IDS,
-            agentIds: [],
-            threadIds: [],
         });
         store.setState({
             railCollapsed: startup.railCollapsed,
             currentFloorId: startup.currentFloorId,
+            conversationByFloor: startup.conversationByFloor,
         });
         applyContextColumn(startup.place);
         // Applied, not left to the subscription: a session restored with the
@@ -230,26 +232,17 @@ const BossModShell = (() => {
         applyRailCollapsed(startup.railCollapsed);
         navigate(startup.place);
 
-        // Stage two: a persisted conversation is only safe once the live agent
-        // and thread ids are known. The first notification of each is the
-        // first response, so nothing has to guess whether a list is empty or
-        // merely unloaded.
+        // Stage two: the floor's remembered chat is only safe once the live
+        // agent and thread lists are known. The first notification of each is
+        // the first response, so nothing has to guess whether a list is empty
+        // or merely unloaded.
         let sawRoster = false;
         let sawThreads = false;
         let sessionSettled = false;
         function settleSession() {
             if (sessionSettled || !sawRoster || !sawThreads) return;
             sessionSettled = true;
-            const live = store.getState();
-            const safe = BossModSession.validate(restored, {
-                places: BossModPlaces.PLACE_IDS,
-                agentIds: live.roster.map((agent) => agent.id),
-                threadIds: live.threads.map((thread) => thread.id),
-            });
-            store.setState({
-                conversationId: safe.conversationId,
-                conversationKind: safe.conversationKind,
-            });
+            floorChat.settle();
         }
         store.subscribe((s) => s.roster, () => { sawRoster = true; settleSession(); });
         store.subscribe((s) => s.threads, () => { sawThreads = true; settleSession(); });

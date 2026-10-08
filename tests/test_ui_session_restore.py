@@ -21,7 +21,7 @@ def test_session_restore_is_validated() -> None:
     assert payload == {
         "ok": True,
         "whitelistsKeys": True,
-        "dropsStaleConversation": True,
+        "sanitizesFloorConversations": True,
         "fallsBackOnUnknownPlace": True,
         "discardsCorruptBlob": True,
         "fillsDefaults": True,
