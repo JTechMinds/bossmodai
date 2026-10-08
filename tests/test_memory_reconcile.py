@@ -3,6 +3,10 @@
 Prompt rows are seeded once and never overwritten, so the shipped edits to
 runtime_contract_decision.md and system_prompt.md reach an existing database
 only through this line-level, marker-guarded pass.
+
+The shipped decision contract has since moved on: the ``remember`` pass
+(``reconcile_memory_remember_prompt_lines``) rewrote two of these new lines.
+This pass's target is the shipped default with that second pass undone.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ from core.default_prompts import load_default_prompt, prompt_file_path
 
 _MARKER = "memory_prompt_lines_reconciled"
 _EDITS = settings_db._MEMORY_PROMPT_LINE_EDITS
+_LATER_EDITS = settings_db._MEMORY_REMEMBER_PROMPT_LINE_EDITS
 
 
 def setup_function() -> None:
@@ -43,9 +48,18 @@ def _stored(key: str) -> tuple[str, str]:
     return str(row["value"]), str(row["category"])
 
 
+def _first_pass_default(key: str) -> str:
+    """The shipped default as this pass left it: the later remember pass undone."""
+    text = load_default_prompt(key)
+    for old_line, new_line in _LATER_EDITS.get(key, ()):
+        assert text.count(new_line) == 1, (key, new_line)
+        text = text.replace(new_line, old_line)
+    return text
+
+
 def _prior_default(key: str) -> str:
     """The shipped default as it was before the edit: every new line swapped back."""
-    text = load_default_prompt(key)
+    text = _first_pass_default(key)
     for old_line, new_line in _EDITS[key]:
         assert text.count(new_line) == 1, (key, new_line)
         text = text.replace(new_line, old_line)
@@ -59,7 +73,10 @@ def _rerun() -> None:
 
 def test_the_shipped_files_carry_the_new_lines_and_not_the_old() -> None:
     for key, pairs in _EDITS.items():
-        lines = prompt_file_path(key).read_text(encoding="utf-8").splitlines()
+        if key in _LATER_EDITS:
+            lines = _first_pass_default(key).splitlines()
+        else:
+            lines = prompt_file_path(key).read_text(encoding="utf-8").splitlines()
         for old_line, new_line in pairs:
             assert new_line in lines, (key, new_line)
             assert old_line not in lines, (key, old_line)
@@ -75,7 +92,7 @@ def test_a_row_holding_the_prior_default_gets_the_new_lines_and_keeps_its_catego
         _rerun()
     for key in _EDITS:
         value, category = _stored(key)
-        assert value == load_default_prompt(key)
+        assert value == _first_pass_default(key)
         assert category == settings_db.get_seed_setting_default(key)[1]
     assert [r for r in caplog.records if r.levelno >= logging.WARNING] == []
     assert _stored(_MARKER)[0] == "true"

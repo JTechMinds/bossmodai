@@ -86,6 +86,14 @@ class MemoryNotFoundError(ValueError):
     """No memory has the requested id. Distinct from a corrupt store."""
 
 
+class MemoryStoreUnreadableError(ValueError):
+    """The store on disk cannot be read or parsed, or is not a file.
+
+    A defect in the stored document, not a text-rule refusal: changing the
+    memory text cannot fix it. Raised by saves, which never overwrite it.
+    """
+
+
 class Memory(BaseModel):
     """One memory: a system-assigned id and one line of text.
 
@@ -287,7 +295,8 @@ def add_memory(storage_key: str, text: str) -> Memory:
         ValueError: One sentence naming the failed rule: empty text, a line
             break, the text limit, growth past the ``section_max_chars()``
             store cap, or a corrupt current store (which is never
-            overwritten). The store is unchanged.
+            overwritten; raised as ``MemoryStoreUnreadableError``). The
+            store is unchanged.
         config.ConfigError: A limit setting is missing or invalid.
         OSError: The lock or the atomic write failed. The previous store is
             intact.
@@ -500,15 +509,15 @@ def _read_existing_for_write(path: Path) -> MemoryDocument:
     if not path.exists():
         return _document(next_id=1, memories=[])
     if not path.is_file():
-        raise ValueError("memory store path is not a file; refusing to overwrite")
+        raise MemoryStoreUnreadableError("memory store path is not a file; refusing to overwrite")
     try:
         raw = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as exc:
-        raise ValueError("memory store is unreadable; refusing to overwrite") from exc
+        raise MemoryStoreUnreadableError("memory store is unreadable; refusing to overwrite") from exc
     try:
         return parse_memory_document(raw)
     except ValueError as exc:
-        raise ValueError("memory store is unreadable; refusing to overwrite") from exc
+        raise MemoryStoreUnreadableError("memory store is unreadable; refusing to overwrite") from exc
 
 
 def _enforce_store_cap(existing: list[Memory], merged: list[Memory]) -> None:

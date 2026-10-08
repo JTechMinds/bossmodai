@@ -1,7 +1,8 @@
-"""Run one structured decision turn: parse, optional CLI lookup, apply."""
+"""Run one structured decision turn: parse, optional CLI lookup, save `remember`, apply."""
 
 from __future__ import annotations
 
+import logging
 import time
 from typing import Any
 
@@ -14,6 +15,8 @@ from core.agent_loop.decision_contract import (
     parse_direct_turn_response,
     validate_decision_for_trigger,
 )
+from core.agent_loop.decision_memory import memory_repair_error, save_decision_memory
+from core.agent_loop.standing_prefs import MemoryStoreUnreadableError
 from core.agent_loop.decision_peek import DecisionPeekBudget
 from core.agent_loop.decision_runtime import apply_decision, summarize_decision
 from core.agent_loop.cli_turn_result import broadcast_cli_side_effects, map_cli_result
@@ -62,6 +65,8 @@ from core.default_prompts import load_default_prompt
 from core.llm import client
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
+
+logger = logging.getLogger(__name__)
 
 def _is_decision_turn(trigger: dict[str, Any]) -> bool:
     """Return whether the trigger should use the direct-request decision contract."""
@@ -740,9 +745,82 @@ async def _run_decision_turn(
                 start=start,
             )
 
+        # Save ``remember`` before apply_decision posts anything, so a refused
+        # sentence can still be repaired in this turn with nothing posted.
+        memory_outcome: dict[str, Any] = {}
+        memory_not_saved: str | None = None
+        if decision.remember:
+            try:
+                memory = await off_request_loop(save_decision_memory, agent, decision.remember)
+            except MemoryStoreUnreadableError as exc:
+                # A corrupt store is a defect no rewording fixes: no repair
+                # round, report it and let the reply post.
+                memory_not_saved = str(exc)
+                logger.error(
+                    "%s (storage key %s) could not save a memory: %s",
+                    agent.name,
+                    agent.storage_key,
+                    memory_not_saved,
+                )
+            except ValueError as exc:
+                reason = str(exc)
+                if parse_failure_should_repair(
+                    kind="invalid_decision",
+                    repair_attempts=decision_repair_attempts,
+                    max_repairs=decision_repair_attempt_limit(),
+                    decision=True,
+                ):
+                    decision_repair_attempts += 1
+                    continuation_messages = _build_decision_repair_messages(
+                        parsed_error=memory_repair_error(reason),
+                    )
+                    step_traces.append(
+                        _build_step_trace(
+                            step_index=len(step_traces) + 1,
+                            context_snapshot=next_context_snapshot,
+                            raw_response=response.content,
+                            action=decision.model_dump(),
+                            result={
+                                "event": "memory_repair_requested",
+                                "detail": "The remember sentence was refused; asked the model to fix it or leave it out.",
+                            },
+                            prompt_tokens=step_prompt_tokens,
+                            completion_tokens=step_completion_tokens,
+                            total_tokens=step_total_tokens,
+                            duration_ms=int((time.monotonic() - step_started) * 1000),
+                            error=reason,
+                        )
+                    )
+                    current_context.extend(
+                        [{"role": "assistant", "content": response.content}, *continuation_messages]
+                    )
+                    next_context_snapshot = _serialize_trace_value(continuation_messages)
+                    await breathe()
+                    continue
+                # Budget spent: the memory is optional data, so the reply still
+                # posts and the refusal is reported, never fatal or silent.
+                memory_not_saved = reason
+            else:
+                executed_actions.append("memory_add")
+                memory_outcome = {"memory_saved": memory.model_dump()}
+                await manager.broadcast_activity(
+                    event="memory_saved",
+                    detail=f"{agent.name} saved memory #{memory.id}",
+                    agent_name=agent.name,
+                )
+        if memory_not_saved is not None:
+            memory_outcome = {"memory_not_saved": memory_not_saved}
+            await manager.broadcast_activity(
+                event="memory_not_saved",
+                detail=f"{agent.name} could not save a memory: {memory_not_saved}",
+                agent_name=agent.name,
+            )
+
         result = await off_request_loop(
             apply_decision, decision.model_dump(), agent, state, trigger
         )
+        if memory_outcome:
+            result = {**result, **memory_outcome}
         executed_actions.append(summarize_decision(decision.model_dump()))
 
         await manager.broadcast_world_state()

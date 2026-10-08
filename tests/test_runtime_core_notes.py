@@ -47,9 +47,11 @@ def test_memory_guidance_names_the_three_homes() -> None:
     assert lines[1] == (
         f"- Keep each memory to 1–2 short sentences (about {MEMORY_SOFT_TARGET_CHARS} characters; at most 400)."
     )
+    # A reply saves through the decision's `remember`; work turns use `memory add`.
     assert lines[2] == (
-        "- When someone tells you something like that, save it in this turn, before you reply: "
-        "`memory add` with the sentence in the body. The system numbers it."
+        "- When someone tells you something like that, save it in this turn: in a reply, put the "
+        "sentence in `remember`; while working, `memory add` with the sentence in the body. "
+        "The system numbers it."
     )
     assert "`memory replace <n>`" in lines[3] and "`memory remove <n>`" in lines[3]
     assert "`memory list` shows everything." in lines[3]
@@ -59,7 +61,10 @@ def test_memory_guidance_names_the_three_homes() -> None:
     # Personal how-to stays cold.
     assert lines[5].startswith("- /me/notes is for things you need rarely but long term")
     assert "Not shown automatically; open it when you need it." in lines[5]
-    assert lines[6].endswith("Saving is never task progress or Done.")
+    assert lines[6].endswith(
+        "Saving is never task progress or Done. A correction to how you do your work, "
+        "including a recurring job, is lasting, not a one-off."
+    )
     assert len(lines) == 7
     # The retired command and its ceremony are gone.
     for retired in ("`pref", "Standing prefs", "kind", "sources", "Pointers-first"):

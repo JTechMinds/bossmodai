@@ -38,7 +38,7 @@ INVALID_DECISION_STEER = (
 # Existing compact keys plus the product aliases. Unknown keys stay fail-closed.
 # ``next_owners`` is the structured handoff pin. It is not a second protocol.
 _COMPACT_ACTION_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th", "next_owners"})
-_ENVELOPE_KEYS = frozenset({"say", "actions", "next_owners", "work_commit"})
+_ENVELOPE_KEYS = frozenset({"say", "actions", "next_owners", "work_commit", "remember"})
 _COMPACT_ROOT_KEYS = _COMPACT_ACTION_KEYS | _ENVELOPE_KEYS
 _CONVERSATION_ACTS = frozenset(
     {"reply", "observe", "accept", "clarify", "cancel", "decline", "defer"}
@@ -203,13 +203,39 @@ def read_work_commit(payload: dict[str, Any]) -> bool | None:
     raise InvalidDecisionEnvelope('"work_commit" must be a boolean when provided')
 
 
+def read_remember(payload: dict[str, Any]) -> str | None:
+    """Return the envelope ``remember`` sentence: one memory to save this turn.
+
+    Args:
+        payload: The raw decision object as the model returned it.
+
+    Returns:
+        The stripped sentence, or ``None`` when ``remember`` is omitted,
+        ``null``, or blank (nothing to save).
+
+    Raises:
+        InvalidDecisionEnvelope: ``remember`` is present but not a string.
+            Fail-closed: a malformed value is never dropped. The memory
+            store's own rules (one line, the length limit) are checked when
+            the decision turn saves it, not here.
+    """
+    value = payload.get("remember")
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise InvalidDecisionEnvelope('"remember" must be one sentence (a string) when provided')
+    text = value.strip()
+    return text or None
+
+
 def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:
     """Map ``say`` / ``actions`` onto the existing compact act/msg object.
 
     Empty ``actions`` is a no-work chat envelope. One nested compact action
     unwraps to that same object (not a second schema). Invented keys stay
-    fail-closed. ``work_commit`` is validated and stripped here so lookup
-    acts keep their existing shape; the conversation parser reattaches it.
+    fail-closed. ``work_commit`` and ``remember`` are validated and stripped
+    here so lookup acts keep their existing shape; the conversation parser
+    reattaches them (and rejects ``remember`` on a lookup act).
     """
     extra = set(payload) - _COMPACT_ROOT_KEYS
     if extra:
@@ -217,6 +243,7 @@ def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:
             f'unexpected top-level keys: {", ".join(sorted(extra))}'
         )
     read_work_commit(payload)
+    read_remember(payload)
 
     chat = _resolve_chat_alias(payload.get("say"), payload.get("msg"))
     owners = parse_next_owner_ids(payload.get("next_owners")) if "next_owners" in payload else None

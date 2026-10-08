@@ -135,6 +135,12 @@ def parse_action(raw_response: str) -> dict[str, Any]:
             peel_decision_envelope,
         )
 
+        # The shared envelope peel strips ``remember`` for the decision parser;
+        # an execution turn never saves it, so dropping it would be silent.
+        if "remember" in original:
+            raise InvalidDecisionEnvelope(
+                '"remember" belongs on a conversation decision; while working, use `memory add`'
+            )
         wire = peel_decision_envelope(original)
         parsed = _normalize_action_payload(wire)
     except InvalidDecisionEnvelope as exc:

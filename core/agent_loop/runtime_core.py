@@ -80,8 +80,9 @@ def format_memory_guidance() -> str:
         "Not project details.\n"
         f"- Keep each memory to 1–2 short sentences (about {MEMORY_SOFT_TARGET_CHARS} characters; "
         f"at most {hard}).\n"
-        "- When someone tells you something like that, save it in this turn, before you reply: "
-        "`memory add` with the sentence in the body. The system numbers it.\n"
+        "- When someone tells you something like that, save it in this turn: in a reply, put the "
+        "sentence in `remember`; while working, `memory add` with the sentence in the body. "
+        "The system numbers it.\n"
         "- When it changes or stops being true: `memory replace <n>` with the new sentence in "
         "the body, or `memory remove <n>`. `memory list` shows everything.\n"
         "- Project knowledge (decisions, requirements, contacts, facts about one project) goes "
@@ -92,7 +93,8 @@ def format_memory_guidance() -> str:
         "how-to, scratch work. Not shown automatically; open it when you need it.\n"
         "Save what lasts; skip small talk, one-off instructions for the current task, and "
         "anything already saved. When you save, say so in a few words. Saving is never task "
-        "progress or Done."
+        "progress or Done. A correction to how you do your work, including a recurring job, is "
+        "lasting, not a one-off."
     )
 
 

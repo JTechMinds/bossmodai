@@ -2,7 +2,8 @@
  * BossMod AI — an agent's memory, as a layer over its desk.
  *
  * Memory is the small store the agent is shown on every turn: facts and
- * preferences it saved with its `memory` command. It lives outside every agent
+ * preferences it saved with `remember` on a reply, or with `memory add` while
+ * working. It lives outside every agent
  * path (core/agent_loop/standing_prefs.py), so the desk's Files and Notes
  * cannot reach it; GET /api/agents/{id}/memory is its one read. The desk
  * head's Memory tool (context/desk-panel.js) opens this as a LAYER in the

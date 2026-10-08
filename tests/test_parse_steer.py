@@ -201,6 +201,21 @@ def test_parse_action_invented_th2_is_invalid_decision() -> None:
     assert "th2" in str(parsed.get("_raw_snippet") or "")
 
 
+def test_parse_action_remember_fails_closed_in_an_execution_turn() -> None:
+    for raw in (
+        '{"act":"cli","data":{"cmd":"ls /me"},"remember":"The boss wants tables.","th":"list"}',
+        '{"say":"Listing.","remember":"The boss wants tables.",'
+        '"actions":[{"act":"cli","data":{"cmd":"ls /me"},"th":"list"}]}',
+    ):
+        parsed = parse_action(raw)
+        assert parsed["action"] == "_parse_failed", raw
+        assert parsed.get("_parse_kind") == "invalid_decision", raw
+        assert '"remember" belongs on a conversation decision; while working, use `memory add`' in (
+            parsed["_raw_snippet"]
+        )
+    assert parse_action('{"act":"cli","data":{"cmd":"ls /me"},"th":"list"}')["action"] == "bm_cli"
+
+
 def test_parse_action_invented_needs_approval_is_invalid_decision() -> None:
     parsed = parse_action(
         '{"act":"cli","data":{"cmd":"sed -i s/a/b/ tests/x.py"},'
@@ -374,6 +389,59 @@ def test_work_commit_flag_is_intent_not_an_invented_key() -> None:
     )
     assert "work_commit" not in peeled
     assert peeled["msg"] == "Committing now to land the notes"
+
+
+def test_remember_rides_the_decision_envelope() -> None:
+    parsed = parse_direct_turn_response(
+        '{"say":"Got it, saved.","remember":"  The boss wants the weekly report as a table.  ",'
+        '"actions":[],"work_commit":false}'
+    )
+    assert parsed.get("decision") == "answer"
+    assert parsed.get("reply") == "Got it, saved."
+    assert parsed.get("remember") == "The boss wants the weekly report as a table."
+    compact = parse_direct_turn_response(
+        '{"act":"clarify","intent":"work","msg":"Which repo?","remember":"Repos live under /projects.","th":"q"}'
+    )
+    assert compact.get("decision") == "clarify"
+    assert compact.get("remember") == "Repos live under /projects."
+    for absent in ('', ',"remember":null', ',"remember":""', ',"remember":"   "'):
+        parsed = parse_direct_turn_response(
+            '{"say":"Status is green.","actions":[],"work_commit":false' + absent + "}"
+        )
+        assert parsed.get("decision") == "answer", absent
+        assert parsed.get("remember") is None, absent
+    peeled = peel_decision_envelope(
+        {"say": "Saved.", "remember": "The boss wants tables.", "actions": [], "work_commit": False}
+    )
+    assert "remember" not in peeled
+    assert peeled["msg"] == "Saved."
+
+
+def test_a_non_string_remember_fails_closed() -> None:
+    for value in ("3", "true", '["a","b"]', '{"text":"a"}'):
+        parsed = parse_direct_turn_response(
+            '{"say":"Saved.","remember":' + value + ',"actions":[],"work_commit":false}'
+        )
+        assert parsed["decision"] == "_parse_failed", value
+        assert parsed.get("_parse_kind") == "invalid_decision", value
+        assert '"remember" must be one sentence (a string) when provided' in parsed["_raw_snippet"], value
+
+
+def test_remember_on_a_lookup_act_is_a_schema_failure_not_dropped() -> None:
+    for raw in (
+        '{"act":"cli","data":{"cmd":"ls /me"},"remember":"The boss wants tables.","th":"list"}',
+        '{"say":"Checking.","remember":"The boss wants tables.",'
+        '"actions":[{"act":"cli","data":{"cmd":"ls /me"},"th":"list"}]}',
+        '{"act":"request_host_access","data":{"path":"/tmp/app/main.py","why":"Need the source"},'
+        '"remember":"The boss wants tables.","th":"ask"}',
+    ):
+        parsed = parse_direct_turn_response(raw)
+        assert parsed["decision"] == "_parse_failed", raw
+        assert parsed.get("_parse_kind") == "invalid_decision", raw
+        assert "goes on your final decision, not on a cli or request_host_access call" in parsed["_raw_snippet"]
+    # Without remember the same lookup still parses as a CLI call.
+    lookup = parse_direct_turn_response('{"act":"cli","data":{"cmd":"ls /me"},"th":"list"}')
+    assert lookup.get("action") == "bm_cli"
 
 
 def test_peel_say_alias_and_empty_actions() -> None:

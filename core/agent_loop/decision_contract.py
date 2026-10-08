@@ -87,6 +87,9 @@ WORK_COMMIT_STARTS_NOTHING = (
     'To start new work, use act "accept" with commit "work" and data.task. '
     "Otherwise set work_commit false and do not say you are starting work."
 )
+# A lookup act never reaches the decision save; dropping the sentence would
+# lose it silently, so the object is an invalid decision the model repairs.
+_REMEMBER_ON_LOOKUP = '"remember" goes on your final decision, not on a cli or request_host_access call'
 TASK_ID_NOT_OPEN = "data.task.id must be one of your open tasks (see MY OPEN TASKS)"
 WORK_COMMIT_CANNOT_START = "you cannot start work from this turn; set work_commit false."
 
@@ -151,6 +154,9 @@ class ConversationDecision(BaseModel):
     # Envelope intent. Required on every reply (``answer``): the model must
     # declare whether this reply commits to work. None means it was omitted.
     workCommit: bool | None = None
+    # Envelope ``remember``: one memory sentence the decision turn saves
+    # before the reply posts. None means nothing to save.
+    remember: str | None = None
 
     @model_validator(mode="after")
     def _validate_shape(self) -> "ConversationDecision":
@@ -216,10 +222,17 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
     operator_say = _operator_say_before_peel(parsed)
     wire = parsed
     work_commit: bool | None = None
+    remember: str | None = None
     try:
-        from core.agent_loop.parse_steer import peel_decision_envelope, read_work_commit
+        from core.agent_loop.parse_steer import (
+            InvalidDecisionEnvelope,
+            peel_decision_envelope,
+            read_remember,
+            read_work_commit,
+        )
 
         work_commit = read_work_commit(parsed)
+        remember = read_remember(parsed)
         wire = peel_decision_envelope(parsed)
     except ValueError as exc:
         return _schema_failed_payload(raw_response, parsed, exc)
@@ -230,6 +243,8 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         except (ValidationError, ValueError) as exc:
             return _schema_failed_payload(raw_response, parsed, exc)
         if cli_call is not None:
+            if remember is not None:
+                return _schema_failed_payload(raw_response, parsed, InvalidDecisionEnvelope(_REMEMBER_ON_LOOKUP))
             payload = cli_call.model_dump()
             if operator_say and not payload.get("operator_say"):
                 payload["operator_say"] = operator_say
@@ -239,6 +254,8 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
         except (ValidationError, ValueError) as exc:
             return _schema_failed_payload(raw_response, parsed, exc)
         if host_call is not None:
+            if remember is not None:
+                return _schema_failed_payload(raw_response, parsed, InvalidDecisionEnvelope(_REMEMBER_ON_LOOKUP))
             payload = host_call.model_dump()
             if operator_say and not payload.get("operator_say"):
                 payload["operator_say"] = operator_say
@@ -247,6 +264,7 @@ def _parse_conversation_response(raw_response: str, *, allow_cli: bool) -> dict[
     try:
         normalized = _normalize_conversation_payload(wire)
         normalized["workCommit"] = work_commit
+        normalized["remember"] = remember
         decision = ConversationDecision.model_validate(normalized)
     except (ValidationError, ValueError) as exc:
         error = _validation_message(exc)

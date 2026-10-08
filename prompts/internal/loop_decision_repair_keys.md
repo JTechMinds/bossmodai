@@ -7,6 +7,7 @@ Allowed keys only:
 - `say` (alias `msg`) is the boss-visible chat text
 - `actions` is optional; empty is valid for a 1:1 status update with no Board/CLI work
 - `work_commit` is a required boolean on every reply (including the say-only envelope). `false` for status, questions, and reports. `true` only to continue work already active on your Board; to start new work, use act `accept` with commit `work` instead. It is not Done.
+- `remember` is optional: one sentence (one line) the system saves to your memory before your reply posts. It goes on your final decision only, never on a `cli` or `request_host_access` call.
 - `act` is the response mode when you are not using the say-only envelope
 - `intent` is the topic
 - `commit` is the commitment kind when the contract allows it

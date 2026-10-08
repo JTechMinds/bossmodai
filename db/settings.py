@@ -340,6 +340,7 @@ def seed_defaults() -> None:
     reconcile_specialty_gate_prompt_lines()
     reconcile_boss_prompt_wording()
     reconcile_memory_prompt_lines()
+    reconcile_memory_remember_prompt_lines()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -697,16 +698,103 @@ def reconcile_memory_prompt_lines() -> None:
     Guarded by a marker row: the first pass records the marker and every
     later pass is a no-op.
     """
+    _reconcile_prompt_lines(
+        _MEMORY_PROMPT_LINE_EDITS,
+        _MEMORY_PROMPT_LINES_RECONCILED,
+        missing_row_label="memory",
+        missing_line_label="agent-memory",
+    )
+
+
+# Agent memory, second pass: a reply saves a memory through the decision
+# envelope's ``remember`` field, not a separate ``memory add`` CLI round.
+# Two line swaps, then three insertions; an insertion is its anchor line ->
+# the anchor line, a newline, and the new lines. The shape anchor also
+# appears in later trigger blocks: the first occurrence is the human_chat
+# block, where the new shape belongs. (old, new), each without its final
+# newline, copied verbatim from the shipped file before and after the edit;
+# the two swapped old lines are the new lines of _MEMORY_PROMPT_LINE_EDITS.
+_MEMORY_REMEMBER_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_decision": (
+        (
+            '- If the snapshot already answers the question, reply directly instead of looking it up with CLI. Saving to memory is not a lookup.',
+            '- If the snapshot already answers the question, reply directly instead of looking it up with CLI. To save something to memory, put it in `remember` on your answer; it is not a lookup.',
+        ),
+        (
+            "Use CLI lookups only when the snapshot and surrounding turn context still lack an internal fact you genuinely need before making the final conversation decision. Saving what you were just told (`memory add`, or adding to a project's project_knowledge.md) is not a lookup: do it in this turn with `cli`, then give your final conversation decision.",
+            "Use CLI lookups only when the snapshot and surrounding turn context still lack an internal fact you genuinely need before making the final conversation decision. Saving what you were just told is not a lookup: put the sentence in `remember` on your final decision (project facts still go in that project's project_knowledge.md with `cli`).",
+        ),
+        (
+            '{"say":"string","actions":[],"work_commit":false}',
+            '{"say":"string","actions":[],"work_commit":false}\n```\n\nFor a reply that also saves something lasting you were told:\n```json\n{"say":"string","remember":"one sentence","actions":[],"work_commit":false}',
+        ),
+        (
+            '- `say` plus empty `actions` is the 1:1 status envelope. It posts to chat. It does not complete, block, or CLEAR work.',
+            '- `say` plus empty `actions` is the 1:1 status envelope. It posts to chat. It does not complete, block, or CLEAR work.\n- `remember` is optional: one sentence (one line) the system adds to your memory before your reply posts. Use it when the message tells you something lasting about the boss, the company, clients, systems, or how the boss wants your work done — including a correction to how you do a recurring job. Leave it out for small talk and one-off details. Say in a few words that you saved it.',
+        ),
+        (
+            '- A 1:1 status wake from the boss may emit `{"say":"...","actions":[],"work_commit":false}`. Do not emit raw prose.',
+            '- A 1:1 status wake from the boss may emit `{"say":"...","actions":[],"work_commit":false}`. Do not emit raw prose.\n- Example: the boss says "stop sending me paragraphs, I want the weekly report as a table" → `{"say":"Got it — tables from now on. Saved to memory.","remember":"The boss wants the weekly report as a table, not paragraphs.","actions":[],"work_commit":false}`.',
+        ),
+    ),
+}
+_MEMORY_REMEMBER_PROMPT_LINES_RECONCILED = "memory_remember_prompt_lines_reconciled"
+
+
+def reconcile_memory_remember_prompt_lines() -> None:
+    """Teach the stored decision contract the ``remember`` envelope field, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_memory_prompt_lines`, driven by
+    ``_MEMORY_REMEMBER_PROMPT_LINE_EDITS``: the two memory lines move from
+    "save it with ``cli``" to "put it in ``remember``", and the ``remember``
+    shape, field note, and example are inserted after their anchor lines.
+    A row equal to the shipped default is skipped. A row missing an old or
+    anchor line keeps that part as stored, and a warning names the key and
+    the line, so the operator can review it by hand.
+
+    Must run after :func:`reconcile_memory_prompt_lines`: that pass's new
+    lines are this pass's old lines.
+    """
+    _reconcile_prompt_lines(
+        _MEMORY_REMEMBER_PROMPT_LINE_EDITS,
+        _MEMORY_REMEMBER_PROMPT_LINES_RECONCILED,
+        missing_row_label="memory remember",
+        missing_line_label="agent-memory remember",
+    )
+
+
+def _reconcile_prompt_lines(
+    edits: dict[str, tuple[tuple[str, str], ...]],
+    marker: str,
+    *,
+    missing_row_label: str,
+    missing_line_label: str,
+) -> None:
+    """Swap whole stored prompt lines ``old`` -> ``new``, once per marker.
+
+    For each key in ``edits``, the first whole line equal to each ``old`` is
+    replaced by ``new`` with its original line ending kept; every other byte
+    and the row's category stay as stored. A row equal to the shipped default
+    is skipped. A missing row, or a row without an old line, is logged as a
+    warning and left alone for that part. The two labels only name the pass
+    in those log lines. The marker row is written last; a later call with the
+    marker present is a no-op.
+    """
     seen = query_one(
         "SELECT key FROM settings WHERE key = $1",
-        [_MEMORY_PROMPT_LINES_RECONCILED],
+        [marker],
     )
     if seen is not None:
         return
-    for key, pairs in _MEMORY_PROMPT_LINE_EDITS.items():
+    for key, pairs in edits.items():
         row = query_one("SELECT value, category FROM settings WHERE key = $1", [key])
         if row is None:
-            logger.warning("Prompt setting '%s' is missing; the memory prompt lines were not applied", key)
+            logger.warning(
+                "Prompt setting '%s' is missing; the %s prompt lines were not applied",
+                key,
+                missing_row_label,
+            )
             continue
         stored = str(row.get("value") or "")
         if stored == load_default_prompt(key):
@@ -721,9 +809,10 @@ def reconcile_memory_prompt_lines() -> None:
             if index is None:
                 logger.warning(
                     "Prompt setting '%s': the line %r was not found; review that prompt by hand "
-                    "for the agent-memory wording",
+                    "for the %s wording",
                     key,
                     old_line,
+                    missing_line_label,
                 )
                 continue
             ending = lines[index][len(old_line):]
@@ -731,8 +820,8 @@ def reconcile_memory_prompt_lines() -> None:
             changed = True
         if changed:
             set_setting(key, "".join(lines), str(row["category"]))
-            logger.info("Applied the agent-memory prompt lines to prompt setting: %s", key)
-    set_setting(_MEMORY_PROMPT_LINES_RECONCILED, "true", "advanced")
+            logger.info("Applied the %s prompt lines to prompt setting: %s", missing_line_label, key)
+    set_setting(marker, "true", "advanced")
 
 
 def ensure_local_api_token() -> str:
