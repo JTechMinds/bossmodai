@@ -322,7 +322,8 @@ def test_conversation_harness() -> None:
         "chromeShowsIdentityAvatar": True,
         "chromeAvatarNodeIsStable": True,
         "chromeActionCarriesItsIcon": True,
-        # Browser Vision's screen button beside Desk (R11).
+        # Browser Vision's screen button: the header row's only action, beside
+        # the `⋯` (R11).
         "browserViewAbsentWithoutAView": True,
         "browserViewShowsWhenListed": True,
         "browserViewOpensTheViewer": True,

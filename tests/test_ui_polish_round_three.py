@@ -24,6 +24,8 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 
+from tests.test_ui_conversation import CONVERSATION_MODULES
+
 ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
 CSS = ROOT / "ui" / "static" / "css"
@@ -723,46 +725,6 @@ def test_the_form_lost_no_fields_in_the_move() -> None:
 
 
 # ─── Task 4: rename a thread inline ───
-
-# The order tests/js_conversation_harness.cjs evaluates its modules in.
-CONVERSATION_MODULES = [
-    JS / "core" / "dom.js",
-    JS / "core" / "markdown.js",
-    JS / "core" / "avatar.js",
-    JS / "core" / "switch.js",
-    JS / "core" / "store.js",
-    JS / "core" / "bus.js",
-    JS / "core" / "format.js",
-    JS / "core" / "gates.js",
-    JS / "core" / "consent-card.js",
-    JS / "core" / "overlay-focus.js",
-    JS / "core" / "modal-trail.js",
-    JS / "core" / "overlay-actions.js",
-    JS / "core" / "overlays.js",
-    JS / "core" / "menu.js",
-    CONVERSATION / "empty-state.js",
-    CONVERSATION / "transcript.js",
-    CONVERSATION / "transcript-cache.js",
-    CONVERSATION / "message.js",
-    CONVERSATION / "event-cards.js",
-    CONVERSATION / "title-rename.js",
-    CONVERSATION / "chrome-menu.js",
-    CONVERSATION / "chrome.js",
-    JS / "core" / "desktop-clipboard.js",
-    CONVERSATION / "composer-attachments.js",
-    CONVERSATION / "composer.js",
-    CONVERSATION / "system-receipts.js",
-    JS / "needs" / "need-shape.js",
-    JS / "needs" / "needs-bar.js",
-    CONVERSATION / "sources" / "thread-archive.js",
-    CONVERSATION / "sources" / "thread-seat.js",
-    CONVERSATION / "sources" / "thread-requests.js",
-    CONVERSATION / "auto-approve-switch.js",
-    CONVERSATION / "sources" / "thread-source.js",
-    CONVERSATION / "sources" / "agent-source.js",
-    CONVERSATION / "conversation.js",
-]
-
 
 def _conversation_payload() -> dict:
     return _run("js_conversation_harness.cjs", CONVERSATION_MODULES)

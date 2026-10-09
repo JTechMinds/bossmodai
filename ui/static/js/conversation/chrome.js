@@ -214,18 +214,18 @@ const BossModConversationChrome = (() => {
          *   `avatar` is optional `{name, color}`; without it the group glyph is
          *   shown. `menuTitle` is the subject section's heading, required once
          *   any action names `section: 'subject'`. Each action is `{id, label,
-         *   icon?, iconOnly?, slot?, section?, tone?, onSelect}`, where `icon` is a Lucide glyph NAME — the source names
-         *   it, this builds it — `iconOnly` shows the glyph alone with `label`
-         *   as the button's accessible name instead of its text (SC 4.1.2) and
-         *   as its tooltip, and `slot` is `'menu'` to put it behind the `⋯`,
-         *   `'title'` to put it beside the name, or absent for the action row;
-         *   a `'menu'` action's `section` is `'subject'` or `'chat'`.
-         *   `tone` is `'live'` (the only tone so far) for an action that marks
-         *   something running now — the browser view — and sets
-         *   `data-tone="live"`, which the stylesheet colours soft green.
-         *   A `kind: 'switch'` menu action also takes `pressed`, and
-         *   optional `disabled` and `hint` (a visible line under the switch
-         *   that is also its accessible description).
+         *   icon?, iconOnly?, slot?, section?, tone?, onSelect}`, where `icon`
+         *   is a Lucide glyph NAME — the source names it, this builds it —
+         *   `iconOnly` shows the glyph alone with `label` as the button's
+         *   accessible name instead of its text (SC 4.1.2) and as its tooltip,
+         *   and `slot` is `'menu'` to put it behind the `⋯`, `'title'` to put
+         *   it beside the name, or absent for the action row; a `'menu'`
+         *   action's `section` is `'subject'` or `'chat'`. `tone` is `'live'`
+         *   (the only tone so far) for an action that marks something running
+         *   now — the browser view — and sets `data-tone="live"`, which the
+         *   stylesheet colours soft green. A `kind: 'switch'` menu action also
+         *   takes `pressed`, and optional `disabled` and `hint` (a visible line
+         *   under the switch that is also its accessible description).
          *   `onSelect` may return a promise and may reject. `onRename` is
          *   optional: with it the title is editable in place, without it the
          *   title is plain text.
