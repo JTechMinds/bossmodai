@@ -613,10 +613,11 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
    .btn, so no button hover or active fill reaches it. The host class lets it
    shrink inside its cell (the codebase does not use :has()). */
 .menu-select--field { max-width: 100%; min-width: 0; }
-/* The date field's trigger (core/date-field.js) is the same field-look
-   button: a glyph, the day, the hairline. */
+/* The date field's 'field' trigger (core/date-field.js) is the same
+   field-look button: a glyph, the day, the hairline. Keyed on .edit-field so
+   its 'button' trigger keeps .btn.btn-sm, as the menu-select's does. */
 .menu-select-field,
-.date-field-trigger {
+.edit-field.date-field-trigger {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -638,8 +639,8 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 .menu-select-field .menu-select-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .menu-select-field:focus-visible,
 .menu-select-field[aria-expanded="true"],
-.date-field-trigger:focus-visible,
-.date-field-trigger[aria-expanded="true"] { outline: none; border-bottom-color: var(--accent); }
+.edit-field.date-field-trigger:focus-visible,
+.edit-field.date-field-trigger[aria-expanded="true"] { outline: none; border-bottom-color: var(--accent); }
 
 /* ─── Time field and date field ───
  *

@@ -161,3 +161,63 @@ def test_metrics_modules_stay_focused() -> None:
         '.metric-health-light[data-health="bad"]',
     ):
         assert selector in css, f"places.css does not resolve {selector}"
+
+
+def test_metrics_counts_the_period_the_header_chose() -> None:
+    """The dashboard reads a range, not "UTC today" beside "all time".
+
+    The period row (metrics-range.js) loads before the place that builds it;
+    its toolbar is the shared `.place-controls` row with `.btn.btn-sm`
+    controls, not the Files place's toolbar classes. Every fetch names the
+    period, the "today" copy is gone, and an empty company is decided on
+    all-time values, so a quiet period is not mistaken for one.
+    """
+    place = _read("metrics-place.js")
+    html = HTML.read_text(encoding="utf-8")
+    scripts = re.findall(r"static_url\('([^']+\.js)'\)", html)
+    assert scripts.index("js/places/metrics/metric-bars.js") < scripts.index(
+        "js/places/metrics/metrics-range.js"
+    ) < scripts.index("js/places/metrics/metrics-place.js")
+
+    assert "file-toolbar-btn" not in place
+    assert "files-controls" not in place
+    assert "class: 'btn btn-sm', type: 'button'," in place
+    assert "RANGE.createRangeFilter({" in place
+    assert "let lastRange = null;" in place
+
+    refresh = place.split("async function refresh() {", 1)[1].split("\n    }\n", 1)[0]
+    assert "?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}" in refresh
+    assert "if (!period.ok) return;" in refresh
+
+    cards = _read("metric-cards.js")
+    bars = _read("metric-bars.js")
+    for gone in ("'Tokens Today'", "'Errors Today'", "today`", "completed_today", "tokens.today", "errors.today"):
+        assert gone not in cards, gone
+    assert "tasks.completed_all_time" in cards
+    assert "tokens.all_time" in cards
+    assert "'active channels now'" in cards
+    assert "'Task Status Now'" in bars
+    assert "'No agent activity in this period.'" in bars
+    # Agent Activity is the period's calls. Live active/idle is the Active
+    # Agents card's; an "All Agents" share under this heading would read as
+    # activity in a period that had none.
+    activity = bars.split("function renderAgentActivity(data) {", 1)[1].split("\n    }\n", 1)[0]
+    assert "'All Agents'" not in activity
+    assert "agents.total" not in activity and "agents.active" not in activity
+    empty_branch = activity.split("if (byAgent.length === 0) {", 1)[1].split("\n        }\n", 1)[0]
+    assert "'No agent activity in this period.'" in empty_branch
+
+    # The inline range error is shaped like the .btn.btn-sm row it sits in,
+    # without touching the base banner the Log and Files use.
+    places_css = (ROOT / "ui" / "static" / "css" / "places.css").read_text(encoding="utf-8")
+    inline = places_css.split(".place-controls .files-error {", 1)[1].split("}", 1)[0]
+    for declaration in ("min-height: 24px;", "padding: 4px 10px;", "border: 1px solid var(--alert-line);",
+                        "border-radius: var(--r);", "font-size: 12px;"):
+        assert declaration in inline, declaration
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b", inline)
+    assert "'No token usage in this period.'" in bars
+
+    is_empty = place.split("function isEmpty(data) {", 1)[1].split("\n    }", 1)[0]
+    assert "tokens.all_time" in is_empty
+    assert "tasks.by_status" in is_empty
+    assert "tokens.total" not in is_empty

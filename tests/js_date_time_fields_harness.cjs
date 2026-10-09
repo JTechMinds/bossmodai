@@ -242,6 +242,24 @@ const offGridToggle = offGrid.element.querySelector(".time-field-toggle");
         fail(`a month step must clamp to the month's last day: ${focusedDay()}`);
     }
 
+    // ── The date field's trigger looks ─────────────────────────────────
+    // 'field' stays the default (the schedule form passes no variant);
+    // 'button' is the toolbar's .btn.btn-sm, like menu-select's.
+    const looks = (variant) => {
+        const built = DateField.create({ label: "From", value: "2026-10-01", onChange() {}, variant });
+        return built.element.querySelector(".date-field-trigger").getAttribute("class");
+    };
+    const dateFieldHasTwoLooks = looks(undefined) === "edit-field date-field-trigger"
+        && looks("field") === "edit-field date-field-trigger"
+        && looks("button") === "btn btn-sm date-field-trigger"
+        && threw(() => DateField.create({ label: "x", value: "2026-10-01", onChange() {}, variant: "chip" }));
+    if (!dateFieldHasTwoLooks) fail(`the date field's variants: ${looks(undefined)} / ${looks("button")}`);
+    const dayArithmeticIsExported = DateField.addDays("2026-12-31", 1) === "2027-01-01"
+        && DateField.addDays("2026-03-01", -1) === "2026-02-28"
+        && DateField.parseIso("2026-10-01").getDate() === 1
+        && threw(() => DateField.addDays("2026-02-30", 1));
+    if (!dayArithmeticIsExported) fail("addDays and parseIso must be exported and roll across month and year ends");
+
     // ── Autogrow ──────────────────────────────────────────────────────
     const plain = { style: {} };
     AutoGrow.fit(plain);
@@ -325,6 +343,8 @@ const offGridToggle = offGrid.element.querySelector(".time-field-toggle");
         enterPicksTheDay,
         escReturnsFocusToTheTrigger,
         aMonthStepClampsTheDay,
+        dateFieldHasTwoLooks,
+        dayArithmeticIsExported,
         autogrowSkipsANodeWithNoLayout,
         autogrowBindsTextareasOnly,
         autogrowRefitsOnWidthOnly,

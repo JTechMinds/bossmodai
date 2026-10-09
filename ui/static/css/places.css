@@ -631,6 +631,19 @@ button.task-detail-file-path:disabled { border-bottom-color: transparent; cursor
 
 .files-error[hidden] { display: none !important; }
 
+/* The same alert inline in a place's toolbar row (metrics-range.js), shaped
+   like the .btn.btn-sm controls beside it (controls.css): full border, radius,
+   padding, type size and height, in the alert's own colours. */
+.place-controls .files-error {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 4px 10px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r);
+  font-size: 12px;
+}
+
 .files-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 10px 16px; }
 
 .file-list { display: flex; flex-direction: column; gap: 4px; }

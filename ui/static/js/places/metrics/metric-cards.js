@@ -2,8 +2,10 @@
  * BossMod AI — the Metrics numbers: the health panel, the four stat cards, the
  * health grid, and the communication line.
  *
- * Pure rendering over the metrics dashboard payload. It formats
- * nothing itself: `formatNumber`, `formatDuration` and `formatTokenCount` are
+ * Pure rendering over the metrics dashboard payload, whose event counts cover
+ * the period the header chose. Live-state numbers (active agents, active
+ * channels) say "now", and the period cards keep an all-time sub-line. It
+ * formats nothing itself: `formatNumber`, `formatDuration` and `formatTokenCount` are
  * BossModFormat's, because company-metrics.js kept private copies of the last
  * two and a second opinion about what "< 1m" means is a second number on screen.
  *
@@ -84,7 +86,9 @@ const BossModMetricCards = (() => {
     }
 
     /**
-     * The four headline numbers.
+     * The four headline numbers: completed tasks and tokens for the period
+     * (each with its all-time total), agents as they are now, and the
+     * period's error rate.
      *
      * @param {object} data
      * @returns {HTMLElement}
@@ -98,12 +102,12 @@ const BossModMetricCards = (() => {
         return h('div', { class: 'metric-cards' },
             card('Tasks Completed', U.formatNumber(tasks.completed || 0),
                 h('p', { class: 'metric-card-sub' },
-                    `+${U.formatNumber(tasks.completed_today || 0)} today`)),
+                    `${U.formatNumber(tasks.completed_all_time || 0)} all-time`)),
             card('Active Agents', U.formatNumber(agents.active || 0),
-                h('p', { class: 'metric-card-sub' }, `${U.formatNumber(agents.idle || 0)} idle`)),
-            card('Tokens Today', U.formatNumber(tokens.today || 0),
+                h('p', { class: 'metric-card-sub' }, `${U.formatNumber(agents.idle || 0)} idle · now`)),
+            card('Tokens', U.formatNumber(tokens.total || 0),
                 h('p', { class: 'metric-card-sub' },
-                    `${U.formatTokenCount(tokens.total || 0)} all-time`)),
+                    `${U.formatTokenCount(tokens.all_time || 0)} all-time`)),
             card('Error Rate', `${health.percent}%`,
                 h('p', { class: 'metric-card-sub metric-card-health', 'data-health': health.tone },
                     h('span', { class: 'status-dot', 'aria-hidden': 'true' }),
@@ -117,7 +121,7 @@ const BossModMetricCards = (() => {
     }
 
     /**
-     * Errors, invalid decisions, tool calls, uptime.
+     * The period's errors, invalid decisions and tool calls; uptime is now.
      *
      * @param {object} data
      * @returns {HTMLElement}
@@ -127,7 +131,7 @@ const BossModMetricCards = (() => {
         const tools = data.tool_calls || {};
         const uptime = data.uptime || {};
         return h('div', { class: 'metric-grid' },
-            healthCell(U.formatNumber(errors.today || 0), 'Errors Today', 'bad'),
+            healthCell(U.formatNumber(errors.total || 0), 'Errors', 'bad'),
             healthCell(U.formatNumber(errors.invalid_decisions || 0), 'Invalid Decisions', 'warn'),
             healthCell(U.formatNumber(tools.total || 0), 'Tool Calls', 'info'),
             // The endpoint reports null when the runtime has never started;
@@ -137,7 +141,7 @@ const BossModMetricCards = (() => {
     }
 
     /**
-     * The communication stats row.
+     * The communication stats row: the period's counts, and channels open now.
      *
      * @param {object} comms
      * @returns {HTMLElement}
@@ -146,7 +150,7 @@ const BossModMetricCards = (() => {
         const items = [
             [comms.messages_sent || 0, 'messages sent'],
             [comms.agent_conversations || 0, 'agent conversations'],
-            [comms.active_channels || 0, 'active channels'],
+            [comms.active_channels || 0, 'active channels now'],
             [comms.meetings_held || 0, 'meetings held'],
         ];
         const row = h('div', { class: 'metric-comms' });

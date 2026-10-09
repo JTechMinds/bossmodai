@@ -15,11 +15,17 @@
  * Home/End to the week's ends, Enter or Space picks. Esc, the Tab trap and
  * focus returning to the trigger are core/menu.js's.
  *
+ * Two trigger looks, one control, as core/menu-select.js has: the field
+ * look above (the default), and `'button'`, the toolbar's `.btn.btn-sm`,
+ * for a date that sits in a place's toolbar row.
+ *
  * Split along one seam: the calendar arithmetic (`monthGrid`,
- * `formatDateLabel`, `today`) is pure and exported so it is tested without
- * a DOM; `create` owns the DOM. Dates are local calendar days throughout and
- * every label is spelled by hand, as core/format.js spells its own, so the
- * output never depends on the host's locale data.
+ * `formatDateLabel`, `today`, `parseIso`, `addDays`) is pure and exported so
+ * it is tested without a DOM — and so a caller doing day arithmetic shares
+ * this one definition of a calendar day; `create` owns the DOM. Dates are
+ * local calendar days throughout and every label is spelled by hand, as
+ * core/format.js spells its own, so the output never depends on the host's
+ * locale data.
  */
 const BossModDateField = (() => {
     const { h } = BossModDom;
@@ -30,6 +36,8 @@ const BossModDateField = (() => {
     const WEEKDAYS = Object.freeze(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']);
     const GRID_CELLS = 42;
     const ISO = /^(\d{4})-(\d{2})-(\d{2})$/;
+    /** The trigger looks `deps.variant` may name; the first is the default. */
+    const VARIANTS = Object.freeze(['field', 'button']);
 
     const pad = (n) => String(n).padStart(2, '0');
     const isoOf = (date) => `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
@@ -93,7 +101,14 @@ const BossModDateField = (() => {
             + `${date.getDate()}, ${date.getFullYear()}`;
     }
 
-    /** `iso` moved by whole days. */
+    /**
+     * `iso` moved by whole calendar days, across month and year ends.
+     *
+     * @param {string} iso  `YYYY-MM-DD`.
+     * @param {number} days  Negative moves back.
+     * @returns {string} `YYYY-MM-DD`.
+     * @throws {Error} When `iso` is not a real calendar day.
+     */
     function addDays(iso, days) {
         const date = parseIso(iso);
         return isoOf(new Date(date.getFullYear(), date.getMonth(), date.getDate() + days));
@@ -120,16 +135,23 @@ const BossModDateField = (() => {
      *   holds a day (callers default to `today()`).
      * @param {() => void} deps.onChange  A different day was picked; read it
      *   back with `read()`.
+     * @param {'field'|'button'} [deps.variant='field']  The trigger's look.
+     *   `'field'` reads as an Edit-mode field over the edit hairline (a form's
+     *   fact cell); `'button'` is the toolbar's `.btn.btn-sm`, so it stands in
+     *   a row beside menu-select dropdowns with one look.
      * @returns {{element: HTMLElement, read: () => ({ok: true, value: string}),
      *   setDisabled: (disabled: boolean) => void, destroy: () => void}}
      *   `destroy` puts an open panel away.
-     * @throws {Error} When label or onChange is missing, or value is not a
-     *   real calendar day.
+     * @throws {Error} When label or onChange is missing, the variant is not
+     *   one of VARIANTS, or value is not a real calendar day.
      */
     function create(deps) {
-        const { label, value, onChange } = deps || {};
+        const { label, value, onChange, variant = VARIANTS[0] } = deps || {};
         if (!label) throw new Error('[date-field] deps.label is required');
         if (typeof onChange !== 'function') throw new Error('[date-field] deps.onChange is required');
+        if (!VARIANTS.includes(variant)) {
+            throw new Error(`[date-field] unknown variant "${variant}"; expected one of ${VARIANTS.join(', ')}`);
+        }
         formatDateLabel(value);
         const id = `date-field-${instances += 1}`;
 
@@ -142,7 +164,8 @@ const BossModDateField = (() => {
 
         const text = h('span', { class: 'date-field-value' });
         const trigger = h('button', {
-            class: 'edit-field date-field-trigger', type: 'button', 'aria-haspopup': 'dialog',
+            class: variant === 'button' ? 'btn btn-sm date-field-trigger' : 'edit-field date-field-trigger',
+            type: 'button', 'aria-haspopup': 'dialog',
             'aria-expanded': 'false', onclick: () => toggleMenu(),
         }, h('i', { 'data-lucide': 'calendar', 'aria-hidden': 'true' }), text);
         const element = h('span', { class: 'date-field' }, trigger);
@@ -309,5 +332,5 @@ const BossModDateField = (() => {
         };
     }
 
-    return { today, monthGrid, formatDateLabel, create };
+    return { today, parseIso, addDays, monthGrid, formatDateLabel, create };
 })();

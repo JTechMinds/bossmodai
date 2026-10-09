@@ -45,44 +45,36 @@ const BossModMetricBars = (() => {
     }
 
     /**
-     * Share of API calls per agent, or the aggregate active/idle split when the
-     * endpoint reports no per-agent rows.
+     * Share of the period's API calls per agent. No per-agent rows means no
+     * activity in the period; live active/idle is the Active Agents card's,
+     * not this panel's.
      *
      * @param {object} data  The dashboard payload.
      * @returns {HTMLElement}
      */
     function renderAgentActivity(data) {
-        const agents = data.agents || {};
         const byAgent = ((data.tokens || {}).by_agent) || [];
-        if ((agents.total || 0) === 0 && byAgent.length === 0) {
+        if (byAgent.length === 0) {
             return panel('Agent Activity',
-                h('p', { class: 'place-empty-hint' }, 'No agent data yet.'));
+                h('p', { class: 'place-empty-hint' }, 'No agent activity in this period.'));
         }
 
         const rows = h('div', { class: 'metric-rows' });
-        if (byAgent.length > 0) {
-            const calls = byAgent.reduce((sum, item) => sum + (item.api_calls || 0), 0);
-            byAgent.forEach((agent, index) => {
-                const share = calls > 0 ? Math.round(((agent.api_calls || 0) / calls) * 100) : 0;
-                rows.append(h('div', { class: 'metric-row' },
-                    h('span', { class: 'metric-row-name' },
-                        String(agent.agent_name || agent.agent_id || 'Unknown')),
-                    bar(share, index),
-                    h('span', { class: 'metric-row-value' }, `${share}%`)));
-            });
-        } else {
-            const share = (agents.total || 0) > 0
-                ? Math.round(((agents.active || 0) / agents.total) * 100) : 0;
+        const calls = byAgent.reduce((sum, item) => sum + (item.api_calls || 0), 0);
+        byAgent.forEach((agent, index) => {
+            const share = calls > 0 ? Math.round(((agent.api_calls || 0) / calls) * 100) : 0;
             rows.append(h('div', { class: 'metric-row' },
-                h('span', { class: 'metric-row-name' }, 'All Agents'),
-                bar(share, 0),
+                h('span', { class: 'metric-row-name' },
+                    String(agent.agent_name || agent.agent_id || 'Unknown')),
+                bar(share, index),
                 h('span', { class: 'metric-row-value' }, `${share}%`)));
-        }
+        });
         return panel('Agent Activity', rows);
     }
 
     /**
-     * Task counts by status, as columns.
+     * Task counts by current status, as columns. Status is live state, so this
+     * chart is "now" whatever period the header chose.
      *
      * @param {object} tasks
      * @returns {HTMLElement}
@@ -108,7 +100,7 @@ const BossModMetricBars = (() => {
                     })),
                 h('span', { class: 'metric-column-label' }, entry.label)));
         });
-        return panel('Task Distribution', chart);
+        return panel('Task Status Now', chart);
     }
 
     function tokenRow(agent, index, max, onOpenLog) {
@@ -140,7 +132,7 @@ const BossModMetricBars = (() => {
         const byAgent = tokens.by_agent || [];
         if (byAgent.length === 0) {
             return panel('Token Usage by Agent',
-                h('p', { class: 'place-empty-hint' }, 'No token usage recorded yet.'));
+                h('p', { class: 'place-empty-hint' }, 'No token usage in this period.'));
         }
         const live = new Set((roster || []).map((agent) => agent.id));
         // An empty roster means the first world_update has not landed yet, not

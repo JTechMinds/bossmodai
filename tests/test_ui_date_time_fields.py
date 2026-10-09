@@ -59,6 +59,8 @@ def test_date_time_fields_and_autogrow_harness() -> None:
         "enterPicksTheDay": True,
         "escReturnsFocusToTheTrigger": True,
         "aMonthStepClampsTheDay": True,
+        "dateFieldHasTwoLooks": True,
+        "dayArithmeticIsExported": True,
         "autogrowSkipsANodeWithNoLayout": True,
         "autogrowBindsTextareasOnly": True,
         "autogrowRefitsOnWidthOnly": True,

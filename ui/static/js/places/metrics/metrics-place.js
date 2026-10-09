@@ -5,8 +5,10 @@
  * once, and refreshes after an outage; the numbers themselves are
  * metric-cards.js and metric-bars.js, which take a payload and return nodes.
  *
- * The endpoint is `GET /api/metrics/dashboard` — not `/api/metrics`, which does
- * not exist.
+ * The endpoint is `GET /api/metrics/dashboard?start=…&end=…` — not
+ * `/api/metrics`, which does not exist. The period comes from the header's
+ * range row (metrics-range.js); the place remembers the last one across
+ * mounts, so a trip to the Log through a token bar comes back to it.
  *
  * The dock-era pane had two states: a spinner and the dashboard. A failed fetch
  * logged to the console and left the spinner spinning. All four are here.
@@ -15,6 +17,7 @@ const BossModMetricsPlace = (() => {
     const { h, clear } = BossModDom;
     const CARDS = BossModMetricCards;
     const BARS = BossModMetricBars;
+    const RANGE = BossModMetricsRange;
 
     const ENDPOINT = '/api/metrics/dashboard';
     const SKELETON_CARDS = 4;
@@ -25,6 +28,11 @@ const BossModMetricsPlace = (() => {
     let bodyEl = null;
     let summaryEl = null;
     let lastDashboard = null;
+    let range = null;
+    /** The label of the period `lastDashboard` counts, for a floor repaint. */
+    let shownPeriod = '';
+    /** Module-lifetime, like log-place.js `lastView`: {preset, from, to}. */
+    let lastRange = null;
     const disposers = [];
 
     function setBody(...nodes) {
@@ -54,8 +62,9 @@ const BossModMetricsPlace = (() => {
 
     /**
      * True when the company has produced nothing to measure yet — no agent has
-     * run, no task exists, no message was sent. A grid of zeroes reads as a
-     * broken dashboard; this says which it is.
+     * ever spent a token and no task exists. Keyed on all-time values: a quiet
+     * period in a working company is a dashboard of zeroes with "in this
+     * period" hints, not an empty company.
      *
      * @param {object} data
      * @returns {boolean}
@@ -63,11 +72,8 @@ const BossModMetricsPlace = (() => {
     function isEmpty(data) {
         const tokens = data.tokens || {};
         const tasks = data.tasks || {};
-        const comms = data.communication || {};
-        return (tokens.by_agent || []).length === 0
-            && (tokens.total || 0) === 0
-            && Object.keys(tasks.by_status || {}).length === 0
-            && (comms.messages_sent || 0) === 0;
+        return (tokens.all_time || 0) === 0
+            && Object.keys(tasks.by_status || {}).length === 0;
     }
 
     function paintEmpty() {
@@ -107,8 +113,8 @@ const BossModMetricsPlace = (() => {
         lastDashboard = data;
         // The verdict moved out of this line and into the panel below, where it
         // leads the page instead of trailing the word "Metrics". What is left
-        // here is what the header row is for: what this place is.
-        summaryEl.textContent = 'Company health';
+        // here is what the header row is for: what this place is, and when.
+        summaryEl.textContent = `Company health · ${shownPeriod}`;
         const state = ctxRef.store.getState();
         const roster = BossModFloorScope.filterPeople(state, state.roster || []);
         const dataForFloor = scopedMetrics(state, data, roster);
@@ -131,11 +137,19 @@ const BossModMetricsPlace = (() => {
      * @returns {Promise<void>}
      */
     async function refresh() {
+        // A backwards custom range is already said in the row; there is
+        // nothing to fetch until it is fixed.
+        const period = range.read();
+        if (!period.ok) return;
+        lastRange = { preset: period.preset, ...period.days };
+        const { start, end } = period.instants;
         const loadId = load.next();
         paintSkeleton();
         let data;
         try {
-            const res = await ctxRef.api(ENDPOINT, { cache: 'no-store' });
+            const res = await ctxRef.api(
+                `${ENDPOINT}?start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`,
+                { cache: 'no-store' });
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             data = await res.json();
             if (!data || typeof data !== 'object') {
@@ -153,6 +167,7 @@ const BossModMetricsPlace = (() => {
             paintEmpty();
             return;
         }
+        shownPeriod = period.label;
         paintDashboard(data);
     }
 
@@ -169,18 +184,22 @@ const BossModMetricsPlace = (() => {
             ctxRef = ctx;
             summaryEl = h('p', { class: 'place-summary' }, '');
             bodyEl = h('div', { class: 'metrics-body' });
+            range = RANGE.createRangeFilter({
+                initial: lastRange || { preset: 'today', ...RANGE.presetDays('today', BossModDateField.today()) },
+                onChange: () => { void refresh(); },
+                trailing: h('button', {
+                    class: 'btn btn-sm', type: 'button',
+                    'aria-label': 'Refresh the metrics',
+                    onclick: () => { void refresh(); },
+                }, 'Refresh'),
+            });
 
             clear(el);
             el.append(h('div', { class: 'metrics-place' },
                 h('header', { class: 'place-header' },
                     h('div', { class: 'place-title' },
                         h('h1', { tabindex: '-1' }, 'Metrics'), summaryEl),
-                    h('div', { class: 'files-controls' },
-                        h('button', {
-                            class: 'file-toolbar-btn', type: 'button',
-                            'aria-label': 'Refresh the metrics',
-                            onclick: () => { void refresh(); },
-                        }, 'Refresh'))),
+                    range.element),
                 bodyEl));
 
             // The shell does not drive Place.resync() yet; without this the
@@ -209,6 +228,8 @@ const BossModMetricsPlace = (() => {
         unmount() {
             disposers.splice(0).forEach((off) => off());
             load.next();
+            range.destroy();
+            range = null;
             lastDashboard = null;
             bodyEl = null;
             summaryEl = null;

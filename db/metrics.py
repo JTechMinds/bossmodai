@@ -8,15 +8,43 @@ from typing import Any
 from db.crud import query, query_one
 
 
-def get_dashboard_metrics() -> dict[str, Any]:
-    """Run all aggregation queries and return the full dashboard metrics payload."""
+def get_dashboard_metrics(start: datetime, end: datetime) -> dict[str, Any]:
+    """Run all aggregation queries and return the dashboard payload for a period.
+
+    Event-timestamped figures (tasks completed, tokens, errors, messages,
+    meetings, tool calls) count only rows inside the half-open period
+    ``[start, end)``: a row stamped exactly at ``start`` is in, one stamped
+    exactly at ``end`` is out, so back-to-back periods never count a row twice.
+    Current-state figures (agents, task status, active channels, uptime)
+    describe now whatever the period, and the tasks and tokens blocks carry an
+    all-time companion (``completed_all_time``, ``all_time``).
+
+    Args:
+        start: The period's first instant. Must be timezone-aware.
+        end: The instant just after the period. Must be timezone-aware.
+
+    Returns:
+        The dashboard payload: ``tasks``, ``agents``, ``tokens``, ``errors``,
+        ``communication``, ``tool_calls`` and ``uptime`` blocks.
+
+    Raises:
+        ValueError: When either bound is naive (its instant would depend on the
+            host's timezone) or ``start`` is not before ``end``.
+    """
+    if start.tzinfo is None or start.utcoffset() is None:
+        raise ValueError("start must be a timezone-aware datetime")
+    if end.tzinfo is None or end.utcoffset() is None:
+        raise ValueError("end must be a timezone-aware datetime")
+    if start >= end:
+        raise ValueError("start must be before end")
+    lo, hi = _sql_bound(start), _sql_bound(end)
     return {
-        "tasks": _task_metrics(),
+        "tasks": _task_metrics(lo, hi),
         "agents": _agent_metrics(),
-        "tokens": _token_metrics(),
-        "errors": _error_metrics(),
-        "communication": _communication_metrics(),
-        "tool_calls": _tool_call_metrics(),
+        "tokens": _token_metrics(lo, hi),
+        "errors": _error_metrics(lo, hi),
+        "communication": _communication_metrics(lo, hi),
+        "tool_calls": _tool_call_metrics(lo, hi),
         "uptime": _uptime_metrics(),
     }
 
@@ -68,19 +96,41 @@ def get_agent_stats_batch() -> dict[str, dict[str, Any]]:
 # Private aggregation helpers
 # ---------------------------------------------------------------------------
 
-def _task_metrics() -> dict[str, Any]:
-    """Aggregate task status counts."""
+def _sql_bound(moment: datetime) -> str:
+    """A period bound as stored timestamps compare against it, as text.
+
+    Timestamps are stored as UTC text in two shapes — the adapter's
+    ``YYYY-MM-DD HH:MM:SS.ffffff+00:00`` and SQL ``current_timestamp``'s
+    ``YYYY-MM-DD HH:MM:SS`` — and both order correctly against this one, so
+    the raw column is compared and its index stays usable.
+
+    A whole-second bound drops the fraction: ``05:00:00`` sorts BEFORE
+    ``05:00:00.000000``, so a ``current_timestamp`` row stamped on the bound's
+    second would otherwise fall out of the period it starts and into the one
+    it ends.
+    """
+    utc = moment.astimezone(timezone.utc)
+    if utc.microsecond == 0:
+        return utc.strftime("%Y-%m-%d %H:%M:%S")
+    return utc.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _task_metrics(lo: str, hi: str) -> dict[str, Any]:
+    """Aggregate task status counts; ``completed`` counts closures in the period."""
     status_rows = query("SELECT status, COUNT(*) AS cnt FROM tasks GROUP BY status")
     by_status: dict[str, int] = {row["status"]: row["cnt"] for row in status_rows}
 
-    completed_today_row = query_one(
-        "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'complete' AND DATE(last_activity) = DATE('now')",
+    # closed_at, not last_activity: completion is stamped once, on entry to a
+    # terminal status, while last_activity moves with every later touch.
+    completed_row = query_one(
+        "SELECT COUNT(*) AS cnt FROM tasks WHERE status = 'complete' AND closed_at >= ? AND closed_at < ?",
+        [lo, hi],
     )
-    completed_today = int(completed_today_row["cnt"]) if completed_today_row else 0
+    completed = int(completed_row["cnt"]) if completed_row else 0
 
     return {
-        "completed": by_status.get("complete", 0),
-        "completed_today": completed_today,
+        "completed": completed,
+        "completed_all_time": by_status.get("complete", 0),
         "active": by_status.get("active", 0),
         "pending": by_status.get("pending", 0) + by_status.get("accepted", 0),
         "stalled": by_status.get("stalled", 0),
@@ -102,21 +152,22 @@ def _agent_metrics() -> dict[str, Any]:
     }
 
 
-def _token_metrics() -> dict[str, Any]:
-    """Aggregate token usage from diagnostics."""
-    total_row = query_one(
+def _token_metrics(lo: str, hi: str) -> dict[str, Any]:
+    """Aggregate token usage from diagnostics over the period, plus the all-time total."""
+    all_time_row = query_one(
         "SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total FROM diagnostics",
     )
-    total_tokens = int(total_row["total"] or 0) if total_row else 0
+    all_time_tokens = int(all_time_row["total"] or 0) if all_time_row else 0
 
-    today_row = query_one(
+    total_row = query_one(
         """
         SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total
         FROM diagnostics
-        WHERE DATE(created_at) = DATE('now')
+        WHERE created_at >= ? AND created_at < ?
         """,
+        [lo, hi],
     )
-    today_tokens = int(today_row["total"] or 0) if today_row else 0
+    total_tokens = int(total_row["total"] or 0) if total_row else 0
 
     by_agent_rows = query(
         """
@@ -124,9 +175,11 @@ def _token_metrics() -> dict[str, Any]:
                SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total_tokens,
                COUNT(*) AS api_calls
         FROM diagnostics
+        WHERE created_at >= ? AND created_at < ?
         GROUP BY agent_id, agent_name
         ORDER BY total_tokens DESC
         """,
+        [lo, hi],
     )
     by_agent = [
         {
@@ -140,48 +193,49 @@ def _token_metrics() -> dict[str, Any]:
 
     return {
         "total": total_tokens,
-        "today": today_tokens,
+        "all_time": all_time_tokens,
         "by_agent": by_agent,
     }
 
 
-def _error_metrics() -> dict[str, Any]:
-    """Aggregate error stats from diagnostics."""
+def _error_metrics(lo: str, hi: str) -> dict[str, Any]:
+    """Aggregate error stats from diagnostics over the period."""
     totals_row = query_one(
         """
         SELECT COUNT(*) AS total,
                SUM(CASE WHEN status = 'error' THEN 1 ELSE 0 END) AS errors
         FROM diagnostics
+        WHERE created_at >= ? AND created_at < ?
         """,
+        [lo, hi],
     )
     total = int(totals_row["total"] or 0) if totals_row else 0
     errors = int(totals_row["errors"] or 0) if totals_row else 0
     rate = (errors / total) if total > 0 else 0.0
 
-    today_row = query_one(
-        "SELECT COUNT(*) AS cnt FROM diagnostics WHERE status = 'error' AND DATE(created_at) = DATE('now')",
-    )
-    today_errors = int(today_row["cnt"]) if today_row else 0
-
     invalid_row = query_one(
         """
         SELECT COUNT(*) AS cnt FROM diagnostics
         WHERE status = 'error' AND action_name IS NOT NULL
+          AND created_at >= ? AND created_at < ?
         """,
+        [lo, hi],
     )
     invalid_decisions = int(invalid_row["cnt"]) if invalid_row else 0
 
     return {
         "total": errors,
-        "today": today_errors,
         "rate": round(rate, 4),
         "invalid_decisions": invalid_decisions,
     }
 
 
-def _communication_metrics() -> dict[str, Any]:
-    """Aggregate communication stats from messages, channels, and meetings."""
-    msg_row = query_one("SELECT COUNT(*) AS cnt FROM messages")
+def _communication_metrics(lo: str, hi: str) -> dict[str, Any]:
+    """Aggregate communication stats over the period; active channels are current state."""
+    msg_row = query_one(
+        "SELECT COUNT(*) AS cnt FROM messages WHERE created_at >= ? AND created_at < ?",
+        [lo, hi],
+    )
     messages_sent = int(msg_row["cnt"]) if msg_row else 0
 
     conversations_row = query_one(
@@ -189,14 +243,19 @@ def _communication_metrics() -> dict[str, Any]:
         SELECT COUNT(DISTINCT from_agent || '-' || to_agent) AS cnt
         FROM messages
         WHERE from_agent IS NOT NULL AND to_agent IS NOT NULL
+          AND created_at >= ? AND created_at < ?
         """,
+        [lo, hi],
     )
     agent_conversations = int(conversations_row["cnt"]) if conversations_row else 0
 
     channels_row = query_one("SELECT COUNT(*) AS cnt FROM channels WHERE status = 'active'")
     active_channels = int(channels_row["cnt"]) if channels_row else 0
 
-    meetings_row = query_one("SELECT COUNT(*) AS cnt FROM meeting_sessions")
+    meetings_row = query_one(
+        "SELECT COUNT(*) AS cnt FROM meeting_sessions WHERE created_at >= ? AND created_at < ?",
+        [lo, hi],
+    )
     meetings_held = int(meetings_row["cnt"]) if meetings_row else 0
 
     return {
@@ -207,9 +266,12 @@ def _communication_metrics() -> dict[str, Any]:
     }
 
 
-def _tool_call_metrics() -> dict[str, Any]:
-    """Aggregate tool call stats from bm_cli_events."""
-    row = query_one("SELECT COUNT(*) AS cnt FROM bm_cli_events")
+def _tool_call_metrics(lo: str, hi: str) -> dict[str, Any]:
+    """Count tool calls from bm_cli_events over the period."""
+    row = query_one(
+        "SELECT COUNT(*) AS cnt FROM bm_cli_events WHERE created_at >= ? AND created_at < ?",
+        [lo, hi],
+    )
     return {"total": int(row["cnt"]) if row else 0}
 
 

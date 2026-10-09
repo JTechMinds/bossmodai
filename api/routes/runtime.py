@@ -1,6 +1,7 @@
 """Map, world, metrics, activity, diagnostics, and runtime-control routes."""
 
 import asyncio
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -112,9 +113,18 @@ async def get_world_state():
 
 
 @router.get("/metrics/dashboard")
-async def get_metrics_dashboard() -> dict[str, object]:
-    """Return aggregated dashboard metrics for the Company overview."""
-    return await asyncio.to_thread(db.get_dashboard_metrics)
+async def get_metrics_dashboard(start: datetime, end: datetime) -> dict[str, object]:
+    """Return aggregated dashboard metrics for the half-open period ``[start, end)``.
+
+    Both bounds are required timezone-aware ISO-8601 instants; the client turns
+    the operator's local calendar days into them, so the server never guesses a
+    timezone. A missing or unparseable bound is a 422 (FastAPI's validation); a
+    naive bound or ``start >= end`` is a 400 with the reason.
+    """
+    try:
+        return await asyncio.to_thread(db.get_dashboard_metrics, start, end)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
 
 
 # ─── Unified Activity Feed ───
