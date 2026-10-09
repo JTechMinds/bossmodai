@@ -15,6 +15,7 @@ from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.decision_contract import ConversationDecision, parse_direct_turn_response
 from core.agent_loop.loop import run_turn
 from core.agent_loop.parse_steer import (
+    EXECUTION_PARSE_STEER,
     INVALID_DECISION_STEER,
     PROSE_STATUS_STEER,
     classify_json_parse_failure,
@@ -112,7 +113,7 @@ def test_classify_prose_status_vs_invalid_json() -> None:
         'missing "act"',
         {"say": "Committed.", "actions": []},
     ) == "invalid_json"
-    steer = parse_failure_steer("prose_status")
+    steer = parse_failure_steer("prose_status", decision=True)
     assert PROSE_STATUS_STEER in steer
     assert "say plus optional actions" in steer
     assert "Do not park @Boss" in steer
@@ -124,11 +125,31 @@ def test_describe_execution_parse_failure_uses_action_object_wording() -> None:
     prose = describe_execution_parse_failure("prose_status", "Verifying the commit,\n  then   pushing.")
     assert prose == "prose instead of one JSON action object: Verifying the commit, then pushing."
     assert "envelope" not in prose
-    assert describe_execution_parse_failure("invalid_json") == "truncated or broken JSON"
+    assert describe_execution_parse_failure("invalid_json") == "invalid action JSON"
     assert describe_execution_parse_failure("invalid_decision", "") == "invented or disallowed keys"
     long = describe_execution_parse_failure("invalid_json", "x" * 400)
     assert long.endswith("...")
-    assert len(long) == len("truncated or broken JSON: ") + 180
+    assert len(long) == len("invalid action JSON: ") + 180
+
+
+def test_execution_parse_failure_steer_uses_execution_wording() -> None:
+    snippet = 'invalid outs item ("type": Field required)'
+    steer = parse_failure_steer("invalid_json", snippet, decision=False)
+    assert steer.startswith(EXECUTION_PARSE_STEER)
+    assert PROSE_STATUS_STEER not in steer
+    assert steer.endswith(f"Parser error: {snippet}")
+    assert parse_failure_steer("prose_status", "Working on it.", decision=False) == EXECUTION_PARSE_STEER
+    # Invented keys keep the fail-closed approval steer on either turn.
+    assert parse_failure_steer("invalid_decision", decision=False) == INVALID_DECISION_STEER
+
+
+def test_parse_action_names_the_json_decode_error() -> None:
+    parsed = parse_action(r"""{"act":"cli","data":{"cmd":"grep 'a\|b' x"},"th":"t"}""")
+    assert parsed["action"] == "_parse_failed"
+    assert parsed["_parse_kind"] == "invalid_json"
+    assert parsed["_raw_snippet"].startswith(r"Invalid \escape near ")
+    # The excerpt around the failure is quoted with repr, so the backslash is doubled.
+    assert r"a\\|b" in parsed["_raw_snippet"]
 
 
 def test_parse_direct_turn_prose_is_parse_failed_prose_kind() -> None:
@@ -153,7 +174,7 @@ def test_invented_needs_approval_is_invalid_decision_not_schema_key() -> None:
     assert parsed.get("_parse_kind") == "invalid_decision"
     assert "_needsApproval" in str(parsed.get("_raw_snippet") or "")
     assert "_needsApproval" not in parsed or parsed.get("decision") == "_parse_failed"
-    steer = parse_failure_steer("invalid_decision", parsed.get("_raw_snippet", ""))
+    steer = parse_failure_steer("invalid_decision", parsed.get("_raw_snippet", ""), decision=True)
     assert INVALID_DECISION_STEER in steer
     assert "Do not invent approval fields" in steer
     assert "approval_required" in steer
@@ -190,7 +211,7 @@ def test_invented_th2_key_is_invalid_decision_not_schema_key() -> None:
     assert parsed.get("_parse_kind") == "invalid_decision"
     assert "th2" in str(parsed.get("_raw_snippet") or "")
     assert "th2" not in parsed or parsed.get("decision") == "_parse_failed"
-    steer = parse_failure_steer("invalid_decision", parsed.get("_raw_snippet", ""))
+    steer = parse_failure_steer("invalid_decision", parsed.get("_raw_snippet", ""), decision=True)
     assert INVALID_DECISION_STEER in steer
     assert "Do not invent approval fields" in steer
     assert "Do not park @Boss" in steer
@@ -370,9 +391,8 @@ async def test_execution_prose_fail_closes_after_the_repair_cap(
     assert len(seen) == 3
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
-    assert "Emit the required JSON" in detail
-    assert "Do not park @Boss" in detail
-    assert not detail.startswith("Blocked")
+    assert detail == EXECUTION_PARSE_STEER
+    assert PROSE_STATUS_STEER not in detail
 
 
 @pytest.mark.asyncio
@@ -420,6 +440,88 @@ async def test_execution_prose_repairs_then_completes_the_turn(
     assert not any("agent_error" in str(step.get("result") or "") for step in outcome.steps)
     repair_prompt = "\n".join(str(item.get("content") or "") for item in prompts[1])
     assert "prose instead of one JSON action object" in repair_prompt
+
+
+def _execution_repair_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [step for step in steps if "execution_repair_requested" in str(step.get("result") or "")]
+
+
+@pytest.mark.asyncio
+async def test_execution_repair_cap_counts_failures_in_a_row_not_per_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent(
+        "Jim", role="Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock")
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    task = db.create_task("Validate clone", assigned_to=agent.id)
+    from core.agent_loop.activity_runtime import activate_work_activity
+
+    activate_work_activity(agent.id, task)
+    db.set_setting("execution_max_consecutive_repairs", "1", "advanced")
+    config.reload()
+    # Two slips with a valid step between them: a per-turn total of 1 would
+    # fail the turn at the second slip; a streak cap of 1 does not.
+    seen = _script_completions(
+        monkeypatch,
+        [
+            "Checking status first.",
+            '{"act":"cli","data":{"cmd":"status"},"th":"check"}',
+            r"""{"act":"cli","data":{"cmd":"grep 'a\|b' notes.md"},"th":"search"}""",
+            '{"act":"cli","data":{"cmd":"pwd"},"th":"where"}',
+            '{"act":"done","data":{"sum":"Checked.","claim":{"type":"tests","ev":"3 passed"}},"th":"done"}',
+        ],
+    )
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "task_id": task.id,
+            "source_channel": "work",
+        },
+    )
+    assert len(seen) == 5
+    assert outcome.trigger_status == "completed"
+    assert len(_execution_repair_steps(outcome.steps)) == 2
+    assert not any("agent_error" in str(step.get("result") or "") for step in outcome.steps)
+
+
+@pytest.mark.asyncio
+async def test_execution_repair_cap_still_fails_a_streak_of_broken_replies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent(
+        "Jim", role="Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock")
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    task = db.create_task("Validate clone", assigned_to=agent.id)
+    from core.agent_loop.activity_runtime import activate_work_activity
+
+    activate_work_activity(agent.id, task)
+    # One reply plus two repairs (the shipped streak cap), each a bad outs item.
+    bad_assign = (
+        '{"act":"assign","data":{"aid":"x","task":{"title":"Review","desc":"Review it.",'
+        '"outs":[{"path":"/projects/verdict.md"}]}},"th":"hand off"}'
+    )
+    seen = _script_completions(monkeypatch, [bad_assign] * 3)
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "task_id": task.id,
+            "source_channel": "work",
+        },
+    )
+    assert len(seen) == 3
+    assert outcome.trigger_status == "failed"
+    assert len(_execution_repair_steps(outcome.steps)) == 2
+    detail = str(outcome.result.get("detail") or "")
+    assert detail.startswith(EXECUTION_PARSE_STEER)
+    assert '{"type":"file","path":"<path>","desc":"<optional>"}' in detail
 
 
 def test_work_commit_flag_is_intent_not_an_invented_key() -> None:

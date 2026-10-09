@@ -374,6 +374,9 @@ def _parse_json_object(raw_response: str) -> dict[str, Any]:
 
 def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize the model-facing compact conversation payload into canonical fields."""
+    # Lazy: deliverables → bm_cli → … → role_contracts → deliverables is a cycle at import time.
+    from core.agent_loop.deliverables import parse_wire_outs
+
     payload = _default_status_reply_if_say_only(payload)
     if "act" not in payload:
         raise ValueError('missing "act"')
@@ -415,7 +418,7 @@ def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "taskTitle": task.get("title"),
         "taskDescription": task.get("desc"),
         "taskId": task.get("id"),
-        "deliverables": _normalize_outs(task.get("outs")),
+        "deliverables": parse_wire_outs(task.get("outs")),
         "executionPlan": _normalize_work_plan(plan),
         "nextOwners": _next_owner_ids(payload.get("next_owners")),
         "thought": payload.get("th", ""),
@@ -444,37 +447,10 @@ def _default_status_reply_if_say_only(payload: dict[str, Any]) -> dict[str, Any]
     return filled
 
 
-def _normalize_outs(value: Any) -> Any:
-    """Normalize model-facing deliverable outs into canonical deliverables."""
-    if value in (None, ""):
-        return None
-    if not isinstance(value, list):
-        raise ValueError('"data.task.outs" must be an array when provided')
-
-    normalized: list[dict[str, Any]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            raise ValueError('each item in "data.task.outs" must be an object')
-        extra_item = set(item) - {"type", "path", "desc"}
-        if extra_item:
-            raise ValueError(f'unexpected deliverable keys: {", ".join(sorted(extra_item))}')
-        if item.get("type") != "file":
-            raise ValueError('deliverable "type" must be "file"')
-        path = item.get("path")
-        if not isinstance(path, str) or not path.strip():
-            raise ValueError('deliverable "path" must be a non-empty string')
-        normalized.append(
-            {
-                "type": "file",
-                "path": path,
-                "description": item.get("desc"),
-            }
-        )
-    return normalized
-
-
 def _normalize_work_plan(value: Any) -> Any:
     """Normalize the compact plan payload into the canonical execution-plan shape."""
+    from core.agent_loop.deliverables import parse_wire_outs
+
     if value in (None, "", {}):
         return None
     if not isinstance(value, dict):
@@ -503,7 +479,7 @@ def _normalize_work_plan(value: Any) -> Any:
                 "agentName": item.get("who"),
                 "taskTitle": child_task.get("title"),
                 "taskDescription": child_task.get("desc"),
-                "deliverables": _normalize_outs(child_task.get("outs")),
+                "deliverables": parse_wire_outs(child_task.get("outs")),
             }
         )
 

@@ -115,11 +115,15 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0 and end > start:
+            candidate = text[start:end]
             try:
-                parsed = json.loads(text[start:end])
-            except json.JSONDecodeError:
-                logger.warning("Failed to parse action JSON: %s", text[:200])
-                return parse_failed_payload(text, decision=False, snippet=text[:200])
+                parsed = json.loads(candidate)
+            except json.JSONDecodeError as exc:
+                logger.warning("Failed to parse action JSON (%s): %s", exc.msg, text[:200])
+                # The repair prompt needs the decoder's reason and where it
+                # failed; the raw reply alone gave the model nothing to fix.
+                snippet = f"{exc.msg} near {candidate[max(0, exc.pos - 30):exc.pos + 30]!r}"
+                return parse_failed_payload(text, decision=False, snippet=snippet)
         else:
             logger.warning("No JSON found in response: %s", text[:200])
             return parse_failed_payload(text, decision=False, snippet=text[:200])
@@ -220,6 +224,8 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError('invalid "act"')
 
     from core.agent_loop.parse_steer import parse_next_owner_ids
+    # Lazy: deliverables → bm_cli → … → role_contracts → deliverables is a cycle at import time.
+    from core.agent_loop.deliverables import parse_wire_outs
 
     normalized: dict[str, Any] = {
         "action": _MODEL_ACTION_TO_NAME[action_code],
@@ -256,7 +262,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
             normalized["agentId"] = extra.get("aid")
             normalized["taskTitle"] = task.get("title")
             normalized["taskDescription"] = task.get("desc")
-            normalized["deliverables"] = _normalize_compact_deliverables(task.get("outs"))
+            normalized["deliverables"] = parse_wire_outs(task.get("outs"))
         case "walk":
             normalized["destination"] = _map_optional_code(extra.get("dst"), _DESTINATION_CODE_TO_NAME, "data.dst")
         case "mtg":
@@ -281,35 +287,6 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         case "idle":
             pass
 
-    return normalized
-
-
-def _normalize_compact_deliverables(value: Any) -> Any:
-    """Normalize compact outs payload into canonical deliverables."""
-    if value in (None, ""):
-        return None
-    if not isinstance(value, list):
-        raise ValueError('"data.task.outs" must be an array when provided')
-
-    normalized: list[dict[str, Any]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            raise ValueError('each item in "data.task.outs" must be an object')
-        extra_item = set(item) - {"type", "path", "desc"}
-        if extra_item:
-            raise ValueError(f'unexpected deliverable keys: {", ".join(sorted(extra_item))}')
-        if item.get("type") != "file":
-            raise ValueError('deliverable "type" must be "file"')
-        path = item.get("path")
-        if not isinstance(path, str) or not path.strip():
-            raise ValueError('deliverable "path" must be a non-empty string')
-        normalized.append(
-            {
-                "type": "file",
-                "path": path,
-                "description": item.get("desc"),
-            }
-        )
     return normalized
 
 

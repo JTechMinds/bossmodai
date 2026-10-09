@@ -253,7 +253,7 @@ async def _run_decision_turn(
             parse_kind = parsed.get("_parse_kind") or classify_json_parse_failure(
                 response.content
             )
-            error = parse_failure_steer(parse_kind, parsed.get("_raw_snippet", ""))
+            error = parse_failure_steer(parse_kind, parsed.get("_raw_snippet", ""), decision=True)
             if parse_failure_should_repair(
                 kind=parse_kind,
                 repair_attempts=decision_repair_attempts,

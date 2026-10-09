@@ -36,6 +36,8 @@ INVALID_DECISION_STEER = (
     "Do not park @Boss. Do not invent a desk deny."
 )
 
+EXECUTION_PARSE_STEER = "Emit exactly one JSON action object for this execution turn."
+
 # Existing compact keys plus the product aliases. Unknown keys stay fail-closed.
 # ``next_owners`` is the structured handoff pin. It is not a second protocol.
 _COMPACT_ACTION_KEYS = frozenset({"act", "intent", "msg", "commit", "data", "th", "next_owners"})
@@ -86,7 +88,7 @@ _PARSE_KIND_LABELS = {
 _EXECUTION_PARSE_KIND_LABELS = {
     "prose_status": "prose instead of one JSON action object",
     "invalid_decision": "invented or disallowed keys",
-    "invalid_json": "truncated or broken JSON",
+    "invalid_json": "invalid action JSON",
 }
 
 
@@ -152,13 +154,32 @@ def _describe_parse_failure(label: str, snippet: str) -> str:
     return label
 
 
-def parse_failure_steer(kind: str, snippet: str = "") -> str:
-    """Return the fail-closed steer for a parse failure."""
+def parse_failure_steer(kind: str, snippet: str = "", *, decision: bool) -> str:
+    """Return the fail-closed steer for a parse failure that ends the turn.
+
+    The steer becomes the turn's ``agent_error`` detail and diagnostics error,
+    so it uses the wording of the turn that failed: the say/actions envelope
+    for a decision turn, one JSON action object for an execution turn.
+
+    Args:
+        kind: The parse failure kind (``prose_status``, ``invalid_json``,
+            or ``invalid_decision``).
+        snippet: The parser error; appended as ``Parser error: ...`` unless
+            the kind is ``prose_status`` or the snippet is blank.
+        decision: True for a decision turn, False for an execution turn.
+
+    Returns:
+        ``INVALID_DECISION_STEER`` for invented keys on either turn,
+        otherwise ``PROSE_STATUS_STEER`` (decision) or
+        ``EXECUTION_PARSE_STEER`` (execution), plus the parser error.
+    """
     extra = (snippet or "").strip()
     if kind == "invalid_decision":
         base = INVALID_DECISION_STEER
-    else:
+    elif decision:
         base = PROSE_STATUS_STEER
+    else:
+        base = EXECUTION_PARSE_STEER
     if kind == "prose_status":
         return base
     if extra:

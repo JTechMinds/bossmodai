@@ -1,4 +1,4 @@
-Your previous execution response was invalid JSON and could not be parsed.
+Your previous execution response was not a valid action.
 
 Parser error:
 {{parsed_error}}

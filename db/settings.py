@@ -210,6 +210,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("world_state_coalesce_ms", "150", "advanced"),
     ("trigger_claim_timeout_seconds", "300", "advanced"),
     ("turn_failure_retry_limit", "2", "advanced"),
+    # Invalid execution replies in a row before the turn fails; a valid action resets it.
+    ("execution_max_consecutive_repairs", "2", "advanced"),
 
     # ── API limits ──
     ("api_message_limit_max", "200", "advanced"),
@@ -351,6 +353,7 @@ def seed_defaults() -> None:
     reconcile_memory_remember_prompt_lines()
     reconcile_memory_notice_prompt_lines()
     reconcile_task_update_prompts()
+    reconcile_execution_outs_prompt_line()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -852,6 +855,40 @@ def reconcile_task_update_prompts() -> None:
     logger.info(
         "Reconciled prompt settings to the task_update stakeholder contract: %s",
         ", ".join(_TASK_UPDATE_PROMPT_KEYS),
+    )
+
+
+# The execution contract's ``assign`` line now shows the ``data.task.outs``
+# item shape and that outs are file-only; before, execution turns guessed it.
+# One line swap, (old, new), without its newline, copied verbatim from the
+# shipped file before and after the edit.
+_EXECUTION_OUTS_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_execution": (
+        (
+            "  - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional",
+            '  - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional, file deliverables only: [{"type":"file","path":"/projects/...","desc":"optional"}]; omit outs when the result is not a file',
+        ),
+    ),
+}
+_EXECUTION_OUTS_PROMPT_LINE_RECONCILED = "execution_outs_prompt_line_reconciled"
+
+
+def reconcile_execution_outs_prompt_line() -> None:
+    """Teach the stored execution contract the ``data.task.outs`` shape, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_memory_notice_prompt_lines`, driven by
+    ``_EXECUTION_OUTS_PROMPT_LINE_EDITS``: the ``assign`` line's bare
+    "data.task.outs optional" gains the file-only item shape. A row equal to
+    the shipped default is skipped. A row without the old line keeps its
+    bytes, and a warning names the key and the line, so the operator can
+    review it by hand. Later calls, once the marker is recorded, are no-ops.
+    """
+    _reconcile_prompt_lines(
+        _EXECUTION_OUTS_PROMPT_LINE_EDITS,
+        _EXECUTION_OUTS_PROMPT_LINE_RECONCILED,
+        missing_row_label="execution outs",
+        missing_line_label="execution outs",
     )
 
 

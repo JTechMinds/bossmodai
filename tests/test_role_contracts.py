@@ -20,7 +20,7 @@ from api.routes import router
 from core import config
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.activity_runtime import activate_work_activity
-from core.agent_loop.deliverables import missing_deliverables
+from core.agent_loop.deliverables import OUTS_ITEM_SHAPE, missing_deliverables, parse_wire_outs
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.role_contracts import (
     format_role_contract_block,
@@ -1105,6 +1105,36 @@ def test_parse_done_action_keeps_claim() -> None:
     assert parsed["action"] == "complete"
     assert parsed["doneClaim"]["type"] == "tests"
     assert parsed["doneClaim"]["ev"] == "12 passed"
+
+
+@pytest.mark.parametrize(
+    "item",
+    [
+        "file: /projects/m7/verdict-m7-cert.md",
+        {"file": "/projects/m7/verdict-m7-cert.md"},
+        {"path": "/projects/m7/verdict-m7-cert.md"},
+    ],
+)
+def test_parse_wire_outs_rejects_a_guessed_item_and_states_the_shape(item: Any) -> None:
+    with pytest.raises(ValueError) as excinfo:
+        parse_wire_outs([item])
+    message = str(excinfo.value)
+    assert OUTS_ITEM_SHAPE in message
+    assert len(message) <= 180
+
+
+def test_parse_wire_outs_returns_canonical_deliverables() -> None:
+    assert parse_wire_outs([{"type": "file", "path": " /me/out/report.md "}]) == [
+        {"type": "file", "path": "/me/out/report.md", "description": None}
+    ]
+    assert parse_wire_outs(None) is None
+    assert parse_wire_outs("") is None
+
+
+def test_parse_wire_outs_maps_desc_to_description() -> None:
+    assert parse_wire_outs([{"type": "file", "path": "/me/out/report.md", "desc": "Weekly report"}]) == [
+        {"type": "file", "path": "/me/out/report.md", "description": "Weekly report"}
+    ]
 
 
 def test_role_contract_block_and_done_claim_guidance_are_operator_actionable() -> None:

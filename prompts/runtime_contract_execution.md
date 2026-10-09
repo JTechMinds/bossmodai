@@ -32,7 +32,7 @@ RULES:
   - work: require data.out
   - socialmsg: require data.to and data.msg; require data.aid only when data.to="agent"
   - taskmsg: require data.tid and data.msg; include data.kind so the runtime knows whether this is a passive update or a response request
-  - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional
+  - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional, file deliverables only: [{"type":"file","path":"/projects/...","desc":"optional"}]; omit outs when the result is not a file
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
   - mtg + mode="remote": require data.aids (list of exactly one teammate); NEVER use data.aid

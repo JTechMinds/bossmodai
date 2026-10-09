@@ -196,6 +196,13 @@ const BossModSystemSettingsMeta = (() => {
             label: 'LLM Retry Backoff (seconds)',
             description: 'How long to wait before the first retry of a failed model call; the wait doubles on each retry. Default 2.',
         },
+        // Stored under 'advanced' (db/settings.py); shown with the LLM retry settings.
+        execution_max_consecutive_repairs: {
+            order: 34,
+            tab: 'llm',
+            label: 'Repairs in a Row',
+            description: 'How many invalid replies in a row an agent may correct during one work turn before the turn fails. A valid action resets the count. Default 2.',
+        },
         decision_repair_attempts: {
             order: 35,
             label: 'Decision Repair Attempts',

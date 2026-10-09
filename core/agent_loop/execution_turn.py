@@ -59,6 +59,7 @@ from core.bm_cli.managed_writer import (
     run_managed_write,
 )
 from core.bm_cli.results import cli_approval_result_messages, cli_continuation_messages
+from core import config
 from core.default_prompts import load_default_prompt
 from core.llm import client
 from core.models import Agent, AgentState
@@ -67,7 +68,6 @@ import db
 
 logger = logging.getLogger(__name__)
 
-_MAX_EXECUTION_REPAIR_ATTEMPTS = 2
 
 # Dispatcher merges the queued JSON onto the trigger. A nested ``payload``
 # is only the pre-dispatch shape some callers still pass.
@@ -243,6 +243,12 @@ async def _run_execution_turn(
     next_step_delta: str | None = None
     scheduled_triggers: list[dict[str, Any]] = []
     execution_repair_attempts = 0
+    max_consecutive_repairs = config.require_int("execution_max_consecutive_repairs")
+    if max_consecutive_repairs < 0:
+        raise config.ConfigError(
+            "Required setting 'execution_max_consecutive_repairs' must not be negative: "
+            f"{max_consecutive_repairs!r}"
+        )
     retry_blocked = False
     step_messages: list[dict[str, str]] = []
 
@@ -340,11 +346,11 @@ async def _run_execution_turn(
             parse_kind = action.get("_parse_kind") or classify_json_parse_failure(
                 response.content
             )
-            steer = parse_failure_steer(parse_kind, action.get("_raw_snippet", ""))
+            steer = parse_failure_steer(parse_kind, action.get("_raw_snippet", ""), decision=False)
             if parse_failure_should_repair(
                 kind=parse_kind,
                 repair_attempts=execution_repair_attempts,
-                max_repairs=_MAX_EXECUTION_REPAIR_ATTEMPTS,
+                max_repairs=max_consecutive_repairs,
             ):
                 execution_repair_attempts += 1
                 continuation_messages = _build_execution_repair_messages(
@@ -441,7 +447,7 @@ async def _run_execution_turn(
         )
         if validation_error:
             logger.warning("Contextual action validation failed for %s: %s", agent.name, validation_error)
-            if execution_repair_attempts < _MAX_EXECUTION_REPAIR_ATTEMPTS:
+            if execution_repair_attempts < max_consecutive_repairs:
                 # The refusal text is written for the agent: hand it back in
                 # this turn so it can correct course, instead of failing a
                 # turn whose earlier actions may already have side effects.
@@ -525,6 +531,8 @@ async def _run_execution_turn(
                 start=start,
             )
 
+        # The cap stops a model stuck on one broken reply; a valid action ends the streak.
+        execution_repair_attempts = 0
         logger.info(
             "Agent %s action: %s (thought: %s)",
             agent.name, action_name, action.get("thought", "")[:100],
