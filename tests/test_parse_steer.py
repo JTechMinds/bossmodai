@@ -18,6 +18,7 @@ from core.agent_loop.parse_steer import (
     INVALID_DECISION_STEER,
     PROSE_STATUS_STEER,
     classify_json_parse_failure,
+    describe_execution_parse_failure,
     kind_for_schema_error,
     parse_failure_should_repair,
     parse_failure_steer,
@@ -80,6 +81,9 @@ def test_classify_prose_status_vs_invalid_json() -> None:
     assert classify_json_parse_failure('{"act":') == "invalid_json"
     assert parse_failure_should_repair(
         kind="prose_status", repair_attempts=0, max_repairs=2
+    ) is True
+    assert parse_failure_should_repair(
+        kind="prose_status", repair_attempts=2, max_repairs=2
     ) is False
     assert parse_failure_should_repair(
         kind="invalid_json", repair_attempts=0, max_repairs=2
@@ -114,6 +118,17 @@ def test_classify_prose_status_vs_invalid_json() -> None:
     assert "Do not park @Boss" in steer
     assert "do not invent a desk" in steer.lower()
     assert not steer.startswith("Blocked")
+
+
+def test_describe_execution_parse_failure_uses_action_object_wording() -> None:
+    prose = describe_execution_parse_failure("prose_status", "Verifying the commit,\n  then   pushing.")
+    assert prose == "prose instead of one JSON action object: Verifying the commit, then pushing."
+    assert "envelope" not in prose
+    assert describe_execution_parse_failure("invalid_json") == "truncated or broken JSON"
+    assert describe_execution_parse_failure("invalid_decision", "") == "invented or disallowed keys"
+    long = describe_execution_parse_failure("invalid_json", "x" * 400)
+    assert long.endswith("...")
+    assert len(long) == len("truncated or broken JSON: ") + 180
 
 
 def test_parse_direct_turn_prose_is_parse_failed_prose_kind() -> None:
@@ -331,7 +346,7 @@ async def test_decision_invented_th2_fail_closes_without_repair(
 
 
 @pytest.mark.asyncio
-async def test_execution_prose_fail_closes_without_repair_loop(
+async def test_execution_prose_fail_closes_after_the_repair_cap(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
@@ -341,7 +356,8 @@ async def test_execution_prose_fail_closes_without_repair_loop(
     from core.agent_loop.activity_runtime import activate_work_activity
 
     activate_work_activity(agent.id, task)
-    seen = _script_completions(monkeypatch, ["In progress on tests. Prose only."])
+    # One reply plus two repairs (the execution repair cap), all prose.
+    seen = _script_completions(monkeypatch, ["In progress on tests. Prose only."] * 3)
     outcome = await run_turn(
         agent,
         state,
@@ -351,12 +367,59 @@ async def test_execution_prose_fail_closes_without_repair_loop(
             "source_channel": "work",
         },
     )
-    assert len(seen) == 1
+    assert len(seen) == 3
     assert outcome.result.get("event") == "agent_error"
     detail = str(outcome.result.get("detail") or "")
     assert "Emit the required JSON" in detail
     assert "Do not park @Boss" in detail
     assert not detail.startswith("Blocked")
+
+
+@pytest.mark.asyncio
+async def test_execution_prose_repairs_then_completes_the_turn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent(
+        "Jim", role="Engineer", desk_x=1, desk_y=1, connection_id=model_connection("test/mock")
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    task = db.create_task("Validate clone", assigned_to=agent.id)
+    from core.agent_loop.activity_runtime import activate_work_activity
+
+    activate_work_activity(agent.id, task)
+    replies = [
+        "Verifying the commit contents, then pushing.",
+        '{"act":"wait","data":{"why":"Waiting on Brad.","msg":"Waiting on Brad\'s review."},"th":"wait"}',
+    ]
+    prompts: list[list[dict[str, Any]]] = []
+
+    async def _fake_completion(**kwargs: Any) -> LLMResponse:
+        if not replies:
+            raise AssertionError("unexpected extra LLM completion")
+        prompts.append(list(kwargs["messages"]))
+        return _llm(replies.pop(0))
+
+    monkeypatch.setattr("core.llm.client.completion", _fake_completion)
+    outcome = await run_turn(
+        agent,
+        state,
+        {
+            "type": "activity_resumed",
+            "task_id": task.id,
+            "source_channel": "work",
+        },
+    )
+    assert len(prompts) == 2
+    assert outcome.trigger_status == "completed"
+    assert outcome.result.get("event") != "agent_error"
+    repair_steps = [
+        step for step in outcome.steps if "execution_repair_requested" in str(step.get("result") or "")
+    ]
+    assert len(repair_steps) == 1
+    assert not any("agent_error" in str(step.get("result") or "") for step in outcome.steps)
+    repair_prompt = "\n".join(str(item.get("content") or "") for item in prompts[1])
+    assert "prose instead of one JSON action object" in repair_prompt
 
 
 def test_work_commit_flag_is_intent_not_an_invented_key() -> None:

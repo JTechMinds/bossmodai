@@ -21,8 +21,10 @@ from core.llm.call_budget import budget, current_turn_lane
 logger = logging.getLogger(__name__)
 
 # Suppress litellm's verbose logging.
-# Provider retries default to a tight loop (BadRequest and 5xx). Decision
-# repair is the only retry. A second client retry starves the serve loop.
+# litellm's built-in retry stays off: it retries immediately, and it also
+# retries permanent 4xx errors, which starves the serve loop. Transient
+# provider failures retry in ``completion()`` below, with backoff. Content
+# problems (prose, broken JSON) are not retried here; turn repair owns them.
 litellm.suppress_debug_info = True
 litellm.num_retries = 0
 
@@ -50,9 +52,24 @@ class LLMResponse:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    # The provider's stop reason for the last choice, when it reported one.
+    finish_reason: str | None = None
 
 
 _STREAM_END = object()
+
+# Failure classes that say nothing about the request itself: a dropped or
+# refused connection, a 5xx, or a rate limit. Matched by class, never by
+# message text, so any engine behind litellm is covered. BadRequestError
+# (context-window errors included), AuthenticationError, NotFoundError and
+# PermissionDeniedError are permanent and stay out of this tuple.
+_TRANSIENT_PROVIDER_ERRORS: tuple[type[BaseException], ...] = (
+    litellm.exceptions.APIConnectionError,
+    litellm.exceptions.InternalServerError,
+    litellm.exceptions.ServiceUnavailableError,
+    litellm.exceptions.BadGatewayError,
+    litellm.exceptions.RateLimitError,
+)
 
 
 def _stall_timeout_seconds() -> float | None:
@@ -98,6 +115,42 @@ def _is_provider_timeout(exc: BaseException) -> bool:
     }
 
 
+def _is_transient_provider_error(exc: BaseException) -> bool:
+    """Return whether ``exc`` is a provider failure worth another attempt.
+
+    A provider timeout is excluded first: ``litellm.Timeout`` subclasses
+    ``APIConnectionError``, and timeouts keep their own repair path. An empty
+    completion counts as transient (a dropped stream looks like one).
+    """
+    if _is_provider_timeout(exc):
+        return False
+    if isinstance(exc, LLMEmptyResponseError):
+        return True
+    return isinstance(exc, _TRANSIENT_PROVIDER_ERRORS)
+
+
+def _transient_retry_policy() -> tuple[int, float]:
+    """Return ``(retries, first_backoff_seconds)`` for transient failures.
+
+    Raises
+    ------
+    ConfigError
+        If either setting is missing, not numeric, or negative.
+    """
+    retries = config.require_int("llm_transient_retries")
+    if retries < 0:
+        raise config.ConfigError(
+            f"Required setting 'llm_transient_retries' must not be negative: {retries!r}"
+        )
+    backoff = config.require_float("llm_transient_retry_backoff_seconds")
+    if backoff < 0:
+        raise config.ConfigError(
+            "Required setting 'llm_transient_retry_backoff_seconds' must not be negative: "
+            f"{backoff!r}"
+        )
+    return retries, backoff
+
+
 def _as_text(value: Any) -> str:
     if isinstance(value, str):
         return value
@@ -126,6 +179,11 @@ def _message_content(message: Any) -> str:
     return _as_text(getattr(message, "content", None))
 
 
+def _choice_finish_reason(choice: Any) -> str | None:
+    value = choice.get("finish_reason") if isinstance(choice, dict) else getattr(choice, "finish_reason", None)
+    return value if isinstance(value, str) and value else None
+
+
 def _response_from_model(response: Any, model: str) -> LLMResponse:
     if isinstance(response, dict):
         choice = response["choices"][0]
@@ -144,6 +202,7 @@ def _response_from_model(response: Any, model: str) -> LLMResponse:
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        finish_reason=_choice_finish_reason(choice),
     )
 
 
@@ -158,6 +217,13 @@ def _delta_content(chunk: Any) -> str:
     if isinstance(delta, dict):
         return _as_text(delta.get("content"))
     return _as_text(getattr(delta, "content", None))
+
+
+def _chunk_finish_reason(chunk: Any) -> str | None:
+    choices = chunk.get("choices") if isinstance(chunk, dict) else getattr(chunk, "choices", None)
+    if not choices:
+        return None
+    return _choice_finish_reason(choices[0])
 
 
 def _chunk_model(chunk: Any) -> str:
@@ -193,6 +259,7 @@ def _response_from_chunks(chunks: list[Any], messages: list[dict[str, Any]], mod
     parts: list[str] = []
     response_model = model
     usage: tuple[int, int, int] | None = None
+    finish_reason: str | None = None
     for chunk in chunks:
         text = _delta_content(chunk)
         if text:
@@ -203,6 +270,9 @@ def _response_from_chunks(chunks: list[Any], messages: list[dict[str, Any]], mod
         chunk_usage = _chunk_usage(chunk)
         if chunk_usage is not None:
             usage = chunk_usage
+        chunk_finish = _chunk_finish_reason(chunk)
+        if chunk_finish is not None:
+            finish_reason = chunk_finish
     prompt_tokens, completion_tokens, total_tokens = usage or (0, 0, 0)
     return LLMResponse(
         content="".join(parts),
@@ -210,6 +280,7 @@ def _response_from_chunks(chunks: list[Any], messages: list[dict[str, Any]], mod
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        finish_reason=finish_reason,
     )
 
 
@@ -285,6 +356,62 @@ async def _read_stream(
     return _response_from_chunks(chunks, messages, model)
 
 
+async def _attempt_completion(
+    kwargs: dict[str, Any],
+    *,
+    messages: list[dict[str, Any]],
+    model: str,
+    backstop_seconds: float,
+    stall_seconds: float | None,
+    stream_for_progress: bool,
+) -> LLMResponse:
+    """Make one provider call and return its completion.
+
+    Each attempt gets its own ``backstop_seconds`` wall clock and stall window.
+
+    Raises
+    ------
+    LLMTimeoutError
+        If opening the call or reading the stream hits the stall or backstop limit.
+    LLMEmptyResponseError
+        If the provider returned a completion with no content.
+    Exception
+        Any provider exception from litellm, unchanged; ``completion()``
+        classifies it.
+    """
+    started = time.monotonic()
+    try:
+        opened = await asyncio.wait_for(
+            litellm.acompletion(**kwargs),
+            timeout=backstop_seconds,
+        )
+    except asyncio.TimeoutError as exc:
+        logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
+        raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
+    if stream_for_progress and _is_async_stream(opened):
+        try:
+            response = await _read_stream(
+                opened,
+                messages=messages,
+                model=model,
+                started=started,
+                backstop_seconds=backstop_seconds,
+                stall_seconds=stall_seconds,
+            )
+        finally:
+            await _close_stream(opened)
+    else:
+        response = _response_from_model(opened, model)
+    # An empty reply is never a model answer: it is a dropped stream or a
+    # reasoning model that spent its whole budget thinking. Returning it
+    # would let a turn read it as prose.
+    if response.content.strip() == "":
+        raise LLMEmptyResponseError(
+            f"provider returned an empty completion (finish_reason={response.finish_reason})"
+        )
+    return response
+
+
 async def completion(
     model: str,
     messages: list[dict[str, Any]],
@@ -302,6 +429,12 @@ async def completion(
     A provider path that sets ``extra_body`` ``{"stream": false}``, or that
     returns a finished completion instead of a stream, has no progress signal
     and uses only that absolute backstop.
+
+    A transient provider failure (connection error, 5xx, rate limit, or an
+    empty completion) is retried up to ``llm_transient_retries`` times. The
+    first wait is ``llm_transient_retry_backoff_seconds`` and doubles on each
+    retry. The call-budget slot is held across retries: a retry is the same
+    logical call. Timeouts and permanent errors are not retried here.
 
     Parameters
     ----------
@@ -326,11 +459,16 @@ async def completion(
     Raises
     ------
     LLMError
-        If the LLM call fails.
+        If the LLM call fails with a permanent error, or every transient retry
+        failed. The message names the number of attempts.
+    LLMEmptyResponseError
+        If every attempt returned an empty completion.
     LLMTimeoutError
         If the stream is idle for the stall window, or the absolute backstop expires.
     AttachmentUnavailableError
         If a named attachment's row or file is missing.
+    ConfigError
+        If a timeout or transient-retry setting is missing, invalid, or negative.
     """
     # The raw model name is the image-capability key, so expand before the
     # provider prefix is added; both the call and the stream rebuild below
@@ -367,6 +505,8 @@ async def completion(
 
     backstop_seconds = config.require_float("llm_request_timeout_seconds")
     stall_seconds = _stall_timeout_seconds()
+    transient_retries, retry_backoff_seconds = _transient_retry_policy()
+    max_attempts = 1 + transient_retries
     # litellm defaults its own client timeout to 600s. Pin it to the absolute
     # backstop so a live call is not cut off short of that limit. Idle silence
     # on a stream is enforced separately by the stall timer.
@@ -392,37 +532,45 @@ async def completion(
     if held is None:
         owned = await budget.acquire(kind="call", owner=str(model or "llm-call"))
     try:
-        # The backstop bounds the model call, not the wait for a free slot.
-        started = time.monotonic()
-        try:
-            opened = await asyncio.wait_for(
-                litellm.acompletion(**kwargs),
-                timeout=backstop_seconds,
-            )
-        except asyncio.TimeoutError as exc:
-            logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
-            raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
-        if stream_for_progress and _is_async_stream(opened):
+        # The backstop bounds each model attempt, not the wait for a free slot
+        # or the backoff between attempts.
+        attempt = 1
+        while True:
             try:
-                return await _read_stream(
-                    opened,
+                return await _attempt_completion(
+                    kwargs,
                     messages=messages,
                     model=model,
-                    started=started,
                     backstop_seconds=backstop_seconds,
                     stall_seconds=stall_seconds,
+                    stream_for_progress=stream_for_progress,
                 )
-            finally:
-                await _close_stream(opened)
-        return _response_from_model(opened, model)
-    except LLMTimeoutError:
-        raise
-    except Exception as exc:
-        if _is_provider_timeout(exc):
-            logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
-            raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
-        logger.error("LLM call failed (model=%s): %s", model, exc)
-        raise LLMError(f"LLM call failed: {exc}") from exc
+            except LLMTimeoutError:
+                raise
+            except Exception as exc:
+                if _is_provider_timeout(exc):
+                    logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
+                    raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
+                if attempt < max_attempts and _is_transient_provider_error(exc):
+                    delay = retry_backoff_seconds * 2 ** (attempt - 1)
+                    logger.warning(
+                        "LLM call failed transiently (model=%s, attempt %d/%d); retrying in %.1fs: %s",
+                        model,
+                        attempt,
+                        max_attempts,
+                        delay,
+                        exc,
+                    )
+                    # Drop the broken connection so the retry opens a fresh one.
+                    await close_provider_sessions(allow_inflight=1)
+                    await asyncio.sleep(delay)
+                    attempt += 1
+                    continue
+                logger.error("LLM call failed (model=%s): %s", model, exc)
+                # Keep the empty-completion type so callers can tell it apart;
+                # it is still an LLMError, never a reply.
+                error_type = LLMEmptyResponseError if isinstance(exc, LLMEmptyResponseError) else LLMError
+                raise error_type(f"LLM call failed after {attempt} attempt(s): {exc}") from exc
     finally:
         if owned is not None:
             budget.release(owned)
@@ -470,6 +618,17 @@ def count_tokens(text: str, model: str | None = None) -> int:
 
 class LLMError(Exception):
     """Raised when an LLM call fails."""
+
+
+class LLMEmptyResponseError(LLMError):
+    """Raised when the provider returned a completion with no content.
+
+    Either the stream dropped before any text arrived, or a reasoning model
+    spent its whole budget on thinking. It is a provider failure, never a
+    prose reply, and it is retried like other transient provider errors. It
+    deliberately does not subclass :class:`LLMTimeoutError`: decision-turn
+    timeout repair stays timeout-only.
+    """
 
 
 class LLMTimeoutError(LLMError):

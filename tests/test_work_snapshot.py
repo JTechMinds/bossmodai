@@ -410,7 +410,8 @@ async def test_llm_error_exit_freezes_and_the_retry_replays_once(monkeypatch: py
 @pytest.mark.asyncio
 async def test_parse_failure_exit_freezes_and_the_retry_replays_once(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task, activity = _working_agent()
-    _script(monkeypatch, [_STATUS_STEP, "I am still working on it."])
+    # Invented keys still fail-close an execution turn at once; prose now repairs.
+    _script(monkeypatch, [_STATUS_STEP, '{"act":"cli","data":{"cmd":"status"},"th":"s","_needsApproval":true}'])
     outcome = await run_turn(agent, db.get_agent_state(agent.id), _resume_trigger(task.id))
     assert outcome.trigger_status == "failed"
     snapshot = db.get_work_snapshot(activity.id)

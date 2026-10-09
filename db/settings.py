@@ -73,6 +73,12 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # stream. Default 120 seconds. Each chunk resets the timer. A path that
     # cannot stream uses only llm_request_timeout_seconds.
     ("llm_stall_timeout_seconds", "120", "llm"),
+    # Retries after the first attempt for a transient provider failure
+    # (connection, 5xx, rate limit, empty completion). Same convention as
+    # turn_failure_retry_limit. Timeouts and 4xx errors are never retried.
+    ("llm_transient_retries", "2", "llm"),
+    # First wait before a transient retry, doubled on each retry (2s, then 4s).
+    ("llm_transient_retry_backoff_seconds", "2", "llm"),
     ("decision_repair_attempts", "6", "llm"),
     # One budget for inflight model calls: agent turns, System AI routes,
     # and repairs. Default 2. One agent still runs at most one turn.

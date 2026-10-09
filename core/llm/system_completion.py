@@ -25,7 +25,7 @@ import litellm
 
 import db
 
-# Same rule as the agent client: one attempt. Decision repair is the retry.
+# System AI calls make one attempt; their callers fall back or retry.
 litellm.num_retries = 0
 from core import config
 from core.llm.call_budget import budget

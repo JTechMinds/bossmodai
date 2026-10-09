@@ -186,6 +186,16 @@ const BossModSystemSettingsMeta = (() => {
             label: 'LLM Stall Timeout (seconds)',
             description: 'Cancel a model call when an open stream produces no chunk for this many seconds, including the wait for the first chunk. Default 120. Chunks that keep arriving reset the timer, so a long reply is not cancelled before LLM Request Timeout. A call that has not opened a stream, and a provider path that cannot stream, use only that absolute limit.',
         },
+        llm_transient_retries: {
+            order: 32,
+            label: 'LLM Transient Retries',
+            description: 'How many times to retry a model call that failed with a temporary provider or connection error (not a timeout or bad request) before the turn fails. Default 2.',
+        },
+        llm_transient_retry_backoff_seconds: {
+            order: 33,
+            label: 'LLM Retry Backoff (seconds)',
+            description: 'How long to wait before the first retry of a failed model call; the wait doubles on each retry. Default 2.',
+        },
         decision_repair_attempts: {
             order: 35,
             label: 'Decision Repair Attempts',

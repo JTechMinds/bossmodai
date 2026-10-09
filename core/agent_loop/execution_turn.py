@@ -27,6 +27,7 @@ from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.task_origins import consent_origin_channel_id
 from core.agent_loop.parse_steer import (
     classify_json_parse_failure,
+    describe_execution_parse_failure,
     parse_failure_should_repair,
     parse_failure_steer,
 )
@@ -347,7 +348,9 @@ async def _run_execution_turn(
             ):
                 execution_repair_attempts += 1
                 continuation_messages = _build_execution_repair_messages(
-                    parsed_error=action.get("_raw_snippet", ""),
+                    parsed_error=describe_execution_parse_failure(
+                        parse_kind, action.get("_raw_snippet", "")
+                    ),
                 )
                 result = {
                     "event": "execution_repair_requested",

@@ -1,8 +1,9 @@
 """Fail-closed steer when a turn emits prose or an invalid decision object.
 
 Decision turns may repair prose, invented keys, and broken JSON up to the
-configured attempt limit, then fail-close. Execution turns still fail-close
-prose and invented keys immediately. Soft-block behavior is unchanged.
+configured attempt limit, then fail-close. Execution turns repair prose and
+broken JSON up to their cap; invented keys fail-close immediately.
+Soft-block behavior is unchanged.
 
 Product envelope: ``say`` (operator chat) plus optional ``actions`` (Board /
 tools / CLI). Those map onto the existing compact keys ``msg`` and
@@ -81,6 +82,13 @@ _PARSE_KIND_LABELS = {
     "invalid_json": "truncated or broken JSON",
 }
 
+# Execution turns reply with one action object, not the say/actions envelope.
+_EXECUTION_PARSE_KIND_LABELS = {
+    "prose_status": "prose instead of one JSON action object",
+    "invalid_decision": "invented or disallowed keys",
+    "invalid_json": "truncated or broken JSON",
+}
+
 
 def parse_failure_should_repair(
     *,
@@ -92,18 +100,50 @@ def parse_failure_should_repair(
     """Return whether this parse failure may take another repair wake.
 
     Decision turns repair every parse kind until ``max_repairs``.
-    Execution turns still fail-close prose and invented keys immediately.
+    Execution turns repair ``prose_status`` and ``invalid_json`` until
+    ``max_repairs``; ``invalid_decision`` (invented approval keys) fail-closes
+    immediately.
+
+    Args:
+        kind: The parse failure kind (or ``llm_timeout`` on decision turns).
+        repair_attempts: Repairs already spent this turn.
+        max_repairs: The turn's repair cap.
+        decision: True for a decision turn, False for an execution turn.
+
+    Returns:
+        True when the turn should ask the model to correct its reply.
     """
     if decision:
         return repair_attempts < max_repairs
-    if kind in {"prose_status", "invalid_decision"}:
+    if kind == "invalid_decision":
         return False
     return repair_attempts < max_repairs
 
 
 def describe_decision_parse_failure(kind: str, snippet: str = "") -> str:
     """Describe what failed so a repair wake can name it."""
-    label = _PARSE_KIND_LABELS.get(kind, "invalid decision")
+    return _describe_parse_failure(_PARSE_KIND_LABELS.get(kind, "invalid decision"), snippet)
+
+
+def describe_execution_parse_failure(kind: str, snippet: str = "") -> str:
+    """Describe an execution-turn parse failure for its repair prompt.
+
+    Uses execution wording (one JSON action object), not the decision
+    envelope's, with the same snippet trimming as the decision describer.
+
+    Args:
+        kind: The parse failure kind (``prose_status``, ``invalid_json``,
+            or ``invalid_decision``).
+        snippet: The raw reply excerpt; whitespace is collapsed and long
+            text is cut to 180 characters.
+
+    Returns:
+        ``"<label>: <snippet>"``, or just the label when the snippet is blank.
+    """
+    return _describe_parse_failure(_EXECUTION_PARSE_KIND_LABELS.get(kind, "invalid action"), snippet)
+
+
+def _describe_parse_failure(label: str, snippet: str) -> str:
     extra = " ".join((snippet or "").split())
     if len(extra) > 180:
         extra = extra[:177].rstrip() + "..."
