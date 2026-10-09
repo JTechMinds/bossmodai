@@ -108,7 +108,8 @@ async function flowCases() {
     });
     const menu = flow.menuAction();
     const menuActionShape = menu.id === "agent-chat-rewind" && menu.label === "Rewind…"
-        && menu.icon === "rotate-ccw" && menu.slot === "menu" && typeof menu.onSelect === "function";
+        && menu.icon === "rotate-ccw" && menu.slot === "menu" && menu.section === "chat"
+        && typeof menu.onSelect === "function";
     check(menuActionShape, `menu action shape: ${JSON.stringify(menu)}`);
 
     const errorNeed = { id: "d1", kind: "error", agentId: "a", groupedIds: ["d1"] };
@@ -394,7 +395,11 @@ async function conversationCases() {
         if (!dots) return "";
         await dots.dispatchClick();
         const open = conversation.element.querySelector(".menu");
-        const names = open ? open.querySelector(".menu-actions").querySelectorAll("button").map((b) => b.textContent) : [];
+        // Every section's bodies, in DOM order: the panel is sectioned now.
+        const names = open
+            ? open.querySelectorAll(".menu-actions").flatMap((body) => body.querySelectorAll("button"))
+                .map((b) => b.textContent)
+            : [];
         await dots.dispatchClick();
         return names.join("|");
     };

@@ -303,8 +303,8 @@ const BossModAgentSource = (() => {
         }
 
         /**
-         * Face, name, role, and — when the desk modal is injected — the Desk
-         * toggle.
+         * Face, name, role, and — when the desk modal is injected — Open desk,
+         * in the `⋯`'s Agent section (`menuTitle`).
          *
          * `avatar` and `icon` are DATA: a name, a colour, and a glyph name. The
          * adapter still builds nothing, which is what keeps the conversation
@@ -315,24 +315,22 @@ const BossModAgentSource = (() => {
          * but does nothing is worse than one that is absent, which is the same
          * rule event-cards.js follows for the origin note link.
          *
-         * The DM's auto-approve switch sits behind the `⋯` once the agent has
-         * loaded, the same switch a thread carries (auto-approve-switch.js).
+         * The DM's auto-approve switch sits in the `⋯`'s Chat section once the
+         * agent has loaded, the same switch a thread carries.
          *
-         * @returns {{title: string, subtitle: string, avatar: object, actions: object[]}}
+         * @returns {{title: string, subtitle: string, avatar: object,
+         *            menuTitle: string, actions: object[]}}
          */
         function chrome() {
             const who = agent();
             const actions = [];
             if (typeof ctx.openDesk === 'function') {
                 actions.push({
-                    id: 'conversation-desk-toggle',
-                    label: 'Desk',
+                    id: 'conversation-open-desk',
+                    label: 'Open desk',
                     icon: 'lamp-desk',
-                    // The lamp says desk on its own, and the word beside it
-                    // spent a quarter of the header row repeating the glyph.
-                    // `iconOnly` keeps `label` as the accessible name and as
-                    // the hover tooltip, so nothing is lost but the ink.
-                    iconOnly: true,
+                    slot: 'menu',
+                    section: 'subject',
                     onSelect: () => ctx.openDesk(agentId),
                 });
             }
@@ -360,6 +358,7 @@ const BossModAgentSource = (() => {
                 title: who.name,
                 subtitle: who.role || '',
                 avatar: { name: who.name, color: who.color || null },
+                menuTitle: 'Agent',
                 actions,
             };
         }

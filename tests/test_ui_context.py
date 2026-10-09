@@ -947,16 +947,22 @@ def test_desk_panel_keeps_role_contract_copy() -> None:
 
 
 def test_desk_toggle_and_open_desk_are_injected() -> None:
-    """The Desk toggle and the capability behind it ship together."""
+    """Open desk and the capability behind it ship together.
+
+    It lives in the `⋯`'s Agent section: a `subject` menu action, headed by
+    the descriptor's `menuTitle`.
+    """
     source = _read(CONVERSATION / "sources" / "agent-source.js")
     assert "typeof ctx.openDesk === 'function'" in source
-    assert "id: 'conversation-desk-toggle'" in source
-    assert "label: 'Desk'" in source
+    assert "id: 'conversation-open-desk'" in source
+    assert "label: 'Open desk'" in source
+    assert "section: 'subject'" in source
+    assert "menuTitle: 'Agent'" in source
     assert "ctx.openDesk(agentId)" in source
     # The guard comes before the action is pushed, not after.
     chrome = source.split("function chrome() {", 1)[1]
     assert chrome.index("typeof ctx.openDesk === 'function'") < chrome.index(
-        "id: 'conversation-desk-toggle'"
+        "id: 'conversation-open-desk'"
     )
 
     # The capability reaches the source through the controller.

@@ -211,7 +211,7 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert thread.index("id: 'channel-pause-btn'") < thread.index("id: 'channel-archive-btn'")
     assert "id: 'channel-reopen-btn'" in thread
     assert "id: 'channel-seat-btn'" in thread
-    assert "'Add to thread'" in thread
+    assert "'Add people…'" in thread
     seat = _read("conversation/sources/thread-seat.js")
     assert "function createThreadSeat(" in seat
     assert "/api/channels/${threadId}/members" in seat

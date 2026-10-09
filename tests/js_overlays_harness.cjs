@@ -926,6 +926,35 @@ try {
 }
 if (!menuNeedsAnAnchor) throw new Error("an anchorless menu must throw, not open");
 
+// ── The titled section: one caption, and it is what names the group ──
+//
+// A group with no name is announced as nothing, so a section without an id or
+// a label refuses rather than rendering an unheaded block.
+[{ label: "Chat" }, { id: "s" }, { id: "", label: "Chat" }, { id: "s", label: "" }].forEach((bad) => {
+    let refused = false;
+    try {
+        BossModMenu.createMenuSection(bad);
+    } catch (err) {
+        refused = /a section needs an id and a label/.test(String(err.message));
+    }
+    if (!refused) throw new Error(`a section without an id and a label must throw: ${JSON.stringify(bad)}`);
+});
+const sectionBody = makeEl("div");
+const section = BossModMenu.createMenuSection({ id: "menu-section-test", label: "Chat", children: [sectionBody] });
+const caption = section.children[0];
+const sectionIsALabelledGroup = section.getAttribute("role") === "group"
+    && section.getAttribute("aria-labelledby") === "menu-section-test"
+    && caption.tagName === "P"
+    && String(caption.getAttribute("class")).split(/\s+/).includes("menu-label")
+    && caption.getAttribute("id") === "menu-section-test"
+    // This fake has no textContent on elements; the caption's text is its child.
+    && caption.children.map((child) => child.textContent).join("") === "Chat"
+    && section.children[1] === sectionBody
+    && section.children.length === 2;
+if (!sectionIsALabelledGroup) {
+    throw new Error("a section must be role=group, labelled by its own p.menu-label caption, over its children");
+}
+
 process.stdout.write(JSON.stringify({
     ok: true,
     hasDialogSemantics: true,

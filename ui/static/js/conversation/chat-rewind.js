@@ -57,6 +57,7 @@ const BossModChatRewind = (() => {
                 label: 'Rewind…',
                 icon: 'rotate-ccw',
                 slot: 'menu',
+                section: 'chat',
                 // Not awaited: the dialog owns its own loading state, and the
                 // chrome's busy gate must not hold every header button meanwhile.
                 onSelect: () => { void open({}); },

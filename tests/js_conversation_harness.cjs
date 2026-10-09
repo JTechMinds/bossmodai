@@ -481,29 +481,76 @@ async function main() {
     const chromeAvatarNodeIsStable = chromeAvatar() === identity;
     if (!chromeAvatarNodeIsStable) throw new Error("a repaint rebuilt an unchanged avatar");
 
-    // The Desk action names its glyph; the source hands over a NAME, and the
-    // view is the only thing that builds an element from it. It is icon-only,
-    // so what used to be its visible text is now its accessible name AND the
-    // tooltip — one string in both places, which is the property that keeps a
-    // glyph from being unnameable to one kind of operator or the other.
-    const deskBtn = conversation.element.querySelector("#conversation-desk-toggle");
-    if (!deskBtn) throw new Error("an injected openDesk must produce the Desk action");
+    // Open desk lives behind the `⋯`, in the Agent section — one `⋯` per
+    // header, and nothing icon-only beside it. The source still hands over a
+    // glyph NAME and the view is the only thing that builds an element from
+    // it; inside the panel the label is visible text, so the row names itself.
+    const rowButtons = () => conversation.element
+        .querySelector(".conversation-actions").querySelectorAll("button");
+    if (rowButtons().some((btn) => btn.getAttribute("id") === "conversation-open-desk")) {
+        throw new Error("Open desk must not sit in the header row");
+    }
+    // The panel's shape: its sections (and the rule between them), their
+    // headings, and each section's rows across both of its bodies.
+    const panelSections = (open) => open.querySelector(".menu-sections").children;
+    const headingsOf = (open) => open.querySelectorAll(".menu-label").map((label) => label.textContent);
+    const sectionRows = (section) => section.querySelectorAll(".menu-actions")
+        .flatMap((body) => body.querySelectorAll("button"))
+        .map((btn) => btn.textContent);
+    // A section is a group named by its own heading: one string on screen and
+    // in the accessibility tree.
+    const sectionIsLabelled = (section) => {
+        const heading = section.querySelector(".menu-label");
+        return section.getAttribute("role") === "group" && Boolean(heading)
+            && Boolean(heading.getAttribute("id"))
+            && section.getAttribute("aria-labelledby") === heading.getAttribute("id");
+    };
+    const deskDots = conversation.element.querySelector("#conversation-view-options");
+    await deskDots.dispatchClick();
+    const deskPanel = conversation.element.querySelector(".menu");
+    const deskBtn = deskPanel && deskPanel.querySelector("#conversation-open-desk");
+    if (!deskBtn) throw new Error("an injected openDesk must produce Open desk behind the `⋯`");
     const glyph = deskBtn.querySelector("i");
+    const deskSection = deskBtn.closest(".menu-section");
     const chromeActionCarriesItsIcon = Boolean(glyph)
         && glyph.getAttribute("data-lucide") === "lamp-desk"
-        && deskBtn.getAttribute("aria-label") === "Desk"
-        && deskBtn.getAttribute("data-tooltip") === "Desk"
-        && !deskBtn.textContent.includes("Desk");
+        && deskBtn.textContent === "Open desk"
+        && deskBtn.getAttribute("aria-label") === null
+        && Boolean(deskSection)
+        && deskSection.querySelector(".menu-label").textContent === "Agent";
     if (!chromeActionCarriesItsIcon) {
-        throw new Error(
-            "the Desk action must be an icon that names itself: "
-            + `${deskBtn.getAttribute("aria-label")} / ${deskBtn.textContent}`,
-        );
+        throw new Error(`Open desk must be a glyph and its words under "Agent": `
+            + `${deskBtn.textContent} / ${deskSection && deskSection.querySelector(".menu-label").textContent}`);
+    }
+    // The DM's panel: Agent, one rule, then Chat — and inside Chat the action
+    // (Rewind…) comes before the settings, the doing first.
+    const dmSections = panelSections(deskPanel);
+    const dmMenuIsSectioned = headingsOf(deskPanel).join("|") === "Agent|Chat"
+        && dmSections.length === 3
+        && dmSections[1].matches(".menu-divider")
+        && deskPanel.querySelectorAll(".menu-divider").length === 1
+        && sectionRows(dmSections[0]).join("|") === "Open desk"
+        && sectionRows(dmSections[2]).join("|")
+            === "Rewind…|Auto-approve safe commands|Show system notifications"
+        && sectionIsLabelled(dmSections[0]) && sectionIsLabelled(dmSections[2]);
+    if (!dmMenuIsSectioned) {
+        throw new Error(`the DM's \`⋯\` must read Agent | Chat, got ${headingsOf(deskPanel).join("|")}: `
+            + dmSections.map((node) => (node.matches(".menu-divider") ? "—" : sectionRows(node).join("|"))).join(" / "));
+    }
+    // Choosing it puts the panel away first, then opens this agent's desk.
+    await deskBtn.dispatchClick();
+    await tick();
+    const deskOpensFromTheMenu = openedDesks.join("|") === "a"
+        && conversation.element.querySelectorAll(".menu").length === 0
+        && deskDots.getAttribute("aria-expanded") === "false";
+    if (!deskOpensFromTheMenu) {
+        throw new Error(`Open desk must close the panel and open "a", got ${openedDesks.join("|")}`);
     }
 
     // The Browser Vision screen: absent until the status lists this agent,
-    // then a soft-green, icon-only "Browser view" beside Desk; gone again
-    // when the view goes (the extension was turned off).
+    // then a soft-green, icon-only "Browser view" — the row's first action,
+    // now that Desk is behind the `⋯`; gone again when the view goes (the
+    // extension was turned off).
     const viewBtn = () => conversation.element.querySelector("#conversation-browser-view");
     const browserViewAbsentWithoutAView = !viewBtn() && viewListeners.size === 1;
     browserViews.add("a");
@@ -514,9 +561,8 @@ async function main() {
         && shown.getAttribute("data-tone") === "live"
         && shown.getAttribute("aria-label") === "Browser view"
         && Boolean(shownGlyph) && shownGlyph.getAttribute("data-lucide") === "monitor"
-        // Right after Desk in the action row.
-        && shown.parentNode.children.indexOf(shown)
-            === shown.parentNode.children.indexOf(conversation.element.querySelector("#conversation-desk-toggle")) + 1;
+        // The first action button in the row.
+        && rowButtons()[0] === shown;
     await shown.click();
     const browserViewOpensTheViewer = openedViews.length === 1 && openedViews[0][0] === "a";
     browserViews.delete("a");
@@ -643,7 +689,8 @@ async function main() {
         .querySelector(".conversation-actions")
         .querySelector(".conversation-subtitle"));
     /**
-     * The overflow panel's action labels, with the panel opened and shut again.
+     * The overflow panel's row labels, every section's bodies in DOM order,
+     * with the panel opened and shut again.
      *
      * Archive and Reopen moved behind the `⋯`: rare and irreversible-looking,
      * so they do not hold a permanent seat beside the title. Reading them means
@@ -655,7 +702,8 @@ async function main() {
         await dotsBtn.dispatchClick();
         const open = conversation.element.querySelector(".menu");
         const names = open
-            ? open.querySelector(".menu-actions").querySelectorAll("button")
+            ? open.querySelectorAll(".menu-actions")
+                .flatMap((body) => body.querySelectorAll("button"))
                 .map((btn) => btn.textContent)
             : [];
         await dotsBtn.dispatchClick();
@@ -687,20 +735,20 @@ async function main() {
         throw new Error("a control that looks like a heading needs its own name");
     }
     if (titleInput().value !== "Standup") throw new Error("the title must show the name");
-    // At rest the row's only wordless action is Add to thread. Archive lives
-    // behind the `⋯`. Add to thread is icon-only, so textContent stays empty.
+    // At rest the row carries no action at all: Add people… moved behind the
+    // `⋯` with the thread's other controls.
     if (actionLabels().join("|") !== "") {
         throw new Error(`at rest the row carries no text action, got ${actionLabels().join("|")}`);
     }
-    if (actionNames().join("|") !== "Add to thread") {
-        throw new Error(`a live thread must offer Add to thread, got ${actionNames().join("|")}`);
+    if (actionNames().join("|") !== ""
+        || conversation.element.querySelector(".conversation-actions").querySelector("#channel-seat-btn")) {
+        throw new Error(`a live thread's row must be empty at rest, got ${actionNames().join("|")}`);
     }
-    // The thread's other rare controls share the panel: the per-thread CLI
-    // auto-approve switch (787dd54) and Pause (ac0c6fe), both ahead of Archive
-    // in the order thread-source.js emits them. Archive is still in there and
-    // still nowhere on the row.
+    // The panel, in DOM order: the Thread section (Add people…, Pause, then
+    // Archive), then the Chat section's switches. Archive is in there and
+    // nowhere on the row.
     const archiveLivesInTheMenu = await menuActionNames()
-        === "Auto-approve safe commands|Pause thread|Archive";
+        === "Add people…|Pause thread|Archive|Auto-approve safe commands|Show system notifications";
     if (!archiveLivesInTheMenu) {
         throw new Error(`Archive must be behind the \`⋯\`, got ${await menuActionNames()}`);
     }
@@ -725,7 +773,7 @@ async function main() {
     // Beside the TITLE, and nowhere near the action row at the other end.
     const saveActionAppearsBesideArchive =
         renameSlotNames().join("|") === "Cancel rename|Save name"
-        && actionNames().join("|") === "Add to thread"
+        && actionNames().join("|") === ""
         && Boolean(conversation.element.querySelector("#conversation-title-save"));
     if (!saveActionAppearsBesideArchive) {
         throw new Error(`the rename pair must sit beside the title, got `
@@ -962,6 +1010,87 @@ async function main() {
     if (!ownFlagsComeBack) {
         throw new Error(`turning Global off must restore each flag, got `
             + `${JSON.stringify(threadBack)} / ${JSON.stringify(dmBack)}`);
+    }
+
+    // ─── The thread's `⋯`: Thread, one rule, then Chat ───
+    await conversation.open("t1", "thread");
+    menu = await openMenu();
+    const threadSections = panelSections(menu.panel);
+    const threadMenuIsSectioned = headingsOf(menu.panel).join("|") === "Thread|Chat"
+        && threadSections.length === 3
+        && threadSections[1].matches(".menu-divider")
+        && menu.panel.querySelectorAll(".menu-divider").length === 1
+        && sectionRows(threadSections[0]).join("|") === "Add people…|Pause thread|Archive"
+        && sectionRows(threadSections[2]).join("|")
+            === "Auto-approve safe commands|Show system notifications"
+        && sectionIsLabelled(threadSections[0]) && sectionIsLabelled(threadSections[2])
+        && !conversation.element.querySelector(".conversation-actions").querySelector("#channel-seat-btn");
+    if (!threadMenuIsSectioned) {
+        throw new Error(`the thread's \`⋯\` must read Thread | Chat, got ${headingsOf(menu.panel).join("|")}: `
+            + threadSections.map((node) => (node.matches(".menu-divider") ? "—" : sectionRows(node).join("|"))).join(" / "));
+    }
+    // Archived elsewhere while the panel is open: the repaint lands in the
+    // panel on screen, and Reopen lands in the Thread section.
+    bus.publish("channel_updated", Object.assign({}, THREADS.t1, { status: "archived" }));
+    const reopenSections = panelSections(menu.panel);
+    const reopenLandsInTheThreadSection = conversation.element.querySelector(".menu") === menu.panel
+        && headingsOf(menu.panel).join("|") === "Thread|Chat"
+        && sectionRows(reopenSections[0]).join("|") === "Reopen"
+        && reopenSections[0].querySelector(".menu-label").textContent === "Thread";
+    if (!reopenLandsInTheThreadSection) {
+        throw new Error(`Reopen must land in the open panel's Thread section, got `
+            + `${headingsOf(menu.panel).join("|")}: ${sectionRows(reopenSections[0]).join("|")}`);
+    }
+    await menu.dotsBtn.dispatchClick();
+    await tick();
+    await tick();
+
+    // A DM with no openDesk has nothing about the agent to put there: only
+    // Chat, and no rule with nothing on its other side.
+    const bare = BossModConversation.createConversation({
+        store, bus, api, navigate() {}, needs: needsStub, drafts: new Map(),
+        cache: global.BossModTranscriptCache.createCache(),
+    });
+    await bare.open("a", "agent");
+    const bareDots = bare.element.querySelector("#conversation-view-options");
+    await bareDots.dispatchClick();
+    const barePanel = bare.element.querySelector(".menu");
+    const dmWithoutDeskShowsOnlyChat = Boolean(barePanel)
+        && headingsOf(barePanel).join("|") === "Chat"
+        && barePanel.querySelectorAll(".menu-divider").length === 0
+        && panelSections(barePanel).length === 1
+        && !barePanel.querySelector("#conversation-open-desk");
+    await bareDots.dispatchClick();
+    bare.destroy();
+    if (!dmWithoutDeskShowsOnlyChat) {
+        throw new Error(`a DM without openDesk must show only Chat, got ${barePanel && headingsOf(barePanel).join("|")}`);
+    }
+
+    // No unheaded fallback: a menu action must name its section, and a
+    // subject section must have the source's word for its heading.
+    const lone = global.BossModConversationChrome.createChrome({ onError() {} });
+    const refusalOf = (descriptor) => {
+        try {
+            lone.apply(descriptor);
+        } catch (err) {
+            return err.message;
+        }
+        return "";
+    };
+    const menuItem = (extra) => ({
+        title: "x", subtitle: "",
+        actions: [Object.assign({ id: "x-act", label: "X", slot: "menu", onSelect() {} }, extra)],
+    });
+    const UNSECTIONED = '[chrome] menu action "x-act" needs section "subject" or "chat"';
+    const applyRefusesBadMenuActions = refusalOf(menuItem({})) === UNSECTIONED
+        && refusalOf(menuItem({ section: "elsewhere" })) === UNSECTIONED
+        && refusalOf(menuItem({ section: "subject" }))
+            === "[chrome] a subject menu action needs descriptor.menuTitle"
+        && refusalOf(Object.assign(menuItem({ section: "subject" }), { menuTitle: "Agent" })) === "";
+    lone.destroy();
+    if (!applyRefusesBadMenuActions) {
+        throw new Error("apply must refuse a menu action without a known section, "
+            + "and a subject action without menuTitle");
     }
 
     // ─── The empty conversation offers the two things you can do ───

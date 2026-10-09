@@ -31,7 +31,7 @@ const BossModAutoApproveSwitch = (() => {
      * @param {boolean} opts.globalEnabled  Whether Global auto-approve is on.
      * @param {(enabled: boolean) => Promise<void>} opts.onSelect  Saves the
      *   conversation's own flag. Never called while the switch is disabled.
-     * @returns {{id: string, kind: 'switch', slot: 'menu', label: string,
+     * @returns {{id: string, kind: 'switch', slot: 'menu', section: 'chat', label: string,
      *   pressed: boolean, disabled: boolean, hint: string,
      *   onSelect: (enabled: boolean) => Promise<void>}}
      * @throws {Error} When `id` or `onSelect` is missing: either one absent is
@@ -49,6 +49,7 @@ const BossModAutoApproveSwitch = (() => {
             id,
             kind: 'switch',
             slot: 'menu',
+            section: 'chat',
             label: LABEL,
             pressed: globalOn || opts.enabled === true,
             disabled: globalOn,

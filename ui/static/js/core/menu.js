@@ -96,5 +96,34 @@ const BossModMenu = (() => {
         return { close, element };
     }
 
-    return { createMenu };
+    /**
+     * A titled section inside a menu panel: a caption over the caller's nodes.
+     *
+     * Menu vocabulary, next to createMenu, because its CSS (`.menu-group`,
+     * `.menu-label`) already lives with `.menu`. It holds no layout opinion of
+     * its own — the caller's `children` are the body — so one primitive serves
+     * a panel of action rows and a segment of chips alike.
+     *
+     * The caption is a real `<p>` with an id and the group points at it with
+     * aria-labelledby: one string on screen and in the accessibility tree,
+     * never an aria-label that can drift from the visible words.
+     *
+     * @param {object} options
+     * @param {string} options.id  The caption's DOM id, which labels the group.
+     * @param {string} options.label  The caption's visible text.
+     * @param {HTMLElement[]} [options.children]  The section's body, in order.
+     *   Owned by the caller, which may keep refilling them.
+     * @returns {HTMLElement} `div.menu-group.menu-section[role=group]`, its
+     *   first child the `p.menu-label` caption.
+     * @throws {Error} When `id` or `label` is missing or empty — a group with
+     *   no name is announced as nothing, and an unlabelled caption is not one.
+     */
+    function createMenuSection({ id, label, children } = {}) {
+        if (!id || !label) throw new Error('[menu] a section needs an id and a label');
+        return h('div', { class: 'menu-group menu-section', role: 'group', 'aria-labelledby': id },
+            h('p', { class: 'menu-label', id }, label),
+            children || []);
+    }
+
+    return { createMenu, createMenuSection };
 })();

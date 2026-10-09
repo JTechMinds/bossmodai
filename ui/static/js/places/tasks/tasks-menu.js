@@ -68,11 +68,10 @@ const BossModTasksMenu = (() => {
             onclick: () => { onWindow(entry.days); sync(); },
         }, entry.label));
 
-        const group = h('div', { class: 'menu-group' },
-            h('p', { class: 'menu-label', id: WINDOW_LABEL_ID }, WINDOW_LABEL),
-            h('div', {
-                class: 'menu-segment', role: 'group', 'aria-labelledby': WINDOW_LABEL_ID,
-            }, windows));
+        // The shared titled section (core/menu.js) is the labelled group, so
+        // the segment inside carries no role of its own.
+        const group = BossModMenu.createMenuSection({ id: WINDOW_LABEL_ID, label: WINDOW_LABEL,
+            children: [h('div', { class: 'menu-segment' }, windows)] });
 
         const sortRow = h('button', {
             class: 'menu-action', id: 'tasks-sort', type: 'button',

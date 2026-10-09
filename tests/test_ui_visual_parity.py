@@ -1109,9 +1109,9 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     assert "Show archived" not in _code(view)
     assert "View archives" not in _code(view)
     # The caption is a real heading the group points at, rather than an
-    # aria-label repeating on screen text into the accessibility tree.
-    assert "'aria-labelledby': SEGMENT_ID" in view
-    assert "class: 'menu-label', id: SEGMENT_ID" in view
+    # aria-label repeating on screen text into the accessibility tree — built
+    # by the shared section primitive, which labels its group by its caption.
+    assert "BossModMenu.createMenuSection({ id: SEGMENT_ID, label: SEGMENT_LABEL" in view
     overlays = _read(CSS / "overlays.css")
     pressed = overlays.split('.menu-segment-option[aria-pressed="true"] {', 1)[1].split("}", 1)[0]
     assert "var(--accent)" not in pressed

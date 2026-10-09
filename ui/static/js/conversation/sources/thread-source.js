@@ -308,18 +308,17 @@ const BossModThreadSource = (() => {
         }
 
         /**
-         * Title, participant count, Add to thread, and Archive / Reopen.
+         * Title, participant count, and the `⋯`'s Thread section (`menuTitle`).
          *
          * A LIVE thread also carries `onRename`, which is what makes its title
          * editable in place. A sealed room does not: archiving seals it against
          * writes, and renaming it is a write. Reopen is the way back.
          *
-         * Archive / Reopen sit behind the header's `⋯`. Add to thread stays on
-         * the action row: seating someone is the ordinary next step, not a
-         * once-a-month seal.
+         * Add people…, Pause / Resume and Archive / Reopen act on the thread,
+         * so all three sit in that section behind the header's `⋯`.
          *
-         * @returns {{title: string, subtitle: string, actions: object[],
-         *            onRename?: (name: string) => Promise<void>}}
+         * @returns {{title: string, subtitle: string, menuTitle: string,
+         *            actions: object[], onRename?: (name: string) => Promise<void>}}
          */
         function chrome() {
             const archived = !isLiveThread();
@@ -327,9 +326,9 @@ const BossModThreadSource = (() => {
             if (!archived) {
                 actions.push({
                     id: 'channel-seat-btn',
-                    label: 'Add to thread',
+                    label: 'Add people…',
                     icon: 'user-plus',
-                    iconOnly: true,
+                    slot: 'menu', section: 'subject',
                     onSelect: seatAgent,
                 });
                 actions.push(BossModAutoApproveSwitch.describe({
@@ -343,14 +342,14 @@ const BossModThreadSource = (() => {
                         id: 'channel-resume-btn',
                         label: 'Resume',
                         icon: 'play',
-                        slot: 'menu',
+                        slot: 'menu', section: 'subject',
                         onSelect: resumeThread,
                     }
                     : {
                         id: 'channel-pause-btn',
                         label: 'Pause thread',
                         icon: 'pause',
-                        slot: 'menu',
+                        slot: 'menu', section: 'subject',
                         onSelect: pauseThread,
                     });
             }
@@ -359,20 +358,21 @@ const BossModThreadSource = (() => {
                     id: 'channel-reopen-btn',
                     label: 'Reopen',
                     icon: 'archive-restore',
-                    slot: 'menu',
+                    slot: 'menu', section: 'subject',
                     onSelect: reopenThread,
                 }
                 : {
                     id: 'channel-archive-btn',
                     label: 'Archive',
                     icon: 'archive',
-                    slot: 'menu',
+                    slot: 'menu', section: 'subject',
                     onSelect: archiveThread,
                 });
             return {
                 title: (channel && channel.name) || 'Thread',
                 subtitle: `${members().length} participants`,
                 onRename: archived ? null : renameThread,
+                menuTitle: 'Thread',
                 actions,
             };
         }

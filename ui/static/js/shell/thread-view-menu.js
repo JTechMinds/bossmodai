@@ -94,16 +94,12 @@ const BossModThreadViewMenu = (() => {
             onclick: () => onSelect(option.status),
         }, option.label));
 
-        // The caption is a real heading with an id rather than an aria-label on
-        // the group: one string, on screen and in the accessibility tree, so
-        // the two cannot drift apart.
-        const group = h('div', { class: 'menu-group' },
-            h('p', { class: 'menu-label', id: SEGMENT_ID }, SEGMENT_LABEL),
-            h('div', {
-                class: 'menu-segment',
-                role: 'group',
-                'aria-labelledby': SEGMENT_ID,
-            }, options));
+        // The shared titled section (core/menu.js): its caption is a real
+        // heading the group is labelled by, one string on screen and in the
+        // accessibility tree. The segment inside carries no role of its own —
+        // a second group under the same heading would be announced twice.
+        const group = BossModMenu.createMenuSection({ id: SEGMENT_ID, label: SEGMENT_LABEL,
+            children: [h('div', { class: 'menu-segment' }, options)] });
 
         const menu = BossModRosterHeaderMenu.createHeaderMenu({
             id: 'roster-thread-view',

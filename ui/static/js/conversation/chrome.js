@@ -20,12 +20,10 @@
  * The TITLE may be renameable, and says so through the descriptor's optional
  * `onRename` rather than by this view learning what a thread is. The control
  * itself is conversation/title-rename.js; what belongs here is where its
- * confirm and cancel land — BESIDE the title, which is the thing they act on.
- * They sat at the far right for a while, seven hundred pixels from the field
- * whose edit they were confirming, and the operator had to cross the header to
- * answer a question the header was asking on the left. Both are icon-only, so
- * each carries its own accessible name: colour is not the only carrier
- * (SC 1.4.1), and a check and a cross differ in shape as well as in hue.
+ * confirm and cancel land — BESIDE the title, which is the thing they act on,
+ * not across the header from it. Both are icon-only, so each carries its own
+ * accessible name: colour is not the only carrier (SC 1.4.1), and a check and
+ * a cross differ in shape as well as in hue.
  *
  * THREE SLOTS, ONE FIELD. Every action is the same `{id, label, icon,
  * onSelect}` with the same reused node, the same in-flight gate and the same
@@ -33,23 +31,20 @@
  * about a control can drift from the vocabulary by sitting somewhere else.
  *
  *   (default)      the action row, at the right. Frequent and safe.
- *   slot: 'menu'   behind the `⋯`. Rare or irreversible — Archive and Reopen.
+ *   slot: 'menu'   behind the `⋯`, in the `section` it names.
  *   slot: 'title'  beside the title. Confirming an edit to the title itself.
  *
- * The `⋯` is the header's OVERFLOW and it holds two kinds of thing. The first
- * is view options — "show system notifications" is a preference about the
- * transcript rather than an action on the person, and it was crowding out the
- * one real action with its 25-character label. The second is any `slot:
- * 'menu'` action: a destructive, once-a-month control does not earn a
- * permanent seat beside the conversation title, and a bordered `Archive`
- * sitting there every time you open a thread reads as a suggestion.
+ * The `⋯` is the header's OVERFLOW, in two titled sections. `subject` is the
+ * agent or the thread — Open desk, Archive — headed by the descriptor's
+ * `menuTitle`, the source's word. `chat` is this conversation: Rewind, its
+ * switches, and the surface's view options. A once-a-month control does not
+ * earn a permanent seat beside the title, and a bordered `Archive` sitting
+ * there every time you open a thread reads as a suggestion.
  *
- * The menu's actions are appended into a STABLE panel node rather than handed
- * to the menu at open time, which is what lets a repaint that happens while
- * the panel is open — Archive succeeding and becoming Reopen — land inside the
- * panel the operator is looking at. That node, the `⋯` itself and the panel's
+ * The sections, their stable nodes, the `⋯` itself and the panel's
  * open/close lifecycle are conversation/chrome-menu.js's; this view only
- * decides what goes behind it.
+ * decides what goes behind it. Stable nodes are what let a repaint while the
+ * panel is open — Archive becoming Reopen — land in the panel on screen.
  *
  * The SUBTITLE sits with the actions rather than with the title. `3
  * participants` is a fact about the room and the title is its name; putting
@@ -112,7 +107,6 @@ const BossModConversationChrome = (() => {
         // The `⋯` and its panel's lifecycle are conversation/chrome-menu.js's;
         // what goes behind it is decided below, in apply().
         const overflow = BossModChromeMenu.createChromeMenu({ container: element, viewOptions });
-        const menuActionsEl = overflow.actionsEl;
         const menuButton = overflow.button;
         const closeMenu = overflow.close;
 
@@ -132,9 +126,8 @@ const BossModConversationChrome = (() => {
          * `disabled` means the setting is decided somewhere else, which the
          * source names in `hint`. It is announced as well as styled
          * (`aria-disabled`), and the hint is the switch's accessible
-         * description. The hint sits BESIDE the
-         * switch rather than inside it: the disabled row is dimmed, and the
-         * one line that explains it must stay readable.
+         * description. The hint sits BESIDE the switch rather than inside
+         * it: the disabled row is dimmed, and its explanation must stay readable.
          *
          * @param {object} action
          * @returns {HTMLElement} The wrapper; `_row` is the switch itself.
@@ -216,15 +209,17 @@ const BossModConversationChrome = (() => {
         /**
          * Paint one chrome descriptor.
          *
-         * @param {{title: string, subtitle: string, avatar?: object,
+         * @param {{title: string, subtitle: string, avatar?: object, menuTitle?: string,
          *   actions: object[], onRename?: (name: string) => Promise<void>}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
-         *   shown. Each action is `{id, label, icon?, iconOnly?, slot?, tone?,
-         *   onSelect}`, where `icon` is a Lucide glyph NAME — the source names
+         *   shown. `menuTitle` is the subject section's heading, required once
+         *   any action names `section: 'subject'`. Each action is `{id, label,
+         *   icon?, iconOnly?, slot?, section?, tone?, onSelect}`, where `icon` is a Lucide glyph NAME — the source names
          *   it, this builds it — `iconOnly` shows the glyph alone with `label`
          *   as the button's accessible name instead of its text (SC 4.1.2) and
          *   as its tooltip, and `slot` is `'menu'` to put it behind the `⋯`,
-         *   `'title'` to put it beside the name, or absent for the action row.
+         *   `'title'` to put it beside the name, or absent for the action row;
+         *   a `'menu'` action's `section` is `'subject'` or `'chat'`.
          *   `tone` is `'live'` (the only tone so far) for an action that marks
          *   something running now — the browser view — and sets
          *   `data-tone="live"`, which the stylesheet colours soft green.
@@ -235,9 +230,21 @@ const BossModConversationChrome = (() => {
          *   optional: with it the title is editable in place, without it the
          *   title is plain text.
          * @returns {void}
+         * @throws {Error} When a menu action has no known `section`, or a
+         *   subject action comes without `menuTitle`: no unheaded fallback.
          */
         function apply(chrome) {
+            (chrome.actions || []).forEach((action) => {
+                if (action.slot !== 'menu') return;
+                if (action.section !== 'subject' && action.section !== 'chat') {
+                    throw new Error(`[chrome] menu action "${action.id}" needs section "subject" or "chat"`);
+                }
+                if (action.section === 'subject' && !chrome.menuTitle) {
+                    throw new Error('[chrome] a subject menu action needs descriptor.menuTitle');
+                }
+            });
             latest = chrome;
+            overflow.setTitle(chrome.menuTitle || '');
             applyAvatar(chrome.avatar || null);
             title.apply({ title: chrome.title || '', onRename: chrome.onRename });
             subtitleEl.textContent = chrome.subtitle || '';
@@ -270,7 +277,7 @@ const BossModConversationChrome = (() => {
                 if (action.kind === 'switch' && action.slot === 'menu') {
                     const node = ensureMenuSwitch(action);
                     node._row.disabled = gate.busy() || action.disabled === true;
-                    menuActionsEl.append(node);
+                    overflow.place(action.section, 'switch', node);
                     inMenu += 1;
                     return;
                 }
@@ -314,7 +321,7 @@ const BossModConversationChrome = (() => {
                     : () => { void run(btn, action); };
                 btn.disabled = gate.busy();
                 if (menuAction) {
-                    menuActionsEl.append(btn);
+                    overflow.place(action.section, 'action', btn);
                     inMenu += 1;
                 } else if (action.slot === 'title') {
                     titleActionsEl.append(btn);
@@ -327,6 +334,7 @@ const BossModConversationChrome = (() => {
                 btn.remove();
                 actionNodes.delete(id);
             }
+            overflow.settle();
             // Appended last on every pass, so the `⋯` stays at the end of the
             // row however the actions before it churn — and only when there is
             // something behind it, because a menu with nothing in it is not a
@@ -338,11 +346,9 @@ const BossModConversationChrome = (() => {
                 menuButton.remove();
             }
             BossModIcons.paintDocument('conversation-chrome');
-            // The sweep above reaches the panel only while it is open, and an
-            // apply() that runs then has just rebuilt the rows inside it —
-            // Archive becoming Reopen is that case. Painting it explicitly
-            // costs nothing when there is nothing left to paint (the painter is
-            // idempotent) and is the difference between a glyph and a word.
+            // The sweep above reaches the panel only while it is open. Painting
+            // it explicitly is idempotent, and after apply() rebuilt its rows
+            // (Archive becoming Reopen) is the difference between glyph and word.
             overflow.paint();
         }
 

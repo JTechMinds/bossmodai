@@ -939,6 +939,18 @@
 
 .menu-label { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
 
+/* A TITLED SECTION (core/menu.js createMenuSection): a `.menu-group` whose
+ * caption labels it. The conversation `⋯` stacks two — the agent or thread,
+ * then the chat — with the panel's own 8px gap between them, and an empty
+ * body adds no gap. Its headings take the rows' 8px inset so a caption lines
+ * up with the labels under it; scoped to that panel, because the segment
+ * menus' chips sit flush with their caption. */
+.menu-sections { display: flex; flex-direction: column; gap: 8px; }
+
+.menu-section > .menu-actions:empty { display: none; }
+
+.menu-sections .menu-label { padding: 0 8px; }
+
 .menu-segment { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* Each option is its own chip. --line-control, not --line: the edge is what
