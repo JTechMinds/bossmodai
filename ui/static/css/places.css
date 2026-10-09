@@ -669,18 +669,14 @@ svg.file-entry-kind { flex: none; width: 14px; height: 14px; }
 .file-entry-time { margin-left: auto; font-size: 11px; color: var(--muted); white-space: nowrap; }
 .file-entry-time { margin-left: 0; }
 
+/* The row's `⋯` is the shared .menu-trigger (controls.css), which carries its
+   look; this only seats it at the row's right edge. */
 .file-entry-menu {
   flex: 0 0 auto;
   width: 28px;
   min-height: 28px;
-  border: 0;
   border-left: 1px solid var(--line);
-  background: none;
-  color: var(--muted);
-  font-size: 14px;
 }
-
-.file-entry-menu:hover { color: var(--ink); background: var(--bg); }
 
 .file-row.is-skeleton { pointer-events: none; padding: 10px; }
 .file-skeleton-bar { display: block; width: 45%; height: 10px; border-radius: 4px; background: var(--line); }

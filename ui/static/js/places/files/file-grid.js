@@ -70,17 +70,16 @@ const BossModFileGrid = (() => {
             size ? h('span', { class: 'file-entry-size' }, size) : null,
             when ? h('span', { class: 'file-entry-time' }, when) : null);
 
-        const menu = h('button', {
-            class: 'file-entry-menu',
-            type: 'button',
-            'aria-haspopup': 'menu',
-            'aria-expanded': 'false',
-            'aria-label': `Actions for ${name}`,
-            onclick: (event) => {
+        const menu = BossModMenuButton.createTrigger({
+            label: `Actions for ${name}`,
+            size: 'inline',
+            haspopup: 'menu',
+            extraClass: 'file-entry-menu',
+            onClick: (event) => {
                 event.stopPropagation();
                 onMenu(entry, menu, null);
             },
-        }, '⋯');
+        });
 
         const row = h('div', { class: 'file-row' }, open, menu);
         // Right-click stays, because that is the gesture operators reach for.

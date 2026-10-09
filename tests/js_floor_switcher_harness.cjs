@@ -26,7 +26,7 @@ installIconsStub();
 const NAMES = [
     "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModAvatar", "BossModSearchField",
     "BossModInlineRename",
-    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModAgentApi",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModAgentApi",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
     "BossModFloorSettings", "BossModFloorSwitcher",
@@ -136,8 +136,10 @@ async function submit(form) {
         && choices[0].getAttribute("aria-pressed") === "true"
         && choices[1].getAttribute("aria-pressed") === "false"
         && documentStub.activeElement === choices[0];
-    const more = panel.querySelectorAll(".floor-row-more");
+    // Each row's `⋯` is the shared inline trigger.
+    const more = panel.querySelectorAll(".menu-trigger");
     verdict.everyRowHasANamedSettingsButton = more.length === 2
+        && more.every((button) => button.getAttribute("data-size") === "inline")
         && more[1].getAttribute("aria-label") === "Floor settings Finance";
 
     // ─── Picking a row moves the operator and closes the panel ───
@@ -172,7 +174,7 @@ async function submit(form) {
     store.setState({ currentFloorId: "fin" });
     await trigger.dispatchClick();
     panel = switcher.element.querySelector(".menu");
-    const finMore = panel.querySelectorAll(".floor-row-more")
+    const finMore = panel.querySelectorAll(".menu-trigger")
         .find((button) => button.getAttribute("aria-label") === "Floor settings Finance");
     await finMore.dispatchClick();
     await drain();

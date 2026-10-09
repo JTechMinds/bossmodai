@@ -94,6 +94,8 @@ const BossModFloorProjects = (() => {
             view.rows(projects.map((project) => {
                 const modified = BossModFormat.formatDateTime(project.modified_at);
                 return ctx.row({
+                    // A project has no id: its folder name is its identity on a floor.
+                    id: project.name,
                     lead: null,
                     name: project.name,
                     meta: modified ? `Modified ${modified}` : null,

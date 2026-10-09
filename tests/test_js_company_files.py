@@ -28,6 +28,7 @@ FILES_MODULES = [
     JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
     JS / "shell" / "places.js",
     JS / "shell" / "floor-scope.js",
     FILES / "file-content.js",

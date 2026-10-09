@@ -23,7 +23,7 @@ const NAMES = [
     "BossModDom", "BossModFactList", "BossModAvatar", "BossModSwitch",
     "BossModSearchField", "BossModStore",
     "BossModBus", "BossModFormat", "BossModSpecialty", "BossModGates",
-    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModMenuSelect",
     "BossModAutoGrow",
     "BossModFileListing", "BossModPlaces", "BossModAgentRoutes",
     "BossModFloorScope",

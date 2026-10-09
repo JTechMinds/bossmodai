@@ -9,8 +9,8 @@
  * thread-create.js came out of roster-threads.js.
  *
  * It owns the segment inside the header's `⋯` panel. The `⋯` and the panel
- * themselves are shell/roster-header-menu.js's, shared with the PEOPLE header
- * so the rail's two menus open, close and hang the same way. It owns no
+ * themselves are core/menu-button.js's, shared with the PEOPLE header and
+ * every other `⋯`, so they all open, close and hang the same way. It owns no
  * STATE: which list is showing belongs to the half that fetches it, so this
  * asks (`getStatus`) and reports (`onSelect`) and never keeps a copy. Two
  * copies of one mode is how a control and the list under it end up disagreeing.
@@ -101,12 +101,14 @@ const BossModThreadViewMenu = (() => {
         const group = BossModMenu.createMenuSection({ id: SEGMENT_ID, label: SEGMENT_LABEL,
             children: [h('div', { class: 'menu-segment' }, options)] });
 
-        const menu = BossModRosterHeaderMenu.createHeaderMenu({
+        const menu = BossModMenuButton.create({
             id: 'roster-thread-view',
             label: MENU_LABEL,
+            size: 'inline',
+            extraClass: 'roster-section-action',
             menuName: 'thread-view',
             getContainer,
-            items: [group],
+            getItems: () => [group],
         });
 
         return {

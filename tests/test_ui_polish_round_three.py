@@ -480,6 +480,7 @@ CONTEXT_MODULES = [
     JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
     JS / "core" / "menu-select.js",
     # Edit-mode widgets: the growing textarea, and the schedule editor's time and date fields.
     JS / "core" / "autogrow.js",
@@ -563,6 +564,7 @@ CONTEXT_MODULES = [
     JS / "context" / "desk-schedules.js",
     JS / "context" / "desk-pack.js",
     JS / "context" / "desk-memory.js",
+    JS / "context" / "desk-menu.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks

@@ -197,6 +197,8 @@
     <script defer src="{{ static_url('js/core/overlay-actions.js') }}"></script>
     <script defer src="{{ static_url('js/core/overlays.js') }}"></script>
     <script defer src="{{ static_url('js/core/menu.js') }}"></script>
+    <!-- The one `⋯` and its panel lifecycle, which composes the panel above. -->
+    <script defer src="{{ static_url('js/core/menu-button.js') }}"></script>
     <!-- A dropdown is the shared menu panel, so it loads after menu.js. -->
     <script defer src="{{ static_url('js/core/menu-select.js') }}"></script>
     <!-- Edit-mode field widgets: a textarea that grows with its text, and the
@@ -285,7 +287,6 @@
     <script defer src="{{ static_url('js/shell/header.js') }}"></script>
     <script defer src="{{ static_url('js/shell/agent-routes.js') }}"></script>
     <script defer src="{{ static_url('js/shell/roster-row-meta.js') }}"></script>
-    <script defer src="{{ static_url('js/shell/roster-header-menu.js') }}"></script>
     <script defer src="{{ static_url('js/shell/people-view-menu.js') }}"></script>
     <script defer src="{{ static_url('js/shell/roster-people.js') }}"></script>
     <script defer src="{{ static_url('js/shell/thread-create.js') }}"></script>
@@ -501,6 +502,7 @@
     <script defer src="{{ static_url('js/context/desk-schedules.js') }}"></script>
     <script defer src="{{ static_url('js/context/desk-pack.js') }}"></script>
     <script defer src="{{ static_url('js/context/desk-memory.js') }}"></script>
+    <script defer src="{{ static_url('js/context/desk-menu.js') }}"></script>
     <script defer src="{{ static_url('js/context/desk-panel.js') }}"></script>
     <script defer src="{{ static_url('js/context/desk-dialog.js') }}"></script>
 

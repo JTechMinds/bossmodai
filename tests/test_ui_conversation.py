@@ -33,6 +33,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
     CONVERSATION / "empty-state.js",
     CONVERSATION / "transcript.js",
     CONVERSATION / "transcript-cache.js",

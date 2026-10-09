@@ -92,8 +92,8 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, modalTrail, overlayActions, overlays, menu, rowMeta,
-    places, scopeModule, floorApi, floorSwitcher, header, rosterHeaderMenu, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
+    dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, modalTrail, overlayActions, overlays, menu, menuButton,
+    rowMeta, places, scopeModule, floorApi, floorSwitcher, header, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
     rosterThreads, agentRoutes, roster, footer,
 ] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
@@ -113,14 +113,14 @@ load(modalTrail, "BossModModalTrail");
 load(overlayActions, "BossModOverlayActions");
 load(overlays, "BossModOverlays");
 load(menu, "BossModMenu");
+// Every `⋯` — the floor switcher rows' and both rail headers' — is this trigger.
+load(menuButton, "BossModMenuButton");
 load(places, "BossModPlaces");
 load(scopeModule, "BossModFloorScope");
 load(floorApi, "BossModFloorApi");
 load(floorSwitcher, "BossModFloorSwitcher");
 load(header, "BossModHeader");
-// Both section headers' `⋯`, then the People one's owner, before the half
-// that mounts it.
-load(rosterHeaderMenu, "BossModRosterHeaderMenu");
+// The People header's `⋯` owner, before the half that mounts it.
 load(peopleViewMenu, "BossModPeopleViewMenu");
 load(rosterPeople, "BossModRosterPeople");
 load(threadCreate, "BossModThreadCreate");

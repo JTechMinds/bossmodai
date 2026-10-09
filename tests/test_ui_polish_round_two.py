@@ -78,6 +78,7 @@ CONTEXT_MODULES = [
     JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
     JS / "core" / "menu-select.js",
     # Edit-mode widgets: the growing textarea, and the schedule editor's time and date fields.
     JS / "core" / "autogrow.js",
@@ -161,6 +162,7 @@ CONTEXT_MODULES = [
     JS / "context" / "desk-schedules.js",
     JS / "context" / "desk-pack.js",
     JS / "context" / "desk-memory.js",
+    JS / "context" / "desk-menu.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks
@@ -497,15 +499,21 @@ def test_view_options_live_behind_one_menu_not_in_the_header() -> None:
     """
     # The `⋯` and its panel live in chrome-menu.js, split out of chrome.js
     # along the seam between what goes behind the `⋯` and how the panel lives.
+    # The `⋯` button itself is the shared core/menu-button.js trigger, handed
+    # the one constant.
     chrome = _read(CONVERSATION / "chrome-menu.js")
+    menu_button = _read(JS / "core/menu-button.js")
     assert "const MENU_LABEL = 'More actions';" in chrome
-    assert "'aria-label': MENU_LABEL" in chrome
+    assert "BossModMenuButton.create({" in chrome
+    assert "label: MENU_LABEL," in chrome
+    assert "'aria-label': label," in menu_button
     # Named twice from one constant: the label a screen reader hears and the
     # bubble a pointer gets cannot drift apart.
-    assert "'data-tooltip': MENU_LABEL" in chrome
-    assert "aria-haspopup" in chrome
+    assert "'data-tooltip': label," in menu_button
+    assert "'aria-haspopup': haspopup," in menu_button
     # It reuses the one overlay implementation (the menu shape, core/menu.js).
     assert "BossModMenu." in chrome
+    assert "BossModMenu.createMenu({" in menu_button
 
     # And there is still exactly ONE focus trap in the tree — the whole reason
     # the menu is an overlays.js function rather than a popover of its own.

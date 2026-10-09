@@ -109,8 +109,9 @@ const BossModScheduleLayer = (() => {
         const discardButton = tool('schedule-discard', 'x', 'btn btn-sm conversation-action inline-rename-cancel',
             LABELS.discard, () => discard());
         const pencilButton = tool('schedule-edit', 'pencil', 'header-icon-btn', LABELS.edit, () => enterEdit());
-        const optionsButton = tool('schedule-options', 'ellipsis', 'header-icon-btn', LABELS.options,
-            () => toggleOptions(), { 'aria-haspopup': 'dialog', 'aria-expanded': 'false' });
+        const optionsButton = BossModMenuButton.createTrigger({
+            id: 'schedule-options', label: LABELS.options, size: 'header', onClick: () => toggleOptions(),
+        });
 
         /** Show one callout above the fields, or clear it with null. */
         function show(node) {

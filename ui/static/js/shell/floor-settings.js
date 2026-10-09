@@ -90,6 +90,9 @@ const BossModFloorSettings = (() => {
      * One list row with a `⋯` whose menu lists the other floors.
      *
      * @param {object} opts
+     * @param {string} opts.id  The agent's, thread's or project's identity,
+     *   unique within its list; names the Move to… caption the panel's group
+     *   is labelled by.
      * @param {HTMLElement|null} opts.lead  An avatar, or null.
      * @param {string} opts.name
      * @param {HTMLElement|string|null} opts.meta  Under the name.
@@ -97,52 +100,38 @@ const BossModFloorSettings = (() => {
      *   other floors, read when the menu opens.
      * @param {(floor: {id: string, name: string}) => void} opts.onMoveTo
      * @returns {HTMLElement} The `<li>`.
+     * @throws {Error} When `id` is missing — the caption would label nothing.
      */
-    function row({ lead, name, meta, targets, onMoveTo }) {
-        const more = h('button', {
-            class: 'floor-row-more',
-            type: 'button',
-            'aria-label': `Move ${name} to another floor`,
-            'aria-haspopup': 'dialog',
-            'aria-expanded': 'false',
-            onclick: () => toggle(),
-        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
+    function row({ id, lead, name, meta, targets, onMoveTo }) {
+        if (!id) throw new Error('[floor-settings] a row needs an id');
         // Positioned (overlays.css): THE host the Move to… menu hangs off.
-        const host = h('div', { class: 'floor-item-more' }, more);
-        let menu = null;
-
-        function toggle() {
-            if (menu) {
-                menu.close();
-                return;
-            }
-            const floors = targets();
-            const choices = floors.map((floor) => h('button', {
-                class: 'menu-action',
-                type: 'button',
-                onclick: () => {
-                    menu.close();
-                    onMoveTo(floor);
-                },
-            }, h('span', { class: 'menu-select-label' }, floor.name)));
-            menu = BossModMenu.createMenu({
-                anchor: more,
-                container: host,
-                label: `Move ${name} to`,
-                items: [
-                    h('p', { class: 'menu-label' }, 'Move to…'),
-                    choices.length
+        const host = h('div', { class: 'floor-item-more' });
+        // One string names the `⋯` and the panel it opens.
+        const menu = BossModMenuButton.create({
+            size: 'inline',
+            label: `Move ${name} to another floor`,
+            menuName: 'floor-move',
+            getContainer: () => host,
+            // Built on each open: the other floors are read as it opens.
+            getItems: () => {
+                const choices = targets().map((floor) => h('button', {
+                    class: 'menu-action',
+                    type: 'button',
+                    onclick: () => {
+                        menu.close();
+                        onMoveTo(floor);
+                    },
+                }, h('span', { class: 'menu-select-label' }, floor.name)));
+                return [BossModMenu.createMenuSection({
+                    id: `floor-move-${id}-label`,
+                    label: 'Move to…',
+                    children: [choices.length
                         ? h('div', { class: 'menu-actions' }, choices)
-                        : h('p', { class: 'field-hint' }, 'There is no other floor yet.'),
-                ],
-                onClose: () => {
-                    menu = null;
-                    more.setAttribute('aria-expanded', 'false');
-                },
-            });
-            menu.element.setAttribute('data-menu', 'floor-move');
-            more.setAttribute('aria-expanded', 'true');
-        }
+                        : h('p', { class: 'field-hint' }, 'There is no other floor yet.')],
+                })];
+            },
+        });
+        host.append(menu.button);
 
         return h('li', { class: 'floor-item' },
             lead,

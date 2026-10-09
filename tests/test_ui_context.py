@@ -38,6 +38,7 @@ CONTEXT_MODULES = [
     JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
     # A desk task's Edit mode picks its assignee from a dropdown.
     JS / "core" / "menu-select.js",
     # Edit-mode widgets: the growing textarea, and the schedule editor's time and date fields.
@@ -124,6 +125,7 @@ CONTEXT_MODULES = [
     CONTEXT / "desk-schedules.js",
     CONTEXT / "desk-pack.js",
     CONTEXT / "desk-memory.js",
+    CONTEXT / "desk-menu.js",
     CONTEXT / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
     # A desk task row opens the task as a layer over the desk: the Tasks
@@ -289,14 +291,19 @@ def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
     panel = _read(CONTEXT / "desk-panel.js")
     assert len(panel.splitlines()) < 400
     assert "BossModDeskMemory.createDeskMemory({ api, agentId })" in panel
-    assert "menuRow('desk-memory', 'brain', LABELS.memory, pick(() => memory.open()))" in panel
+    # The desk's `⋯` rows live in context/desk-menu.js; the panel wires them.
+    desk_menu = _read(CONTEXT / "desk-menu.js")
+    assert len(desk_menu.splitlines()) < 400
+    assert "onMemory: () => memory.open()," in panel
+    assert "menuRow('desk-memory', 'brain', LABELS.memory, pick(onMemory))" in desk_menu
     assert "memory.destroy()" in panel
     # Open chat, Memory, Edit role, the divider, then the operational rows.
-    assert (panel.index("menuRow('desk-chat'") < panel.index("menuRow('desk-memory'")
-            < panel.index("menuRow('desk-edit'") < panel.index("h('hr', { class: 'menu-divider' })")
-            < panel.index("menuRow('desk-diagnostics'"))
+    assert (desk_menu.index("menuRow('desk-chat'") < desk_menu.index("menuRow('desk-memory'")
+            < desk_menu.index("menuRow('desk-edit'") < desk_menu.index("h('hr', { class: 'menu-divider' })")
+            < desk_menu.index("menuRow('desk-diagnostics'"))
     index = _read(ROOT / "ui" / "templates" / "index.html")
     assert index.index("js/context/desk-memory.js") < index.index("js/context/desk-panel.js")
+    assert index.index("js/context/desk-menu.js") < index.index("js/context/desk-panel.js")
 
 
 def test_desk_notes_read_the_workspace_not_a_column() -> None:
@@ -937,8 +944,11 @@ def test_desk_panel_keeps_role_contract_copy() -> None:
         assert "confirmThen({" in footer.split(runner, 1)[1].split("\n        }\n", 1)[0], runner
     assert "onclick" not in footer
     panel = _read(CONTEXT / "desk-panel.js")
-    assert "pick(() => actions.confirmReset()), { danger: true })" in panel
-    assert "pick(() => actions.confirmRemove()), { danger: true }))" in panel
+    assert "onReset: () => actions.confirmReset()," in panel
+    assert "onRemove: () => actions.confirmRemove()," in panel
+    desk_menu = _read(CONTEXT / "desk-menu.js")
+    assert "pick(onReset), { danger: true })" in desk_menu
+    assert "pick(onRemove), { danger: true }))" in desk_menu
     assert "onclick: () => { void removeAgent(); }" not in footer
     assert "onclick: () => { void resetRuntime(); }" not in footer
     # Cancel is last, so it holds focus and Esc and Enter agree.

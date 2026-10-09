@@ -177,16 +177,14 @@ const BossModFloorSwitcher = (() => {
                     current ? h('i', { 'data-lucide': 'check', 'aria-hidden': 'true' }) : null),
                 h('span', { class: 'menu-select-label' }, floor.name),
                 h('span', { class: 'menu-action-count', 'aria-hidden': 'true' }, String(count)));
-            const more = h('button', {
-                class: 'floor-row-more',
-                type: 'button',
-                'aria-label': `Floor settings ${floor.name}`,
-                'data-tooltip': `Floor settings ${floor.name}`,
-                onclick: () => {
+            const more = BossModMenuButton.createTrigger({
+                size: 'inline',
+                label: `Floor settings ${floor.name}`,
+                onClick: () => {
                     close();
                     BossModFloorSettings.open({ store, floorApi, floorId: floor.id, reloadFloors: loadFloors });
                 },
-            }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
+            });
             return h('div', { class: 'floor-row' }, choice, more);
         }
 

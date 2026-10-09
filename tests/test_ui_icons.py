@@ -42,7 +42,8 @@ CALL_SITES = {
     "shell/thread-create.js": "BossModIcons.paintDocument('thread-create')",
     # The People half paints only the rows it built this pass (patched by key).
     "shell/roster-people.js": "BossModIcons.paint(row, 'roster-people')",
-    "shell/roster-header-menu.js": "BossModIcons.paint(menu.element, 'roster-header-menu')",
+    # Every `⋯` panel (core/menu-button.js) paints what it just attached.
+    "core/menu-button.js": "BossModIcons.paint(menu.element, 'menu-button')",
 }
 
 

@@ -94,7 +94,7 @@ documentStub.createElement = (tag) => {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModApi", "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
-    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModMenuSelect",
     "BossModAutoGrow", "BossModTimeField", "BossModDateField",
     "BossModFileListing",
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
@@ -129,7 +129,7 @@ const NAMES = [
     "BossModDeskPack",
     // The desk head's Memory layer.
     "BossModDeskMemory",
-    "BossModDeskPanel",
+    "BossModDeskMenu", "BossModDeskPanel",
     // The desk's task rows wear the Tasks place's status labels and open the
     // task as a layer over the desk through the Tasks place's own loader,
     // detail, task actions and layer controller; its Chat tool is the one
@@ -1077,8 +1077,9 @@ async function main() {
         throw new Error(`Tasks owes its header a "See all" and Schedules a "New", got ${sectionActions.join("|")}`);
     }
     // The actions on the agent are the HEAD's, and all of them sit behind its
-    // one `⋯`: the agent's own doors, a divider, then the operational three,
-    // the destructive two marked.
+    // one `⋯` (context/desk-menu.js): the "Agent" section's own doors, a
+    // divider, then the "Manage" section's operational three, the destructive
+    // two marked.
     const head = deskModal().querySelector(".modal-head");
     const headTools = head.querySelector(".modal-tools").querySelectorAll("button")
         .map((node) => node.getAttribute("aria-label"));
@@ -1091,20 +1092,33 @@ async function main() {
     await drain();
     const menuRows = head.querySelectorAll(".menu-action");
     const menuPanel = head.querySelector(".menu");
-    // Exactly one divider, and it sits between Edit role and Diagnostics.
-    const menuParts = menuPanel.children.map((node) => (node.classList.contains("menu-divider")
-        ? "—" : node.querySelectorAll(".menu-action").map((row) => row.textContent).join(",")));
+    // Exactly one divider, and it sits between the two titled sections:
+    // Agent (to Edit role) and Manage (from Diagnostics). Each section is a
+    // role="group" labelled by its own visible heading.
+    const menuStack = menuPanel.querySelector(".menu-sections");
+    const menuParts = menuStack.children.map((node) => (node.classList.contains("menu-divider")
+        ? "—" : `${node.querySelector(".menu-label").textContent}:`
+            + node.querySelectorAll(".menu-action").map((row) => row.textContent).join(",")));
+    const sectionsAreLabelled = menuStack.children
+        .filter((node) => !node.classList.contains("menu-divider"))
+        .every((node) => node.getAttribute("role") === "group"
+            && node.getAttribute("aria-labelledby") === node.querySelector(".menu-label").getAttribute("id"));
+    const optionsTrigger = inDesk("#desk-options");
     const optionsMenuHoldsEveryAction = menuRows.map((node) => node.textContent).join("|")
             === "Open chat|Memory|Edit role|Diagnostics|Reset runtime|Remove agent"
         && menuRows.map((node) => node.getAttribute("data-tone") || "").join("|")
             === "||||danger|danger"
         && menuPanel.querySelectorAll(".menu-divider").length === 1
-        && menuParts.join("|") === "Open chat,Memory,Edit role|—|Diagnostics,Reset runtime,Remove agent"
+        && menuParts.join("|")
+            === "Agent:Open chat,Memory,Edit role|—|Manage:Diagnostics,Reset runtime,Remove agent"
+        && sectionsAreLabelled
         && inDesk("#desk-edit").disabled === false
-        && inDesk("#desk-options").getAttribute("aria-expanded") === "true";
+        && optionsTrigger.classList.contains("menu-trigger")
+        && optionsTrigger.getAttribute("data-size") === "header"
+        && optionsTrigger.getAttribute("aria-expanded") === "true";
     if (!optionsMenuHoldsEveryAction) {
-        throw new Error(`the ⋯ must hold Open chat, Memory, Edit role, a divider, then Diagnostics, `
-            + `Reset runtime and Remove agent, got ${menuParts.join("|")}`);
+        throw new Error(`the ⋯ must hold an Agent section (Open chat, Memory, Edit role), a divider, then a `
+            + `Manage section (Diagnostics, Reset runtime, Remove agent), got ${menuParts.join("|")}`);
     }
     // The contract is CLOSED until the operator asks for it.
     if (inDesk(".desk-contract").hasAttribute("open")) {

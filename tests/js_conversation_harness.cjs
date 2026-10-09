@@ -21,7 +21,7 @@ installIconsStub();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
-    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModEmptyState",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
@@ -600,6 +600,13 @@ async function main() {
     }
     if (dots.getAttribute("aria-expanded") !== "false") {
         throw new Error("the `⋯` must report its panel as closed before it is opened");
+    }
+    // The app's one `⋯` (core/menu-button.js): the plain header glyph, never
+    // a bordered button.
+    const dotsClasses = String(dots.getAttribute("class") || "").split(/\s+/).filter(Boolean);
+    if (dotsClasses.join(" ") !== "menu-trigger" || dots.getAttribute("data-size") !== "header") {
+        throw new Error(`the header's ⋯ must be the shared .menu-trigger[data-size="header"] and no .btn, `
+            + `got class "${dots.getAttribute("class")}" size "${dots.getAttribute("data-size")}"`);
     }
     await dots.dispatchClick();
     const panel = conversation.element.querySelector(".menu");

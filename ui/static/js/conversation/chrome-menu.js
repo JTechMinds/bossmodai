@@ -3,11 +3,11 @@
  *
  * THE SEAM. conversation/chrome.js decides WHAT goes behind the `⋯` — it
  * `place()`s the source's `slot: 'menu'` actions on every apply(), and decides
- * whether the button is shown at all. This module owns HOW the panel lives:
- * the button's name and expanded state, its sections, opening and closing
- * through the one overlay implementation, and painting glyphs inside a panel
- * the document sweep cannot reach. The chrome never touches the panel; this
- * module never reads a descriptor.
+ * whether the button is shown at all. This module owns WHAT the panel is:
+ * its sections, their headings, and painting glyphs inside a panel the
+ * document sweep cannot reach. The `⋯` itself — its look, its expanded state,
+ * opening and closing — is core/menu-button.js's, the one every `⋯` shares.
+ * The chrome never touches the panel; this module never reads a descriptor.
  *
  * TWO SECTIONS, each a core/menu.js `createMenuSection`: `subject` — the agent
  * or the thread, titled by the source's word through `setTitle` — and `chat`,
@@ -34,7 +34,7 @@ const BossModChromeMenu = (() => {
     const SUBJECT_PLACEHOLDER = 'Conversation';
 
     /**
-     * Build the `⋯` and the lifecycle of the panel it opens.
+     * Build the `⋯` and the sectioned panel it opens.
      *
      * @param {object} deps
      * @param {HTMLElement} deps.container  The positioned header the panel
@@ -61,8 +61,6 @@ const BossModChromeMenu = (() => {
         if (!container) throw new Error('[chrome-menu] deps.container is required');
         const viewOptions = (deps && deps.viewOptions) || [];
 
-        /** The open menu, or null. One at a time, and the `⋯` toggles it. */
-        let menu = null;
         /**
          * Each section's two bodies, owned here and reused forever.
          *
@@ -95,18 +93,18 @@ const BossModChromeMenu = (() => {
         // The surface's preferences are the chat's settings, and they are the
         // caller's nodes: placed once, and kept last by place().
         bodies.chat.settings.append(...viewOptions);
-        const button = h('button', {
-            class: 'btn btn-sm conversation-action conversation-view-options',
-            type: 'button',
+        // The panel holds a role="switch", which is not a menuitem — hence
+        // the trigger's `aria-haspopup="dialog"`.
+        const menu = BossModMenuButton.create({
             id: 'conversation-view-options',
-            'aria-label': MENU_LABEL,
-            'data-tooltip': MENU_LABEL,
-            // dialog, not menu: the panel holds a role="switch", which is
-            // not a menuitem and must not be announced as one.
-            'aria-haspopup': 'dialog',
-            'aria-expanded': 'false',
-            onclick: () => toggle(),
-        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
+            label: MENU_LABEL,
+            size: 'header',
+            getContainer: () => container,
+            // The sections, settled by the last apply(); see settle().
+            getItems: () => [content],
+            // Paint what was just attached; see paint().
+            onOpen: () => paint(),
+        });
 
         /**
          * Put one node into a section, after what is already there.
@@ -162,14 +160,6 @@ const BossModChromeMenu = (() => {
             if (!same) content.replaceChildren(...wanted);
         }
 
-        /** @returns {void} */
-        function close() {
-            if (!menu) return;
-            const open = menu;
-            menu = null;
-            open.close();
-        }
-
         /**
          * THE PANEL IS THE ONE TREE THE SWEEP CANNOT REACH. The chrome's apply()
          * ends on BossModIcons.paintDocument, which walks document.body — and
@@ -182,41 +172,11 @@ const BossModChromeMenu = (() => {
          * @returns {void}
          */
         function paint() {
-            if (menu) BossModIcons.paint(menu.element, 'conversation-chrome.menu');
+            const panel = menu.openElement();
+            if (panel) BossModIcons.paint(panel, 'conversation-chrome.menu');
         }
 
-        /**
-         * Show the panel, or put it away again.
-         *
-         * The panel is core/menu.js's — it already owns the focus trap, Esc,
-         * and returning focus to the control that opened it. A second popover
-         * implementation is exactly the duplication the primitives exist to
-         * remove.
-         *
-         * @returns {void}
-         */
-        function toggle() {
-            if (menu) {
-                close();
-                return;
-            }
-            menu = BossModMenu.createMenu({
-                anchor: button,
-                label: MENU_LABEL,
-                // The sections, settled by the last apply(); see settle().
-                items: [content],
-                container,
-                onClose: () => {
-                    menu = null;
-                    button.setAttribute('aria-expanded', 'false');
-                },
-            });
-            // Paint what was just attached; see paint().
-            paint();
-            button.setAttribute('aria-expanded', 'true');
-        }
-
-        return { button, place, setTitle, settle, close, paint };
+        return { button: menu.button, place, setTitle, settle, close: menu.close, paint };
     }
 
     return { createChromeMenu };

@@ -955,6 +955,130 @@ if (!sectionIsALabelledGroup) {
     throw new Error("a section must be role=group, labelled by its own p.menu-label caption, over its children");
 }
 
+// ── The `⋯` (core/menu-button.js): one look, and the panel lifecycle ──
+//
+// Loaded as core/menu.js's SIBLING rather than from an argument slot: five
+// Python files drive this harness with one positional list each, and a new
+// slot would have to land in all of them.
+const menuButtonPath = require("path").join(require("path").dirname(process.argv[7]), "menu-button.js");
+eval(`${fs.readFileSync(menuButtonPath, "utf8")}\n;global.BossModMenuButton = BossModMenuButton;\n`);
+const attr = (node, name) => node.getAttribute(name);
+const triggerClasses = (node) => String(attr(node, "class") || "").split(/\s+/).filter(Boolean);
+const click = (node) => (node.listeners.click || []).forEach((fn) => fn({ stopPropagation() {} }));
+
+let triggerClicks = 0;
+const rowTrigger = BossModMenuButton.createTrigger({
+    id: "trigger-test", label: "Row actions", size: "inline", extraClass: "host-seat",
+    onClick: () => { triggerClicks += 1; },
+});
+const glyph = rowTrigger.children[0];
+const triggerIsTheOneLook = rowTrigger.tagName === "BUTTON"
+    && triggerClasses(rowTrigger).join(" ") === "menu-trigger host-seat"
+    && attr(rowTrigger, "id") === "trigger-test"
+    && attr(rowTrigger, "type") === "button"
+    && attr(rowTrigger, "data-size") === "inline"
+    && attr(rowTrigger, "aria-label") === "Row actions"
+    && attr(rowTrigger, "data-tooltip") === attr(rowTrigger, "aria-label")
+    && attr(rowTrigger, "aria-haspopup") === "dialog"
+    && attr(rowTrigger, "aria-expanded") === "false"
+    && rowTrigger.children.length === 1
+    && attr(glyph, "data-lucide") === "ellipsis"
+    && attr(glyph, "aria-hidden") === "true";
+if (!triggerIsTheOneLook) {
+    throw new Error("createTrigger must build button.menu-trigger[data-size] with the ellipsis glyph, "
+        + "named and tooltipped by one label, collapsed, aria-haspopup dialog by default");
+}
+click(rowTrigger);
+if (triggerClicks !== 1) throw new Error("a trigger's click must run its onClick");
+const menuHaspopup = BossModMenuButton.createTrigger({
+    label: "Actions", size: "header", haspopup: "menu", onClick: () => {},
+});
+if (attr(menuHaspopup, "aria-haspopup") !== "menu" || attr(menuHaspopup, "data-size") !== "header"
+    || triggerClasses(menuHaspopup).join(" ") !== "menu-trigger" || attr(menuHaspopup, "id") !== null) {
+    throw new Error("createTrigger must honour haspopup and size, and add no class or id it was not given");
+}
+[
+    [{ label: "x", size: "large", onClick: () => {} }, /size must be "header" or "inline"/],
+    [{ label: "x", onClick: () => {} }, /size must be "header" or "inline"/],
+    [{ label: "", size: "inline", onClick: () => {} }, /a trigger needs a label/],
+    [{ size: "inline", onClick: () => {} }, /a trigger needs a label/],
+    [{ label: "x", size: "inline" }, /a trigger needs onClick/],
+].forEach(([bad, reason]) => {
+    let refused = false;
+    try {
+        BossModMenuButton.createTrigger(bad);
+    } catch (err) {
+        refused = reason.test(String(err.message));
+    }
+    if (!refused) throw new Error(`createTrigger must refuse ${JSON.stringify(bad)} with ${reason}`);
+});
+
+const menuHost = makeEl("div");
+const menuItem = makeEl("button");
+let itemReads = 0;
+const openedPanels = [];
+const panelMenu = BossModMenuButton.create({
+    id: "menu-button-test", label: "Test options", size: "header", menuName: "test-menu",
+    getContainer: () => menuHost,
+    getItems: () => { itemReads += 1; return [menuItem]; },
+    onOpen: (panel) => openedPanels.push(panel),
+});
+const paintsBefore = iconPaints.length;
+click(panelMenu.button);
+const openPanel = menuHost.children[0];
+const createOpens = Boolean(openPanel)
+    && panelMenu.openElement() === openPanel
+    && attr(openPanel, "aria-label") === "Test options"
+    && attr(openPanel, "data-menu") === "test-menu"
+    && openPanel.children[0] === menuItem
+    && attr(panelMenu.button, "aria-expanded") === "true"
+    && attr(panelMenu.button, "id") === "menu-button-test"
+    && attr(panelMenu.button, "data-size") === "header"
+    && openedPanels.length === 1 && openedPanels[0] === openPanel
+    && iconPaints.length === paintsBefore + 1
+    && iconPaints[paintsBefore].root === openPanel
+    && iconPaints[paintsBefore].context === "menu-button"
+    && itemReads === 1;
+if (!createOpens) {
+    throw new Error("create must open the panel in its container with data-menu, flip aria-expanded, "
+        + "paint the panel and call onOpen");
+}
+click(panelMenu.button);
+const createToggles = menuHost.children.length === 0
+    && panelMenu.openElement() === null
+    && attr(panelMenu.button, "aria-expanded") === "false";
+if (!createToggles) throw new Error("a second click on the ⋯ must close its panel and collapse it");
+click(panelMenu.button);
+if (itemReads !== 2 || menuHost.children.length !== 1) {
+    throw new Error("create must read getItems again on every open");
+}
+panelMenu.close();
+panelMenu.close();
+if (menuHost.children.length !== 0 || attr(panelMenu.button, "aria-expanded") !== "false") {
+    throw new Error("close must put the panel away, and be a no-op when it is closed");
+}
+click(panelMenu.button);
+panelMenu.destroy();
+click(panelMenu.button);
+const destroyCloses = menuHost.children.length === 0
+    && attr(panelMenu.button, "aria-expanded") === "false"
+    && itemReads === 3;
+if (!destroyCloses) throw new Error("destroy must close the panel, and the ⋯ must open nothing after it");
+[
+    [{ size: "header", getContainer: () => menuHost, getItems: () => [] }, /deps.label is required/],
+    [{ label: "x", size: "header", getItems: () => [] }, /deps.getContainer is required/],
+    [{ label: "x", size: "header", getContainer: () => menuHost }, /deps.getItems is required/],
+    [{ label: "x", size: "huge", getContainer: () => menuHost, getItems: () => [] }, /size must be/],
+].forEach(([bad, reason]) => {
+    let refused = false;
+    try {
+        BossModMenuButton.create(bad);
+    } catch (err) {
+        refused = reason.test(String(err.message));
+    }
+    if (!refused) throw new Error(`create must refuse ${Object.keys(bad).join(",")} with ${reason}`);
+});
+
 process.stdout.write(JSON.stringify({
     ok: true,
     hasDialogSemantics: true,

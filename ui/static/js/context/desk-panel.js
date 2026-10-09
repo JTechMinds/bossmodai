@@ -20,11 +20,8 @@
  * is (About, Details, Notes, Extensions) in the aside. About carries the pack
  * the agent was hired from, and its per-agent update (context/desk-pack.js). The actions on the
  * agent are the HEAD's, as in every other modal, and all of them sit behind
- * its one `⋯` (places/tasks/task-detail.js's pattern), so the title bar holds
- * only the agent and never accumulates icon tools: Open chat, Memory (a layer,
- * context/desk-memory.js) and Edit role, a divider, then Diagnostics, Reset
- * runtime and Remove. Destructive actions belong behind a menu and a confirm,
- * not at the bottom of the reading flow.
+ * its one `⋯` (context/desk-menu.js), so the title bar holds only the agent
+ * and never accumulates icon tools. Memory is a layer (context/desk-memory.js).
  *
  * The done/fail contract is a DISCLOSURE: the agent's role contract is
  * reference material read once, not a standing alert. Editing the role opens
@@ -43,10 +40,6 @@ const BossModDeskPanel = (() => {
     const DONE_BAR_TITLE = 'What done looks like for this agent:';
     const NO_DONE_BAR = 'No done/fail bar set for this agent yet. Edit the role to add one.';
     const CONTRACT_SUMMARY = 'Done/fail contract';
-    /** The `⋯`'s accessible name and tooltip, and its rows' labels: one string each. */
-    const LABELS = Object.freeze({
-        chat: 'Open chat', memory: 'Memory', edit: 'Edit role', options: 'Desk options',
-    });
 
     /**
      * One labelled section: a header row, an optional right-aligned action,
@@ -67,17 +60,6 @@ const BossModDeskPanel = (() => {
                         action.icon ? h('i', { 'data-lucide': action.icon, 'aria-hidden': 'true' }) : null)
                     : null),
             content);
-    }
-
-    /**
-     * A `⋯` row: glyph and label.
-     * @param {{danger?: boolean, disabled?: boolean}} [state]  `danger` marks
-     *   a destructive row; `disabled` withholds one that cannot act yet.
-     */
-    function menuRow(id, icon, label, onclick, { danger = false, disabled = false } = {}) {
-        return h('button', {
-            class: 'menu-action', id, type: 'button', 'data-tone': danger ? 'danger' : null, disabled, onclick,
-        }, h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }), label);
     }
 
     /**
@@ -163,9 +145,8 @@ const BossModDeskPanel = (() => {
             agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
             onChange: () => { if (extensionsSection) extensionsSection.hidden = deskExtensions.isEmpty(); },
         });
-        /** The open role dialog, the open `⋯`, or null. One of each at a time. */
+        /** The open role dialog, or null. One at a time. */
         let edit = null;
-        let menu = null;
         /** Server lane note. Queued replaces the status label until a lane frees. */
         let laneNote = '';
         /** Set before teardown closes the dialog, so its onClosed does nothing. */
@@ -178,13 +159,17 @@ const BossModDeskPanel = (() => {
         let shownName = agent() ? String(agent().name) : null;
         let seen = Boolean(agent());
 
-        // The head's one tool, in the frame's icon-button shape.
-        const optionsBtn = h('button', {
-            class: 'header-icon-btn', id: 'desk-options', type: 'button',
-            'aria-label': LABELS.options, 'data-tooltip': LABELS.options,
-            'aria-haspopup': 'dialog', 'aria-expanded': 'false', onclick: () => toggleOptions(),
-        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
-        const tools = [optionsBtn];
+        // The head's one tool: the `⋯` and its sectioned rows (context/desk-menu.js).
+        const deskMenu = BossModDeskMenu.create({
+            canEdit: () => Boolean(agent()),
+            onChat: () => openConversation(agentId, 'agent'),
+            onMemory: () => memory.open(),
+            onEdit: () => openEdit(),
+            onDiagnostics: () => navigate('log', { agentId }),
+            onReset: () => actions.confirmReset(),
+            onRemove: () => actions.confirmRemove(),
+        });
+        const tools = [deskMenu.button];
 
         const element = h('div', { class: 'desk' },
             h('div', { class: 'desk-grid' },
@@ -242,52 +227,6 @@ const BossModDeskPanel = (() => {
             }
             const bar = who.done_fail_bar ? String(who.done_fail_bar).trim() : '';
             contractEl.append(bar ? `${DONE_BAR_TITLE} ${bar}` : NO_DONE_BAR);
-        }
-
-        /**
-         * Show the `⋯` panel, or put it away. Picking a row closes the panel
-         * first, so focus is back on the `⋯` and a confirmation layer returns
-         * there.
-         * @returns {void}
-         */
-        function toggleOptions() {
-            if (menu) {
-                menu.close();
-                return;
-            }
-            const pick = (run) => () => { menu.close(); run(); };
-            menu = BossModMenu.createMenu({
-                anchor: optionsBtn,
-                label: LABELS.options,
-                // The agent's own doors, then the operational ones — the
-                // divider is shell/floor-switcher.js's, between two groups.
-                items: [
-                    h('div', { class: 'menu-actions' },
-                        menuRow('desk-chat', 'message-circle', LABELS.chat,
-                            pick(() => openConversation(agentId, 'agent'))),
-                        menuRow('desk-memory', 'brain', LABELS.memory, pick(() => memory.open())),
-                        // A role form needs the row it edits; until the roster
-                        // has it, Edit role is withheld rather than live and
-                        // doing nothing. Read when the menu opens.
-                        menuRow('desk-edit', 'pencil', LABELS.edit, pick(() => openEdit()),
-                            { disabled: !agent() })),
-                    h('hr', { class: 'menu-divider' }),
-                    h('div', { class: 'menu-actions' },
-                        menuRow('desk-diagnostics', 'activity', 'Diagnostics',
-                            pick(() => navigate('log', { agentId }))),
-                        menuRow('desk-reset-runtime', 'rotate-ccw', 'Reset runtime',
-                            pick(() => actions.confirmReset()), { danger: true }),
-                        menuRow('desk-remove', 'trash-2', 'Remove agent',
-                            pick(() => actions.confirmRemove()), { danger: true })),
-                ],
-                container: optionsBtn.closest('.modal-head'),
-                onClose: () => {
-                    menu = null;
-                    optionsBtn.setAttribute('aria-expanded', 'false');
-                },
-            });
-            optionsBtn.setAttribute('aria-expanded', 'true');
-            BossModIcons.paint(menu.element, 'desk-panel');
         }
 
         /**
@@ -376,7 +315,7 @@ const BossModDeskPanel = (() => {
             destroy() {
                 destroyed = true;
                 disposers.splice(0).forEach((off) => off());
-                if (menu) menu.close();
+                deskMenu.destroy();
                 actions.destroy();
                 // A dialog outliving the desk that opened it would edit an
                 // agent nobody is looking at any more.

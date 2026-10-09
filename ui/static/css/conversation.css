@@ -33,13 +33,6 @@
   background: var(--panel);
 }
 
-/* The `⋯` opens the overflow menu — the source's `slot: 'menu'` actions over the
-   surface's view options — which core/overlays.js positions against the header
-   above. Icon-only, so its accessible name is its label; composes .btn.btn-sm,
-   so it is the same height as the action beside it. */
-.conversation-view-options { color: var(--muted); }
-.conversation-view-options:hover { color: var(--ink); }
-
 /* The icon-only shape is controls.css's `.btn[data-tooltip]` now — the desk's
    back arrow wanted the same thing, and a second surface asking for a rule is
    the signal it belongs to the primitive rather than to either caller. */

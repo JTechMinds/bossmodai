@@ -24,7 +24,7 @@ installIconsStub();
 
 const NAMES = [
     "BossModDom", "BossModStore", "BossModFormat", "BossModAvatar", "BossModSearchField", "BossModInlineRename",
-    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModAgentApi",
+    "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModAgentApi",
     "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
     "BossModFloorSettings",
@@ -144,7 +144,13 @@ function keydown(el, key) {
     const reloadFloors = async () => true;
 
     // ─── Four sections with their counts; Lobby has no Delete ───
+    // The shared row builder reaches the lists through their ctx; kept here
+    // so the harness can ask it for a row with no id.
+    let sharedRow = null;
+    const peopleCreate = BossModFloorPeople.create;
+    BossModFloorPeople.create = (ctx) => { sharedRow = ctx.row; return peopleCreate(ctx); };
     const settings = BossModFloorSettings.open({ store, floorApi, floorId: "lobby", reloadFloors });
+    BossModFloorPeople.create = peopleCreate;
     await drain();
     const panel = dialogs()[0];
     const titles = panel.querySelectorAll(".floor-section-title").map((node) => node.textContent);
@@ -180,15 +186,34 @@ function keydown(el, key) {
         && !panel.querySelector(".inline-rename-cancel");
 
     // ─── ⋯ → Move to… hangs off the row's host ───
-    const firstMore = panel.querySelector(".floor-item").querySelector(".floor-row-more");
+    // The row's `⋯` is the shared inline trigger, and one string names it
+    // and the panel it opens. The panel is one "Move to…" section labelled
+    // by its own caption, whose id is the row's (Ada's, a1).
+    const firstMore = panel.querySelector(".floor-item").querySelector(".menu-trigger");
     await firstMore.dispatchClick();
     const moveMenu = panel.querySelector(".menu");
+    const moveSection = moveMenu && moveMenu.querySelector(".menu-section");
+    const moveCaption = moveSection && moveSection.querySelector(".menu-label");
+    let rowWithoutIdThrows = false;
+    try {
+        sharedRow({ lead: null, name: "Nobody", meta: null, targets: () => [], onMoveTo: () => {} });
+    } catch (err) {
+        rowWithoutIdThrows = /a row needs an id/.test(err.message);
+    }
     verdict.moveToMenuHangsOffTheRow = Boolean(moveMenu)
         && moveMenu.parentNode !== documentStub.body
         && moveMenu.parentNode.classList.contains("floor-item-more")
         && moveMenu.getAttribute("data-menu") === "floor-move"
+        && moveMenu.getAttribute("aria-label") === "Move Ada to another floor"
+        && firstMore.getAttribute("aria-label") === "Move Ada to another floor"
+        && firstMore.getAttribute("data-size") === "inline"
+        && Boolean(moveSection) && moveSection.getAttribute("role") === "group"
+        && moveSection.getAttribute("aria-labelledby") === "floor-move-a1-label"
+        && moveCaption.getAttribute("id") === "floor-move-a1-label"
+        && moveCaption.textContent === "Move to…"
         && moveMenu.querySelectorAll(".menu-action").map((button) => button.textContent).join("|") === "Finance"
-        && firstMore.getAttribute("aria-expanded") === "true";
+        && firstMore.getAttribute("aria-expanded") === "true"
+        && rowWithoutIdThrows;
     await firstMore.dispatchClick();
 
     // ─── Add people → a picker grouped by floor; Next waits for a choice ───

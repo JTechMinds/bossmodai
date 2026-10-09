@@ -940,11 +940,12 @@
 .menu-label { margin: 0; font-size: 12px; font-weight: 500; color: var(--muted); }
 
 /* A TITLED SECTION (core/menu.js createMenuSection): a `.menu-group` whose
- * caption labels it. The conversation `⋯` stacks two — the agent or thread,
- * then the chat — with the panel's own 8px gap between them, and an empty
- * body adds no gap. Its headings take the rows' 8px inset so a caption lines
- * up with the labels under it; scoped to that panel, because the segment
- * menus' chips sit flush with their caption. */
+ * caption labels it. `.menu-sections` stacks them — the conversation `⋯`'s
+ * agent or thread, then the chat; the desk `⋯`'s Agent, then Manage — with
+ * the panel's own 8px gap between them, and an empty body adds no gap. Their
+ * headings take the rows' 8px inset so a caption lines up with the labels
+ * under it; scoped to those panels, because the segment menus' chips sit
+ * flush with their caption. */
 .menu-sections { display: flex; flex-direction: column; gap: 8px; }
 
 .menu-section > .menu-actions:empty { display: none; }
@@ -976,7 +977,7 @@
 }
 
 /* The rail's two section-header menus, THREADS and PEOPLE (both built by
-   shell/roster-header-menu.js). Same clip, a different answer: each hangs off
+   core/menu-button.js). Same clip, a different answer: each hangs off
    a row near the TOP of the rail, so `top: 100%` lands it inside the scroll
    area rather than below the window and it can stay absolute. What it cannot
    keep is the 220px floor — the rail is exactly 220px wide, so a panel with
@@ -1101,25 +1102,16 @@
 /* The check's slot is always there, so every floor name starts on one edge. */
 .floor-check { display: inline-flex; flex: none; width: 14px; height: 14px; }
 
-/* Always visible — a control that appears only on hover is unreachable by
-   touch and invisible to a keyboard until it is already focused. Quiet at
-   rest, --ink when its row is under the pointer or it has focus. base.css
-   gives it the 24px target floor (SC 2.5.8). */
-.floor-row-more {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  border-radius: var(--r);
-  color: var(--hint);
-}
+/* A floor row's `⋯` (the shared .menu-trigger, controls.css) is always
+   visible — a control that appears only on hover is unreachable by touch and
+   invisible to a keyboard until it is already focused. Quieter than the
+   trigger's own rest, --ink when its row is under the pointer or it has focus.
+   The floor settings rows below share the same reveal. */
+.floor-row .menu-trigger,
+.floor-item .menu-trigger { flex: none; color: var(--hint); }
 
-.floor-row:hover .floor-row-more,
-.floor-row:focus-within .floor-row-more { color: var(--ink); }
-
-.floor-row-more:hover { background: var(--bg); }
-
-.floor-row-more svg { width: 14px; height: 14px; }
+.floor-row:hover .menu-trigger,
+.floor-row:focus-within .menu-trigger { color: var(--ink); }
 
 /* `+ New floor`, turned into its name field in place. */
 .floor-new-form { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
@@ -1222,8 +1214,8 @@
    with the `⋯`, never <body> (the header-collapse RCA in floor-switcher.js). */
 .floor-item-more { position: relative; flex: none; }
 
-.floor-item:hover .floor-row-more,
-.floor-item:focus-within .floor-row-more { color: var(--ink); }
+.floor-item:hover .menu-trigger,
+.floor-item:focus-within .menu-trigger { color: var(--ink); }
 
 .menu[data-menu="floor-move"] {
   top: calc(100% + 4px);

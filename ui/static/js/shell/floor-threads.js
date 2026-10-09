@@ -67,6 +67,7 @@ const BossModFloorThreads = (() => {
                 return;
             }
             view.rows(threads.filter((thread) => floorOf(thread) === floor.id).map((thread) => ctx.row({
+                id: thread.id,
                 lead: null,
                 name: thread.name,
                 meta: faces(thread),

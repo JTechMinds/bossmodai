@@ -132,7 +132,7 @@ eval(`${fs.readFileSync(path.join(path.dirname(process.argv[10]), "modal-trail.j
 // a sibling too, for the same reason.
 eval(`${fs.readFileSync(path.join(path.dirname(process.argv[10]), "overlay-actions.js"), "utf8")}\n;global.BossModOverlayActions = BossModOverlayActions;\n`);
 eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
-// Both section headers' `⋯` (shell/roster-header-menu.js) and the People
+// Both section headers' `⋯` (core/menu-button.js) and the People
 // half's "Show roles" switch behind its own. Loaded as SIBLINGS of the
 // overlays and People slots, for the reason agent-routes.js is below: five
 // Python files drive this harness with one positional list each, and a new
@@ -142,8 +142,8 @@ const shellDir = path.dirname(process.argv[12]);
 // core/menu.js holds createMenu, split from core/overlays.js; a sibling of
 // the overlays slot, for the same five-lists reason.
 eval(`${fs.readFileSync(path.join(coreDir, "menu.js"), "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
+eval(`${fs.readFileSync(path.join(coreDir, "menu-button.js"), "utf8")}\n;global.BossModMenuButton = BossModMenuButton;\n`);
 eval(`${fs.readFileSync(path.join(coreDir, "switch.js"), "utf8")}\n;global.BossModSwitch = BossModSwitch;\n`);
-eval(`${fs.readFileSync(path.join(shellDir, "roster-header-menu.js"), "utf8")}\n;global.BossModRosterHeaderMenu = BossModRosterHeaderMenu;\n`);
 eval(`${fs.readFileSync(path.join(shellDir, "people-view-menu.js"), "utf8")}\n;global.BossModPeopleViewMenu = BossModPeopleViewMenu;\n`);
 // Both halves build their right-hand column through this one builder.
 eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);

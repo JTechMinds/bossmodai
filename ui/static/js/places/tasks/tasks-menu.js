@@ -84,28 +84,24 @@ const BossModTasksMenu = (() => {
             // panel goes first and focus is not left inside a closed menu.
             h('button', {
                 class: 'menu-action', id: 'tasks-archive', type: 'button',
-                onclick: () => { close(); onOpenArchive(); },
+                onclick: () => { menu.close(); onOpenArchive(); },
             }, 'Archive', olderCount),
             h('button', {
                 class: 'menu-action', id: 'tasks-refresh', type: 'button',
-                onclick: () => { close(); onRefresh(); },
+                onclick: () => { menu.close(); onRefresh(); },
             }, 'Refresh'));
 
-        const button = h('button', {
-            class: 'header-icon-btn',
+        // The `⋯` and its panel's lifecycle are core/menu-button.js's. The
+        // controls are written from the place's state each time it opens.
+        const menu = BossModMenuButton.create({
             id: 'tasks-options',
-            type: 'button',
-            'aria-label': MENU_LABEL,
-            'data-tooltip': MENU_LABEL,
-            // dialog, not menu: core/menu.js's panel is a role="dialog" and
-            // its children are ordinary buttons rather than menuitems.
-            'aria-haspopup': 'dialog',
-            'aria-expanded': 'false',
-            onclick: () => toggle(),
-        }, h('i', { 'data-lucide': 'ellipsis', 'aria-hidden': 'true' }));
-
-        /** The open panel, or null. One at a time, and the `⋯` toggles it. */
-        let menu = null;
+            label: MENU_LABEL,
+            size: 'header',
+            menuName: 'tasks',
+            getContainer,
+            getItems: () => [group, actions],
+            onOpen: () => sync(),
+        });
 
         /**
          * Write every control FROM the place's state: the filled window, the
@@ -124,56 +120,7 @@ const BossModTasksMenu = (() => {
             olderCount.textContent = String(state.olderCount);
         }
 
-        /** @returns {void} */
-        function close() {
-            if (!menu) return;
-            const open = menu;
-            menu = null;
-            open.close();
-        }
-
-        /**
-         * Show the options, or put them away again. The panel is
-         * core/menu.js's, which owns the focus trap, Esc, the press-outside
-         * dismiss and returning focus to the `⋯`.
-         * @returns {void}
-         */
-        function toggle() {
-            if (menu) {
-                close();
-                return;
-            }
-            sync();
-            menu = BossModMenu.createMenu({
-                anchor: button,
-                label: MENU_LABEL,
-                items: [group, actions],
-                container: getContainer(),
-                onClose: () => {
-                    menu = null;
-                    button.setAttribute('aria-expanded', 'false');
-                },
-            });
-            menu.element.setAttribute('data-menu', 'tasks');
-            // A menu panel is detached while closed, so a sweep of the page can
-            // never reach inside one; it is painted here, as it opens.
-            BossModIcons.paint(menu.element, 'tasks-menu');
-            button.setAttribute('aria-expanded', 'true');
-        }
-
-        return {
-            button,
-            close,
-
-            /**
-             * Put the panel away. A panel left open would outlive the place it
-             * hangs off, and its press-outside listener would outlive both.
-             * @returns {void}
-             */
-            destroy() {
-                close();
-            },
-        };
+        return { button: menu.button, close: menu.close, destroy: menu.destroy };
     }
 
     return { create };

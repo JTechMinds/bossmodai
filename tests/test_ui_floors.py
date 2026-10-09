@@ -29,7 +29,9 @@ def test_header_switcher_is_one_trigger_over_every_floor() -> None:
     assert "container: element" in switcher
     assert "setAttribute('data-menu', 'floor')" in switcher
     assert "New floor" in switcher
-    assert "floor-row-more" in switcher
+    # Each row's `⋯` is the shared inline trigger (core/menu-button.js).
+    assert "BossModMenuButton.createTrigger({" in switcher
+    assert "size: 'inline'," in switcher
     assert "Floor settings ${floor.name}" in switcher
     assert "BossModFloorSettings.open" in switcher
     # I/O is floor-api.js's; the switcher never fetches directly.
@@ -106,7 +108,7 @@ def test_floor_settings_replace_the_edit_modal() -> None:
     settings = _read("shell", "floor-settings.js")
     assert "size: 'panel'" in settings
     # The Move to… menu hangs off the row's positioned host, never <body>.
-    assert "container: host" in settings
+    assert "getContainer: () => host," in settings
     assert "container: document.body" not in settings
     for name in ("floor-people.js", "floor-threads.js", "floor-projects.js"):
         assert "ctx.section(" in _read("shell", name)

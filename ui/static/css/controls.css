@@ -272,6 +272,26 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .btn[disabled] { opacity: 0.5; cursor: not-allowed; }
 
+/* ─── Menu trigger (core/menu-button.js) ───
+ *
+ * The one `⋯`, everywhere: the plain glyph — borderless, muted, a soft ground
+ * under the pointer — never a bordered .btn. Two sizes. `header` is a toolbar
+ * or modal-head `⋯`, the 32px .header-icon-btn target. `inline` sits in a list
+ * or rail row with the rows' 14px glyph, and base.css gives it the 24px target
+ * floor (SC 2.5.8). A host's own class on the button only positions it.
+ */
+.menu-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--r);
+  color: var(--muted);
+}
+
+.menu-trigger:hover { background: var(--bg); color: var(--ink); }
+.menu-trigger[data-size="header"] { width: 32px; height: 32px; }
+.menu-trigger[data-size="inline"] svg { width: 14px; height: 14px; }
+
 /* ─── Field ───
  *
  * The shared FORM vocabulary, and the reason it exists: the agent form carried

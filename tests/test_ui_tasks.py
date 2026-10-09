@@ -26,6 +26,7 @@ HARNESS_MODULES = [
     JS / "core" / "format.js", JS / "core" / "specialty.js",
     JS / "core" / "gates.js",
     JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
     JS / "core" / "menu-select.js",
     # Edit mode, the assign form and the completer grow their textareas.
     JS / "core" / "autogrow.js",

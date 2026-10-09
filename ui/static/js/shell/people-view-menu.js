@@ -5,7 +5,7 @@
  * conversation/system-receipts.js is: one persisted display choice, with the
  * storage kept here. The People half asks `showRoles()` when it renders and
  * never learns where the answer is kept. The `⋯` and its panel are
- * shell/roster-header-menu.js's, so the rail's two menus behave as one.
+ * core/menu-button.js's, so the rail's two menus behave as one.
  *
  * The role is `agent.role` — the same field the rail's search box already
  * matches on ("Search by name or role") — which is why the switch says
@@ -123,12 +123,16 @@ const BossModPeopleViewMenu = (() => {
             h('i', { 'data-lucide': 'tree-palm', 'aria-hidden': 'true' }),
             h('span', {}, 'On vacation'));
 
-        const menu = BossModRosterHeaderMenu.createHeaderMenu({
+        // Built once, so the switch keeps its state across opens.
+        const items = [control.element, h('div', { class: 'menu-actions' }, vacation)];
+        const menu = BossModMenuButton.create({
             id: 'roster-people-view',
             label: MENU_LABEL,
+            size: 'inline',
+            extraClass: 'roster-section-action',
             menuName: 'people-view',
             getContainer,
-            items: [control.element, h('div', { class: 'menu-actions' }, vacation)],
+            getItems: () => items,
         });
 
         return {

@@ -1051,13 +1051,13 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
 
     roster_threads = _read(JS / "shell/roster-threads.js")
     view = _read(JS / "shell/thread-view-menu.js")
-    # The `⋯` and its panel moved to shell/roster-header-menu.js when the
-    # PEOPLE header grew the same control; the segment stayed here. The
-    # assertions about the button follow it to its new owner, and this module
-    # is held to building its `⋯` through that owner rather than beside it.
-    header_menu = _read(JS / "shell/roster-header-menu.js")
-    assert "BossModRosterHeaderMenu.createHeaderMenu({" in view
-    assert "class: 'roster-section-action'" in header_menu
+    # The `⋯` and its panel are core/menu-button.js's, the one every `⋯` in
+    # the app shares; the segment stayed here. The assertions about the button
+    # follow it to that owner, and this module is held to building its `⋯`
+    # through it rather than beside it, with the rail's layout hook.
+    header_menu = _read(JS / "core/menu-button.js")
+    assert "BossModMenuButton.create({" in view
+    assert "extraClass: 'roster-section-action'," in view
     # The `⋯` sits OUTSIDE the group thread-create.js empties on every mode
     # swap: a control that survives the swap cannot live in the cleared node.
     head = roster_threads.split("class: 'roster-section-head'", 1)[1].split(");", 1)[0]
@@ -1124,10 +1124,47 @@ def test_the_threads_block_is_two_states_not_a_permanent_button() -> None:
     # A menu panel is DETACHED while it is closed, so the document sweep that
     # paints the rail can never reach a glyph inside it. Both menus paint what
     # they just attached — the bug that rendered Archive as a bare heading.
-    assert "BossModIcons.paint(menu.element, 'roster-header-menu')" in header_menu
-    # The conversation's `⋯` panel is conversation/chrome-menu.js's.
+    assert "BossModIcons.paint(menu.element, 'menu-button')" in header_menu
+    # The conversation's `⋯` panel is conversation/chrome-menu.js's, and it
+    # repaints the open panel too (a row can change while it is open).
     chrome_menu = _read(CONVERSATION / "chrome-menu.js")
-    assert "BossModIcons.paint(menu.element, 'conversation-chrome.menu')" in chrome_menu
+    assert "BossModIcons.paint(panel, 'conversation-chrome.menu')" in chrome_menu
+
+
+def test_every_menu_trigger_is_the_one_shared_button() -> None:
+    """One `⋯` across the app: core/menu-button.js's `.menu-trigger`.
+
+    Seven hand-built copies, each with its own class, is how the conversation
+    header's ended up a bordered button while every other one was the plain
+    glyph. So no module but the trigger's own builds the `ellipsis` glyph —
+    directly or through an icon helper — or a text `⋯` button.
+    """
+    glyph = re.compile(r"""['"]ellipsis['"]""")
+    text_dots = re.compile(r"""['"`]⋯['"`]""")
+    builders = sorted(
+        path.relative_to(JS).as_posix()
+        for path in _app_js()
+        if glyph.search(_code(_read(path))) or text_dots.search(_code(_read(path)))
+    )
+    assert builders == ["core/menu-button.js"], builders
+    menu_button = _read(JS / "core/menu-button.js")
+    assert "class: extraClass ? `menu-trigger ${extraClass}` : 'menu-trigger'," in menu_button
+    assert "'data-size': size," in menu_button
+    # The look is the trigger's, in the shared control vocabulary, and no host
+    # keeps a look rule of its own for its `⋯`.
+    controls = _read(CSS / "controls.css")
+    trigger = controls.split(".menu-trigger {", 1)[1].split("}", 1)[0]
+    assert "color: var(--muted);" in trigger
+    assert "border:" not in trigger and "border-color" not in trigger
+    assert ".menu-trigger:hover { background: var(--bg); color: var(--ink); }" in controls
+    assert '.menu-trigger[data-size="header"] { width: 32px; height: 32px; }' in controls
+    assert '.menu-trigger[data-size="inline"] svg { width: 14px; height: 14px; }' in controls
+    for sheet in ("conversation.css", "overlays.css", "places.css"):
+        css = _read(CSS / sheet)
+        assert ".conversation-view-options" not in css, sheet
+        assert ".floor-row-more" not in css, sheet
+    files_seat = _read(CSS / "places.css").split(".file-entry-menu {", 1)[1].split("}", 1)[0]
+    assert "color" not in files_seat and "font-size" not in files_seat
 
 
 # ─── Conversation: identity, glyphs, bubbles, and the empty state ───

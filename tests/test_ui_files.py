@@ -76,10 +76,16 @@ def test_context_menu_is_keyboard_reachable_and_escapable() -> None:
     button that opened it rather than being dropped on <body>.
     """
     grid = _read("file-grid.js")
-    # A named button per row, not a right-click-only target.
-    assert "class: 'file-entry-menu'" in grid
-    assert "'aria-haspopup': 'menu'" in grid
-    assert "'aria-label': `Actions for ${name}`" in grid
+    # A named button per row, not a right-click-only target: the shared
+    # inline `⋯` trigger (core/menu-button.js), which turns `label` into the
+    # accessible name and `haspopup` into aria-haspopup.
+    assert "BossModMenuButton.createTrigger({" in grid
+    assert "extraClass: 'file-entry-menu'," in grid
+    assert "haspopup: 'menu'," in grid
+    assert "label: `Actions for ${name}`," in grid
+    menu_button = (JS / "core" / "menu-button.js").read_text(encoding="utf-8")
+    assert "'aria-haspopup': haspopup," in menu_button
+    assert "'aria-label': label," in menu_button
     assert "onMenu(entry, menu, null)" in grid, "the ⋯ button must open the same menu"
     # Right-click still works, and is additive.
     assert "row.addEventListener('contextmenu'" in grid
