@@ -2,8 +2,8 @@
  * BossMod AI — the task detail dialog.
  *
  * A panel modal whose body is one centred column: the status line, the facts,
- * the one callout the state calls for, the task itself, the deliverables, the
- * subtasks, what counts as done, and the activity. The title is the modal's
+ * the one callout the state calls for, the task itself, its references, the
+ * deliverables, the subtasks, what counts as done, and the activity. The title is the modal's
  * own head and is not repeated below it. The sections are pure builders in
  * task-detail-sections.js; this file composes them, owns the modal, and owns
  * the head's tools: the pencil that enters Edit mode, and its ✓ and ✕.
@@ -95,13 +95,16 @@ const BossModTaskDetail = (() => {
             const children = tasks.filter((item) => item.parent_task_id === current.id);
             const instructions = editing ? null : SECTIONS.instructions(current);
             const assigneeValue = editing ? editMode.assigneeControl : undefined;
+            const severityValue = editing ? editMode.severityControl : undefined;
             status = editing ? statusActions(current) : null;
             column.replaceChildren(...[
                 SECTIONS.statusLine(current, { actions: status && status.element }),
                 editing ? editMode.errorSlot : null,
-                SECTIONS.facts(current, { tasks, colorOf, onNavigate, assigneeValue }),
+                SECTIONS.facts(current, { tasks, colorOf, onNavigate, assigneeValue, severityValue }),
                 SECTIONS.callout(current, { onOpenChat }),
                 editing ? editMode.descriptionSection : (instructions && instructions.element),
+                // What to read first comes before what to produce.
+                SECTIONS.references(current, api),
                 // In Edit mode one Deliverables section holds the task's own
                 // editable rows and its subtasks' read-only ones.
                 editing ? editMode.deliverablesSection : SECTIONS.deliverables(current, children, api),

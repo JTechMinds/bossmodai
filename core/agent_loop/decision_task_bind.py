@@ -125,8 +125,6 @@ def _resolve_or_create_work_task(
     parent_task = _follow_up_parent_task_for_trigger(agent, trigger)
     owner_id = default_task_owner_id(
         assignee_id=agent.id,
-        requester_id=requester_id,
-        created_by=created_by,
         parent_task=parent_task,
     )
 
@@ -230,8 +228,6 @@ def _ensure_deferred_task(
     parent_task = _follow_up_parent_task_for_trigger(agent, trigger)
     owner_id = default_task_owner_id(
         assignee_id=agent.id,
-        requester_id=requester_id,
-        created_by=created_by,
         parent_task=parent_task,
     )
     if parent_task is not None:

@@ -7,7 +7,8 @@
  * button; the checkbox and the action row are its siblings.
  *
  * No status pill: the column says what state the task is in. What the card
- * adds is who, how long, and what it carries.
+ * adds is how serious it is (the severity pill, P0–P3), who, how long, and
+ * what it carries.
  */
 const BossModTaskCard = (() => {
     const { h } = BossModDom;
@@ -26,6 +27,12 @@ const BossModTaskCard = (() => {
             h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }),
             visible,
             h('span', { class: 'visually-hidden' }, spoken));
+    }
+
+    /** The task's severity, said as "Severity P1" to a screen reader. */
+    function severityPill(severity) {
+        return h('span', { class: 'status-pill', 'data-severity': severity },
+            h('span', { class: 'visually-hidden' }, 'Severity '), severity);
     }
 
     /** What the task carries: deliverables, and how far its subtasks are. */
@@ -98,6 +105,7 @@ const BossModTaskCard = (() => {
         const needsYou = BossModTasksColumns.columnFor(task.status) === 'needs';
 
         const meta = h('span', { class: 'task-card-meta' },
+            task.severity ? severityPill(task.severity) : null,
             // An unassigned task has no colour, which tintFor() renders as the
             // neutral pair rather than as a missing circle.
             BossModAvatar.create({

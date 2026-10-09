@@ -70,6 +70,15 @@ DETAIL_MODULES = [
     TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js", TASKS / "task-actions.js",
 ]
 
+SEVERITY_HARNESS = Path(__file__).resolve().parent / "js_task_severity_harness.cjs"
+
+# The detail's chain plus the card, which loads after the data layer it reads.
+SEVERITY_MODULES = [
+    *DETAIL_MODULES[: DETAIL_MODULES.index(TASKS / "task-deliverables.js")],
+    TASKS / "task-card.js",
+    *DETAIL_MODULES[DETAIL_MODULES.index(TASKS / "task-deliverables.js"):],
+]
+
 PICKER_HARNESS = Path(__file__).resolve().parent / "js_task_file_picker_harness.cjs"
 
 # The file picker's own chain, in load order: the modal it opens as a layer,
@@ -543,6 +552,30 @@ def test_task_detail_harness() -> None:
         "contractIsCollapsible": True,
         "activityReadsAsSentences": True,
         "deliverablesCounted": True,
+    }
+
+
+def test_task_severity_and_references_harness() -> None:
+    """Severity and reference documents reach the card, the detail and Edit mode.
+
+    The card's meta row starts with the severity pill (said as "Severity P0").
+    The detail shows a Severity fact and a References section before
+    Deliverables; a reference card opens through the reporter's desk, while
+    a deliverable still resolves against the assignee. Edit mode offers
+    P0–P3 in a field dropdown and sends ``severity`` only when it changed.
+    """
+    args = ["node", str(SEVERITY_HARNESS)] + [str(path) for path in SEVERITY_MODULES]
+    result = subprocess.run(args, check=False, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr or result.stdout
+    payload = json.loads(result.stdout.strip().splitlines()[-1])
+    assert payload == {
+        "ok": True,
+        "cardShowsSeverityPill": True,
+        "detailShowsSeverityFact": True,
+        "referencesComeBeforeDeliverables": True,
+        "referenceOpensThroughTheReporter": True,
+        "deliverableStillUsesTheAssignee": True,
+        "editSendsSeverityOnlyWhenChanged": True,
     }
 
 

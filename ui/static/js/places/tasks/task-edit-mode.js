@@ -3,8 +3,9 @@
  *
  * It replaced a separate edit dialog. The operator presses the detail's
  * pencil and the fields they can change become controls where they already
- * sit: the title in the modal head, the assignee in its fact cell, the
- * task's text in its section, and its required files as the same rows, with
+ * sit: the title in the modal head, the assignee and the severity in their
+ * fact cells, the task's text in its section, and its required files as the
+ * same rows, with
  * the subtasks' files read-only beneath them in the one Deliverables section
  * (task-edit-files.js, which picks each path from the assignee's files).
  * It follows core/inline-rename.js's "one control, two states": a field
@@ -29,6 +30,13 @@ const BossModTaskEditMode = (() => {
     const FILES = BossModTaskEditFiles;
 
     const UNASSIGNED = '';
+    /** The severities, as core/models/task.py TaskSeverity defines them. */
+    const SEVERITY_OPTIONS = Object.freeze([
+        { value: 'P0', label: 'P0 — Critical' },
+        { value: 'P1', label: 'P1 — High' },
+        { value: 'P2', label: 'P2 — Medium' },
+        { value: 'P3', label: 'P3 — Low' },
+    ]);
     /** Every edit-mode field: text at rest, the edit hairline while editing. */
     const FIELD = 'edit-field';
 
@@ -60,7 +68,7 @@ const BossModTaskEditMode = (() => {
      *   saved with nothing changed. However it ended (✓, Enter, ✕, Esc),
      *   the detail repaints from here.
      * @returns {{titleInput: HTMLInputElement, assigneeControl: HTMLElement,
-     *   descriptionSection: HTMLElement, deliverablesSection: HTMLElement,
+     *   severityControl: HTMLElement, descriptionSection: HTMLElement, deliverablesSection: HTMLElement,
      *   errorSlot: HTMLElement, begin: () => void, discard: () => void,
      *   save: () => Promise<{saved: boolean, row?: object}>,
      *   isEditing: () => boolean, isDirty: () => boolean,
@@ -68,7 +76,9 @@ const BossModTaskEditMode = (() => {
      *   `save` never rejects: a refusal is rendered into `errorSlot`, and the
      *   draft and edit mode stay. `isDirty`: the draft would send something,
      *   or cannot be sent as it stands. `showError`: a status action's failure.
-     * @throws {Error} When a dependency is missing.
+     * @throws {Error} When a dependency is missing, or the task has no
+     *   valid severity: the dropdown would otherwise name P0 for a task
+     *   nobody rated.
      */
     function create(deps) {
         const { task, roster, childGroups, api, onSave, onLeave, onDirtyChange } = deps || {};
@@ -78,6 +88,9 @@ const BossModTaskEditMode = (() => {
         if (typeof onSave !== 'function') throw new Error('[task-edit-mode] deps.onSave is required');
         if (typeof onLeave !== 'function') throw new Error('[task-edit-mode] deps.onLeave is required');
         if (typeof onDirtyChange !== 'function') throw new Error('[task-edit-mode] deps.onDirtyChange is required');
+        if (!SEVERITY_OPTIONS.some((option) => option.value === task.severity)) {
+            throw new Error(`[task-edit-mode] task "${task.id}" has no valid severity`);
+        }
 
         const agents = roster.filter((agent) => agent && (!task.floor_id || agent.floorId === task.floor_id));
         let editing = false;
@@ -129,6 +142,15 @@ const BossModTaskEditMode = (() => {
             onChange: () => assigneeChanged(),
         });
 
+        const severity = BossModMenuSelect.create({
+            label: 'Severity',
+            options: SEVERITY_OPTIONS,
+            value: task.severity,
+            variant: 'field',
+            // Read back when Save runs, as the assignee is.
+            onChange: () => changed(),
+        });
+
         // The required files are picked as the DRAFT's assignee sees them.
         const files = FILES.create({
             task, childGroups, api, getAgentId: () => assignee.getValue(), onChange: () => changed(),
@@ -162,6 +184,7 @@ const BossModTaskEditMode = (() => {
             fitTitle();
             description.value = task.description || '';
             assignee.setOptions(assigneeOptions(), task.assigned_to || UNASSIGNED);
+            severity.setValue(task.severity);
             // After the assignee, so the rows' browsing follows the restored one.
             files.restore();
             show(null);
@@ -193,6 +216,7 @@ const BossModTaskEditMode = (() => {
             if (text !== ((task.description || '').trim() || null)) payload.description = text;
             const chosen = assignee.getValue();
             if (chosen !== (task.assigned_to || UNASSIGNED)) payload.assigned_to = chosen || null;
+            if (severity.getValue() !== task.severity) payload.severity = severity.getValue();
             const before = FILES.currentFiles(task).map((file) => ({ type: 'file', ...file }));
             if (JSON.stringify(listed) !== JSON.stringify(before)) {
                 payload.work_contract = listed.length ? { deliverables: listed } : null;
@@ -251,6 +275,7 @@ const BossModTaskEditMode = (() => {
         return {
             titleInput,
             assigneeControl: assignee.element,
+            severityControl: severity.element,
             descriptionSection,
             deliverablesSection: files.section,
             errorSlot,
@@ -273,10 +298,11 @@ const BossModTaskEditMode = (() => {
             isDirty,
             /** A status action's refusal, in the slot a save's refusal uses. */
             showError: (message) => show(callout('alert', message)),
-            /** Put the assignee panel away and unbind the description; this edit state is finished with. */
+            /** Put the dropdown panels away and unbind the description; this edit state is finished with. */
             destroy() {
                 destroyed = true;
                 assignee.destroy();
+                severity.destroy();
                 grow.destroy();
             },
         };

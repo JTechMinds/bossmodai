@@ -58,6 +58,12 @@ SCHEDULE_FORMS: tuple[str, ...] = (
     "schedules remove <id>",
 )
 
+BACKLOG_FORMS: tuple[str, ...] = (
+    "backlog                   — same as backlog list",
+    "backlog list [text…]      — the floor's open backlog, searched by title or description",
+    "backlog add               — with body: the item as JSON",
+)
+
 # ---------------------------------------------------------------------------
 # Command registry — every built-in virtual command
 # ---------------------------------------------------------------------------
@@ -438,6 +444,41 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             '       "weekdays": [0, 1, 2, 3, 4], "times": ["09:00"]}}\n'
             "  schedules off 1a2b3c4d   — pause one\n"
             "  schedules                — review what recurs and when it runs next"
+        ),
+    ),
+    "backlog": VirtualCommandMeta(
+        name="backlog",
+        category="agent",
+        description="File and search the floor's backlog of unassigned work.",
+        usage_syntax="backlog [list [text…]|add]",
+        help_text=(
+            "File and search the floor's backlog: unassigned work for the boss to\n"
+            "triage. Filing creates an unassigned item and wakes nobody. Search\n"
+            "first (backlog list <words>) so you do not file a duplicate.\n"
+            "\n"
+            "Usage:\n"
+            + "".join(f"  {form}\n" for form in BACKLOG_FORMS)
+            + "\n"
+            "add body (JSON): title, and optionally severity, description,\n"
+            "project and references.\n"
+            "severity:\n"
+            "  P0  critical — broken or unsafe now; stop and fix\n"
+            "  P1  high — a major function is broken with no workaround\n"
+            "  P2  medium — broken with a workaround, or degraded\n"
+            "  P3  low — cosmetic or minor (used when you leave severity out)\n"
+            "references: [{\"path\": \"/projects/...\", \"description\": \"...\"}]\n"
+            "\n"
+            "To attach a document (a bug write-up, screenshot or log), write it\n"
+            "under /projects/... first, then list its path in references. /me\n"
+            "files are private to you and cannot be referenced.\n"
+            "\n"
+            "Examples:\n"
+            "  backlog add:\n"
+            '    {"title": "Login returns 500 for a wrong password", "severity": "P1",\n'
+            '     "description": "Steps and logs are in the write-up.", "project": "webapp",\n'
+            '     "references": [{"path": "/projects/webapp/qa/issue-login-500.md",\n'
+            '       "description": "Steps to reproduce"}]}\n'
+            "  backlog list login   — search the backlog before filing"
         ),
     ),
     "recent-work": VirtualCommandMeta(

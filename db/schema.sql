@@ -347,12 +347,24 @@ CREATE TABLE IF NOT EXISTS tasks (
     last_activity  TIMESTAMP DEFAULT current_timestamp,
     closed_at      TIMESTAMP,
     schedule_id    VARCHAR,
+    -- P0 critical … P3 low (core/models/task.py TaskSeverity); never empty.
+    severity       VARCHAR NOT NULL DEFAULT 'P3' CHECK (severity IN ('P0','P1','P2','P3')),
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
 
 CREATE TABLE IF NOT EXISTS task_work_contracts (
     task_id        VARCHAR PRIMARY KEY REFERENCES tasks(id),
     work_contract  TEXT    NOT NULL,
+    created_at     TIMESTAMP DEFAULT current_timestamp,
+    updated_at     TIMESTAMP DEFAULT current_timestamp
+);
+
+-- Documents the assignee reads before starting (input, unlike the work
+-- contract's deliverables). A JSON list of {path, description}. Named
+-- ``refs`` because REFERENCES is an SQL keyword. No row = no references.
+CREATE TABLE IF NOT EXISTS task_references (
+    task_id        VARCHAR PRIMARY KEY REFERENCES tasks(id),
+    refs           TEXT    NOT NULL,
     created_at     TIMESTAMP DEFAULT current_timestamp,
     updated_at     TIMESTAMP DEFAULT current_timestamp
 );

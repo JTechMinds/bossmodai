@@ -25,10 +25,12 @@ from core.default_prompts import load_default_role_prompt
 from core.extensions.prompt_blocks import render_extension_blocks
 from core.models import SCHEDULE_TRIGGER_FIELDS, Agent, AgentState
 from core.models.notification import Notification
+from core.models.task import TASK_TRIGGER_FIELDS
 from core.llm.attachment_parts import history_manifests, mark_trigger_attachments
 from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from core.tasking import build_task_board
+from core.tasking.references import format_references_for_context
 from core.time import ensure_utc, now_local
 from core.world.tilemap import get_room_at
 
@@ -79,6 +81,7 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("task.status", "Current task status"),
     ("task.description", "Current task description"),
     ("task.project", "Current task project"),
+    ("task.severity", "Current task severity (P0 critical … P3 low)"),
     ("task.completion_summary", "Current task completion summary"),
     ("task.status_note", "Current task status note"),
     ("task_board", "Formatted task board summary for open, waiting, owned, and delegated work"),
@@ -128,7 +131,7 @@ _AUTHORED_PROMPT_VARIABLES: list[tuple[str, str]] = [
     ("file_guidance.required_files", "Comma-separated required file paths for the current work contract"),
     ("file_guidance.required_file_count", "Number of required file deliverables for the current work contract"),
     ("communication_snapshot.json", "Serialized authoritative communication snapshot JSON"),
-] + [(f"trigger.{key}", text) for key, text in SCHEDULE_TRIGGER_FIELDS]
+] + [(f"trigger.{key}", text) for key, text in (*TASK_TRIGGER_FIELDS, *SCHEDULE_TRIGGER_FIELDS)]
 AUTHORED_PROMPT_ALLOWED_PATHS = {name for name, _ in _AUTHORED_PROMPT_VARIABLES}
 
 
@@ -462,6 +465,7 @@ def _task_context(task: dict[str, Any] | None) -> dict[str, Any]:
         "status": str((task or {}).get("status") or ""),
         "description": str((task or {}).get("description") or ""),
         "project": str((task or {}).get("project") or ""),
+        "severity": str((task or {}).get("severity") or ""),
         "completion_summary": str((task or {}).get("completion_summary") or ""),
         "status_note": str((task or {}).get("status_note") or ""),
     }
@@ -482,7 +486,7 @@ def _template_trigger(trigger: dict[str, Any]) -> dict[str, Any]:
         "source_channel": str(trigger.get("source_channel") or ""),
         "task_title": str(trigger.get("task_title") or ""),
         "task_description": str(trigger.get("task_description") or ""),
-        **{key: str(trigger.get(key) or "") for key, _ in SCHEDULE_TRIGGER_FIELDS},
+        **{key: str(trigger.get(key) or "") for key, _ in (*TASK_TRIGGER_FIELDS, *SCHEDULE_TRIGGER_FIELDS)},
         "task_status": str(trigger.get("task_status") or ""),
         "task_party": str(trigger.get("task_party") or ""),
         "attention_kind": str(trigger.get("attention_kind") or ""),
@@ -567,6 +571,11 @@ def _format_task(task: dict[str, Any]) -> str:
     ]
     if summary:
         details.append(f"latest_summary: {summary}")
+    if task.get("severity"):
+        details.append(f"severity: {task['severity']}")
+    reference_lines = format_references_for_context(task.get("references") or [])
+    if reference_lines:
+        details.extend(["references (read before starting):", *reference_lines])
     deliverable_lines = format_deliverables_for_context(task)
     if deliverable_lines:
         details.append("deliverables:")

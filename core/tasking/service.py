@@ -13,6 +13,7 @@ from core.boss import boss_label
 from core.bm_cli.filesystem import slugify_name
 from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
+from core.models.task import DEFAULT_TASK_SEVERITY, TaskReference, TaskSeverity
 from core.models.work_contract import WorkContract, DeliverableSpec
 from core.tasking.resolution import OPEN_TASK_STATUSES, TaskResolution, resolve_existing_task
 from core.tasking.transitions import (
@@ -94,8 +95,15 @@ def create_or_bind_task(
     audit_source_trigger_id: str | None = None,
     bind_task_id: str | None = None,
     schedule_id: str | None = None,
+    severity: TaskSeverity = DEFAULT_TASK_SEVERITY,
+    references: list[TaskReference] | None = None,
 ) -> TaskCreateOrBindResult:
     """Create a task only when the board does not already contain the workstream.
+
+    ``severity`` (P0–P3, P3 unless given) and ``references`` (documents the
+    assignee reads first, already checked by ``core/tasking/references.py``)
+    are stored on a new task only. A bind returns the existing task as it
+    is: neither overwrites what that task already carries.
 
     ``schedule_id`` marks the task as one run of that schedule
     (core/scheduling/runner.py) and always creates: board resolution
@@ -150,8 +158,6 @@ def create_or_bind_task(
         )
     requested_owner_id = owner_id or default_task_owner_id(
         assignee_id=assigned_to,
-        requester_id=requester_id,
-        created_by=created_by,
         parent_task=db.get_task(parent_task_id) if parent_task_id else None,
     )
     if schedule_id:
@@ -197,6 +203,8 @@ def create_or_bind_task(
         notification_policy=notification_policy,
         notification_channel_id=notification_channel_id,
         schedule_id=schedule_id,
+        severity=severity,
+        references=references,
     )
 
     rewritten_contract = rewrite_shared_work_contract(

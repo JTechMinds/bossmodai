@@ -425,8 +425,8 @@ def _open_tasks_with_title(title: str, *, assigned_to: str | None = None) -> lis
 
 def test_create_or_bind_task_ambiguous_match_does_not_create_duplicate() -> None:
     agent = _create_agent()
-    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
-    second = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    first = db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
+    second = db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
     assert first.id != second.id
 
     creation = create_or_bind_task(
@@ -456,8 +456,8 @@ def test_create_task_api_ambiguous_match_returns_candidates_without_third_row(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent = _create_agent()
-    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
-    second = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    first = db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
+    second = db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
     client = _task_api_client(monkeypatch)
 
     response = client.post(
@@ -480,8 +480,8 @@ def test_create_task_api_bind_task_id_reuses_chosen_ambiguous_candidate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     agent = _create_agent()
-    first = db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
-    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    first = db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
     client = _task_api_client(monkeypatch)
     headers = _task_api_headers()
 
@@ -524,8 +524,8 @@ def test_apply_decision_accept_ambiguous_match_returns_world_feedback() -> None:
     agent = _create_agent()
     state = db.get_agent_state(agent.id)
     assert state is not None
-    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
-    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
 
     try:
         result = apply_decision(
@@ -659,8 +659,8 @@ def test_apply_decision_defer_ambiguous_match_returns_world_feedback() -> None:
     agent = _create_agent()
     state = db.get_agent_state(agent.id)
     assert state is not None
-    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
-    db.create_task(title="Plan", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
+    db.create_task(title="Plan", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
 
     try:
         result = apply_decision(

@@ -215,17 +215,41 @@ def assert_assignment(
 
 
 def task_floor_id(task: Any) -> str | None:
-    """The floor a card belongs to: its thread, else the assignee, else the owner."""
+    """The floor a card belongs to: its thread, else the assignee, else the owner,
+    else the agent who reported it.
+
+    The requester comes last so an unassigned, unowned backlog item an agent
+    filed sits on the reporter's floor. An operator-reported card (the human
+    requester) with no agent on it has no floor.
+    """
     channel_id = str(getattr(task, "notification_channel_id", None) or "").strip()
     if channel_id:
         return channel_floor_id(channel_id)
-    assignee = str(getattr(task, "assigned_to", None) or "").strip()
-    if assignee and assignee != HUMAN_SENDER_ID:
-        return home_floor_id(assignee)
-    owner = str(getattr(task, "owner_id", None) or "").strip()
-    if owner and owner != HUMAN_SENDER_ID:
-        return home_floor_id(owner)
+    for column in ("assigned_to", "owner_id", "requester_id"):
+        agent_id = str(getattr(task, column, None) or "").strip()
+        if agent_id and agent_id != HUMAN_SENDER_ID:
+            return home_floor_id(agent_id)
     return None
+
+
+def assert_task_stays_on_floor(task: Any, assignee_id: str | None) -> None:
+    """Deny assigning ``task`` to an agent who is not on the task's floor.
+
+    The server-side guard behind the Tasks edit roster, so a reassign can
+    never move work across floors. A task with no floor checks nothing (the
+    operator's own floor-less backlog), and neither does an unassign or the
+    human sender.
+
+    Raises:
+        FloorDenied: The task has a floor and ``assignee_id`` is an agent
+            not living on it.
+    """
+    token = (assignee_id or "").strip()
+    if not token or token == HUMAN_SENDER_ID:
+        return
+    floor_id = task_floor_id(task)
+    if floor_id and not on_floor(token, floor_id):
+        raise FloorDenied(CROSS_FLOOR_DENY)
 
 
 def assignment_stays_on_floor(task: Any) -> bool:

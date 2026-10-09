@@ -519,8 +519,6 @@ async def _handle_delegated(
             requester_id=agent.id,
             owner_id=default_task_owner_id(
                 assignee_id=target.id,
-                requester_id=agent.id,
-                created_by=agent.id,
                 parent_task=original_task,
             ),
             created_by=agent.id,

@@ -112,19 +112,20 @@ const BossModTaskDeliverables = (() => {
     }
 
     /**
-     * One deliverable row: a file glyph, the file's name, what it is, and the
-     * full path it was recorded under.
+     * One path card: a file glyph, the file's name, what it is, and the full
+     * path it was recorded under. Clicking opens it through `agentId`'s desk
+     * (openDeliverablePath); a failure marks the card and puts the reason in
+     * its tooltip. Deliverables and task references both render as this.
      *
-     * @param {object} deliverable  `{path, description}`.
-     * @param {object} task  The task the deliverable belongs to — its assignee
-     *   is the agent id the path is resolved against.
+     * @param {object} entry  `{path, description}`.
+     * @param {string} agentId  The agent the path resolves against; empty
+     *   when none is recorded, which a click on an agent path reports.
      * @param {Function} api
      * @returns {HTMLElement}
      */
-    function renderDeliverable(deliverable, task, api) {
-        const path = deliverable.path || '';
+    function renderPathCard(entry, agentId, api) {
+        const path = entry.path || '';
         const fileName = path.split('/').pop() || path;
-        const agentId = task && task.assigned_to ? task.assigned_to : '';
         const card = h('button', {
             class: 'task-detail-file',
             type: 'button',
@@ -143,12 +144,25 @@ const BossModTaskDeliverables = (() => {
         },
             h('i', { 'data-lucide': 'file-text', 'aria-hidden': 'true' }),
             h('span', { class: 'task-detail-file-name' }, fileName),
-            deliverable.description
-                ? h('span', { class: 'task-detail-file-desc' }, deliverable.description)
+            entry.description
+                ? h('span', { class: 'task-detail-file-desc' }, entry.description)
                 : null,
             h('span', { class: 'task-detail-file-path' }, path));
         return card;
     }
 
-    return { isAgentVirtualPath, openDeliverablePath, renderDeliverable };
+    /**
+     * One deliverable row, opened as the task's assignee sees the path.
+     *
+     * @param {object} deliverable  `{path, description}`.
+     * @param {object} task  The task the deliverable belongs to — its assignee
+     *   is the agent id the path is resolved against.
+     * @param {Function} api
+     * @returns {HTMLElement}
+     */
+    function renderDeliverable(deliverable, task, api) {
+        return renderPathCard(deliverable, task && task.assigned_to ? task.assigned_to : '', api);
+    }
+
+    return { isAgentVirtualPath, openDeliverablePath, renderPathCard, renderDeliverable };
 })();

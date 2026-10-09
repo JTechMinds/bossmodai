@@ -57,6 +57,11 @@ const BossModTaskDetailSections = (() => {
             ...children);
     }
 
+    /** A severity as the pill places.css tones by `data-severity`. */
+    function severityPill(severity) {
+        return h('span', { class: 'status-pill', 'data-severity': severity }, severity);
+    }
+
     /** `a` or `an`, by the sound the role starts with as written. */
     function article(word) {
         return /^[aeiou]/i.test(word) ? 'an' : 'a';
@@ -109,13 +114,15 @@ const BossModTaskDetailSections = (() => {
      * @param {HTMLElement} [deps.assigneeValue]  Shown as the Assignee value
      *   instead of the assignee's name: the detail's Edit mode puts its
      *   assignee dropdown in the same cell.
+     * @param {HTMLElement} [deps.severityValue]  Shown as the Severity value
+     *   instead of the pill: Edit mode's severity dropdown, the same way.
      * @returns {HTMLElement} `dl.fact-list[data-pairs="2"]`.
      * @throws {Error} When the list, colorOf or onNavigate is missing — a
      *   parent that could not be looked up would read "Not in the current
      *   list", which is a different fact.
      */
     function facts(task, deps) {
-        const { tasks, colorOf, onNavigate, assigneeValue } = deps || {};
+        const { tasks, colorOf, onNavigate, assigneeValue, severityValue } = deps || {};
         if (!Array.isArray(tasks)) throw new Error('[task-detail] facts needs the task list');
         if (typeof colorOf !== 'function') throw new Error('[task-detail] facts needs colorOf');
         if (typeof onNavigate !== 'function') throw new Error('[task-detail] facts needs onNavigate');
@@ -136,6 +143,9 @@ const BossModTaskDetailSections = (() => {
             { label: 'Created', value: FORMAT.formatDateTime(task.created_at) },
             { label: 'Updated', value: FORMAT.formatRelativeTime(task.last_activity) },
         ];
+        if (severityValue || task.severity) {
+            list.push({ label: 'Severity', value: severityValue || severityPill(task.severity) });
+        }
         // The owner is news only when it is somebody the two rows above do not
         // already name.
         if (task.owner_id && task.owner_id !== task.assigned_to && task.owner_id !== task.requester_id) {
@@ -256,6 +266,27 @@ const BossModTaskDetailSections = (() => {
     }
 
     /**
+     * The documents to read before starting — input, unlike Deliverables,
+     * which are output. Each opens through the reporter's desk: a reference
+     * is a `/projects` path, which every agent on the floor resolves to the
+     * same file, and the reporter is who named it. The assignee stands in
+     * when the reporter is the operator or gone; with neither, a click says
+     * no agent is recorded rather than doing nothing.
+     *
+     * @param {object} task
+     * @param {Function} api  Passed to each card, which opens its file.
+     * @returns {HTMLElement|null} null when the task has no references.
+     */
+    function references(task, api) {
+        const refs = task.references || [];
+        if (refs.length === 0) return null;
+        const reporter = task.requester_id && task.requester_id !== HUMAN_ID ? task.requester_id : '';
+        const agentId = reporter || task.assigned_to || '';
+        return headed('References', String(refs.length),
+            ...refs.map((ref) => DELIVERABLES.renderPathCard(ref, agentId, api)));
+    }
+
+    /**
      * This task's deliverables, then each child's, under its own subheading.
      *
      * @param {object} task
@@ -333,6 +364,6 @@ const BossModTaskDetailSections = (() => {
 
     return {
         statusLine, facts, callout, instructions,
-        deliverables, childDeliverableGroups, subtasks, doneContract,
+        references, deliverables, childDeliverableGroups, subtasks, doneContract,
     };
 })();

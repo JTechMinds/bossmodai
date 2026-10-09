@@ -91,6 +91,12 @@
 .status-pill[data-activity="conversation"],
 .status-pill[data-activity="social"] { background: var(--teal); color: var(--teal-ink); }
 
+/* Task severity (core/models/task.py TaskSeverity). P3 keeps the neutral
+   pill. The text "P0"… is always shown, so colour is never the only signal. */
+.status-pill[data-severity="P0"] { background: var(--alert-bg); color: var(--alert-ink); }
+.status-pill[data-severity="P1"] { background: var(--amber); color: var(--amber-ink); }
+.status-pill[data-severity="P2"] { background: var(--blue); color: var(--blue-ink); }
+
 /* ─── Office ─── */
 
 .office-place {

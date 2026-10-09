@@ -8,15 +8,16 @@ from datetime import datetime, timezone
 from typing import Any
 
 from core.models import Task, TaskNotificationSettings, WorkContract
-from core.models.message import HUMAN_SENDER_ID
+from core.models.task import DEFAULT_TASK_SEVERITY, TaskReference, TaskSeverity
 from db.crud import build_update, insert_returning_dict, query
 from db.task_notification_policies import delete_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import delete_task_notification_target, set_task_notification_target_channel_id
+from db.task_references import delete_task_references, set_task_references
 from db.task_work_contracts import delete_task_work_contract, set_task_work_contract
 
 _TASK_COLUMNS = (
     "t.id, t.title, t.description, t.project, t.assigned_to, t.requester_id, t.owner_id, t.created_by, "
-    "t.status, twc.work_contract, "
+    "t.status, t.severity, twc.work_contract, trf.refs AS \"references\", "
     "tnp.source_channel, tnp.policy AS notification_policy, tnp.updated_at AS notification_policy_updated_at, "
     "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.schedule_id, t.cost_ceiling, t.completion_summary, "
@@ -26,7 +27,7 @@ _TASK_COLUMNS = (
 
 _TASK_VALID_COLUMNS = {
     "title", "description", "project", "assigned_to", "requester_id", "owner_id",
-    "status", "parent_task_id", "cost_ceiling", "completion_summary",
+    "status", "severity", "parent_task_id", "cost_ceiling", "completion_summary",
     "status_note", "watchdog_pinged_at", "last_progress_at", "last_heartbeat_at",
     "last_activity", "closed_at",
 }
@@ -71,11 +72,20 @@ def create_task(
     notification_policy: str | None = None,
     notification_channel_id: str | None = None,
     schedule_id: str | None = None,
+    severity: TaskSeverity = DEFAULT_TASK_SEVERITY,
+    references: list[TaskReference] | None = None,
 ) -> Task:
     """Insert a new task.
 
+    ``owner_id`` is stored as given: who owns a task is decided in
+    ``core/agent_loop/task_roles.py`` ``default_task_owner_id``, never here.
+    ``requester_id`` defaults to ``created_by``.
+
     ``schedule_id`` links a run to the schedule whose occurrence created it
     (core/scheduling/runner.py); every other task leaves it ``None``.
+    ``severity`` is P0–P3 (P3 unless given). ``references`` are the
+    documents the assignee reads first; they are stored as given, so the
+    caller checks them (``core/tasking/references.py``).
     """
     validated_work_contract = None
     if work_contract is not None:
@@ -87,28 +97,26 @@ def create_task(
         validated_notification_settings = _validate_notification_settings(source_channel, notification_policy)
 
     resolved_requester_id = requester_id if requester_id is not None else created_by
-    resolved_owner_id = owner_id if owner_id is not None else _default_task_owner_id(
-        assigned_to=assigned_to,
-        requester_id=resolved_requester_id,
-        created_by=created_by,
-    )
 
     row = insert_returning_dict(
         f"""
         INSERT INTO tasks (
-            title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id, schedule_id
+            title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id,
+            schedule_id, severity
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id
         """,
         [
-            title, description, project, assigned_to, resolved_requester_id, resolved_owner_id, created_by,
-            parent_task_id, schedule_id,
+            title, description, project, assigned_to, resolved_requester_id, owner_id, created_by,
+            parent_task_id, schedule_id, severity,
         ],
     )
     task_id = row["id"]
     if validated_work_contract is not None:
         set_task_work_contract(task_id, validated_work_contract)
+    if references:
+        set_task_references(task_id, references)
     if validated_notification_settings is not None:
         set_task_notification_settings(
             task_id,
@@ -123,31 +131,19 @@ def create_task(
 
 
 def _task_from_row(row: dict[str, Any]) -> Task:
-    """Hydrate a task row and its optional work contract."""
+    """Hydrate a task row, its optional work contract and its references.
+
+    A task with no ``task_references`` row has no references (``[]``).
+    """
     data = dict(row)
     raw_contract = data.get("work_contract")
     if raw_contract:
         data["work_contract"] = json.loads(raw_contract)
     else:
         data["work_contract"] = None
+    raw_references = data.get("references")
+    data["references"] = json.loads(raw_references) if raw_references else []
     return Task.model_validate(data)
-
-
-def _default_task_owner_id(
-    *,
-    assigned_to: str | None,
-    requester_id: str | None,
-    created_by: str | None,
-) -> str | None:
-    """Pick the accountable owner for a task when one is not provided."""
-    for candidate in (assigned_to, requester_id, created_by):
-        if not isinstance(candidate, str):
-            continue
-        value = candidate.strip()
-        if not value or value == HUMAN_SENDER_ID:
-            continue
-        return value
-    return None
 
 
 def get_task(task_id: str) -> Task | None:
@@ -157,6 +153,7 @@ def get_task(task_id: str) -> Task | None:
         SELECT {_TASK_COLUMNS}
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_references trf ON trf.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE t.id = $1
@@ -186,6 +183,7 @@ def get_tasks_by_ids(task_ids: Sequence[str]) -> dict[str, Task]:
         SELECT {_TASK_COLUMNS}
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_references trf ON trf.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE t.id IN ({placeholders})
@@ -248,6 +246,7 @@ def list_tasks(
         SELECT {_TASK_COLUMNS}
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_references trf ON trf.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         {where}
@@ -304,6 +303,7 @@ def list_tasks_by_statuses(
         SELECT {_TASK_COLUMNS}
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_references trf ON trf.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE {' AND '.join(conditions)}
@@ -313,6 +313,36 @@ def list_tasks_by_statuses(
         ORDER BY t.created_at, t.rowid
         """,
         params,
+    )
+    return [_task_from_row(row) for row in rows]
+
+
+def list_backlog_tasks(*, status: str) -> list[Task]:
+    """Return every top-level, unassigned task in ``status``, newest first.
+
+    The one query behind the backlog (``core/tasking/backlog.py``). The
+    caller passes the backlog status, so this layer never defines what the
+    backlog is.
+
+    Args:
+        status: The task status to match (``BACKLOG_STATUS``).
+
+    Returns:
+        Tasks with that status, no assignee and no parent, newest
+        ``created_at`` first (insertion order breaks ties).
+    """
+    rows = query(
+        f"""
+        SELECT {_TASK_COLUMNS}
+        FROM tasks t
+        LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_references trf ON trf.task_id = t.id
+        LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
+        LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
+        WHERE t.status = $1 AND t.assigned_to IS NULL AND t.parent_task_id IS NULL
+        ORDER BY t.created_at DESC, t.rowid DESC
+        """,
+        [status],
     )
     return [_task_from_row(row) for row in rows]
 
@@ -405,6 +435,7 @@ def list_recent_tasks(
         SELECT {_TASK_COLUMNS}
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
+        LEFT JOIN task_references trf ON trf.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         {where}
@@ -424,6 +455,9 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
     Status changes go through the shared allow-map in
     ``core.tasking.transitions``. Illegal jumps raise
     ``IllegalTaskTransition`` and leave the row unchanged.
+
+    ``references`` (a list of ``TaskReference``) replaces the task's
+    references; an empty list removes them all.
     """
     if "status" in fields:
         from core.tasking.transitions import TERMINAL_TASK_STATUSES, assert_valid_task_transition
@@ -439,6 +473,7 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
                 fields.setdefault("closed_at", datetime.now(timezone.utc))
 
     work_contract = fields.pop("work_contract", None) if "work_contract" in fields else ...
+    references = fields.pop("references", None) if "references" in fields else ...
     source_channel = fields.pop("source_channel", None) if "source_channel" in fields else ...
     notification_policy = fields.pop("notification_policy", None) if "notification_policy" in fields else ...
     notification_channel_id = fields.pop("notification_channel_id", None) if "notification_channel_id" in fields else ...
@@ -475,6 +510,11 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
             delete_task_work_contract(task_id)
         else:
             set_task_work_contract(task_id, validated_work_contract)
+    if references is not ...:
+        if references:
+            set_task_references(task_id, list(references))
+        else:
+            delete_task_references(task_id)
     if validated_notification_settings is not ...:
         set_task_notification_settings(
             task_id,

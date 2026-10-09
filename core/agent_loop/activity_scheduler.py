@@ -14,6 +14,7 @@ from core.agent_loop.task_roles import task_assignment_sender
 from core.agent_loop.work_binding import is_detached
 from core.models import Activity, AgentState, Task
 from core.scheduling.recurrence import describe, format_local_run, next_occurrence
+from core.tasking.references import format_references_for_context
 from core.tasking.resolution import OPEN_TASK_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -223,6 +224,11 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
     one run of a recurring task (``prompts/runtime_block_trigger_event.md``)
     on every presentation, first or re-presented: see
     ``_schedule_payload``.
+
+    The payload also carries the task's ``task_severity`` and its
+    ``task_references`` (one ``- <path> — <description>`` line each, empty
+    when it has none), so the assignee sees how serious the work is and what
+    to read first.
     """
     sender = task_assignment_sender(task)
 
@@ -234,6 +240,8 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
         "payload": {
             "task_title": task.title,
             "task_description": task.description or "",
+            "task_severity": task.severity,
+            "task_references": "\n".join(format_references_for_context(task.references)),
             "project": task.project,
             "from_agent": sender["from_agent"],
             "from_name": sender["from_name"],

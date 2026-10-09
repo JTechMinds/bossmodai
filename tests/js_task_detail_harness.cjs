@@ -69,6 +69,7 @@ const BLOCKED = {
     id: "t-blocked",
     title: "Fix the login bug",
     status: "blocked",
+    severity: "P1",
     status_note: "no progress, @Debra",
     description: "Make the login work again.\nThen tell Debra.",
     assigned_to: "a1",
@@ -87,18 +88,18 @@ const BLOCKED = {
     operator_can_resume: true,
 };
 const CHILD_DONE = {
-    id: "c-done", title: "Write the regression test", status: "complete",
+    id: "c-done", title: "Write the regression test", status: "complete", severity: "P3",
     parent_task_id: "t-blocked", assigned_to: "a1", assigned_to_name: "Jim",
     last_activity: ago(2 * HOUR), created_at: ago(20 * HOUR), closed_at: ago(2 * HOUR),
 };
 const CHILD_OPEN = {
-    id: "c-open", title: "Patch the session check", status: "active",
+    id: "c-open", title: "Patch the session check", status: "active", severity: "P3",
     parent_task_id: "t-blocked", assigned_to: "a2", assigned_to_name: "Debra",
     last_activity: ago(HOUR), created_at: ago(20 * HOUR), closed_at: null,
     work_contract: { deliverables: [{ type: "file", path: "/me/patch.diff" }] },
 };
 const DONE = {
-    id: "t-done", title: "Ship the dashboard", status: "complete",
+    id: "t-done", title: "Ship the dashboard", status: "complete", severity: "P3",
     completion_summary: "Shipped behind the flag.",
     assigned_to: "a1", assigned_to_name: "Jim", requester_id: "a2", requester_name: "Debra",
     parent_task_id: null,
@@ -107,7 +108,7 @@ const DONE = {
 // Not yet accepted: the state machine has no pending → complete, so the
 // server says it cannot be marked complete.
 const PENDING = {
-    id: "t-pending", title: "Draft the rollout note", status: "pending",
+    id: "t-pending", title: "Draft the rollout note", status: "pending", severity: "P3",
     assigned_to: "a2", assigned_to_name: "Debra", requester_id: "__human__", parent_task_id: null,
     last_activity: ago(HOUR), created_at: ago(HOUR), closed_at: null,
     operator_can_complete: false,

@@ -31,20 +31,27 @@ def task_requester_id_for_trigger(
 def default_task_owner_id(
     *,
     assignee_id: str | None,
-    requester_id: str | None,
-    created_by: str | None,
     parent_task: Task | None = None,
 ) -> str | None:
-    """Resolve the accountable owner for a task."""
+    """Resolve the accountable owner for a task: the parent's owner, else the assignee.
+
+    An unassigned top-level task has no owner; the operator triages it, and
+    ownership lands on the first assignee. The requester is deliberately not
+    a fallback: a reporter who files work does not own it, so deleting the
+    reporter leaves the item open and an assignee can delegate under it.
+
+    Args:
+        assignee_id: The task's assignee; the human sender id is not an agent.
+        parent_task: The parent, whose agent owner a child inherits.
+
+    Returns:
+        An agent id, or None when there is neither an owning parent nor an
+        agent assignee.
+    """
     inherited_owner = _normalize_agent_id(parent_task.owner_id) if parent_task else None
     if inherited_owner:
         return inherited_owner
-
-    for candidate in (assignee_id, requester_id, created_by):
-        owner_id = _normalize_agent_id(candidate)
-        if owner_id:
-            return owner_id
-    return None
+    return _normalize_agent_id(assignee_id)
 
 
 def task_assignment_sender(task: Task) -> dict[str, str | None]:

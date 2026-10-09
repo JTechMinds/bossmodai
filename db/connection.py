@@ -364,6 +364,12 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "tasks", "schedule_id", "VARCHAR",
     )
+    # Existing tasks become P3, the default severity: a new column holding
+    # only valid values, so nothing stored needs checking at boot.
+    _add_column_if_missing(
+        con, "tasks", "severity",
+        "VARCHAR NOT NULL DEFAULT 'P3' CHECK (severity IN ('P0','P1','P2','P3'))",
+    )
     # Schedules from before agents could manage them: set up by the operator
     # ('__human__' is HUMAN_SENDER_ID) and locked against agent changes.
     _add_column_if_missing(

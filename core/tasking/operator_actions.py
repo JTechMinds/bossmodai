@@ -23,7 +23,7 @@ from core.agent_loop.task_followups import _CHILD_UPDATES_TO_PARENT_EVENT_TYPES
 from core.agent_loop.task_origin_mirrors import mirror_origin_status, mirror_task_completed_by_operator
 from core.agent_loop.task_roles import default_task_owner_id
 from core.boss import boss_label
-from core.floors import assert_assignment
+from core.floors import assert_assignment, assert_task_stays_on_floor
 from core.models import Agent, Task, TaskUpdateRequest, WorkContract
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import append_task_event, list_open_child_tasks, rewrite_shared_work_contract
@@ -63,12 +63,13 @@ class OpenChildTasks(ValueError):
 
 
 def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> OperatorTaskResult:
-    """Apply the operator's edit to an open task: title, description, assignee, requirements.
+    """Apply the operator's edit to an open task: title, description, assignee, requirements, severity.
 
     Only fields present in ``changes.model_fields_set`` are considered, and
     only those that differ from the stored task are written. A reassign, or a
     description/requirements change on an assigned task, re-presents the task
-    to its assignee (see module docstring). A title-only edit wakes nobody.
+    to its assignee (see module docstring). A title-only or severity-only
+    edit wakes nobody: neither changes what the task asks for.
 
     Args:
         task_id: The task to edit.
@@ -83,7 +84,9 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
         ValueError: No such task, no such assignee, the human operator named as
             assignee, or relative deliverable paths on an unassigned task.
         IllegalTaskTransition: The task is closed.
-        FloorDenied: The new assignee is not on the task's floor.
+        FloorDenied: The new assignee is not on the task's floor (the stored
+            task's floor, ``assert_task_stays_on_floor``), or the assignment
+            would cross floors with the owner or thread.
         PathOutsideRootsError: A deliverable path resolves outside the agent's roots.
     """
     task = db.get_task(task_id)
@@ -109,6 +112,11 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
             description_changed = True
             summary_bits.append("description")
 
+    # The request model refuses a null severity, so a set severity is P0–P3.
+    if "severity" in fields_set and changes.severity is not None and changes.severity != task.severity:
+        columns["severity"] = changes.severity
+        summary_bits.append("severity")
+
     parent = db.get_task(task.parent_task_id) if task.parent_task_id else None
     old_assignee = db.get_agent(task.assigned_to) if task.assigned_to else None
     assignee_id = task.assigned_to
@@ -118,12 +126,13 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
     if assignee_changed:
         assignee_id = changes.assigned_to
         assignee = _validate_new_assignee(assignee_id)
+        # Checked on the stored task, before the owner moves: its floor is
+        # where the work lives, whoever it goes to next.
+        assert_task_stays_on_floor(task, assignee_id)
         if task.owner_id == task.assigned_to:
             # The owner was defaulted to the old assignee; it follows the work.
             owner_id = default_task_owner_id(
                 assignee_id=assignee_id,
-                requester_id=task.requester_id,
-                created_by=task.created_by,
                 parent_task=parent,
             )
         assert_assignment(

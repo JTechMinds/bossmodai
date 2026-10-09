@@ -212,6 +212,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── CLI safety ──
     ("cli_max_write_bytes", "262144", "advanced"),
     ("cli_max_read_lines", "200", "advanced"),
+    # Most rows `backlog list` shows (core/bm_cli/backlog_commands.py).
+    ("cli_backlog_list_limit", "50", "advanced"),
 
     # ── CLI policy ──
     # HA-SEC-P0-03: native shell stays off until an operator opts in.

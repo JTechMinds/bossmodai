@@ -189,8 +189,6 @@ async def create_task(body: TaskCreate, response: Response) -> TaskCreateRespons
 
     owner_id = body.owner_id or default_task_owner_id(
         assignee_id=body.assigned_to,
-        requester_id=requester_id,
-        created_by=HUMAN_SENDER_ID,
         parent_task=parent_task,
     )
 

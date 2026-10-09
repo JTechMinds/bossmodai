@@ -71,8 +71,8 @@ def test_create_or_bind_creates_then_reuses_same_title() -> None:
 
 def test_create_or_bind_ambiguous_match_does_not_create_third() -> None:
     agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
-    first = db.create_task(title="Shared title", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
-    second = db.create_task(title="Shared title", assigned_to=agent.id, created_by=HUMAN_SENDER_ID)
+    first = db.create_task(title="Shared title", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
+    second = db.create_task(title="Shared title", assigned_to=agent.id, owner_id=agent.id, created_by=HUMAN_SENDER_ID)
     assert first.id != second.id
 
     result = _bind(title="Shared title", assigned_to=agent.id)

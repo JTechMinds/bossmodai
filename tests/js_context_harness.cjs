@@ -386,8 +386,8 @@ const JIM_TASK = { id: "t1", title: "Write TDD specs", status: "complete" };
 // parent and subtasks from. Jim's task, and an open subtask of it — open, so
 // its Edit mode offers Cancel.
 const TASK_LIST = [
-    { ...JIM_TASK, assigned_to: "a1" },
-    { id: "t2", title: "Draft M5.3 list", status: "in_progress", parent_task_id: "t1", assigned_to: "a1" },
+    { ...JIM_TASK, assigned_to: "a1", severity: "P3" },
+    { id: "t2", title: "Draft M5.3 list", status: "in_progress", parent_task_id: "t1", assigned_to: "a1", severity: "P3" },
 ];
 // Set by the section that proves a failed list read is said on the desk.
 let taskListFails = false;
