@@ -27,6 +27,9 @@ const BossModFloorSettings = (() => {
     const DELETE_LABEL = 'Delete floor';
     /** Matches db/floors.py FLOOR_NAME_MAX_LENGTH. */
     const NAME_MAX_LENGTH = 80;
+    // Generated, never built from a row's data: a project's name is a folder
+    // name (spaces and all), and an agent's id could equal a thread's.
+    let moveLabelSeq = 0;
 
     /**
      * One list section: heading with its count, an Add door, and a body that
@@ -90,9 +93,6 @@ const BossModFloorSettings = (() => {
      * One list row with a `⋯` whose menu lists the other floors.
      *
      * @param {object} opts
-     * @param {string} opts.id  The agent's, thread's or project's identity,
-     *   unique within its list; names the Move to… caption the panel's group
-     *   is labelled by.
      * @param {HTMLElement|null} opts.lead  An avatar, or null.
      * @param {string} opts.name
      * @param {HTMLElement|string|null} opts.meta  Under the name.
@@ -100,10 +100,11 @@ const BossModFloorSettings = (() => {
      *   other floors, read when the menu opens.
      * @param {(floor: {id: string, name: string}) => void} opts.onMoveTo
      * @returns {HTMLElement} The `<li>`.
-     * @throws {Error} When `id` is missing — the caption would label nothing.
      */
-    function row({ id, lead, name, meta, targets, onMoveTo }) {
-        if (!id) throw new Error('[floor-settings] a row needs an id');
+    function row({ lead, name, meta, targets, onMoveTo }) {
+        // One per row, reused on every open: it names the Move to… caption
+        // the panel's group is labelled by.
+        const labelId = `floor-move-label-${++moveLabelSeq}`;
         // Positioned (overlays.css): THE host the Move to… menu hangs off.
         const host = h('div', { class: 'floor-item-more' });
         // One string names the `⋯` and the panel it opens.
@@ -123,7 +124,7 @@ const BossModFloorSettings = (() => {
                     },
                 }, h('span', { class: 'menu-select-label' }, floor.name)));
                 return [BossModMenu.createMenuSection({
-                    id: `floor-move-${id}-label`,
+                    id: labelId,
                     label: 'Move to…',
                     children: [choices.length
                         ? h('div', { class: 'menu-actions' }, choices)

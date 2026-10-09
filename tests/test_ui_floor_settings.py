@@ -47,6 +47,7 @@ def test_floor_settings_behaviour() -> None:
         "lobbyHasNoFooterAndNoDelete": True,
         "nameRestsAsTextWithItsVisibleLabelAndNoButtons": True,
         "moveToMenuHangsOffTheRow": True,
+        "moveToCaptionIdsAreGeneratedAndDistinct": True,
         "pickerGroupsOtherFloorsAndWaits": True,
         "choosingEnablesNext": True,
         "confirmShowsEveryGroup": True,

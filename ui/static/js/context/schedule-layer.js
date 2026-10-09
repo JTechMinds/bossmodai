@@ -101,8 +101,8 @@ const BossModScheduleLayer = (() => {
         };
         const switchElements = () => [switches.enabled.element, switches.agent_can_change.element];
 
-        const tool = (id, icon, cls, label, onclick, extra) => h('button', {
-            class: cls, id, type: 'button', 'aria-label': label, 'data-tooltip': label, onclick, ...(extra || {}),
+        const tool = (id, icon, cls, label, onclick) => h('button', {
+            class: cls, id, type: 'button', 'aria-label': label, 'data-tooltip': label, onclick,
         }, h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }));
         const saveButton = tool('schedule-save', 'check', 'btn btn-sm conversation-action inline-rename-save',
             LABELS.save, () => { void save(); });

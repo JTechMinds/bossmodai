@@ -1158,7 +1158,11 @@ def test_every_menu_trigger_is_the_one_shared_button() -> None:
     assert "border:" not in trigger and "border-color" not in trigger
     assert ".menu-trigger:hover { background: var(--bg); color: var(--ink); }" in controls
     assert '.menu-trigger[data-size="header"] { width: 32px; height: 32px; }' in controls
-    assert '.menu-trigger[data-size="inline"] svg { width: 14px; height: 14px; }' in controls
+    # One glyph size for both sizes, the modal head ✕'s: a size-scoped glyph
+    # rule is how the header `⋯` drew Lucide's default 24px glyph.
+    assert ".menu-trigger svg { width: 14px; height: 14px; }" in controls
+    assert '[data-size="header"] svg' not in controls
+    assert '[data-size="inline"] svg' not in controls
     for sheet in ("conversation.css", "overlays.css", "places.css"):
         css = _read(CSS / sheet)
         assert ".conversation-view-options" not in css, sheet

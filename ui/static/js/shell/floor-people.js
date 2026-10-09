@@ -47,7 +47,6 @@ const BossModFloorPeople = (() => {
 
         function render() {
             view.rows(agentsWhere(store.getState(), onFloor).map((agent) => ctx.row({
-                id: agent.id,
                 lead: avatar(agent),
                 name: agent.name,
                 meta: agent.role || null,

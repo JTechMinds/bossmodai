@@ -74,7 +74,8 @@ function apiFetch(url, init) {
     calls.push({ url, method, body });
     if (url === "/api/channels?status=active") return Promise.resolve(response(200, THREADS));
     if (url === "/api/floors/lobby/projects") {
-        return Promise.resolve(response(200, [{ name: "site", modified_at: "2026-09-01T10:00:00+00:00" }]));
+        // A folder name with a space: the Move to… caption id must not be built from it.
+        return Promise.resolve(response(200, [{ name: "client site", modified_at: "2026-09-01T10:00:00+00:00" }]));
     }
     if (url === "/api/floors/fin/projects") return Promise.resolve(response(200, [{ name: "books", modified_at: null }]));
     if (url === "/api/floors/lobby/move-plan" && method === "POST") {
@@ -144,13 +145,7 @@ function keydown(el, key) {
     const reloadFloors = async () => true;
 
     // ─── Four sections with their counts; Lobby has no Delete ───
-    // The shared row builder reaches the lists through their ctx; kept here
-    // so the harness can ask it for a row with no id.
-    let sharedRow = null;
-    const peopleCreate = BossModFloorPeople.create;
-    BossModFloorPeople.create = (ctx) => { sharedRow = ctx.row; return peopleCreate(ctx); };
     const settings = BossModFloorSettings.open({ store, floorApi, floorId: "lobby", reloadFloors });
-    BossModFloorPeople.create = peopleCreate;
     await drain();
     const panel = dialogs()[0];
     const titles = panel.querySelectorAll(".floor-section-title").map((node) => node.textContent);
@@ -188,18 +183,12 @@ function keydown(el, key) {
     // ─── ⋯ → Move to… hangs off the row's host ───
     // The row's `⋯` is the shared inline trigger, and one string names it
     // and the panel it opens. The panel is one "Move to…" section labelled
-    // by its own caption, whose id is the row's (Ada's, a1).
+    // by its own caption.
     const firstMore = panel.querySelector(".floor-item").querySelector(".menu-trigger");
     await firstMore.dispatchClick();
     const moveMenu = panel.querySelector(".menu");
     const moveSection = moveMenu && moveMenu.querySelector(".menu-section");
     const moveCaption = moveSection && moveSection.querySelector(".menu-label");
-    let rowWithoutIdThrows = false;
-    try {
-        sharedRow({ lead: null, name: "Nobody", meta: null, targets: () => [], onMoveTo: () => {} });
-    } catch (err) {
-        rowWithoutIdThrows = /a row needs an id/.test(err.message);
-    }
     verdict.moveToMenuHangsOffTheRow = Boolean(moveMenu)
         && moveMenu.parentNode !== documentStub.body
         && moveMenu.parentNode.classList.contains("floor-item-more")
@@ -208,13 +197,49 @@ function keydown(el, key) {
         && firstMore.getAttribute("aria-label") === "Move Ada to another floor"
         && firstMore.getAttribute("data-size") === "inline"
         && Boolean(moveSection) && moveSection.getAttribute("role") === "group"
-        && moveSection.getAttribute("aria-labelledby") === "floor-move-a1-label"
-        && moveCaption.getAttribute("id") === "floor-move-a1-label"
         && moveCaption.textContent === "Move to…"
         && moveMenu.querySelectorAll(".menu-action").map((button) => button.textContent).join("|") === "Finance"
-        && firstMore.getAttribute("aria-expanded") === "true"
-        && rowWithoutIdThrows;
+        && firstMore.getAttribute("aria-expanded") === "true";
     await firstMore.dispatchClick();
+
+    // ─── The Move to… caption id is generated: valid, and one per row ───
+    // Never built from the row's data: a project's name is a folder name,
+    // spaces and all, and an agent's id could equal a thread's. Each row's
+    // `⋯` is opened in turn, its group read, and the panel closed again.
+    const GENERATED_ID = /^floor-move-label-\d+$/;
+    async function moveGroupOf(item) {
+        const more = item.querySelector(".menu-trigger");
+        await more.dispatchClick();
+        const menu = item.querySelector(".menu");
+        const group = menu && menu.querySelector(".menu-section");
+        const caption = group && group.querySelector(".menu-label");
+        const read = {
+            open: Boolean(menu) && more.getAttribute("aria-expanded") === "true",
+            menuLabel: menu ? menu.getAttribute("aria-label") : null,
+            role: group ? group.getAttribute("role") : null,
+            labelledBy: group ? group.getAttribute("aria-labelledby") : null,
+            captionId: caption ? caption.getAttribute("id") : null,
+            captionText: caption ? caption.textContent : null,
+        };
+        await more.dispatchClick();
+        read.closed = !item.querySelector(".menu") && more.getAttribute("aria-expanded") === "false";
+        return read;
+    }
+    const sectionItems = (key) => panel.querySelectorAll(".floor-section")
+        .find((node) => node.getAttribute("aria-labelledby") === `floor-section-${key}`)
+        .querySelectorAll(".floor-item");
+    const [adaRow, bobRow] = sectionItems("people");
+    const [projectRow] = sectionItems("projects");
+    const groupsRead = [await moveGroupOf(adaRow), await moveGroupOf(bobRow), await moveGroupOf(projectRow)];
+    const labelledByItsCaption = (read) => read.open && read.closed
+        && read.role === "group"
+        && GENERATED_ID.test(read.captionId)
+        && read.labelledBy === read.captionId
+        && read.captionText === "Move to…";
+    verdict.moveToCaptionIdsAreGeneratedAndDistinct = groupsRead.every(labelledByItsCaption)
+        && new Set(groupsRead.map((read) => read.captionId)).size === groupsRead.length
+        // The project whose folder name has a space still names its group.
+        && groupsRead[2].menuLabel === "Move client site to another floor";
 
     // ─── Add people → a picker grouped by floor; Next waits for a choice ───
     const addPeople = panel.querySelectorAll(".floor-section-add")
