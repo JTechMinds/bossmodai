@@ -26,28 +26,6 @@ Use it to avoid repeating questions or mixing in unrelated direct messages.
 {{if trigger.task_description}}
 Task description: {{trigger.task_description}}
 {{end}}
-{{if trigger.attention_kind = 'question'}}
-Reason: the latest task-thread note asks you a direct question.
-{{elseif trigger.attention_kind = 'review_request'}}
-Reason: the latest task-thread note needs your review or decision.
-{{elseif trigger.attention_kind = 'completion_report'}}
-Reason: someone reported completion and you need to handle the next step.
-{{elseif trigger.attention_kind = 'blocker'}}
-Reason: someone reported a blocker and needs a decision or help.
-{{elseif trigger.attention_kind = 'handoff'}}
-Reason: someone reported a handoff and you need to decide what happens next.
-{{elseif trigger.attention_kind = 'abandoned'}}
-Reason: someone reported that the task was abandoned and you need to respond.
-{{elseif trigger.attention_kind = 'clarification_requested'}}
-Reason: the other person needs clarification from you before the task can move.
-{{elseif trigger.attention_kind = 'decision_needed'}}
-Reason: the task is waiting on your decision.
-{{end}}
-{{if trigger.attention_kind = 'completion_report'}}
-Guidance: Treat this as a state transition. Do NOT redelegate duplicate work. Review the task-thread update and any deliverables, then either complete the coordination/parent task or delegate a clearly new next step.
-{{elseif trigger.attention_kind = 'blocker'}}
-Guidance: Do NOT restart the same delegated work. Decide how to unblock (clarify, provide access, or reassign with a new child task) and then continue the parent coordination task.
-{{end}}
 {{if trigger.content}}
 Latest note from [{{trigger.from_name}}]: {{trigger.content}}
 {{end}}
@@ -59,6 +37,16 @@ Respond within the existing task thread for this task.
 {{end}}
 {{else}}
 Respond within the existing task thread for this task.
+{{end}}
+{{elseif trigger.type = 'task_update'}}
+Update on "{{trigger.task_title}}" from [{{trigger.from_name}}].
+Current task status: {{trigger.task_status}}
+If task-thread history is shown above this trigger, it is the canonical transcript for this task.
+{{if trigger.task_description}}
+Task description: {{trigger.task_description}}
+{{end}}
+{{if trigger.content}}
+Latest note from [{{trigger.from_name}}]: {{trigger.content}}
 {{end}}
 {{elseif trigger.type = 'task_assigned'}}
 {{if turn.contract_kind = 'decision'}}
@@ -106,4 +94,26 @@ System watchdog status check: you have been quiet on "{{trigger.task_title}}". P
 This arrived through {{trigger.from_name}}; it is not a chat message. Decide what, if anything, it needs and act with the commands that extension gives you (its instructions are in your system prompt). Any task you are working on is paused unchanged and resumes after this. Use idle when you are done.
 {{else}}
 You have been activated.
+{{end}}
+{{if trigger.attention_kind = 'question'}}
+Reason: the latest task-thread note asks you a direct question.
+{{elseif trigger.attention_kind = 'review_request'}}
+Reason: the latest task-thread note needs your review or decision.
+{{elseif trigger.attention_kind = 'completion_report'}}
+Reason: someone reported completion and you need to handle the next step.
+{{elseif trigger.attention_kind = 'blocker'}}
+Reason: someone reported a blocker and needs a decision or help.
+{{elseif trigger.attention_kind = 'handoff'}}
+Reason: someone reported a handoff and you need to decide what happens next.
+{{elseif trigger.attention_kind = 'abandoned'}}
+Reason: someone reported that the task was abandoned and you need to respond.
+{{elseif trigger.attention_kind = 'clarification_requested'}}
+Reason: the other person needs clarification from you before the task can move.
+{{elseif trigger.attention_kind = 'decision_needed'}}
+Reason: the task is waiting on your decision.
+{{end}}
+{{if trigger.attention_kind = 'completion_report'}}
+Guidance: Decide what should happen next. If this work is one step of something larger and the next step has no owner yet, start it or hand it to the right teammate. If nothing more is needed, observe. Do NOT redelegate duplicate work.
+{{elseif trigger.attention_kind = 'blocker'}}
+Guidance: Do NOT restart the same delegated work. Decide how to unblock (clarify, provide access, or reassign with a new child task) and then continue the parent coordination task.
 {{end}}

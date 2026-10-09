@@ -344,6 +344,7 @@ def seed_defaults() -> None:
     reconcile_memory_prompt_lines()
     reconcile_memory_remember_prompt_lines()
     reconcile_memory_notice_prompt_lines()
+    reconcile_task_update_prompts()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -807,6 +808,44 @@ def reconcile_memory_notice_prompt_lines() -> None:
         _MEMORY_NOTICE_PROMPT_LINES_RECONCILED,
         missing_row_label="memory notice",
         missing_line_label="agent-memory notice",
+    )
+
+
+# The stakeholder ``task_update`` branch (a report on work you requested can be
+# answered, or followed by new work) lives in the decision contract row, and its
+# trigger block lives in the trigger-event row. Seeding never overwrites them,
+# so both move to the shipped defaults once per database.
+_TASK_UPDATE_PROMPT_KEYS = ("runtime_contract_decision", "runtime_block_trigger_event")
+_TASK_UPDATE_PROMPTS_RECONCILED = "task_update_prompts_reconciled"
+
+
+def reconcile_task_update_prompts() -> None:
+    """Overwrite the decision contract and trigger-event rows with the shipped defaults once.
+
+    Same marker-guarded pattern as :func:`reconcile_extension_event_prompt`:
+    the first pass on a database writes the current file-backed default for
+    each key, keeping its seeded category, and records the marker; every later
+    pass is a no-op, so operator edits made after it are never touched. Edits
+    made before it are replaced.
+
+    Raises:
+        RuntimeError: A prompt key has no seeded default.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_TASK_UPDATE_PROMPTS_RECONCILED],
+    )
+    if seen is not None:
+        return
+    for key in _TASK_UPDATE_PROMPT_KEYS:
+        seeded = get_seed_setting_default(key)
+        if seeded is None:
+            raise RuntimeError(f"Prompt setting '{key}' has no seeded default")
+        set_setting(key, load_default_prompt(key), seeded[1])
+    set_setting(_TASK_UPDATE_PROMPTS_RECONCILED, "true", "advanced")
+    logger.info(
+        "Reconciled prompt settings to the task_update stakeholder contract: %s",
+        ", ".join(_TASK_UPDATE_PROMPT_KEYS),
     )
 
 

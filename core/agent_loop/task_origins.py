@@ -96,6 +96,9 @@ def task_source_channel_for_trigger(trigger: dict[str, Any]) -> str | None:
         return "meeting"
     if trigger_type == "channel_response":
         return "channel"
+    if trigger_type == "task_update" and _nonempty_id(trigger.get("channel_id")):
+        # Follow-on work from a thread-origin report stays on that thread.
+        return "channel"
     if trigger_type == "task_assigned":
         return None
     return None
@@ -112,12 +115,18 @@ def task_notification_policy_for_trigger(trigger: dict[str, Any]) -> str | None:
         return "completion_blocked" if trigger.get("author_type") == "human" else "none"
     if trigger_type == "channel_response":
         return "completion_blocked" if trigger.get("author_type") == "human" else "none"
+    if trigger_type == "task_update":
+        return "none"
     return None
 
 
 def task_notification_channel_id_for_trigger(trigger: dict[str, Any]) -> str | None:
-    """Return the shared channel target for later task notifications, if any."""
-    if trigger.get("type") != "channel_response":
+    """Return the shared channel target for later task notifications, if any.
+
+    ``channel_response`` carries its thread; a ``task_update`` carries the
+    reported task's thread when ``stamp_origin_channel_payload`` stamped one.
+    """
+    if trigger.get("type") not in {"channel_response", "task_update"}:
         return None
     channel_id = trigger.get("channel_id")
     if not isinstance(channel_id, str) or not channel_id.strip():

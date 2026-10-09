@@ -170,6 +170,31 @@ For clarify:
 ```
 {{end}}
 {{elseif trigger.type = 'task_update'}}
+{{if trigger.task_party = 'stakeholder'}}
+ALLOWED conversation act FOR THIS TURN: observe | reply | accept | defer
+
+Use one of these shapes:
+
+For observe:
+```json
+{"act":"observe","intent":"other","th":"string"}
+```
+
+For reply:
+```json
+{"act":"reply","intent":"question | status | social | other","msg":"string","work_commit":false,"th":"string"}
+```
+
+For accept:
+```json
+{"act":"accept","intent":"work","msg":"string","commit":"work","data":{"task":"same work-task object as human_chat accept, including optional id (one of your open task ids, to revise that task)","plan":"same work-plan object as human_chat accept when needed"},"th":"string"}
+```
+
+For defer (queue the work to start after your current work ends):
+```json
+{"act":"defer","intent":"work","msg":"string","commit":"work","data":{"task":{"title":"string","desc":"string"}},"th":"string"}
+```
+{{else}}
 ALLOWED conversation act FOR THIS TURN: observe
 
 Use this shape:
@@ -178,6 +203,7 @@ For observe:
 ```json
 {"act":"observe","intent":"other","th":"string"}
 ```
+{{end}}
 {{elseif trigger.type = 'task_assigned'}}
 ALLOWED conversation act FOR THIS TURN: accept | clarify | defer | decline
 

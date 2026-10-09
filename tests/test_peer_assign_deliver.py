@@ -646,3 +646,237 @@ def test_get_agent_triggers_unknown_agent_is_404(monkeypatch: pytest.MonkeyPatch
     client = _task_api_client(monkeypatch)
     response = client.get("/api/agents/missing-agent/triggers", headers=_headers())
     assert response.status_code == 404
+
+
+# ─── A completion report lets the requester start the next step ───
+
+
+def _record_tool_evidence(agent_id: str) -> None:
+    db.create_bm_cli_event(
+        agent_id=agent_id,
+        command="cat /projects/m0.md",
+        content_present=False,
+        executor="virtual",
+        cwd_before="/",
+        cwd_after="/",
+        policy_tier="read",
+        decision="allowed",
+        exit_code=0,
+        result_kind="read",
+        stdout_preview="ok",
+        stderr_preview=None,
+        changed_paths=None,
+        trigger_type="activity_resumed",
+    )
+
+
+async def _complete_active(agent, *, summary: str) -> dict[str, Any]:
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    _record_tool_evidence(agent.id)
+    completed = await execute_action(
+        {
+            "action": "complete",
+            "summary": summary,
+            "followUpMessage": summary,
+            "doneClaim": {"type": "proof", "ev": "work checked in"},
+        },
+        agent,
+        state,
+    )
+    assert completed["event"] == "status_changed", completed.get("detail")
+    persist_result_triggers(completed)
+    return completed
+
+
+def _turn_trigger(row: dict[str, Any]) -> dict[str, Any]:
+    """The trigger dict a turn runs on (``dispatcher._turn_trigger``)."""
+    return {
+        **_payload(row),
+        "type": row["trigger_type"],
+        "trigger_id": row["id"],
+        "task_id": row["task_id"],
+        "source_channel": row["source_channel"],
+    }
+
+
+def _decide(agent, trigger: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any]:
+    """Parse and validate one decision object as the turn would, then apply it."""
+    from core.agent_loop.decision_contract import (
+        ConversationDecision,
+        parse_decision,
+        validate_decision_for_trigger,
+    )
+
+    parsed = parse_decision(json.dumps({**raw, "work_commit": False} if raw.get("act") == "reply" else raw))
+    assert parsed.get("decision") != "_parse_failed", parsed
+    decision = ConversationDecision.model_validate(parsed)
+    error = validate_decision_for_trigger(
+        decision,
+        trigger_type=trigger["type"],
+        active_task_id=None,
+        has_live_work=False,
+        agent_id=agent.id,
+        trigger=trigger,
+    )
+    assert error is None, error
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    result = apply_decision(decision.model_dump(), agent, state, trigger)
+    assert result["event"] == "decision_applied", result.get("detail")
+    persist_result_triggers(result)
+    return result
+
+
+def _reported_milestone(lead, worker, channel):
+    task = create_or_bind_task(
+        title="Build milestone M0",
+        description="Scaffold the project.",
+        project=None,
+        assigned_to=worker.id,
+        requester_id=lead.id,
+        owner_id=None,
+        created_by=lead.id,
+        parent_task_id=None,
+        work_contract=None,
+        source_channel="channel",
+        notification_policy="none",
+        notification_channel_id=channel.id,
+        audit_author_name=lead.name,
+        audit_author_type="agent",
+        audit_author_agent_id=lead.id,
+    ).task
+    assert task is not None
+    activate_work_activity(worker.id, task)
+    return task
+
+
+async def _completion_report_to(lead, worker, channel) -> tuple[Any, dict[str, Any]]:
+    reported = _reported_milestone(lead, worker, channel)
+    await _complete_active(worker, summary="M0 scaffold is in.")
+    rows = _queued(lead.id, trigger_type="task_update", task_id=reported.id)
+    assert len(rows) == 1
+    trigger = _turn_trigger(rows[0])
+    assert trigger["task_party"] == "stakeholder"
+    assert trigger["attention_kind"] == "completion_report"
+    assert trigger["from_agent"] == worker.id
+    assert trigger["channel_id"] == channel.id
+    return reported, trigger
+
+
+@pytest.mark.asyncio
+async def test_requester_accepts_the_next_step_from_a_completion_report() -> None:
+    lead = db.create_agent("Cap Planner", role="Planner", desk_x=1, desk_y=1)
+    worker = db.create_agent("Cap Builder", role="Engineer", desk_x=2, desk_y=1)
+    auditor = db.create_agent("Cap Auditor", role="Auditor", desk_x=3, desk_y=1)
+    channel = db.create_channel(
+        name="Pipeline",
+        member_agent_ids=[lead.id, worker.id, auditor.id],
+        created_by=lead.id,
+    )
+    reported, trigger = await _completion_report_to(lead, worker, channel)
+
+    _decide(
+        lead,
+        trigger,
+        {
+            "act": "accept",
+            "intent": "work",
+            "msg": "M0 is in. Getting the audit started.",
+            "commit": "work",
+            "data": {
+                "task": {"title": "Coordinate M0 audit", "desc": "Own the M0 audit and report back."},
+                "plan": {
+                    "mode": "delegate",
+                    "children": [{"who": auditor.name, "task": {"title": "Audit M0", "desc": "Review the scaffold."}}],
+                },
+            },
+            "th": "start the next step",
+        },
+    )
+
+    coordination = next(task for task in db.list_tasks(assigned_to=lead.id) if task.title == "Coordinate M0 audit")
+    assert coordination.requester_id == lead.id
+    assert coordination.owner_id == lead.id
+    assert coordination.created_by == lead.id
+    assert coordination.parent_task_id is None
+    assert coordination.source_channel == "channel"
+    assert coordination.notification_channel_id == channel.id
+    assert coordination.notification_policy == "none"
+    assert db.get_task(reported.id).status == "complete"
+
+    children = db.list_tasks(parent_task_id=coordination.id)
+    assert [(child.title, child.assigned_to, child.status) for child in children] == [
+        ("Audit M0", auditor.id, "pending"),
+    ]
+    child = children[0]
+    assert child.requester_id == lead.id
+    assert child.notification_channel_id == channel.id
+    assert _queued(auditor.id, trigger_type="task_assigned", task_id=child.id)
+
+    # The child's completion reaches the coordination task through the parent path.
+    _accept_work(
+        auditor,
+        db.get_agent_state(auditor.id),
+        child,
+        from_name=lead.name,
+        from_agent=lead.id,
+        reply="On it.",
+    )
+    transition_task(coordination.id, "waiting", reason="Waiting on the audit.", actor=lead.name, actor_type="agent")
+    await _complete_active(auditor, summary="M0 audit passed.")
+    parent_rows = _queued(lead.id, trigger_type="task_update", task_id=coordination.id)
+    assert len(parent_rows) == 1
+    parent_trigger = _turn_trigger(parent_rows[0])
+    assert parent_trigger["task_party"] == "assignee"
+    resumed = _decide(lead, parent_trigger, {"act": "observe", "intent": "other", "th": "audit done"})
+    resumes = [item for item in resumed["trigger_requests"] if item.get("trigger_type") == "activity_resumed"]
+    assert [item["task_id"] for item in resumes] == [coordination.id]
+
+
+@pytest.mark.asyncio
+async def test_requester_defers_the_next_step_as_its_own_pending_work() -> None:
+    lead = db.create_agent("Cap Planner", role="Planner", desk_x=1, desk_y=1)
+    worker = db.create_agent("Cap Builder", role="Engineer", desk_x=2, desk_y=1)
+    channel = db.create_channel(name="Pipeline", member_agent_ids=[lead.id, worker.id], created_by=lead.id)
+    _, trigger = await _completion_report_to(lead, worker, channel)
+
+    _decide(
+        lead,
+        trigger,
+        {
+            "act": "defer",
+            "intent": "work",
+            "msg": "Queued M1 behind my current work.",
+            "commit": "work",
+            "data": {"task": {"title": "Plan milestone M1", "desc": "Break M1 into cards."}},
+            "th": "queue the next step",
+        },
+    )
+    deferred = next(task for task in db.list_tasks(assigned_to=lead.id) if task.title == "Plan milestone M1")
+    assert deferred.status == "pending"
+    assert deferred.requester_id == lead.id
+    assert deferred.notification_channel_id == channel.id
+
+
+@pytest.mark.asyncio
+async def test_requester_reply_on_a_completion_report_goes_to_the_reporter() -> None:
+    lead = db.create_agent("Cap Planner", role="Planner", desk_x=1, desk_y=1)
+    worker = db.create_agent("Cap Builder", role="Engineer", desk_x=2, desk_y=1)
+    channel = db.create_channel(name="Pipeline", member_agent_ids=[lead.id, worker.id], created_by=lead.id)
+    reported, trigger = await _completion_report_to(lead, worker, channel)
+    before = {item.id for item in db.list_notifications(agent_id=worker.id)}
+
+    result = _decide(
+        lead,
+        trigger,
+        {"act": "reply", "intent": "status", "msg": "Nice work on M0, thanks.", "th": "acknowledge"},
+    )
+
+    events = [event for event in db.list_task_events(reported.id) if event.event_type == "answer"]
+    assert [(event.author_agent_id, event.content) for event in events] == [(lead.id, "Nice work on M0, thanks.")]
+    notes = [item for item in db.list_notifications(agent_id=worker.id) if item.id not in before]
+    assert [(item.task_id, item.content) for item in notes] == [(reported.id, "Nice work on M0, thanks.")]
+    assert all(item.content != "Nice work on M0, thanks." for item in db.list_notifications(agent_id=lead.id))
+    assert not result.get("channel_message")
+    assert not result.get("chat_message")

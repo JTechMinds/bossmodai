@@ -78,6 +78,10 @@ _ALLOWED_ACTS_BY_TRIGGER = {
     "task_update": ("observe",),
     "watchdog_status_ping": ("reply",),
 }
+# A report (completion, blocker, handoff) on a task the recipient does not
+# own: they may start or hand off the next step. The assignee stays
+# observe-only because the resume path already continues their own work.
+_TASK_REPORT_STAKEHOLDER_ACTS = ("observe", "reply", "accept", "defer")
 _DEFAULT_ALLOWED_ACTS = ("reply", "accept", "clarify", "decline", "defer", "observe")
 _SHARED_ALLOWED_ACTS = ("observe", "reply", "accept", "clarify", "decline", "defer")
 
@@ -189,16 +193,47 @@ class ConversationDecision(BaseModel):
         return self
 
 
-def allowed_decisions_for_trigger(trigger_type: str | None) -> tuple[str, ...]:
-    """Return the valid canonical decision names for one conversation trigger type."""
-    return tuple(_ACT_TO_DECISION[act] for act in allowed_conversation_acts_for_trigger(trigger_type))
+def allowed_decisions_for_trigger(
+    trigger_type: str | None,
+    trigger: dict[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """Return the valid canonical decision names for one conversation trigger.
+
+    Args:
+        trigger_type: The turn's trigger type.
+        trigger: The turn's trigger payload; its ``task_party`` widens a
+            ``task_update`` turn for a stakeholder (see
+            :func:`allowed_conversation_acts_for_trigger`).
+    """
+    return tuple(_ACT_TO_DECISION[act] for act in allowed_conversation_acts_for_trigger(trigger_type, trigger))
 
 
-def allowed_conversation_acts_for_trigger(trigger_type: str | None) -> tuple[str, ...]:
-    """Return the valid final conversation act values for one trigger type."""
+def allowed_conversation_acts_for_trigger(
+    trigger_type: str | None,
+    trigger: dict[str, Any] | None = None,
+) -> tuple[str, ...]:
+    """Return the valid final conversation act values for one trigger.
+
+    A ``task_update`` to a stakeholder (``task_party == "stakeholder"``, i.e.
+    not the task's assignee) allows observe, reply, accept and defer, so a
+    requester told that work finished can start or hand off the next step.
+    Every other ``task_update`` stays observe-only.
+
+    Args:
+        trigger_type: The turn's trigger type.
+        trigger: The turn's trigger payload, or ``None`` when only the type
+            is known (the type's default acts apply).
+    """
     if trigger_type in _SHARED_CONVERSATION_TRIGGER_TYPES:
         return _SHARED_ALLOWED_ACTS
+    if trigger_type == "task_update" and _task_party(trigger) == "stakeholder":
+        return _TASK_REPORT_STAKEHOLDER_ACTS
     return _ALLOWED_ACTS_BY_TRIGGER.get(str(trigger_type or ""), _DEFAULT_ALLOWED_ACTS)
+
+
+def _task_party(trigger: dict[str, Any] | None) -> str:
+    """Return the trigger's normalized ``task_party`` ("" when absent)."""
+    return str((trigger or {}).get("task_party") or "").strip().lower()
 
 
 def parse_decision(raw_response: str) -> dict[str, Any]:
@@ -539,7 +574,7 @@ def validate_decision_for_trigger(
     if trigger_type == "watchdog_status_ping" and decision.decision != "answer":
         return "watchdog status pings require a direct reply"
 
-    allowed = allowed_decisions_for_trigger(trigger_type)
+    allowed = allowed_decisions_for_trigger(trigger_type, trigger)
     if decision.decision not in allowed:
         return f'this turn only allows decisions: {", ".join(allowed)}'
 
@@ -553,6 +588,7 @@ def validate_decision_for_trigger(
         "channel_response",
         "task_assigned",
         "task_follow_up",
+        "task_update",
         "watchdog_status_ping",
     } and decision.decision != "observe" and not (decision.reply and decision.reply.strip()):
         return 'conversation turns require a non-empty "reply" unless you choose "observe"'
@@ -622,6 +658,7 @@ def validate_decision_for_trigger(
         "session_response",
         "channel_message",
         "channel_response",
+        "task_update",
     } and decision.commitmentKind == "work":
         if trigger_type == "peer_message":
             return 'peer messages are conversational only; use explicit task assignment instead of creating durable work from coworker chat'
@@ -680,7 +717,7 @@ def _work_commit_error(
 
 def _accept_allowed(trigger_type: str, trigger: dict[str, Any] | None) -> bool:
     """Return whether this turn could legally ``accept`` instead of replying."""
-    if "accept" not in allowed_decisions_for_trigger(trigger_type):
+    if "accept" not in allowed_decisions_for_trigger(trigger_type, trigger):
         return False
     if trigger_type == "task_follow_up":
         task_status = str((trigger or {}).get("task_status") or "").strip().lower()

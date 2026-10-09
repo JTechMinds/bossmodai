@@ -124,7 +124,7 @@ def _persist_reply(
 
     trigger_type = trigger.get("type")
     shared_floor = None
-    if trigger_type in {"task_assigned", "task_follow_up"}:
+    if trigger_type in {"task_assigned", "task_follow_up", "task_update"}:
         return _persist_task_follow_up_reply(agent, state, trigger, decision)
     if trigger_type == "human_chat":
         target_id = HUMAN_SENDER_ID
@@ -448,7 +448,9 @@ def _persist_task_follow_up_reply(
         source_trigger_id=trigger.get("trigger_id"),
     )
 
-    if trigger.get("type") == "task_follow_up" and trigger.get("from_agent"):
+    # Reply to whoever wrote the note. On a stakeholder's task_update the
+    # assignment reply target would resolve to the requester themselves.
+    if trigger.get("type") in {"task_follow_up", "task_update"} and trigger.get("from_agent"):
         target_agent_id = str(trigger["from_agent"]).strip()
         if target_agent_id:
             db.create_notification(

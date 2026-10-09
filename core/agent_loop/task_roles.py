@@ -15,12 +15,19 @@ def task_requester_id_for_trigger(
     *,
     default_agent_id: str | None = None,
 ) -> str | None:
-    """Resolve the durable requester for a task created from one trigger."""
+    """Resolve the durable requester for a task created from one trigger.
+
+    Work started from a ``task_update`` (a report on someone else's task) is
+    the recipient's own initiative, so the recipient is its requester, not
+    the reporter in ``from_agent``.
+    """
     trigger_type = trigger.get("type")
     if trigger_type == "human_chat":
         return HUMAN_SENDER_ID
     if trigger_type in {"session_response", "channel_response"} and trigger.get("author_type") == "human":
         return HUMAN_SENDER_ID
+    if trigger_type == "task_update":
+        return _normalize_actor_id(default_agent_id)
 
     from_agent = _normalize_actor_id(trigger.get("from_agent"))
     if from_agent:

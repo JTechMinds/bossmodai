@@ -23,12 +23,14 @@ from core.agent_loop.decision_contract import (
     WORK_COMMIT_CANNOT_START,
     WORK_COMMIT_STARTS_NOTHING,
     ConversationDecision,
+    allowed_conversation_acts_for_trigger,
     parse_direct_turn_response,
     validate_decision_for_trigger,
 )
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.loop import run_turn
 from core.llm.client import LLMResponse
+from core.llm.context_builder import _format_trigger
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.tasking import create_or_bind_task
@@ -416,6 +418,35 @@ def test_resume_prompt_reconcile_runs_once() -> None:
         assert _stored(key) == "operator's own text"
 
 
+_TASK_UPDATE_MARKER = "task_update_prompts_reconciled"
+
+
+def test_task_update_prompt_reconcile_replaces_stale_rows_once() -> None:
+    from db.settings import get_seed_setting_default
+
+    db.execute("DELETE FROM settings WHERE key = $1", [_TASK_UPDATE_MARKER])
+    for key in _RESUME_KEYS:
+        db.execute("UPDATE settings SET value = $1 WHERE key = $2", [f"stale {key} without the stakeholder branch", key])
+    seed_defaults()
+    for key in _RESUME_KEYS:
+        assert _stored(key) == load_default_prompt(key)
+        seeded = get_seed_setting_default(key)
+        assert seeded is not None
+        row = db.query_one("SELECT category FROM settings WHERE key = $1", [key])
+        assert row is not None and row["category"] == seeded[1]
+    assert "{{if trigger.task_party = 'stakeholder'}}" in _stored("runtime_contract_decision")
+    assert _stored(_TASK_UPDATE_MARKER) == "true"
+
+
+def test_task_update_prompt_reconcile_keeps_operator_edits_after_marker() -> None:
+    assert _stored(_TASK_UPDATE_MARKER) == "true"
+    for key in _RESUME_KEYS:
+        db.set_setting(key, f"operator's own {key}", "advanced")
+    seed_defaults()
+    for key in _RESUME_KEYS:
+        assert _stored(key) == f"operator's own {key}"
+
+
 def _accept_by_id(task_id: str, desc: str) -> dict[str, Any]:
     raw = (
         '{"act":"accept","intent":"work","msg":"Revising that task.","commit":"work",'
@@ -553,3 +584,163 @@ def test_defer_on_a_thread_intake_turn_queues_a_pending_task() -> None:
     apply_decision(decision.model_dump(), agent, state, trigger)
     deferred = [task for task in db.list_tasks(assigned_to=agent.id) if task.title == "Draft the Q4 plan"]
     assert [task.status for task in deferred] == ["pending"]
+
+
+# ─── task_update: a report on someone else's task ───
+
+
+def _task_update(*, party: str, task_id: str = "t-report", from_agent: str = "a-reporter") -> dict[str, Any]:
+    return {
+        "type": "task_update",
+        "task_id": task_id,
+        "task_title": "Build milestone M0",
+        "task_description": "Scaffold the project.",
+        "task_status": "complete",
+        "task_party": party,
+        "attention_kind": "completion_report",
+        "from_agent": from_agent,
+        "from_name": "Charles",
+        "content": 'Completed "Build milestone M0": scaffold is in.',
+        "source_channel": "work",
+    }
+
+
+def _validate_on(trigger: dict[str, Any], decision: ConversationDecision, agent_id: str) -> str | None:
+    return validate_decision_for_trigger(
+        decision,
+        trigger_type="task_update",
+        active_task_id=None,
+        has_live_work=False,
+        agent_id=agent_id,
+        trigger=trigger,
+    )
+
+
+_STAKEHOLDER_DECISIONS = {
+    "observe": {"decision": "observe", "intentKind": "other"},
+    "reply": {"decision": "answer", "intentKind": "status_request", "reply": "Thanks, noted.", "workCommit": False},
+    "accept": {
+        "decision": "accept",
+        "intentKind": "work_request",
+        "commitmentKind": "work",
+        "reply": "Starting M1.",
+        "taskTitle": "Build milestone M1",
+    },
+    "defer": {
+        "decision": "defer",
+        "intentKind": "work_request",
+        "commitmentKind": "work",
+        "reply": "Queued M1.",
+        "taskTitle": "Build milestone M1",
+    },
+}
+
+
+@pytest.mark.parametrize("act", sorted(_STAKEHOLDER_DECISIONS))
+def test_stakeholder_task_update_allows_observe_reply_accept_defer(act: str) -> None:
+    agent = db.create_agent("Harley", role="Planner")
+    decision = ConversationDecision.model_validate(_STAKEHOLDER_DECISIONS[act])
+    assert _validate_on(_task_update(party="stakeholder"), decision, agent.id) is None
+
+
+def test_stakeholder_task_update_still_rejects_clarify_and_decline() -> None:
+    agent = db.create_agent("Harley", role="Planner")
+    for name in ("clarify", "decline"):
+        decision = ConversationDecision.model_validate(
+            {"decision": name, "intentKind": "work_request", "reply": "Which milestone?"}
+        )
+        error = _validate_on(_task_update(party="stakeholder"), decision, agent.id)
+        assert error == "this turn only allows decisions: observe, answer, accept, defer"
+
+
+@pytest.mark.parametrize("act", ["reply", "accept", "defer"])
+def test_assignee_task_update_stays_observe_only(act: str) -> None:
+    agent = db.create_agent("Charles", role="Build Engineer")
+    decision = ConversationDecision.model_validate(_STAKEHOLDER_DECISIONS[act])
+    error = _validate_on(_task_update(party="assignee"), decision, agent.id)
+    assert error == "this turn only allows decisions: observe"
+    observe = ConversationDecision.model_validate(_STAKEHOLDER_DECISIONS["observe"])
+    assert _validate_on(_task_update(party="assignee"), observe, agent.id) is None
+
+
+def test_stakeholder_task_update_reply_needs_text() -> None:
+    agent = db.create_agent("Harley", role="Planner")
+    decision = ConversationDecision.model_validate(
+        {"decision": "answer", "intentKind": "status_request", "reply": "   ", "workCommit": False}
+    )
+    error = _validate_on(_task_update(party="stakeholder"), decision, agent.id)
+    assert error == 'conversation turns require a non-empty "reply" unless you choose "observe"'
+
+
+def test_stakeholder_task_update_work_needs_a_title() -> None:
+    agent = db.create_agent("Harley", role="Planner")
+    decision = ConversationDecision.model_validate(
+        {"decision": "accept", "intentKind": "work_request", "commitmentKind": "work", "reply": "On it."}
+    )
+    error = _validate_on(_task_update(party="stakeholder"), decision, agent.id)
+    assert error == 'conversation work requests must provide a non-empty "taskTitle"'
+
+
+def test_stakeholder_committed_reply_with_nothing_open_is_told_to_accept() -> None:
+    agent = db.create_agent("Harley", role="Planner")
+    decision = ConversationDecision.model_validate(
+        {"decision": "answer", "intentKind": "status_request", "reply": "Starting M1.", "workCommit": True}
+    )
+    assert _validate_on(_task_update(party="stakeholder"), decision, agent.id) == WORK_COMMIT_STARTS_NOTHING
+
+
+def test_task_update_acts_in_the_shipped_contract_match_the_code() -> None:
+    text = load_default_prompt("runtime_contract_decision")
+    block = text.split("{{elseif trigger.type = 'task_update'}}", 1)[1].split("{{elseif trigger.type", 1)[0]
+    stakeholder, assignee = block.split("{{else}}", 1)
+    assert stakeholder.lstrip().startswith("{{if trigger.task_party = 'stakeholder'}}")
+    stakeholder_acts = " | ".join(allowed_conversation_acts_for_trigger("task_update", {"task_party": "stakeholder"}))
+    assignee_acts = " | ".join(allowed_conversation_acts_for_trigger("task_update", {"task_party": "assignee"}))
+    assert f"ALLOWED conversation act FOR THIS TURN: {stakeholder_acts}\n" in stakeholder
+    assert f"ALLOWED conversation act FOR THIS TURN: {assignee_acts}\n" in assignee
+    assert stakeholder_acts == "observe | reply | accept | defer"
+    assert assignee_acts == "observe"
+    assert allowed_conversation_acts_for_trigger("task_update") == ("observe",)
+
+
+_TRIGGER_BLOCK_KEY = "runtime_block_trigger_event"
+
+
+def _render_trigger(trigger: dict[str, Any]) -> str:
+    return _format_trigger(
+        trigger,
+        "decision",
+        {_TRIGGER_BLOCK_KEY: load_default_prompt(_TRIGGER_BLOCK_KEY)},
+    )
+
+
+def test_task_update_trigger_renders_the_report_and_its_guidance() -> None:
+    text = _render_trigger(_task_update(party="stakeholder"))
+    assert 'Update on "Build milestone M0" from [Charles].' in text
+    assert "Current task status: complete" in text
+    assert "Task description: Scaffold the project." in text
+    assert 'Latest note from [Charles]: Completed "Build milestone M0": scaffold is in.' in text
+    assert "Reason: someone reported completion and you need to handle the next step." in text
+    assert (
+        "Guidance: Decide what should happen next. If this work is one step of something larger and the next "
+        "step has no owner yet, start it or hand it to the right teammate. If nothing more is needed, observe. "
+        "Do NOT redelegate duplicate work."
+    ) in text
+    assert "You have been activated." not in text
+
+
+def test_task_follow_up_trigger_keeps_its_lines_and_one_reason_block() -> None:
+    trigger = {**_task_update(party="stakeholder"), "type": "task_follow_up", "attention_kind": "blocker"}
+    text = _render_trigger(trigger)
+    assert 'A task needs your response on "Build milestone M0".' in text
+    assert "Task description: Scaffold the project." in text
+    assert 'Latest note from [Charles]: Completed "Build milestone M0": scaffold is in.' in text
+    assert "Respond within the existing task thread for this task." in text
+    assert text.count("Reason: someone reported a blocker and needs a decision or help.") == 1
+    assert text.count("Guidance: Do NOT restart the same delegated work.") == 1
+
+
+def test_non_task_triggers_render_no_reason_block() -> None:
+    text = _render_trigger({"type": "human_chat", "content": "Status?"})
+    assert "Reason:" not in text
+    assert "Guidance:" not in text
