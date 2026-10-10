@@ -2,8 +2,84 @@
 
    The Extensions dialog itself is built from marketplace.css's card classes;
    this sheet adds only what those do not cover for the single-agent browser
-   viewer — a scroller for a panel body (panel bodies do not scroll themselves,
-   see overlays.css) and the full-size image. Linked after marketplace.css. */
+   viewer — a band of the image's facts pinned above a scroller (panel bodies
+   do not scroll themselves, see overlays.css) and the full-size image. The
+   band is the page's identity row over a recessed stat strip, in the app's
+   stat language (small --muted label over an --ink value). Linked after
+   marketplace.css. */
+
+/* The viewer's body: the band stays put while the image pans beneath it —
+   the focal content scrolls, its context does not. */
+.ext-live {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ext-live-band {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Title and URL on the left, the capture time on the right. */
+.ext-live-identity {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.ext-live-page { min-width: 0; }
+
+.ext-live-title,
+.ext-live-url {
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.ext-live-title { font-size: 13px; font-weight: 600; color: var(--ink); }
+.ext-live-url { font-size: 12px; color: var(--muted); user-select: text; }
+.ext-live-taken { font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* One recessed strip of equal cells; wraps to more rows on a narrow window. */
+.ext-live-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(var(--stat-cell-min), 1fr));
+  margin: 0;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+/* A hairline on every cell's leading and bottom edges; the strip's overflow
+   clips the ones on the first cell of each row and under the last row, so
+   wrapped rows need no :nth-child arithmetic. */
+.ext-live-stat {
+  min-width: 0;
+  padding: 6px 10px;
+  box-shadow: -1px 0 0 var(--line), 0 1px 0 var(--line);
+}
+
+.ext-live-stat-label { margin: 0; font-size: 11px; font-weight: 500; color: var(--muted); }
+
+/* Ellipsis clips only the paint: the full value stays in the DOM and title. */
+.ext-live-stat-value {
+  margin: 1px 0 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--ink);
+}
 
 /* The part of a panel layer that scrolls, as a flex child of .modal-body. */
 .ext-scroll {
@@ -17,14 +93,6 @@
   display: block;
   max-width: none;
   border: 1px solid var(--line);
-}
-
-.ext-live-caption {
-  margin: 12px 0 0;
-  padding: 0;
-  list-style: none;
-  font-size: 12px;
-  color: var(--muted);
 }
 
 /* ─── Per-agent settings (extensions/agent-config-dialog.js) ─── */

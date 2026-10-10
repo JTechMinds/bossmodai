@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable
 
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
-from core.extensions.contract import ExtensionContext, LiveViewItem, SetupStatus
+from core.extensions.contract import ExtensionContext, LiveViewFact, LiveViewItem, SetupStatus
 from core.models import Agent
 
 from . import install
@@ -174,7 +174,13 @@ class BrowserVisionExtension:
             if found is None:
                 continue
             path, meta = found
-            caption = [f"window: {meta.window}", meta.view, f"image {meta.image}", f"marks: {meta.marks}"]
+            # Labels are the words the agent's result lines use.
+            facts = [
+                LiveViewFact(label="window", value=meta.window),
+                LiveViewFact(label="view", value=meta.view),
+                LiveViewFact(label="image", value=meta.image),
+                LiveViewFact(label="marks", value=meta.marks),
+            ]
             items.append(LiveViewItem(
                 agent_id=agent_id,
                 image_path=path,
@@ -182,7 +188,7 @@ class BrowserVisionExtension:
                 command=meta.command,
                 url=meta.url,
                 title=meta.title,
-                caption_lines=caption,
+                facts=facts,
             ))
         return sorted(items, key=lambda item: item.taken_at, reverse=True)
 

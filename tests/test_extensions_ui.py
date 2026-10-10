@@ -47,7 +47,8 @@ def test_status_reader_viewer_and_card() -> None:
         "aBurstOfFiveReadsAtMostTwice", "resyncReadsOnce",
         "failureKeepsLastStateAndLogs", "disabledIsAnEmptySet",
         "noSubscribersMeansNoFetches", "toggleRefreshesTheStatus",
-        "viewerTitleAndHeadFocus", "viewerImageHasRealAlt", "viewerShowsEveryCaptionLine",
+        "viewerTitleAndHeadFocus", "viewerImageHasRealAlt", "viewerShowsTheStatBand",
+        "viewerInventsNothingForABlankTitle",
         "viewerDoesNotRefetchAnUnchangedShot", "viewerUpdatesOnANewShotAndRevokesTheOld",
         "viewerSaysSessionEnded", "viewerStopsReadingOnClose",
     ):

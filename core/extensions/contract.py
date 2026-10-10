@@ -32,7 +32,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, runtime_checkable
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from core.extensions.manifest import ExtensionManifest
 
@@ -113,6 +113,26 @@ class Extension(Protocol):
         ...
 
 
+class LiveViewFact(BaseModel):
+    """One labelled fact about a live-view image, shown as a stat cell, in the extension's order.
+
+    Invariant: ``value`` is the exact text the agent's result carried, under
+    the ``label`` that result used. Extensions must not format it separately
+    for the viewer.
+
+    Attributes:
+        label: The agent's own word for the fact, e.g. ``window``.
+        value: The verbatim value, e.g. ``desktop 1280x800``.
+
+    Raises:
+        pydantic.ValidationError: ``label`` or ``value`` is empty (an
+            extension bug, refused at construction rather than shown blank).
+    """
+
+    label: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
 class LiveViewItem(BaseModel):
     """One agent's latest output, for the operator's read-only live view.
 
@@ -123,7 +143,9 @@ class LiveViewItem(BaseModel):
         command: The command that produced it.
         url: Page URL.
         title: Page title.
-        caption_lines: The result lines that describe the image.
+        facts: Labelled facts that describe the image, in display order;
+            each value is the exact text the agent's result carried (see
+            :class:`LiveViewFact`).
     """
 
     agent_id: str
@@ -132,7 +154,7 @@ class LiveViewItem(BaseModel):
     command: str
     url: str
     title: str
-    caption_lines: list[str]
+    facts: list[LiveViewFact]
 
 
 @runtime_checkable

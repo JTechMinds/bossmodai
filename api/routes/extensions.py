@@ -247,7 +247,7 @@ async def extension_live_view(ext_id: str) -> dict[str, Any]:
             "command": item.command,
             "url": item.url,
             "title": item.title,
-            "caption_lines": item.caption_lines,
+            "facts": [fact.model_dump() for fact in item.facts],
             "image_url": f"/api/extensions/{ext_id}/live/{item.agent_id}/image?t={stamp}",
         }
         if agent is None:

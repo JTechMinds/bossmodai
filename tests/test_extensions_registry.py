@@ -310,6 +310,16 @@ def test_a_manifest_declaring_live_view_without_the_method_is_invalid_at_load(tm
     assert "EXTENSION_LOAD_FAILED: manifest declares live_view" in result.prompt_content
 
 
+@pytest.mark.parametrize(("label", "value"), [("", "x"), ("x", "")])
+def test_a_live_view_fact_needs_a_label_and_a_value(label: str, value: str) -> None:
+    from pydantic import ValidationError
+
+    from core.extensions.contract import LiveViewFact
+
+    with pytest.raises(ValidationError):
+        LiveViewFact(label=label, value=value)
+
+
 # ─── agent_config / agent_view manifest blocks ───
 
 

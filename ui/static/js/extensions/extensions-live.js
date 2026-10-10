@@ -2,8 +2,10 @@
  * BossMod AI — one agent's browser view: the exact image its model was sent.
  *
  * Opened from the screen button in that agent's chat header. A read-only
- * debug surface for the operator: the latest screenshot at full size (the
- * scroller pans, the image is never downscaled) and every caption line.
+ * debug surface for the operator: the latest screenshot at full size under a
+ * pinned band of its facts (the scroller pans, the image is never downscaled,
+ * and the band stays put). The band shows only what the agent saw — the
+ * extension's facts verbatim under their own labels — plus the capture time.
  *
  * It does not poll. It listens to BossModBrowserVisionStatus, the one reader,
  * and refetches the image only when the item's `taken_at` changes. Images come
@@ -29,7 +31,7 @@ const BossModExtensionsLive = (() => {
      * @returns {void}
      */
     function openForAgent(agentId, agentName) {
-        const host = h('div', { class: 'ext-scroll' });
+        const host = h('div', { class: 'ext-live' });
         // status: loading | ready | failed | ended
         const state = { status: 'loading', item: null, src: null, error: '', shownAt: null };
         let everSeen = false;
@@ -119,29 +121,56 @@ const BossModExtensionsLive = (() => {
                 ];
             }
             const item = state.item;
-            const lines = [
-                `command: ${item.command}`,
-                `url: ${item.url}`,
-                `title: ${item.title}`,
-                ...item.caption_lines,
-                `taken: ${BossModFormat.formatRelativeTime(item.taken_at)}`,
-            ];
-            return [
-                h('img', {
-                    class: 'ext-live-full', id: 'ext-live-image', src: state.src,
-                    alt: `Latest screenshot from ${agentName}: ${item.title}`,
-                }),
-                h('ul', { class: 'ext-live-caption' }, lines.map((line) => h('li', {}, line))),
-            ];
+            return h('img', {
+                class: 'ext-live-full', id: 'ext-live-image', src: state.src,
+                alt: item.title
+                    ? `Latest screenshot from ${agentName}: ${item.title}`
+                    : `Latest screenshot from ${agentName}`,
+            });
         }
 
         function render() {
             clear(host);
-            [].concat(content()).forEach((node) => host.append(node));
+            // The band describes an item, so only a shown image gets one.
+            if (state.status === 'ready') host.append(statBand(state.item));
+            const scroller = h('div', { class: 'ext-scroll' });
+            [].concat(content()).forEach((node) => scroller.append(node));
+            host.append(scroller);
         }
 
         render();
         void sync();
+    }
+
+    /**
+     * The facts above the image: the page's identity row and the stat strip.
+     *
+     * Every value goes in as text exactly as received — no trimming, casing
+     * or rewording — and a blank title renders no title element, so the band
+     * says what the agent saw and nothing else.
+     *
+     * @param {{command: string, url: string, title: string, taken_at: string,
+     *   facts: Array<{label: string, value: string}>}} item  One /live item.
+     * @returns {HTMLElement} A `header.ext-live-band`.
+     * @throws {Error} When `item.facts` is not an array (a server contract break).
+     */
+    function statBand(item) {
+        if (!Array.isArray(item.facts)) {
+            throw new Error('[extensions-live] item.facts must be an array');
+        }
+        const stats = [{ label: 'command', value: item.command }, ...item.facts];
+        return h('header', { class: 'ext-live-band' },
+            h('div', { class: 'ext-live-identity' },
+                h('div', { class: 'ext-live-page' },
+                    item.title ? h('p', { class: 'ext-live-title' }, item.title) : null,
+                    h('p', { class: 'ext-live-url', title: item.url }, item.url)),
+                h('time', {
+                    class: 'ext-live-taken', datetime: item.taken_at,
+                    title: BossModFormat.formatDateTime(item.taken_at),
+                }, BossModFormat.formatRelativeTime(item.taken_at))),
+            h('dl', { class: 'ext-live-stats' }, stats.map((stat) => h('div', { class: 'ext-live-stat' },
+                h('dt', { class: 'ext-live-stat-label' }, stat.label),
+                h('dd', { class: 'ext-live-stat-value', title: stat.value }, stat.value)))));
     }
 
     /**

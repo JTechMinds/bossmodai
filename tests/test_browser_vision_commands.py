@@ -262,11 +262,46 @@ def test_each_screenshot_has_a_sidecar_describing_it(env) -> None:
     assert sidecar["url"] == "https://example.com"
     assert sidecar["title"] == "Fixture"
     assert sidecar["window"] == "desktop 1280x800"
-    assert sidecar["view"] == "view: zoom 5 — region 427×267 px at (427, 267)"
-    assert sidecar["image"] == "1568x980"
-    assert sidecar["marks"] == 3
+    assert sidecar["view"] == "zoom 5 — region 427×267 px at (427, 267)"
+    assert sidecar["image"] == "1568x980 (scale ×3.675)"
+    assert sidecar["marks"] == "3"
     assert sidecar["taken_at"].endswith("+00:00")
     assert set(sidecar) == {"command", "url", "title", "window", "view", "image", "marks", "taken_at"}
+
+
+def test_view_line_is_the_agents_text_and_view_text_its_bare_value(env) -> None:
+    env["run"]("bv open example.com")
+    assert "view: full page" in env["run"]("bv status").prompt_content
+    env["run"]("bv zoom 5")
+    assert "view: zoom 5 — region 427×267 px at (427, 267)" in env["run"]("bv status").prompt_content
+
+    full = _commands_module._AgentView(window=None, grid=None, show_marks=True)
+    zoomed = _commands_module._AgentView(
+        window=None, grid=None, show_marks=True, zoom=[(427.0, 267.0, 854.0, 534.0)], zoom_path=[5],
+    )
+    assert _commands_module._view_text(full) == "full page"
+    assert _commands_module._view_line(full) == "view: full page"
+    assert _commands_module._view_text(zoomed) == "zoom 5 — region 427×267 px at (427, 267)"
+    assert _commands_module._view_line(zoomed) == "view: zoom 5 — region 427×267 px at (427, 267)"
+
+
+def test_the_sidecar_holds_exactly_what_the_agents_result_lines_say(env) -> None:
+    """No drift: each stored value is the text after its label in the agent's result."""
+    env["run"]("bv open example.com")
+    env["run"]("bv view --marks off")
+    result = env["run"]("bv window widescreen")
+    lines = [line.strip() for line in result.prompt_content.splitlines()]
+    sidecar = json.loads(Path(result.image_paths[0]).with_suffix(".json").read_text(encoding="utf-8"))
+
+    def after(prefix: str) -> str:
+        found = [line[len(prefix):] for line in lines if line.startswith(prefix)]
+        assert len(found) == 1, (prefix, lines)
+        return found[0]
+
+    assert sidecar["image"] == after("image ") == "1568x882 (scale ×0.8167)"
+    assert sidecar["marks"] == after("marks: ") == "3 (hidden on the image)"
+    assert sidecar["window"] == after("window: ") == "widescreen 1920x1080"
+    assert sidecar["view"] == after("view: ") == "full page"
 
 
 def test_open_accepts_localhost_and_rejects_non_urls(env) -> None:

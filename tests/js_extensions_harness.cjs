@@ -128,7 +128,10 @@ const bv = {
 const liveItem = (takenAt) => ({
     agent_id: "a1", agent_name: "Iris", taken_at: takenAt, command: "bv open example.com",
     url: "https://example.com", title: "Example Domain",
-    caption_lines: ["window: desktop 1280x800", "view: full page", "image 1280x800", "marks: 3"],
+    facts: [
+        { label: "window", value: "desktop 1280x800" }, { label: "view", value: "full page" },
+        { label: "image", value: "1280x800" }, { label: "marks", value: "3" },
+    ],
     image_url: `/api/extensions/browser-vision/live/a1/image?t=${Date.parse(takenAt)}`,
 });
 let liveReply = { kind: "ok", body: { items: [] } };
@@ -291,7 +294,7 @@ const verdict = {};
     closeLayer(layers[layers.length - 1]);
     again();
 
-    // 7. The single-agent viewer: real alt, caption lines, and it follows the status.
+    // 7. The single-agent viewer: real alt, the stat band, and it follows the status.
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
     const blobsBefore = blobFetches.length;
     global.BossModExtensionsLive.openForAgent("a1", "Iris");
@@ -303,9 +306,24 @@ const verdict = {};
     verdict.viewerImageHasRealAlt = Boolean(img())
         && img().getAttribute("alt") === "Latest screenshot from Iris: Example Domain"
         && img().getAttribute("src") === liveItem("2026-09-28T10:00:00Z").image_url.replace(/^/, "blob:");
-    verdict.viewerShowsEveryCaptionLine = ["command: bv open example.com", "url: https://example.com",
-        "title: Example Domain", "window: desktop 1280x800", "view: full page", "image 1280x800", "marks: 3", "taken: "]
-        .every((line) => viewer.body.textContent.includes(line));
+    const band = viewer.body.querySelector(".ext-live-band");
+    const scroller = viewer.body.querySelector(".ext-scroll");
+    const statPairs = (root) => root.querySelectorAll(".ext-live-stat")
+        .map((cell) => [cell.children[0].tagName, cell.children[0].textContent,
+            cell.children[1].tagName, cell.children[1].textContent, cell.children[1].getAttribute("title")]);
+    verdict.viewerShowsTheStatBand = Boolean(band) && Boolean(scroller)
+        && band.parentNode === scroller.parentNode
+        && band.parentNode.children.indexOf(band) < band.parentNode.children.indexOf(scroller)
+        && scroller.contains(img())
+        && band.querySelector(".ext-live-title").textContent === "Example Domain"
+        && band.querySelector(".ext-live-url").textContent === "https://example.com"
+        && band.querySelector("time").getAttribute("datetime") === "2026-09-28T10:00:00Z"
+        && band.querySelector("time").textContent === global.BossModFormat.formatRelativeTime("2026-09-28T10:00:00Z")
+        && Boolean(band.querySelector("dl"))
+        && JSON.stringify(statPairs(band)) === JSON.stringify([
+            ["command", "bv open example.com"], ["window", "desktop 1280x800"], ["view", "full page"],
+            ["image", "1280x800"], ["marks", "3"],
+        ].map(([label, value]) => ["DT", label, "DD", value, value]));
 
     // Same taken_at on the next read: no refetch.
     push("browser-vision", "a1");
@@ -331,6 +349,23 @@ const verdict = {};
     push("browser-vision", "a1");
     await drain();
     verdict.viewerStopsReadingOnClose = liveCalls === before && timers.size === 0;
+
+    // A blank title: no title element, no placeholder, an alt without a colon.
+    const blankItem = { ...liveItem("2026-09-28T10:10:00Z"), title: "" };
+    liveReply = { kind: "ok", body: { items: [blankItem] } };
+    global.BossModExtensionsLive.openForAgent("a1", "Iris");
+    await drain();
+    const blankViewer = layers[layers.length - 1];
+    const blankBand = blankViewer.body.querySelector(".ext-live-band");
+    const ownText = [
+        blankItem.url, global.BossModFormat.formatRelativeTime(blankItem.taken_at), "command", blankItem.command,
+        ...blankItem.facts.flatMap((fact) => [fact.label, fact.value]),
+    ].join("");
+    verdict.viewerInventsNothingForABlankTitle = Boolean(blankBand)
+        && !blankViewer.body.querySelector(".ext-live-title")
+        && blankViewer.body.querySelector("#ext-live-image").getAttribute("alt") === "Latest screenshot from Iris"
+        && blankBand.textContent === ownText;
+    closeLayer(blankViewer);
 
     // 8. The data table wrapper: argument checks, the Tabulator options it
     //    passes, loadPage paging, text-only cells, the activator and states.

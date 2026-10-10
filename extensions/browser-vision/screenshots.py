@@ -4,8 +4,9 @@ Screenshots belong to the browser session that took them and are deleted
 when it ends, so nothing (the model's context, the operator's live view)
 can show an old page as if the browser were still on it.
 
-Each PNG has a JSON sidecar with the same stem describing what produced it
-(the command, page, view line, image size and mark count). The live view reads these
+Each PNG has a JSON sidecar with the same stem describing what produced it:
+the command and page, plus the exact values of the agent's ``window``,
+``view``, ``image`` and ``marks`` result lines. The live view reads these
 files directly, so nothing about screenshots lives in memory or the DB.
 """
 
@@ -29,10 +30,14 @@ class ShotMeta:
         command: The ``bv`` command as the agent typed it.
         url: Page URL at capture time.
         title: Page title at capture time.
-        window: The window line, e.g. ``desktop 1280x800``.
-        view: The result's view line (``view: full page`` or the zoom path).
-        image: The image size sent to the model, ``WxH``.
-        marks: How many element marks the screenshot has.
+        window: The exact value of the agent's ``window`` result line,
+            e.g. ``desktop 1280x800``.
+        view: The exact value of the agent's ``view`` result line,
+            e.g. ``full page``.
+        image: The exact value of the agent's ``image`` result line,
+            e.g. ``1280x800 (scale ×0.5)``.
+        marks: The exact value of the agent's ``marks`` result line,
+            e.g. ``3 (hidden on the image)``.
         taken_at: ISO-8601 UTC capture time.
     """
 
@@ -42,7 +47,7 @@ class ShotMeta:
     window: str
     view: str
     image: str
-    marks: int
+    marks: str
     taken_at: str
 
 

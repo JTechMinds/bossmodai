@@ -821,7 +821,16 @@ class BrowserVisionCommands:
             pointer=view.pointer,
         )
         view.image = rendered.geometry
-        view_line = _view_line(view)
+        # Each value is formatted once and feeds both the agent's result line
+        # and the sidecar, so the operator's live view cannot drift from what
+        # the agent was told.
+        window_text = f"{view.window.name} {capture.width}x{capture.height}"
+        view_text = _view_text(view)
+        # Always stated: bv point coordinates are pixels of this image.
+        image_text = f"{rendered.width}x{rendered.height}"
+        if rendered.scale != 1:
+            image_text += f" (scale ×{rendered.scale:.4g})"
+        marks_text = str(len(capture.marks)) + ("" if view.show_marks else " (hidden on the image)")
         path = self._shots.store(
             ctx.agent.id,
             capture.session.session_id,
@@ -830,10 +839,10 @@ class BrowserVisionCommands:
                 command=parsed.raw,
                 url=capture.url,
                 title=capture.title,
-                window=f"{view.window.name} {capture.width}x{capture.height}",
-                view=view_line,
-                image=f"{rendered.width}x{rendered.height}",
-                marks=len(capture.marks),
+                window=window_text,
+                view=view_text,
+                image=image_text,
+                marks=marks_text,
                 taken_at=datetime.now(timezone.utc).isoformat(),
             ),
         )
@@ -845,14 +854,12 @@ class BrowserVisionCommands:
             f"url: {capture.url}",
             f"title: {capture.title}",
             f"viewport: {capture.width}x{capture.height}",
-            f"window: {view.window.name} {capture.width}x{capture.height}",
-            view_line,
+            f"window: {window_text}",
+            f"view: {view_text}",
+            f"image {image_text}",
+            _overlays_line(view),
+            f"marks: {marks_text}",
         ]
-        # Always stated: bv point coordinates are pixels of this image.
-        image_line = f"image {rendered.width}x{rendered.height}"
-        lines.append(image_line if rendered.scale == 1 else f"{image_line} (scale ×{rendered.scale:.4g})")
-        lines.append(_overlays_line(view))
-        lines.append(f"marks: {len(capture.marks)}" + ("" if view.show_marks else " (hidden on the image)"))
         lines += [legend_line(mark) for mark in capture.marks]
         lines += notes
         status_lines: list[str] = []
@@ -881,7 +888,7 @@ class BrowserVisionCommands:
             data={
                 "url": capture.url,
                 "title": capture.title,
-                "view": view_line,
+                "view": f"view: {view_text}",
                 "marks": len(capture.marks),
                 "screenshot": str(path),
                 "status_lines": status_lines,
@@ -914,13 +921,26 @@ class BrowserVisionCommands:
         return error_result(parsed.raw, message, cwd=ctx.cwd)
 
 
-def _view_line(view: _AgentView) -> str:
-    """``view: full page`` or ``view: zoom 5 › 3 — region W×H px at (x, y)``."""
+def _view_text(view: _AgentView) -> str:
+    """The value of the agent's ``view:`` line.
+
+    Args:
+        view: The agent's current view state.
+
+    Returns:
+        ``full page``, or ``zoom 5 › 3 — region W×H px at (x, y)`` for the
+        innermost zoom region.
+    """
     if not view.zoom:
-        return "view: full page"
+        return "full page"
     x0, y0, x1, y1 = view.zoom[-1]
     path = " › ".join(str(digit) for digit in view.zoom_path)
-    return f"view: zoom {path} — region {x1 - x0:.0f}×{y1 - y0:.0f} px at ({x0:.0f}, {y0:.0f})"
+    return f"zoom {path} — region {x1 - x0:.0f}×{y1 - y0:.0f} px at ({x0:.0f}, {y0:.0f})"
+
+
+def _view_line(view: _AgentView) -> str:
+    """``view: full page`` or ``view: zoom 5 › 3 — region W×H px at (x, y)``."""
+    return f"view: {_view_text(view)}"
 
 
 def parse_wait_seconds(raw: str) -> float:

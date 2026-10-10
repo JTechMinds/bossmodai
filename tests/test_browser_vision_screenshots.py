@@ -16,7 +16,7 @@ shots = importlib.import_module(f"{_PACKAGE.__name__}.screenshots")
 sessions = importlib.import_module(f"{_PACKAGE.__name__}.sessions")
 
 
-def _meta(command: str = "bv open example.com", view: str = "view: full page"):
+def _meta(command: str = "bv open example.com", view: str = "full page"):
     return shots.ShotMeta(
         command=command,
         url="https://example.com",
@@ -24,14 +24,14 @@ def _meta(command: str = "bv open example.com", view: str = "view: full page"):
         window="desktop 1280x800",
         view=view,
         image="1280x800",
-        marks=5,
+        marks="5",
         taken_at="2026-09-28T12:00:00+00:00",
     )
 
 
 def test_store_writes_a_sidecar_with_every_field(tmp_path: Path) -> None:
     store = shots.ScreenshotStore(tmp_path, keep=5)
-    zoomed = "view: zoom 5 — region 427×267 px at (427, 267)"
+    zoomed = "zoom 5 — region 427×267 px at (427, 267)"
     path = store.store("agent-1", "s1", b"png-bytes", _meta(view=zoomed))
     assert path.parent == tmp_path / "agent-1" / "s1"
     assert path.read_bytes() == b"png-bytes"
