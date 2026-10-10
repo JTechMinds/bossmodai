@@ -21,9 +21,8 @@ from starlette.responses import FileResponse
 from api.routes._shared import (
     _IMAGE_MIME_TYPES,
     _TEXT_FILE_EXTENSIONS,
-    _available_folder_opener_options,
     _child_virtual_path,
-    _launch_file_explorer,
+    _open_in_file_explorer,
     _read_desk_file_preview,
 )
 from api.routes._company_floors import (
@@ -35,7 +34,6 @@ from api.routes._company_floors import (
     refuse_floor_folder,
     refuse_floor_level_destination,
 )
-from core import config
 
 router = APIRouter()
 
@@ -94,19 +92,7 @@ async def open_company_folder(body: dict) -> dict[str, object]:
         raise HTTPException(404, "Path not found")
 
     target = safe if safe.is_dir() else safe.parent
-    opener = config.get("desktop_open_folder_handler") or "auto"
-    try:
-        _launch_file_explorer(target, opener=opener)
-    except OSError as exc:
-        raise HTTPException(
-            409,
-            {
-                "code": "desk_open_folder_handler_invalid",
-                "message": str(exc),
-                "options": _available_folder_opener_options(),
-            },
-        ) from exc
-
+    _open_in_file_explorer(target)
     return {"status": "ok", "path": str(target)}
 
 

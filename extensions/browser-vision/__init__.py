@@ -174,11 +174,13 @@ class BrowserVisionExtension:
             if found is None:
                 continue
             path, meta = found
-            # Labels are the words the agent's result lines use.
+            # The image the model was sent is the size that matters, so the
+            # window is not listed: its size repeats the image's unless the
+            # image was scaled, and the verbatim "(scale ×N)" qualifier says
+            # so. The view describes itself, so it has no label.
             facts = [
-                LiveViewFact(label="window", value=meta.window),
-                LiveViewFact(label="view", value=meta.view),
-                LiveViewFact(label="image", value=meta.image),
+                LiveViewFact(label="resolution", value=meta.image),
+                LiveViewFact(value=meta.view),
                 LiveViewFact(label="marks", value=meta.marks),
             ]
             items.append(LiveViewItem(

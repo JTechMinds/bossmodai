@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from core import config
 from core.llm import context_builder
 from core.llm.template_engine import validate_template
@@ -69,3 +71,31 @@ def _available_folder_opener_options() -> list[dict[str, str]]:
     """Return detected folder opener choices for the current platform."""
     from core.file_explorer import available_options
     return available_options()
+
+
+def _open_in_file_explorer(target: Path) -> None:
+    """Open ``target`` in the configured file manager (``auto`` when unset).
+
+    One 409 contract for every "open this folder" route, so the UI's
+    ``BossModDeskOpener.reveal`` can ask which file manager to use and retry.
+
+    Args:
+        target: An existing directory on the host.
+
+    Raises:
+        HTTPException: 409 ``desk_open_folder_handler_invalid`` (with the
+            detected ``options``) when the configured opener cannot be
+            launched.
+    """
+    opener = config.get("desktop_open_folder_handler") or "auto"
+    try:
+        _launch_file_explorer(target, opener=opener)
+    except OSError as exc:
+        raise HTTPException(
+            409,
+            {
+                "code": "desk_open_folder_handler_invalid",
+                "message": str(exc),
+                "options": _available_folder_opener_options(),
+            },
+        ) from exc

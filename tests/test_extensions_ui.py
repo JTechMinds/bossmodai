@@ -26,6 +26,8 @@ MODULES = [
     JS / "core" / "tabs.js",
     JS / "core" / "fact-list.js",
     JS / "extensions" / "agent-view-dialog.js",
+    JS / "core" / "external-open.js",
+    JS / "context" / "desk-opener.js",
 ]
 
 
@@ -47,8 +49,8 @@ def test_status_reader_viewer_and_card() -> None:
         "aBurstOfFiveReadsAtMostTwice", "resyncReadsOnce",
         "failureKeepsLastStateAndLogs", "disabledIsAnEmptySet",
         "noSubscribersMeansNoFetches", "toggleRefreshesTheStatus",
-        "viewerTitleAndHeadFocus", "viewerImageHasRealAlt", "viewerShowsTheStatBand",
-        "viewerInventsNothingForABlankTitle",
+        "viewerTitleAndHeadFocus", "viewerImageHasRealAlt", "viewerShowsTheQuietBand",
+        "viewerInventsNothingForABlankTitle", "viewerFileUrlOpensItsFolder", "viewerOtherSchemesAreInert",
         "viewerDoesNotRefetchAnUnchangedShot", "viewerUpdatesOnANewShotAndRevokesTheOld",
         "viewerSaysSessionEnded", "viewerStopsReadingOnClose",
     ):

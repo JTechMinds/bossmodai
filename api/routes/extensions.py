@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import asyncio
 import re
+import urllib.parse
+import urllib.request
 from datetime import datetime, timezone
 from typing import Any
 
@@ -24,6 +26,7 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict
 
 import db
+from api.routes._shared import _open_in_file_explorer
 from api.websocket import manager
 from core.extensions.contract import (
     AgentConfigError,
@@ -273,6 +276,40 @@ async def extension_live_image(ext_id: str, agent_id: str) -> FileResponse:
     if not path.is_relative_to(root) or not path.is_file():
         raise HTTPException(404, "No screenshot for that agent")
     return FileResponse(path, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/extensions/{ext_id}/live/{agent_id}/open-folder")
+async def extension_live_open_folder(ext_id: str, agent_id: str) -> dict[str, str]:
+    """Open the folder of the local page one agent's live view is showing.
+
+    The folder comes from the URL of the agent's own live item; the client
+    sends no path, so this cannot be used to open an arbitrary host folder.
+    A file URL opens the folder that contains the file; a directory URL
+    opens the directory itself.
+
+    Security: the agent controls which page it is on, so this can open any
+    folder the agent's browser could read. The operator triggers it with an
+    explicit click, and it only shows the folder in the file manager.
+
+    Raises:
+        HTTPException: 404 when the agent has no live item or the folder no
+            longer exists; 409 ``LIVE_URL_NOT_FILE`` when the page is not a
+            local ``file:`` URL; 409 ``desk_open_folder_handler_invalid``
+            when the file manager cannot be launched; the ``_live_items``
+            conflicts otherwise.
+    """
+    match = next((item for item in _live_items(ext_id) if item.agent_id == agent_id), None)
+    if match is None:
+        raise HTTPException(404, "No live view for that agent")
+    parsed = urllib.parse.urlparse(match.url)
+    if parsed.scheme.lower() != "file" or parsed.netloc not in ("", "localhost"):
+        raise _conflict("LIVE_URL_NOT_FILE", "That page is not a local file.")
+    path = Path(urllib.request.url2pathname(parsed.path))
+    target = path if path.is_dir() else path.parent
+    if not target.is_dir():
+        raise HTTPException(404, "That folder no longer exists.")
+    _open_in_file_explorer(target)
+    return {"status": "ok", "path": str(target)}
 
 
 # ─── per-agent config and view ───

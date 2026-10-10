@@ -4,8 +4,9 @@
    this sheet adds only what those do not cover for the single-agent browser
    viewer — a band of the image's facts pinned above a scroller (panel bodies
    do not scroll themselves, see overlays.css) and the full-size image. The
-   band is the page's identity row over a recessed stat strip, in the app's
-   stat language (small --muted label over an --ink value). Linked after
+   band is three quiet lines of soft grey text — the page (title, then its
+   URL), the command, and the extension's facts — with no fill, border or
+   dividers: spacing alone sets it apart from the image. Linked after
    marketplace.css. */
 
 /* The viewer's body: the band stays put while the image pans beneath it —
@@ -15,71 +16,62 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 
 .ext-live-band {
   flex: none;
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
+  line-height: 1.45;
 }
 
-/* Title and URL on the left, the capture time on the right. */
+/* The page on the left, the capture time on the right. */
 .ext-live-identity {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: start;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
   gap: 12px;
-  min-width: 0;
 }
 
-.ext-live-page { min-width: 0; }
+.ext-live-page {
+  margin: 0;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
 
-.ext-live-title,
+/* Underlined as well as greyed, so a link is not marked by colour alone
+   (SC 1.4.1). Focus rings come from base.css's :focus-visible. */
 .ext-live-url {
+  font-weight: 400;
+  color: var(--hint);
+  text-decoration: underline;
+  text-decoration-color: var(--line-strong);
+  text-underline-offset: 2px;
+  user-select: text;
+}
+
+a.ext-live-url:hover { text-decoration-color: var(--muted); }
+
+/* Any other scheme (about:blank, data:) is plain text: no link affordance. */
+span.ext-live-url { text-decoration: none; }
+
+.ext-live-taken { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; }
+
+/* The command and the facts: full text, wrapping, never truncated. */
+.ext-live-line {
   margin: 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-
-.ext-live-title { font-size: 13px; font-weight: 600; color: var(--ink); }
-.ext-live-url { font-size: 12px; color: var(--muted); user-select: text; }
-.ext-live-taken { font-size: 12px; color: var(--muted); white-space: nowrap; }
-
-/* One recessed strip of equal cells; wraps to more rows on a narrow window. */
-.ext-live-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(var(--stat-cell-min), 1fr));
-  margin: 0;
-  background: var(--bg);
-  border: 1px solid var(--line);
-  border-radius: var(--r-lg);
-  overflow: hidden;
-}
-
-/* A hairline on every cell's leading and bottom edges; the strip's overflow
-   clips the ones on the first cell of each row and under the last row, so
-   wrapped rows need no :nth-child arithmetic. */
-.ext-live-stat {
-  min-width: 0;
-  padding: 6px 10px;
-  box-shadow: -1px 0 0 var(--line), 0 1px 0 var(--line);
-}
-
-.ext-live-stat-label { margin: 0; font-size: 11px; font-weight: 500; color: var(--muted); }
-
-/* Ellipsis clips only the paint: the full value stays in the DOM and title. */
-.ext-live-stat-value {
-  margin: 1px 0 0;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
   font-size: 12px;
-  font-weight: 500;
-  color: var(--ink);
+  color: var(--muted);
+  overflow-wrap: anywhere;
 }
+
+.ext-live-label { color: var(--hint); }
+.ext-live-sep { margin-inline: 6px; color: var(--line-strong); }
 
 /* The part of a panel layer that scrolls, as a flex child of .modal-body. */
 .ext-scroll {

@@ -320,6 +320,16 @@ def test_a_live_view_fact_needs_a_label_and_a_value(label: str, value: str) -> N
         LiveViewFact(label=label, value=value)
 
 
+def test_a_live_view_fact_without_a_label_describes_itself() -> None:
+    from pydantic import ValidationError
+
+    from core.extensions.contract import LiveViewFact
+
+    assert LiveViewFact(value="x").label is None
+    with pytest.raises(ValidationError):
+        LiveViewFact(label="", value="x")
+
+
 # ─── agent_config / agent_view manifest blocks ───
 
 

@@ -29,6 +29,7 @@
  *                           failed read does not blink every header button away.
  */
 const BossModBrowserVisionStatus = (() => {
+    /** The extension this reader covers; the viewer's folder button names it too. */
     const EXTENSION_ID = 'browser-vision';
 
     /** agent id → the live item `GET …/live` returned for it. */
@@ -151,5 +152,5 @@ const BossModBrowserVisionStatus = (() => {
         return items.get(agentId) || null;
     }
 
-    return { attach, subscribe, refresh, hasView, latest };
+    return { EXTENSION_ID, attach, subscribe, refresh, hasView, latest };
 })();

@@ -259,7 +259,9 @@ def _write_marker(agent_id: str, pid: int) -> None:
     }), encoding="utf-8")
 
 
-def _write_shot(agent_id: str, command: str, taken_at: str, *, marker: bool = True) -> Path:
+def _write_shot(
+    agent_id: str, command: str, taken_at: str, *, marker: bool = True, url: str = "https://example.com",
+) -> Path:
     """One screenshot in the agent's session folder, with a live marker (this process) unless told not to."""
     if marker:
         _write_marker(agent_id, os.getpid())
@@ -268,7 +270,7 @@ def _write_shot(agent_id: str, command: str, taken_at: str, *, marker: bool = Tr
     stamp = taken_at.replace(":", "").replace("-", "")[:15]
     png = folder / f"{stamp}.png"
     png.with_suffix(".json").write_text(json.dumps({
-        "command": command, "url": "https://example.com", "title": "Example",
+        "command": command, "url": url, "title": "Example",
         "window": "desktop 1280x800", "view": "full page", "image": "1280x800",
         "marks": "4", "taken_at": taken_at,
     }), encoding="utf-8")
@@ -313,9 +315,8 @@ def test_live_lists_each_agents_latest_shot_newest_first(client, live_shots) -> 
     assert first["image_url"] == f"/api/extensions/{_BV}/live/{newer.id}/image?t={stamp}"
     assert first["command"] == "bv click 5"
     assert first["facts"] == [
-        {"label": "window", "value": "desktop 1280x800"},
-        {"label": "view", "value": "full page"},
-        {"label": "image", "value": "1280x800"},
+        {"label": "resolution", "value": "1280x800"},
+        {"label": None, "value": "full page"},
         {"label": "marks", "value": "4"},
     ]
     assert "agent_missing" not in first
@@ -372,6 +373,78 @@ def test_live_image_is_served_uncached_and_refuses_anything_else(client, live_sh
 
     for bad in ("unknown-agent", "..", "..%2F..%2Fsetup.log", f"{agent.id}%2F..%2F.."):
         assert client.get(f"/api/extensions/{_BV}/live/{bad}/image").status_code == 404, bad
+
+
+@pytest.fixture()
+def launched(monkeypatch) -> list[tuple[Path, str]]:
+    """Record file-manager launches instead of opening one."""
+    calls: list[tuple[Path, str]] = []
+    monkeypatch.setattr(
+        "api.routes._shared._launch_file_explorer",
+        lambda path, *, opener: calls.append((path, opener)),
+    )
+    return calls
+
+
+def test_live_open_folder_opens_the_folder_of_the_agents_file_page(client, live_shots, launched, tmp_path) -> None:
+    agent = db.create_agent("Seer", role="Researcher")
+    page = tmp_path / "pages" / "hud.png"
+    page.parent.mkdir()
+    page.write_bytes(b"png")
+    _write_shot(agent.id, "bv open hud.png", "2026-09-28T10:00:00+00:00", url=page.as_uri())
+    _enable_bv(client)
+
+    response = client.post(f"/api/extensions/{_BV}/live/{agent.id}/open-folder")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {"status": "ok", "path": str(page.parent)}
+    assert launched == [(page.parent, "auto")]
+
+
+def test_live_open_folder_refuses_a_page_that_is_not_a_local_file(client, live_shots, launched) -> None:
+    agent = db.create_agent("Seer", role="Researcher")
+    _write_shot(agent.id, "bv open example.com", "2026-09-28T10:00:00+00:00", url="https://example.com")
+    _enable_bv(client)
+
+    response = client.post(f"/api/extensions/{_BV}/live/{agent.id}/open-folder")
+
+    assert response.status_code == 409
+    assert response.json()["detail"]["error"] == "LIVE_URL_NOT_FILE"
+    assert launched == []
+
+
+def test_live_open_folder_is_404_for_a_missing_folder_or_an_unknown_agent(client, live_shots, launched, tmp_path) -> None:
+    agent = db.create_agent("Seer", role="Researcher")
+    gone = tmp_path / "gone" / "page.html"
+    _write_shot(agent.id, "bv open page.html", "2026-09-28T10:00:00+00:00", url=gone.as_uri())
+    _enable_bv(client)
+
+    missing = client.post(f"/api/extensions/{_BV}/live/{agent.id}/open-folder")
+    unknown = client.post(f"/api/extensions/{_BV}/live/unknown-agent/open-folder")
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "That folder no longer exists."
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"] == "No live view for that agent"
+    assert launched == []
+
+
+def test_live_open_folder_asks_for_a_file_manager_when_the_launch_fails(client, live_shots, monkeypatch, tmp_path) -> None:
+    def _refuse(path, *, opener):
+        raise OSError("no such file manager")
+
+    monkeypatch.setattr("api.routes._shared._launch_file_explorer", _refuse)
+    agent = db.create_agent("Seer", role="Researcher")
+    _write_shot(agent.id, "bv open x", "2026-09-28T10:00:00+00:00", url=tmp_path.as_uri())
+    _enable_bv(client)
+
+    response = client.post(f"/api/extensions/{_BV}/live/{agent.id}/open-folder")
+
+    assert response.status_code == 409
+    detail = response.json()["detail"]
+    assert detail["code"] == "desk_open_folder_handler_invalid"
+    assert detail["message"] == "no such file manager"
+    assert isinstance(detail["options"], list)
 
 
 def test_the_app_process_can_load_browser_vision_without_starting_a_browser(client, live_shots) -> None:

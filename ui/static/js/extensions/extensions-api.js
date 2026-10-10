@@ -97,6 +97,21 @@ const BossModExtensionsApi = (() => {
 
     const enc = encodeURIComponent;
 
+    /**
+     * Ask the host to open the folder of the local page an agent's live view
+     * shows. The server takes the folder from that agent's live item; no
+     * path is sent.
+     *
+     * @param {string} id  The live-view extension.
+     * @param {string} agentId
+     * @returns {Promise<Response>} The raw response, for
+     *   `BossModDeskOpener.reveal`, which owns the 409 handling (choose a
+     *   file manager, retry once) and the failure message.
+     */
+    function openLiveFolder(id, agentId) {
+        return apiFetch(`/api/extensions/${enc(id)}/live/${enc(agentId)}/open-folder`, { method: 'POST' });
+    }
+
     function agentBase(id, agentId) {
         return `/api/extensions/${enc(id)}/agents/${enc(agentId)}`;
     }
@@ -203,7 +218,7 @@ const BossModExtensionsApi = (() => {
     }
 
     return {
-        listExtensions, setEnabled, startSetup, liveView,
+        listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
         agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
     };
 })();

@@ -114,22 +114,24 @@ class Extension(Protocol):
 
 
 class LiveViewFact(BaseModel):
-    """One labelled fact about a live-view image, shown as a stat cell, in the extension's order.
+    """One fact about a live-view image, shown inline in the extension's order.
 
-    Invariant: ``value`` is the exact text the agent's result carried, under
-    the ``label`` that result used. Extensions must not format it separately
-    for the viewer.
+    Invariant: ``value`` is the exact text the agent's result carried.
+    Extensions must not format it separately for the viewer.
 
     Attributes:
-        label: The agent's own word for the fact, e.g. ``window``.
-        value: The verbatim value, e.g. ``desktop 1280x800``.
+        label: The fact's name, shown as ``label: value``, e.g. ``marks``;
+            ``None`` when the value describes itself (e.g. ``full page``)
+            and is shown alone.
+        value: The verbatim value, e.g. ``3 (hidden on the image)``.
 
     Raises:
-        pydantic.ValidationError: ``label`` or ``value`` is empty (an
-            extension bug, refused at construction rather than shown blank).
+        pydantic.ValidationError: ``value`` is empty, or ``label`` is an
+            empty string (an extension bug, refused at construction rather
+            than shown blank; leave it ``None`` instead).
     """
 
-    label: str = Field(min_length=1)
+    label: str | None = Field(default=None, min_length=1)
     value: str = Field(min_length=1)
 
 
@@ -143,8 +145,8 @@ class LiveViewItem(BaseModel):
         command: The command that produced it.
         url: Page URL.
         title: Page title.
-        facts: Labelled facts that describe the image, in display order;
-            each value is the exact text the agent's result carried (see
+        facts: Facts that describe the image, in display order; each
+            value is the exact text the agent's result carried (see
             :class:`LiveViewFact`).
     """
 

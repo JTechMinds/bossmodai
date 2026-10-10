@@ -20,7 +20,7 @@ const NAMES = [
     "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModExtensionsApi",
     "BossModBrowserVisionStatus", "BossModExtensionsLive", "BossModExtensionsDialog",
     "BossModGates", "BossModSecretField", "BossModDataTable", "BossModAgentConfigDialog", "BossModDeskExtensions",
-    "BossModTabs", "BossModFactList", "BossModAgentViewDialog",
+    "BossModTabs", "BossModFactList", "BossModAgentViewDialog", "BossModExternalOpen", "BossModDeskOpener",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -118,6 +118,9 @@ const blobFetches = [];
 global.apiFetchBlobUrl = async (url) => { blobFetches.push(url); return `blob:${url}`; };
 const errors = [];
 console.error = (...args) => { errors.push(args.map(String).join(" ")); };
+// Only a failed folder open reads the error text, and these tests open it
+// successfully; file-ops.js would drag in the whole file-form stack.
+global.BossModFileOps = { readApiError: async () => "" };
 
 const bv = {
     id: "browser-vision", name: "Browser Vision", version: "1.0.0", description: "d",
@@ -129,8 +132,8 @@ const liveItem = (takenAt) => ({
     agent_id: "a1", agent_name: "Iris", taken_at: takenAt, command: "bv open example.com",
     url: "https://example.com", title: "Example Domain",
     facts: [
-        { label: "window", value: "desktop 1280x800" }, { label: "view", value: "full page" },
-        { label: "image", value: "1280x800" }, { label: "marks", value: "3" },
+        { label: "resolution", value: "1280x800" }, { label: null, value: "full page" },
+        { label: "marks", value: "3" },
     ],
     image_url: `/api/extensions/browser-vision/live/a1/image?t=${Date.parse(takenAt)}`,
 });
@@ -152,6 +155,7 @@ let putReply = () => ({
     json: async () => ({ detail: { error: "CONFIG_VERIFY_FAILED", message: "The client secret is wrong or has expired. Create a new secret and try again." } }),
 });
 let liveCalls = 0;
+const folderOpens = [];
 let listReply = [bv];
 let deskReads = 0;
 const viewCalls = [];
@@ -179,6 +183,10 @@ global.apiFetch = async (url, init) => {
     if (itemMatch) {
         viewCalls.push({ item: itemMatch[1], view: itemMatch[2] });
         return ok({ title: "Opened", facts: [["To", "jordan@contoso.com"]], body_text: "Body" });
+    }
+    if (url.endsWith("/open-folder")) {
+        folderOpens.push({ url, method: init && init.method });
+        return ok({ status: "ok", path: "/tmp/x" });
     }
     if (url.endsWith("/live")) {
         liveCalls += 1;
@@ -308,22 +316,29 @@ const verdict = {};
         && img().getAttribute("src") === liveItem("2026-09-28T10:00:00Z").image_url.replace(/^/, "blob:");
     const band = viewer.body.querySelector(".ext-live-band");
     const scroller = viewer.body.querySelector(".ext-scroll");
-    const statPairs = (root) => root.querySelectorAll(".ext-live-stat")
-        .map((cell) => [cell.children[0].tagName, cell.children[0].textContent,
-            cell.children[1].tagName, cell.children[1].textContent, cell.children[1].getAttribute("title")]);
-    verdict.viewerShowsTheStatBand = Boolean(band) && Boolean(scroller)
+    // Text a reader hears: the aria-hidden separators are left out.
+    const spoken = (node) => (node.getAttribute && node.getAttribute("aria-hidden") === "true"
+        ? "" : node.nodeType === 3 ? node.textContent : (node.childNodes || []).map(spoken).join(""));
+    const identity = band && band.querySelector(".ext-live-page");
+    const lines = band ? band.querySelectorAll(".ext-live-line") : [];
+    const facts = band && band.querySelector(".ext-live-facts");
+    const separators = facts ? facts.querySelectorAll(".ext-live-sep") : [];
+    verdict.viewerShowsTheQuietBand = Boolean(band) && Boolean(scroller)
         && band.parentNode === scroller.parentNode
         && band.parentNode.children.indexOf(band) < band.parentNode.children.indexOf(scroller)
         && scroller.contains(img())
-        && band.querySelector(".ext-live-title").textContent === "Example Domain"
-        && band.querySelector(".ext-live-url").textContent === "https://example.com"
+        && identity.textContent === "Example Domain (https://example.com)"
+        && identity.querySelector(".ext-live-url").tagName === "A"
+        && identity.querySelector(".ext-live-url").getAttribute("href") === "https://example.com"
         && band.querySelector("time").getAttribute("datetime") === "2026-09-28T10:00:00Z"
         && band.querySelector("time").textContent === global.BossModFormat.formatRelativeTime("2026-09-28T10:00:00Z")
-        && Boolean(band.querySelector("dl"))
-        && JSON.stringify(statPairs(band)) === JSON.stringify([
-            ["command", "bv open example.com"], ["window", "desktop 1280x800"], ["view", "full page"],
-            ["image", "1280x800"], ["marks", "3"],
-        ].map(([label, value]) => ["DT", label, "DD", value, value]));
+        && lines[0].textContent === "command: bv open example.com"
+        && JSON.stringify(facts.querySelectorAll(".ext-live-fact").map(spoken))
+            === JSON.stringify(["resolution: 1280x800", "full page", "marks: 3"])
+        && spoken(facts) === "resolution: 1280x800full pagemarks: 3"
+        && separators.length === 2
+        && separators.every((sep) => sep.getAttribute("aria-hidden") === "true" && sep.textContent === "|")
+        && !band.querySelector("dl");
 
     // Same taken_at on the next read: no refetch.
     push("browser-vision", "a1");
@@ -357,15 +372,50 @@ const verdict = {};
     await drain();
     const blankViewer = layers[layers.length - 1];
     const blankBand = blankViewer.body.querySelector(".ext-live-band");
-    const ownText = [
-        blankItem.url, global.BossModFormat.formatRelativeTime(blankItem.taken_at), "command", blankItem.command,
-        ...blankItem.facts.flatMap((fact) => [fact.label, fact.value]),
-    ].join("");
     verdict.viewerInventsNothingForABlankTitle = Boolean(blankBand)
-        && !blankViewer.body.querySelector(".ext-live-title")
+        && blankBand.querySelector(".ext-live-page").textContent === blankItem.url
         && blankViewer.body.querySelector("#ext-live-image").getAttribute("alt") === "Latest screenshot from Iris"
-        && blankBand.textContent === ownText;
+        && spoken(blankBand) === [
+            blankItem.url, global.BossModFormat.formatRelativeTime(blankItem.taken_at),
+            "command: ", blankItem.command, "resolution: 1280x800", "full page", "marks: 3",
+        ].join("");
     closeLayer(blankViewer);
+
+    // A local file page: the URL is a link whose click opens its folder, once, and never navigates.
+    const fileItem = { ...liveItem("2026-09-28T10:15:00Z"), url: "file:///tmp/x/y.png" };
+    liveReply = { kind: "ok", body: { items: [fileItem] } };
+    global.BossModExtensionsLive.openForAgent("a1", "Iris");
+    await drain();
+    const fileViewer = layers[layers.length - 1];
+    const fileUrl = fileViewer.body.querySelector(".ext-live-url");
+    const opensBefore = folderOpens.length;
+    const fileClick = { type: "click", defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    if (fileUrl) fileUrl.dispatchEvent(fileClick);
+    await drain();
+    verdict.viewerFileUrlOpensItsFolder = Boolean(fileUrl) && fileUrl.tagName === "A"
+        && fileUrl.getAttribute("href") === "file:///tmp/x/y.png" && fileUrl.textContent === "file:///tmp/x/y.png"
+        && fileViewer.body.querySelectorAll(".ext-live-url").length === 1
+        && !fileViewer.body.querySelector(".ext-live-band").querySelector("button")
+        && fileClick.defaultPrevented === true
+        && JSON.stringify(folderOpens.slice(opensBefore)) === JSON.stringify([
+            { url: "/api/extensions/browser-vision/live/a1/open-folder", method: "POST" },
+        ])
+        && !fileViewer.body.querySelector(".market-failed");
+    closeLayer(fileViewer);
+
+    // Any other scheme is plain text: nothing to click.
+    const blankPage = { ...liveItem("2026-09-28T10:20:00Z"), url: "about:blank" };
+    liveReply = { kind: "ok", body: { items: [blankPage] } };
+    global.BossModExtensionsLive.openForAgent("a1", "Iris");
+    await drain();
+    const inertViewer = layers[layers.length - 1];
+    const inertBand = inertViewer.body.querySelector(".ext-live-band");
+    verdict.viewerOtherSchemesAreInert = Boolean(inertBand)
+        && Boolean(inertBand.querySelector(".ext-live-url"))
+        && inertBand.querySelector(".ext-live-url").tagName === "SPAN"
+        && inertBand.querySelector(".ext-live-url").textContent === "about:blank"
+        && !inertBand.querySelector("a") && !inertBand.querySelector("button");
+    closeLayer(inertViewer);
 
     // 8. The data table wrapper: argument checks, the Tabulator options it
     //    passes, loadPage paging, text-only cells, the activator and states.
