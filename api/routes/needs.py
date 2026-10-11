@@ -205,62 +205,37 @@ def _approval_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     return items
 
 
-def _auto_approve_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
-    """Recent System AI approvals, so the audit line is visible in Needs."""
-    from core.bm_cli.approval_gate import AUDIT_PREFIX
-
-    items = []
-    for request in db.list_cli_approval_requests(
-        status="approved",
-        decision_by="system",
-        limit=8,
-    ):
-        note = (request.decision_note or "").strip()
-        if AUDIT_PREFIX not in note:
-            continue
-        name = _agent_name(request.agent_id, cache)
-        when = request.decided_at or request.created_at
-        items.append({
-            "id": request.id,
-            "kind": "audit",
-            "card_kind": "cli_auto_approve",
-            "agent_id": request.agent_id,
-            "agent_name": name,
-            "title": f"{name} auto-approved a command",
-            "sub": f"{note} — {request.command}",
-            "cwd": request.cwd,
-            "created_at": when.isoformat(),
-            "conversation_id": request.channel_id or request.agent_id,
-            "grouped_ids": [request.id],
-            "actions": [
-                {"label": "Open log", "method": "GET", "tone": "quiet",
-                 "href": "/api/diagnostics"},
-            ],
-        })
-    return items
-
-
 def _blocked_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     items = []
     for status in BLOCKED_STATUSES:
         for task in db.list_tasks(status=status):
             name = _agent_name(task.assigned_to, cache)
+            reason = (task.status_note or "").strip()
+            # Nudge is offered only where resume_task_as_operator accepts it:
+            # an unassigned task has nobody to hand it back to, and its
+            # "Show me" to Tasks (where it can be assigned) is the way on.
+            actions = []
+            if task.assigned_to:
+                actions.append({
+                    "label": "Nudge", "method": "POST", "tone": "primary",
+                    "href": f"/api/tasks/{task.id}/resume",
+                    "note": {"title": f"Nudge {name}", "label": "Anything that might help? (optional)"},
+                })
             items.append({
                 "id": task.id,
                 "kind": "blocked",
                 "agent_id": task.assigned_to,
                 "agent_name": name,
                 "title": f"{name} is {status}",
-                "sub": task.title,
+                # The agent's stated reason, so every surface shows what is
+                # wrong without the operator leaving the queue.
+                "sub": f"{task.title} — {reason}" if reason else task.title,
                 # Task has no `updated_at`. `last_activity` is a non-optional
                 # datetime and is the field that moves when a task stalls.
                 # (Verified against core/models/task.py — do not substitute.)
                 "created_at": task.last_activity.isoformat(),
                 "conversation_id": task.assigned_to,
-                "actions": [
-                    {"label": "Open task", "method": "GET", "tone": "primary",
-                     "href": f"/api/tasks/{task.id}"},
-                ],
+                "actions": actions,
             })
     return items
 
@@ -269,9 +244,13 @@ def _blocked_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
 async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     """Everything currently waiting on an operator decision, newest first.
 
-    Aggregates pending host-path consents, pending CLI approvals, and
-    blocked/stalled tasks. Actions are server-described so the client never
-    hardcodes a resolution URL per kind.
+    Aggregates pending consents (host path, shell executor, Nest git,
+    workspace preference), pending CLI approvals, and blocked/stalled tasks.
+    Error needs are client-held (the ``diagnostic`` topic) and never listed
+    here. Every action decides something — approve, deny, nudge — and none is
+    a read-only inspection: "Show me" is the client's way to look. Actions
+    are server-described so the client never hardcodes a resolution URL per
+    kind. A blocked task with no assignee has no action.
 
     :param limit: maximum items returned, clamped to 200.
     """
@@ -279,7 +258,6 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     needs = (
         _consent_needs(cache)
         + _approval_needs(cache)
-        + _auto_approve_needs(cache)
         + _blocked_needs(cache)
     )
     needs.sort(key=lambda item: item.get("created_at") or "", reverse=True)

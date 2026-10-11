@@ -18,14 +18,13 @@ const BossModNeedsPopover = (() => {
     const FOCUSABLE = 'button, input';
 
     /** Rendering order. Decisions the operator owes come before reports. */
-    const KIND_ORDER = Object.freeze(['consent', 'nest_git', 'approval', 'blocked', 'error', 'audit']);
+    const KIND_ORDER = Object.freeze(['consent', 'nest_git', 'approval', 'blocked', 'error']);
     const KIND_LABELS = Object.freeze({
         consent: 'Folder access',
         nest_git: 'Nest git',
         approval: 'Command approval',
         blocked: 'Blocked work',
         error: 'Errors',
-        audit: 'Auto-approved',
     });
 
     function groupKey(need) {
@@ -73,6 +72,8 @@ const BossModNeedsPopover = (() => {
         const inFlight = new Set();
         let refreshing = true;
         let closed = false;
+        /** True while a note dialog is open in the popover's place; it owns the keys. */
+        let asking = false;
 
         const heading = h('h2', { class: 'popover-title', tabindex: '-1' });
         const statusEl = h('p', { class: 'popover-status', role: 'status' });
@@ -205,6 +206,23 @@ const BossModNeedsPopover = (() => {
          */
         async function run(need, action) {
             if (inFlight.has(need.id)) return;
+            // An action that takes a note asks for it first; Cancel sends nothing.
+            if (action.note) {
+                // Out of the way while asked: the popover stacks above modals,
+                // so on a narrow window it would cover the dialog.
+                asking = true;
+                element.hidden = true;
+                try {
+                    action = await BossModNeedNoteDialog.ask(need, action);
+                } finally {
+                    asking = false;
+                    element.hidden = false;
+                }
+                if (!action) {
+                    refocus();
+                    return;
+                }
+            }
             inFlight.add(need.id);
             render();
             try {
@@ -237,6 +255,9 @@ const BossModNeedsPopover = (() => {
         }
 
         function onKeydown(event) {
+            // The dialog's own trap answers Tab and Esc; answering too would
+            // pull focus out of it and close the bell under it.
+            if (asking) return;
             if (event.key === 'Escape') {
                 event.preventDefault();
                 close();

@@ -68,7 +68,7 @@ def test_blocked_task_surfaces_as_a_need(client: TestClient) -> None:
         assigned_to=agent.id,
         requester_id=agent.id,
     )
-    db.update_task(task.id, status="blocked")
+    db.update_task(task.id, status="blocked", status_note="Waiting on the staging credentials")
 
     res = client.get("/api/needs", headers=_auth())
     assert res.status_code == 200, res.text
@@ -80,10 +80,39 @@ def test_blocked_task_surfaces_as_a_need(client: TestClient) -> None:
     assert REQUIRED_KEYS <= set(item), f"missing keys: {REQUIRED_KEYS - set(item)}"
     assert item["agent_name"] == "Jim", "agent id must be resolved to a name"
     assert item["kind"] in VALID_KINDS
+    # The agent's stated reason rides on the sub line, after the title.
+    assert item["sub"] == "Implement inline command suppression — Waiting on the staging credentials"
     assert isinstance(item["actions"], list) and item["actions"], "a need must be actionable"
     for action in item["actions"]:
         assert {"label", "href", "method"} <= set(action)
-        assert action["method"] in {"GET", "POST"}
+        assert action["method"] == "POST"
+    assert item["actions"] == [{
+        "label": "Nudge",
+        "method": "POST",
+        "tone": "primary",
+        "href": f"/api/tasks/{task.id}/resume",
+        "note": {"title": "Nudge Jim", "label": "Anything that might help? (optional)"},
+    }]
+
+
+def test_unassigned_blocked_task_has_no_action(client: TestClient) -> None:
+    """Nudge needs an assignee to hand the task back to.
+
+    The one need with no action: its "Show me" to Tasks, where it can be
+    assigned, is the way forward, so "a need must be actionable" does not
+    apply here.
+    """
+    requester = db.create_agent(name="Jim", role="Engineer")
+    task = db.create_task(title="Write the recap", requester_id=requester.id)
+    db.update_task(task.id, status="blocked")
+
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    blocked = [n for n in res.json() if n["kind"] == "blocked"]
+    assert len(blocked) == 1, f"expected one blocked need, got {res.json()}"
+    assert blocked[0]["agent_id"] is None
+    assert blocked[0]["sub"] == "Write the recap"
+    assert blocked[0]["actions"] == []
 
 
 def test_needs_respects_limit(client: TestClient) -> None:

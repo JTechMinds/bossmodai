@@ -209,7 +209,7 @@ def update_task_as_operator(task_id: str, changes: TaskUpdateRequest) -> Operato
     return OperatorTaskResult(task=updated, trigger_requests=trigger_requests, posted_lines=posted_lines)
 
 
-def resume_task_as_operator(task_id: str) -> OperatorTaskResult:
+def resume_task_as_operator(task_id: str, *, note: str | None = None) -> OperatorTaskResult:
     """Hand a blocked or stalled task back to its assignee, with nothing edited.
 
     This is the re-present step a reassign or a requirements change takes
@@ -220,6 +220,10 @@ def resume_task_as_operator(task_id: str) -> OperatorTaskResult:
 
     Args:
         task_id: The task to resume.
+        note: An optional hint from the operator (already stripped; ``None``
+            for none). It is stored as a human ``comment`` task event before
+            the wake is built, so it reaches the agent through the
+            re-presented turn's task-thread history.
 
     Returns:
         The stored task (now ``pending``) and the assignee's wake to enqueue.
@@ -246,6 +250,16 @@ def resume_task_as_operator(task_id: str) -> OperatorTaskResult:
         event_type="system",
         content="The boss resumed the task.",
     )
+    if note:
+        # A task event rather than a DM: the hint belongs to the task, so it
+        # is read in the task's own turn and shows in its event log.
+        append_task_event(
+            task_id=task.id,
+            author_type="human",
+            author_name=boss_label(),
+            event_type="comment",
+            content=note,
+        )
     stored = db.get_task(task.id)
     if stored is None:
         raise RuntimeError(f"Failed to reload task {task.id} after operator resume")

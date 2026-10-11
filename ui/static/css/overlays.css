@@ -1333,6 +1333,10 @@
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.18);
 }
 
+/* Hidden while a Nudge note dialog is open (needs-popover.js run()): the
+   popover stacks above modals, so on a narrow window it would cover it. */
+.popover[hidden] { display: none; }
+
 .popover-title {
   margin: 0 0 4px;
   font-size: 14px;

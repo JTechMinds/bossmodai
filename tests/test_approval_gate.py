@@ -849,12 +849,11 @@ def test_toggle_on_auto_approves_with_the_basis_in_the_audit(
     events = db.list_bm_cli_events(agent_id=agent.id, limit=5)
     assert any(line in str(row.get("stdout_preview") or "") for row in events)
 
+    # History, not a decision: the audit lives in the activity feed and the
+    # CLI result above, never in the operator's needs queue.
     res = client.get("/api/needs", headers=_auth())
     assert res.status_code == 200, res.text
-    audits = [item for item in res.json() if item["kind"] == "audit"]
-    assert len(audits) == 1
-    assert line in audits[0]["sub"]
-    assert "rm notes.txt" in audits[0]["sub"]
+    assert not [item for item in res.json() if item["id"] == approved[0].id]
 
 
 def test_cross_project_write_reaches_the_reviewer_with_labels(
@@ -1109,10 +1108,10 @@ def test_thread_toggle_is_off_in_the_menu_until_the_flag_is_set() -> None:
     requests = (ROOT / "ui/static/js/conversation/sources/thread-requests.js").read_text(encoding="utf-8")
     assert "/cli-auto-approve" in requests
     popover = (ROOT / "ui/static/js/needs/needs-popover.js").read_text(encoding="utf-8")
-    assert "audit: 'Auto-approved'" in popover
+    assert "audit: 'Auto-approved'" not in popover
     assert "popover-need-review" in popover
     shape = (ROOT / "ui/static/js/needs/need-shape.js").read_text(encoding="utf-8")
-    assert "'cli_auto_approved'" in shape
+    assert "'cli_auto_approved'" not in shape
     assert "reviewNote: raw.review_note" in shape
     assert "review_note: need.reviewNote" in shape
     card_js = (ROOT / "ui/static/js/core/consent-card.js").read_text(encoding="utf-8")

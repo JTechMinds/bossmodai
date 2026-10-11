@@ -25,6 +25,7 @@ from core.models import (
     TaskCompleteRequest,
     TaskCreate,
     TaskCreateResponse,
+    TaskResumeRequest,
     TaskUpdateRequest,
 )
 from core.models.message import HUMAN_SENDER_ID
@@ -359,18 +360,23 @@ async def complete_task(task_id: str, body: TaskCompleteRequest):
 
 
 @router.post("/tasks/{task_id}/resume")
-async def resume_task(task_id: str):
+async def resume_task(task_id: str, body: TaskResumeRequest | None = None):
     """Hand a blocked or stalled task back to its assignee, with nothing edited.
+
+    The body is optional: Tasks' one-click Resume posts none, and the needs
+    queue's Nudge posts ``{"note": ...}``, a hint stored on the task's thread
+    for the assignee's next turn.
 
     Returns:
         The serialized task row (as ``GET /tasks`` lists it), now ``pending``.
 
     Raises:
         HTTPException: 404 unknown task, 400 when the task is not blocked or
-            stalled with an assignee, 409 closed task.
+            stalled with an assignee, 409 closed task. FastAPI answers 422
+            for an unknown body field.
     """
     try:
-        result = resume_task_as_operator(task_id)
+        result = resume_task_as_operator(task_id, note=body.note if body else None)
     except IllegalTaskTransition as exc:
         raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:

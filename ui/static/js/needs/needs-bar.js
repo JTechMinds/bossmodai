@@ -197,6 +197,11 @@ const BossModNeedsBar = (() => {
          */
         async function run(need, action) {
             if (inFlight.has(need.id)) return;
+            // An action that takes a note asks for it first; Cancel sends nothing.
+            if (action.note) {
+                action = await BossModNeedNoteDialog.ask(need, action);
+                if (!action) return;
+            }
             inFlight.add(need.id);
             render();
             try {

@@ -5,7 +5,7 @@
  * places: `GET /api/needs` (consent, approval, blocked) and the existing
  * `diagnostic` topic (error). Four dumb surfaces read `store.needs`; only this
  * module writes it, and `needs/need-shape.js` is the only file that ever sees
- * a backend field name.
+ * a backend field name. An error leaves by Clear, or once its agent turns healthy.
  *
  * Two properties matter more than the rest and are commented where they live:
  * the signature guard, which stops a continuously ticking world from
@@ -13,7 +13,7 @@
  * failed approval would look like a granted one.
  */
 const BossModNeeds = (() => {
-    const { ACTIVITY_TRIGGERS, normalise, normaliseDiagnostic } = BossModNeedShape;
+    const { ACTIVITY_TRIGGERS, normalise, normaliseDiagnostic, recoveryOf } = BossModNeedShape;
     const { coalesceKey, coalesceNeeds } = BossModNeedCoalesce;
 
     const NEEDS_URL = '/api/needs';
@@ -56,7 +56,7 @@ const BossModNeeds = (() => {
         if (typeof api !== 'function') throw new Error('[needs] deps.api is required');
 
         const disposers = [];
-        /** Client-held error needs, deduped by diagnostic id. */
+        /** Client-held error needs by diagnostic id; they leave by Clear or recovery. */
         const errorNeeds = new Map();
         const errorListeners = new Set();
         const arrivalListeners = new Set();
@@ -205,14 +205,12 @@ const BossModNeeds = (() => {
          */
         async function resolve(need, action) {
             if (!need || !action) throw new Error('[needs] resolve() needs a need and an action');
-            const before = current.slice();
-            // A GET action inspects ("Open task", "Open diagnostics"); it
-            // decides nothing, so removing the entry for one would tell the
-            // operator they had settled something they had only looked at.
-            const decides = action.method !== 'GET';
-            if (decides) {
-                publish(current.filter((item) => item.id !== need.id), false);
+            if (action.clear) {
+                acknowledgeNeed(need);
+                return;
             }
+            const before = current.slice();
+            publish(current.filter((item) => item.id !== need.id), false);
             try {
                 const nest = nestGit();
                 if (action.dismiss) {
@@ -271,13 +269,37 @@ const BossModNeeds = (() => {
                     : item)), true);
                 throw err;
             }
-            // An error need is client-held: the server list does not contain
-            // it, so nothing else would ever clear it. Reading the diagnostic
-            // is the acknowledgement, and a queue entry that can never leave is
-            // worse than one dismissed by being read.
+            await refresh();
+        }
+
+        /**
+         * Clear a client-held error need: its Clear action, or the operator
+         * dealing with it outside the card (a chat Rewind of the failed turn).
+         *
+         * Error needs are not on the server list, so this and an agent's
+         * recovery are the only things that ever clear one. Every diagnostic
+         * a coalesced card stands for goes with it. No request is made.
+         *
+         * @param {object} need  An `error` need from `store.needs`.
+         * @returns {void}
+         * @throws {Error} For any other kind: server-held needs leave
+         *   only when the server says so.
+         */
+        function acknowledgeNeed(need) {
+            if (!need || need.kind !== 'error') {
+                throw new Error('[needs] acknowledge() takes an error need');
+            }
             const ids = (need.groupedIds && need.groupedIds.length) ? need.groupedIds : [need.id];
             ids.forEach((id) => errorNeeds.delete(id));
-            await refresh();
+            recompute();
+        }
+
+        /** A healthy turn clears its agent's errors up to it; `<=` (ISO strings) spares a newer one. */
+        function recover({ agentId, createdAt }) {
+            const stale = Array.from(errorNeeds.values())
+                .filter((item) => item.agentId === agentId && String(item.createdAt) <= createdAt);
+            stale.forEach((item) => errorNeeds.delete(item.id));
+            if (stale.length) recompute();
         }
 
         // A stale response must never overwrite a newer one; see refresh().
@@ -291,7 +313,11 @@ const BossModNeeds = (() => {
             onEvent(topic, data) {
                 if (topic === 'diagnostic') {
                     const need = normaliseDiagnostic(data);
-                    if (!need) return;
+                    if (!need) {
+                        const recovery = recoveryOf(data);
+                        if (recovery) recover(recovery);
+                        return;
+                    }
                     if (errorNeeds.has(need.id)) return;
                     errorNeeds.set(need.id, need);
                     recompute();
@@ -318,28 +344,8 @@ const BossModNeeds = (() => {
             refresh,
             resolve,
 
-            /**
-             * Clear a client-held error need the operator dealt with outside
-             * the card's own actions (a chat Rewind of the turn that failed).
-             *
-             * Error needs are not on the server list, so `resolve()` is the
-             * only other thing that ever clears one; this is that clearing
-             * without the HTTP call. Every diagnostic a coalesced card stands
-             * for goes with it.
-             *
-             * @param {object} need  An `error` need from `store.needs`.
-             * @returns {void}
-             * @throws {Error} For any other kind: server-held needs leave
-             *   only when the server says so.
-             */
-            acknowledge(need) {
-                if (!need || need.kind !== 'error') {
-                    throw new Error('[needs] acknowledge() takes an error need');
-                }
-                const ids = (need.groupedIds && need.groupedIds.length) ? need.groupedIds : [need.id];
-                ids.forEach((id) => errorNeeds.delete(id));
-                recompute();
-            },
+            /** See acknowledgeNeed; chat-rewind.js calls it after a Rewind. */
+            acknowledge: acknowledgeNeed,
 
             /**
              * The last refresh failure, or '' when the queue is healthy.

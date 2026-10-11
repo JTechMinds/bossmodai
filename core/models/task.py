@@ -251,6 +251,28 @@ class TaskCompleteRequest(BaseModel):
         return text
 
 
+class TaskResumeRequest(BaseModel):
+    """Payload accepted by POST /api/tasks/{id}/resume: the operator hands blocked work back.
+
+    ``note`` is an optional hint for the assignee, in the operator's words.
+    It is stripped, and a blank note becomes ``None`` (nothing to say). A
+    missing body is valid too: the route treats it as no note.
+
+    Raises:
+        pydantic.ValidationError: An unknown field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = None
+
+    @field_validator("note")
+    @classmethod
+    def _strip_note(cls, value: str | None) -> str | None:
+        text = (value or "").strip()
+        return text or None
+
+
 TaskCreateOutcome = Literal[
     "create_new_task",
     "bind_existing_task",

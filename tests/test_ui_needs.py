@@ -92,7 +92,13 @@ def test_needs_harness() -> None:
         "noToastOnFirstSnapshot": True,
         "resyncIsABaselineNotArrivals": True,
         "unchangedBaselineStillEnds": True,
-        "inspectionDoesNotResolve": True,
+        # Every entry has a way out: Clear dismisses an error locally, a
+        # healthy turn clears that agent's older errors, and Nudge posts its
+        # optional note (Cancel sends nothing).
+        "clearDismissesErrorLocally": True,
+        "recoveryClearsAgentErrors": True,
+        "nudgePostsNote": True,
+        "nudgeCancelDoesNothing": True,
         "barLeavesConsentInline": True,
         "barLeavesApprovalInline": True,
         "barShowsApprovalWhenInlineMissing": True,
@@ -132,7 +138,7 @@ def test_failed_resolution_restores_the_need() -> None:
     """The one place in this phase where a swallowed error is a safety problem."""
     source = _read(NEEDS / "needs-store.js")
     body = source.split("async function resolve(need, action) {", 1)[1]
-    catch = body.split("} catch (err) {", 1)[1].split("errorNeeds.delete", 1)[0]
+    catch = body.split("} catch (err) {", 1)[1].split("// A stale response must never overwrite", 1)[0]
 
     assert "const before = current.slice();" in body
     # The restore publishes the PRE-removal list, with the failure attached.
@@ -316,27 +322,26 @@ def test_no_source_emits_progress_or_event_kinds() -> None:
     assert 'no renderer for kind' in cards
 
 
-def test_an_inspection_action_decides_nothing() -> None:
-    """"Open task" and "Open diagnostics" are GETs. They settle nothing.
+def test_every_action_decides_and_clear_makes_no_request() -> None:
+    """No need action is a read-only inspection any more; "Show me" is how to look.
 
-    Removing the entry for one would tell the operator they had resolved
-    something they had only looked at. The exception is an error need, which is
-    held client-side: the server list never contained it, so reading the
-    diagnostic is the only thing that can ever clear it.
+    "Open log", "Open diagnostics" and "Open task" were GETs that settled
+    nothing, so resolve() kept their entries. They are gone, so every request
+    action removes its entry optimistically and rolls back on failure, as an
+    approval always did. An error need's Clear is client-held: it is
+    dismissed locally before any request could be built.
     """
-    assert _harness()["inspectionDoesNotResolve"] is True
+    assert _harness()["clearDismissesErrorLocally"] is True
 
     source = _read(NEEDS / "needs-store.js")
-    resolve = source.split("async function resolve(need, action) {", 1)[1]
-    assert "const decides = action.method !== 'GET';" in resolve
-    assert "if (decides) {" in resolve
-    # The optimistic removal is the only thing behind that branch; the request,
-    # the rollback, and the refresh all still run for a GET.
-    guarded = resolve.split("if (decides) {", 1)[1].split("}", 1)[0]
-    assert "publish(current.filter(" in guarded
-    assert "await api(" not in guarded
-    assert "errorNeeds.delete(id)" in resolve
-    assert "groupedIds" in resolve
+    resolve = source.split("async function resolve(need, action) {", 1)[1].split(
+        "// A stale response must never overwrite", 1
+    )[0]
+    assert "action.method !== 'GET'" not in resolve
+    assert "if (decides)" not in resolve
+    assert "if (action.clear) {" in resolve
+    assert resolve.index("acknowledgeNeed(need);") < resolve.index("await api(")
+    assert resolve.index("publish(current.filter(") < resolve.index("try {")
 
 
 def test_need_targets_come_from_one_mapping_table() -> None:
@@ -390,7 +395,7 @@ def test_need_targets_come_from_one_mapping_table() -> None:
 
     # The server-described actions are untouched: `target` is a client concern.
     store_source = _read(NEEDS / "needs-store.js")
-    assert "const decides = action.method !== 'GET';" in store_source
+    assert "api(action.href, requestInit(action))" in store_source
     assert "target" not in store_source, "the queue store must not know about targets"
 
 
@@ -398,12 +403,13 @@ def test_blocked_and_error_needs_navigate_to_their_place() -> None:
     """Behavioural, through the harness: the target actually takes you there.
 
     A source-level table proves the mapping exists; only this proves the button
-    uses it, carries the id into placeParams, and leaves the server-described
-    GET alone — `inspectionDoesNotResolve` still has to pass beside it.
+    uses it and carries the id into placeParams, while the server-described
+    actions (Clear, Nudge) still do their own job beside it.
     """
     payload = _harness()
     assert payload["targetsNavigate"] is True
-    assert payload["inspectionDoesNotResolve"] is True
+    assert payload["clearDismissesErrorLocally"] is True
+    assert payload["nudgePostsNote"] is True
     assert payload["showMeKeepsShell"] is True
 
 

@@ -358,7 +358,7 @@ async function conversationCases() {
     const errorNeed = {
         id: "d9", kind: "error", agentId: "a", conversationId: "a", title: "Ada hit an error",
         sub: "Connection refused", createdAt: "2026-10-08T10:00:03", groupedIds: ["d9"],
-        actions: [{ label: "Open diagnostics", method: "GET", tone: "quiet", href: "/api/diagnostics/d9" }],
+        actions: [{ label: "Clear", tone: "quiet", clear: true }],
         target: { place: "chat", conversationId: "a", conversationKind: "agent" },
     };
     // The chat place's order: the store names the conversation (and the bar
@@ -418,7 +418,7 @@ async function conversationCases() {
     check(menuOffersRewindWhileThinking, "Rewind must stay offered while the agent is thinking");
 
     const labels = barButtons();
-    const errorCardOffersRewind = labels.indexOf("Rewind…") === labels.indexOf("Open diagnostics") + 1;
+    const errorCardOffersRewind = labels.indexOf("Rewind…") === labels.indexOf("Clear") + 1;
     check(errorCardOffersRewind, `error card buttons: ${labels.join("|")}`);
 
     // End to end through the real source: the card preselects the own

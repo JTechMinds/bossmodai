@@ -65,6 +65,7 @@ from core.models.task import (
     TaskCreate,
     TaskCreateOutcome,
     TaskCreateResponse,
+    TaskResumeRequest,
     TaskUpdateRequest,
 )
 from core.models.task_event import TaskEvent
@@ -109,6 +110,7 @@ __all__ = [
     "TaskCandidateSummary",
     "TaskCancelRequest",
     "TaskCompleteRequest",
+    "TaskResumeRequest",
     "TaskUpdateRequest",
     "TaskCreate",
     "TaskCreateOutcome",

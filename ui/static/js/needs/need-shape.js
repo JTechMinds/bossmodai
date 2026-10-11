@@ -13,9 +13,14 @@ const BossModNeedShape = (() => {
     /**
      * @typedef {object} NeedAction
      * @property {string} label
-     * @property {string} href
-     * @property {string} method  Upper-case. GET means inspect, not decide.
+     * @property {string} [href]    Absent only on a `clear` action.
+     * @property {string} [method]  Upper-case. Absent only on a `clear` action.
      * @property {string} tone
+     * @property {object} [body]    JSON request body, when the route takes one.
+     * @property {boolean} [clear]  Client-held need: dismiss locally, no request.
+     * @property {{title: string, label: string}} [note]  The action takes an
+     *   optional operator note: `title` heads the dialog that asks for it and
+     *   `label` names the field (needs/need-note-dialog.js).
      */
 
     /**
@@ -85,7 +90,6 @@ const BossModNeedShape = (() => {
             conversationId: null, conversationKind: null }),
         consent: (need) => chatTarget(need.conversationId, need.agentId),
         approval: (need) => chatTarget(need.conversationId, need.agentId),
-        audit: (need) => chatTarget(need.conversationId, need.agentId),
     });
 
     /**
@@ -208,7 +212,6 @@ const BossModNeedShape = (() => {
         'nest_git_enabled',
         'nest_git_credentials',
         'cli_approval_required',
-        'cli_auto_approved',
         'cli_approval_approved',
         'cli_approval_rejected',
         'cli_approval_resolved',
@@ -229,19 +232,29 @@ const BossModNeedShape = (() => {
      * @param {object} raw
      * @returns {NeedAction}
      * @throws {Error} When the server described an action the client could not
-     *   carry out. Rendering a button with no href is worse than reporting it.
+     *   carry out. Rendering a button with no href is worse than reporting it,
+     *   and so is a `note` that does not say how to ask for one.
      */
     function normaliseAction(raw) {
         if (!raw || !raw.label || !raw.href) {
             throw new Error('[need-shape] an action carries no label or href');
         }
-        return {
+        const action = {
             label: String(raw.label),
             href: String(raw.href),
             method: String(raw.method || 'POST').toUpperCase(),
             tone: String(raw.tone || 'default'),
             body: raw.body && typeof raw.body === 'object' ? raw.body : undefined,
         };
+        if (raw.note != null) {
+            const note = raw.note;
+            if (typeof note !== 'object' || typeof note.title !== 'string' || !note.title
+                || typeof note.label !== 'string' || !note.label) {
+                throw new Error('[need-shape] an action note carries no title or label');
+            }
+            action.note = { title: String(note.title), label: String(note.label) };
+        }
+        return action;
     }
 
     /**
@@ -310,17 +323,30 @@ const BossModNeedShape = (() => {
             // The agent's own conversation is where "show me" lands: an error
             // is something you take up with the agent that hit it.
             conversationId: agentId,
-            actions: [{
-                label: 'Open diagnostics',
-                // GET /api/diagnostics/{id} — verified present in
-                // api/routes/runtime.py before this href was written.
-                href: `/api/diagnostics/${id}`,
-                method: 'GET',
-                tone: 'primary',
-            }],
+            // Client-held, so the dismissal is local; "Show me" (the Log)
+            // is how the operator opens it.
+            actions: [{ label: 'Clear', tone: 'quiet', clear: true }],
         };
         need.target = targetFor(need);
         return need;
+    }
+
+    /**
+     * Whether a `diagnostic` broadcast says an agent is working again.
+     *
+     * Every agent turn broadcasts a diagnostic; a healthy one is the signal
+     * that the agent's earlier errors are behind it. Same predicate as
+     * normaliseDiagnostic: `error` being empty, NOT `status`.
+     *
+     * @param {object} data  The broadcast payload.
+     * @returns {{agentId: string, createdAt: string}|null} null when the
+     *   payload carries an error or names no agent — not a recovery.
+     */
+    function recoveryOf(data) {
+        if (!data || data.agent_id == null || data.agent_id === '') return null;
+        const message = typeof data.error === 'string' ? data.error.trim() : '';
+        if (message) return null;
+        return { agentId: String(data.agent_id), createdAt: String(data.created_at || '') };
     }
 
     return {
@@ -332,6 +358,7 @@ const BossModNeedShape = (() => {
         isOpenFocusNeed,
         normalise,
         normaliseDiagnostic,
+        recoveryOf,
         requestMessageFromNeed,
         targetFor,
     };

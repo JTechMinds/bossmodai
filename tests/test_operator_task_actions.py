@@ -323,6 +323,101 @@ def test_resume_hands_a_stalled_task_back_to_its_assignee(monkeypatch: pytest.Mo
     assert any(item.content == "The boss resumed the task." for item in events)
 
 
+def _stalled_task(client: TestClient) -> tuple[Any, dict[str, Any]]:
+    writer = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)
+    task = _create(client, title="Write the note", assigned_to=writer.id)
+    _move(task["id"], "accepted", "active", "stalled")
+    return writer, task
+
+
+def _comments(task_id: str) -> list[Any]:
+    return [item for item in db.list_task_events(task_id, limit=50) if item.event_type == "comment"]
+
+
+def test_resume_with_a_note_stores_it_before_the_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.tasking import operator_actions
+
+    client = _client(monkeypatch)
+    _writer, task = _stalled_task(client)
+    seen_at_wake: list[list[str]] = []
+    real_wake = operator_actions.assignment_wake_trigger
+
+    def _recording_wake(stored: Any) -> Any:
+        seen_at_wake.append([item.content for item in _comments(stored.id)])
+        return real_wake(stored)
+
+    monkeypatch.setattr(operator_actions, "assignment_wake_trigger", _recording_wake)
+
+    result = operator_actions.resume_task_as_operator(task["id"], note="try the staging creds")
+
+    assert result.task.status == "pending"
+    assert len(result.trigger_requests) == 1
+    # Already on the task thread when the wake was built, so the re-presented
+    # turn's task-thread history carries it.
+    assert seen_at_wake == [["try the staging creds"]]
+    comments = _comments(task["id"])
+    assert len(comments) == 1
+    assert comments[0].author_type == "human"
+    assert comments[0].content == "try the staging creds"
+
+
+def test_resume_without_a_note_adds_no_comment(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.tasking import operator_actions
+
+    client = _client(monkeypatch)
+    _writer, task = _stalled_task(client)
+
+    operator_actions.resume_task_as_operator(task["id"])
+
+    assert _comments(task["id"]) == []
+
+
+def test_resume_route_with_a_note_posts_the_hint(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    writer, task = _stalled_task(client)
+
+    response = client.post(
+        f"/api/tasks/{task['id']}/resume", headers=_headers(), json={"note": "try the staging creds"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "pending"
+    assert [item.content for item in _comments(task["id"])] == ["try the staging creds"]
+    assert len(_queued(writer.id, trigger_type="task_assigned", task_id=task["id"])) == 1
+
+
+def test_resume_route_without_a_body_is_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    writer, task = _stalled_task(client)
+
+    response = client.post(f"/api/tasks/{task['id']}/resume", headers=_headers())
+
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "pending"
+    assert _comments(task["id"]) == []
+    assert len(_queued(writer.id, trigger_type="task_assigned", task_id=task["id"])) == 1
+
+
+def test_resume_route_ignores_a_blank_note(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    _writer, task = _stalled_task(client)
+
+    response = client.post(f"/api/tasks/{task['id']}/resume", headers=_headers(), json={"note": "  "})
+
+    assert response.status_code == 200, response.text
+    assert _comments(task["id"]) == []
+
+
+def test_resume_route_refuses_an_unknown_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    _writer, task = _stalled_task(client)
+
+    response = client.post(f"/api/tasks/{task['id']}/resume", headers=_headers(), json={"hint": "x"})
+
+    assert response.status_code == 422, response.text
+    assert db.get_task(task["id"]).status == "stalled"
+
+
 def test_resume_refuses_an_active_a_closed_or_an_unassigned_task(monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(monkeypatch)
     writer = db.create_agent("Cap Writer", role="Writer", desk_x=1, desk_y=1)

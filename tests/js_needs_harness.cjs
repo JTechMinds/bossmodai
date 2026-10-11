@@ -79,7 +79,7 @@ function approvalRow(id, conversationId) {
     };
 }
 
-/** One blocked task, exactly as api/routes/needs.py emits it. */
+/** One blocked task with an assignee, exactly as api/routes/needs.py emits it. */
 function blockedRow(id, agentId) {
     return {
         id,
@@ -91,8 +91,9 @@ function blockedRow(id, agentId) {
         created_at: "2026-09-07T13:00:00Z",
         conversation_id: agentId,
         actions: [
-            { label: "Open task", method: "GET", tone: "primary",
-              href: `/api/tasks/${id}` },
+            { label: "Nudge", method: "POST", tone: "primary",
+              href: `/api/tasks/${id}/resume`,
+              note: { title: "Nudge Jim", label: "Anything that might help? (optional)" } },
         ],
     };
 }
@@ -294,8 +295,8 @@ async function main() {
     if (errorNeed.conversationId !== "a2") {
         throw new Error("an error need points at the agent that hit it");
     }
-    if (errorNeed.actions[0].href !== "/api/diagnostics/d1") {
-        throw new Error(`unexpected diagnostics href: ${errorNeed.actions[0].href}`);
+    if (errorNeed.actions.map((a) => a.label).join() !== "Clear") {
+        throw new Error(`an error need offers Clear, got ${JSON.stringify(errorNeed.actions)}`);
     }
     // Deduped by diagnostic id: the same broadcast twice is still one need.
     bus.publish("diagnostic", {
@@ -542,12 +543,9 @@ async function main() {
         throw new Error(`Show me from another place must navigate, got ${navigatedTo.join(",")}`);
     }
 
-    // ─── 9b. An inspection action decides nothing, and acknowledges an error ───
-    // Two deliberate behaviours that nothing else would catch: a GET action is
-    // "Open task" / "Open diagnostics", so it must NOT optimistically remove
-    // the entry — that would tell the operator they had settled something they
-    // had only looked at. And an error need is client-held, so resolving it is
-    // the only thing that can ever clear it.
+    // ─── 9b. Clear dismisses an error locally ───
+    // An error need is client-held: the server list never contained it, so
+    // its Clear is a local dismissal and makes no request at all.
 
     queue = [];
     await needs.refresh();
@@ -559,38 +557,71 @@ async function main() {
     await drain();
     const errorEntry = store.getState().needs.find((item) => item.id === "d2");
     if (!errorEntry) throw new Error("the error need must be in the queue");
-    if (errorEntry.actions[0].method !== "GET") {
-        throw new Error("Open diagnostics is an inspection, not a decision");
+    const clearAction = errorEntry.actions[0];
+    if (clearAction.label !== "Clear" || clearAction.clear !== true || "href" in clearAction) {
+        throw new Error(`an error need's action is a local Clear, got ${JSON.stringify(clearAction)}`);
     }
-
-    // A GET that FAILS must leave the entry exactly where it was.
-    resolveFails = true;
-    let inspectThrew = false;
-    try {
-        await needs.resolve(errorEntry, errorEntry.actions[0]);
-    } catch (err) {
-        inspectThrew = true;
+    const callsBeforeClear = calls.length;
+    await needs.resolve(errorEntry, clearAction);
+    await drain();
+    if (calls.length !== callsBeforeClear) {
+        throw new Error(`Clear must make no request, made ${JSON.stringify(calls.slice(callsBeforeClear))}`);
     }
-    await drain();
-    if (!inspectThrew) throw new Error("a failed inspection must still reject");
-    const stillThere = store.getState().needs.find((item) => item.id === "d2");
-    if (!stillThere) throw new Error("a failed inspection must not remove the need");
-    if (!stillThere.error) throw new Error("a failed inspection must be explained on the entry");
-    resolveFails = false;
-
-    // Reading the diagnostic acknowledges it; nothing else ever could.
-    await needs.resolve(stillThere, stillThere.actions[0]);
-    await drain();
     if (store.getState().needs.some((item) => item.id === "d2")) {
-        throw new Error("resolving an error need must clear the client-held entry");
+        throw new Error("Clear must remove the error need");
     }
     // ...and it stays gone: the server list never contained it.
     await needs.refresh();
     await drain();
     if (store.getState().needs.some((item) => item.id === "d2")) {
-        throw new Error("an acknowledged error need must not come back on refresh");
+        throw new Error("a cleared error need must not come back on refresh");
     }
-    const inspectionDoesNotResolve = true;
+    const clearDismissesErrorLocally = true;
+
+    // ─── 9b'. An agent's healthy turn clears its earlier errors ───
+    // Every turn broadcasts a diagnostic. A healthy one for the same agent,
+    // no older than the error, says the agent is working again.
+
+    // Scoped to this case's two errors; earlier sections left others queued.
+    const errorIds = () => store.getState().needs
+        .filter((item) => item.kind === "error" && (item.id === "r1" || item.id === "r2"))
+        .map((item) => item.id).sort().join();
+    bus.publish("diagnostic", {
+        id: "r1", agent_id: "a2", agent_name: "Laura", status: "success",
+        error: "Model call timed out", created_at: "2026-09-07T12:40:00Z",
+    });
+    bus.publish("diagnostic", {
+        id: "r2", agent_id: "b2", agent_name: "Ben", status: "success",
+        error: "Connection refused", created_at: "2026-09-07T12:40:00Z",
+    });
+    await drain();
+    if (errorIds() !== "r1,r2") throw new Error(`both errors must be queued, got ${errorIds()}`);
+    // An EARLIER healthy report is stale: it must not clear a newer error.
+    bus.publish("diagnostic", {
+        id: "h-early", agent_id: "a2", agent_name: "Laura", status: "success",
+        error: null, created_at: "2026-09-07T12:39:00Z",
+    });
+    // Another agent's healthy turn says nothing about Laura's or Ben's error.
+    bus.publish("diagnostic", {
+        id: "h-other", agent_id: "c3", agent_name: "Cy", status: "success",
+        error: "", created_at: "2026-09-07T12:50:00Z",
+    });
+    await drain();
+    if (errorIds() !== "r1,r2") {
+        throw new Error(`an earlier or another agent's healthy turn must clear nothing, got ${errorIds()}`);
+    }
+    bus.publish("diagnostic", {
+        id: "h-later", agent_id: "a2", agent_name: "Laura", status: "success",
+        error: "  ", created_at: "2026-09-07T12:41:00Z",
+    });
+    await drain();
+    if (errorIds() !== "r2") {
+        throw new Error(`a later healthy turn must clear only that agent's error, got ${errorIds()}`);
+    }
+    await needs.resolve(store.getState().needs.find((item) => item.id === "r2"),
+        store.getState().needs.find((item) => item.id === "r2").actions[0]);
+    await drain();
+    const recoveryClearsAgentErrors = true;
 
     // ─── 9c. A blocked task and an error turn lead to their place ───
     // Phase 2B performed the server-described GET and refreshed, because Tasks
@@ -609,9 +640,10 @@ async function main() {
     if (blocked.target.params.taskId !== "t1") {
         throw new Error("a blocked need must carry its task id to Tasks");
     }
-    // The server-described action is untouched: it is still an inspecting GET.
-    if (blocked.actions[0].method !== "GET" || blocked.actions[0].href !== "/api/tasks/t1") {
-        throw new Error("the server-described actions must not change");
+    // The server-described action is untouched: Nudge, with its note descriptor.
+    if (blocked.actions[0].method !== "POST" || blocked.actions[0].href !== "/api/tasks/t1/resume"
+        || !blocked.actions[0].note || blocked.actions[0].note.title !== "Nudge Jim") {
+        throw new Error(`the server-described actions must not change, got ${JSON.stringify(blocked.actions)}`);
     }
 
     bus.publish("diagnostic", {
@@ -648,7 +680,60 @@ async function main() {
     }
     const targetsNavigate = true;
 
+    // ─── 9d. Nudge asks for its note, then posts it; Cancel sends nothing ───
+
+    const asks = [];
+    let askAnswer = null;
+    global.BossModNeedNoteDialog = {
+        ask(askedNeed, askedAction) {
+            asks.push({ need: askedNeed.id, action: askedAction.label });
+            return Promise.resolve(askAnswer && askAnswer(askedAction));
+        },
+    };
+    const popover4 = BossModNeedsPopover.openPopover({
+        store, needs, anchor: bell, navigate: () => {}, onClose: () => { closes += 1; },
+    });
+    await drain();
+    const nudgeButton = () => popover4.element.querySelector('[data-need-id="t1"]')
+        .querySelectorAll(".popover-action")[0];
+    if (nudgeButton().textContent !== "Nudge") {
+        throw new Error(`a blocked need offers Nudge, got ${nudgeButton().textContent}`);
+    }
+
+    // Cancelled: no request, nothing in flight, the need stays.
+    const callsBeforeCancel = calls.length;
+    askAnswer = null;
+    await nudgeButton().dispatchClick();
+    await drain();
+    if (asks.length !== 1 || asks[0].need !== "t1" || asks[0].action !== "Nudge") {
+        throw new Error(`Nudge must ask for its note first, got ${JSON.stringify(asks)}`);
+    }
+    if (calls.length !== callsBeforeCancel) {
+        throw new Error(`a cancelled Nudge must make no request, made ${JSON.stringify(calls.slice(callsBeforeCancel))}`);
+    }
+    if (!store.getState().needs.some((item) => item.id === "t1") || nudgeButton().disabled) {
+        throw new Error("a cancelled Nudge must leave the need, operable");
+    }
+    const nudgeCancelDoesNothing = true;
+
+    // Sent: the note travels as the JSON body of the server's resume route.
+    askAnswer = (askedAction) => Object.assign({}, askedAction, { body: { note: "x" } });
     queue = [];
+    const callsBeforeNudge = calls.length;
+    await nudgeButton().dispatchClick();
+    await drain();
+    const posted = calls.slice(callsBeforeNudge).filter((c) => !c.url.startsWith("/api/needs"));
+    if (posted.length !== 1 || posted[0].url !== "/api/tasks/t1/resume" || posted[0].method !== "POST"
+        || posted[0].body !== JSON.stringify({ note: "x" })) {
+        throw new Error(`Nudge must POST its note to resume, got ${JSON.stringify(posted)}`);
+    }
+    if (store.getState().needs.some((item) => item.id === "t1")) {
+        throw new Error("a nudged need must leave on refresh");
+    }
+    popover4.close();
+    delete global.BossModNeedNoteDialog;
+    const nudgePostsNote = true;
+
     await needs.refresh();
     await drain();
     await needs.resolve(errored, errored.actions[0]);
@@ -1143,10 +1228,10 @@ async function main() {
         .querySelectorAll("button").map((btn) => btn.textContent).join("|"));
     const plainCards = cardLabels(plainBar).sort().join(" / ");
     const hostCards = cardLabels(hostBar).sort().join(" / ");
-    if (plainCards !== "Open diagnostics|Show me / Open task|Show me") {
+    if (plainCards !== "Clear|Show me / Nudge|Show me") {
         throw new Error(`a bar without needActions must render as before, got ${plainCards}`);
     }
-    if (hostCards !== "Open diagnostics|Extra for error|Show me / Open task|Extra for blocked|Show me") {
+    if (hostCards !== "Clear|Extra for error|Show me / Nudge|Extra for blocked|Show me") {
         throw new Error(`needActions go after the server's actions and before Show me, got ${hostCards}`);
     }
     if (!asked.includes("error") || !asked.includes("blocked")) {
@@ -1161,7 +1246,7 @@ async function main() {
     if (store4.getState().needs.some((item) => item.kind === "error")) {
         throw new Error("acknowledge must remove the error need");
     }
-    if (cardLabels(hostBar).join(" / ") !== "Open task|Extra for blocked|Show me") {
+    if (cardLabels(hostBar).join(" / ") !== "Nudge|Extra for blocked|Show me") {
         throw new Error("the bar must drop an acknowledged error card");
     }
     let refusesServerNeed = false;
@@ -1207,7 +1292,10 @@ async function main() {
         noToastOnFirstSnapshot,
         resyncIsABaselineNotArrivals,
         unchangedBaselineStillEnds,
-        inspectionDoesNotResolve,
+        clearDismissesErrorLocally,
+        recoveryClearsAgentErrors,
+        nudgePostsNote,
+        nudgeCancelDoesNothing,
         barLeavesConsentInline,
         barLeavesApprovalInline,
         barShowsApprovalWhenInlineMissing,
