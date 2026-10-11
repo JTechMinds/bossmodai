@@ -528,6 +528,10 @@ def test_cli_approval_chrome_paints_approve_reject() -> None:
         "paintsHostPathCreateChrome": True,
         "paintsShellLiveAppend": True,
         "paintsShellNeedWithoutBellFetch": True,
+        "threadRequestShowsRequester": True,
+        "unattributedRequestStaysBare": True,
+        "requesterlessThreadRequestStaysBare": True,
+        "dismissHidesRequesterTurn": True,
     }
 
 

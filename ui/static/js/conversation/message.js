@@ -23,6 +23,9 @@
  * name over `[face] [bubble]` rather than a face stacked on the name row.
  * Every agent turn that paints a face also paints `.msg-author`;
  * `showAuthor` must not leave an orphan initial.
+ *
+ * That turn chrome is exported as renderTurn() so a thread's request card
+ * names its requester the same way a post does, rather than a second copy.
  */
 const BossModMessage = (() => {
     const { h } = BossModDom;
@@ -195,13 +198,8 @@ const BossModMessage = (() => {
             BossModMentionPills.linkify(body);
         }
 
-        const label = String(message.authorName || '').trim();
         const withFace = author === 'human' || author === 'agent';
         const showName = Boolean(message.showAuthor) || (withFace && author === 'agent');
-        // The human's own lines are always "You", whatever name the row carries.
-        const faceName = author === 'human' ? 'You' : (label || 'Agent');
-        const color = message.authorColor || null;
-        const tint = color ? BossModAvatar.tintFor(color) : null;
 
         // If the message has no text but has attachments, skip the empty body
         // and render only the attachment row.
@@ -221,23 +219,64 @@ const BossModMessage = (() => {
 
         const bubble = h('div', { class: `msg msg-${author}` }, ...bubbleChildren);
 
-        return h('div', {
+        return renderTurn(bubble, {
+            author,
+            name: message.authorName,
+            color: message.authorColor,
+            showName,
+            key,
+        });
+    }
+
+    /**
+     * Wrap content in the turn chrome: the face lower-left, the tinted name
+     * above, the content beneath it. The one owner of that chrome, so any row
+     * that speaks for an author (an ordinary post, a request card in a thread)
+     * reads the same way.
+     *
+     * @param {HTMLElement} content  The bubble or card the turn carries.
+     * @param {object} opts
+     * @param {string} opts.author  One of AUTHORS; anything else renders as
+     *   'other'. Only 'human' and 'agent' paint a face.
+     * @param {string} [opts.name]  The label shown in `.msg-author`. Empty
+     *   reads as "Unknown" when the name is shown.
+     * @param {string|null} [opts.color]  The author's avatar color; tints the
+     *   name with the same ink as the initial. Null leaves the name muted.
+     * @param {boolean} [opts.showName]  Whether `.msg-author` renders.
+     * @param {string} [opts.key]  Set as `data-message-key` on the turn, so the
+     *   transcript's removeByKey and live replace take the whole turn.
+     * @param {string} [opts.modifier]  Adds `msg-turn-<modifier>` for a row
+     *   that needs its own measure (e.g. 'request').
+     * @returns {HTMLElement}  `div.msg-turn.msg-turn-<author>`.
+     */
+    function renderTurn(content, opts) {
+        const author = AUTHORS.has(opts.author) ? opts.author : 'other';
+        const label = String(opts.name || '').trim();
+        const withFace = author === 'human' || author === 'agent';
+        const color = opts.color || null;
+        const tint = color ? BossModAvatar.tintFor(color) : null;
+        // The human's own lines are always "You", whatever name the row carries.
+        const faceName = author === 'human' ? 'You' : (label || 'Agent');
+
+        const turn = h('div', {
             class: `msg-turn msg-turn-${author}`,
-            'data-message-key': key || null,
+            'data-message-key': opts.key || null,
         },
             withFace
                 ? h('span', { class: 'msg-face', 'aria-hidden': 'true' },
                     BossModAvatar.create({ name: faceName, color, size: 'sm' }))
                 : null,
             h('div', { class: 'msg-stack' },
-                showName
+                opts.showName
                     ? h('div', {
                         class: 'msg-author',
                         style: tint ? `color:${tint.ink}` : null,
                     }, label || 'Unknown')
                     : null,
-                bubble));
+                content));
+        if (opts.modifier) turn.classList.add(`msg-turn-${opts.modifier}`);
+        return turn;
     }
 
-    return { renderMessage };
+    return { renderMessage, renderTurn };
 })();

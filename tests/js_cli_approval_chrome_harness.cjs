@@ -372,6 +372,90 @@ function actionLabels(root) {
     }
     const paintsShellNeedWithoutBellFetch = true;
 
+    // ─── A thread request names its requester; a DM/need request stays bare ───
+
+    const { BossModEventCards } = global;
+    const hasClass = (node, name) => String(node.className).split(/\s+/).includes(name);
+    function threadRequest(overrides) {
+        return Object.assign({
+            key: "cli-approval:appr-brian",
+            author: "system",
+            authorName: "Brian",
+            authorAgentId: "brian",
+            authorColor: null,
+            showAuthor: true,
+            text: 'Brian wants to run pip install -e ".[dev]"',
+            createdAt: "2026-09-16T17:20:00Z",
+            kind: "request",
+            card: approvalPayload("appr-brian", "brian"),
+        }, overrides);
+    }
+
+    const brianTurn = BossModEventCards.renderEventCard(threadRequest(), { api });
+    if (!hasClass(brianTurn, "msg-turn") || !hasClass(brianTurn, "msg-turn-request")) {
+        throw new Error(`a thread request must render as .msg-turn.msg-turn-request, got "${brianTurn.className}"`);
+    }
+    if (brianTurn.getAttribute("data-message-key") !== "cli-approval:appr-brian") {
+        throw new Error("the requester turn must carry the message key so removeByKey takes it whole");
+    }
+    const brianName = brianTurn.querySelector(".msg-author");
+    if (!brianName || brianName.textContent !== "Brian") {
+        throw new Error(`a thread request must name its requester, got "${brianName && brianName.textContent}"`);
+    }
+    if (!brianTurn.querySelector(".msg-face")) {
+        throw new Error("a thread request must paint its requester's face");
+    }
+    if (!brianTurn.querySelector("#cli-approval-appr-brian")
+        || !brianTurn.querySelector(".host-path-consent-card")) {
+        throw new Error("the requester turn must carry the approval card");
+    }
+    const threadRequestShowsRequester = true;
+
+    const bareCard = BossModEventCards.renderEventCard(threadRequest({
+        key: "cli-approval:appr-dm",
+        showAuthor: false,
+        card: approvalPayload("appr-dm", "brian"),
+    }), { api });
+    if (!hasClass(bareCard, "host-path-consent-card") || hasClass(bareCard, "msg-turn")) {
+        throw new Error(`a showAuthor:false request must render the bare card, got "${bareCard.className}"`);
+    }
+    if (bareCard.querySelector(".msg-author") || bareCard.querySelector(".msg-face")) {
+        throw new Error("a showAuthor:false request must not paint a requester");
+    }
+    const unattributedRequestStaysBare = true;
+
+    const legacyCard = BossModEventCards.renderEventCard(threadRequest({
+        key: "cli-approval:appr-legacy",
+        authorName: "Unknown",
+        authorAgentId: null,
+        card: approvalPayload("appr-legacy", "brian"),
+    }), { api });
+    if (!hasClass(legacyCard, "host-path-consent-card") || hasClass(legacyCard, "msg-turn")) {
+        throw new Error(`a thread request with no stored requester must render the bare card, got "${legacyCard.className}"`);
+    }
+    if (legacyCard.querySelector(".msg-author") || legacyCard.querySelector(".msg-face")) {
+        throw new Error("a thread request with no stored requester must not paint \"Unknown\"");
+    }
+    const requesterlessThreadRequestStaysBare = true;
+
+    const goneHost = documentStub.createElement("div");
+    goneHost.setAttribute("data-transcript", "");
+    documentStub.body.append(goneHost);
+    const goneTurn = BossModEventCards.renderEventCard(threadRequest({
+        key: "cli-approval:appr-gone",
+        card: Object.assign(approvalPayload("appr-gone", "brian"), { status: "gone" }),
+    }), { api });
+    goneHost.append(goneTurn);
+    const dismiss = goneTurn.querySelectorAll(".hpc-action")
+        .find((node) => node.textContent === "Dismiss");
+    if (!dismiss) throw new Error("a gone approval in a turn must offer Dismiss");
+    dismiss.click();
+    await tick();
+    if (goneTurn.hidden !== true) {
+        throw new Error("Dismiss must hide the requester turn, not leave its face and name behind");
+    }
+    const dismissHidesRequesterTurn = true;
+
     process.stdout.write(JSON.stringify({
         ok: true,
         paintsCreateChrome,
@@ -382,6 +466,10 @@ function actionLabels(root) {
         paintsHostPathCreateChrome,
         paintsShellLiveAppend,
         paintsShellNeedWithoutBellFetch,
+        threadRequestShowsRequester,
+        unattributedRequestStaysBare,
+        requesterlessThreadRequestStaysBare,
+        dismissHidesRequesterTurn,
     }));
 })().catch((err) => {
     process.stderr.write(String((err && err.stack) || err));

@@ -278,7 +278,8 @@ const BossModConsentCard = (() => {
             if ((el.dataset.cardKind || '') !== 'cli_approval') return;
             if (command && el.dataset.command && el.dataset.command !== command) return;
             if (cwd && el.dataset.cwd && el.dataset.cwd !== cwd) return;
-            el.hidden = true;
+            // A thread card sits in its requester's turn; hide the face and name with it.
+            (el.closest('.msg-turn-request') || el).hidden = true;
             el.classList.add('is-resolved');
             el.querySelector('.host-path-consent-actions')?.remove();
         });

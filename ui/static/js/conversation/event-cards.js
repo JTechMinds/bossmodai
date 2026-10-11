@@ -6,6 +6,11 @@
  * or an agent's memory change), and nothing else. `event.*` is produced by needs/needs-bar.js, which renders
  * its cards through here rather than owning a second look for them.
  *
+ * In a thread several agents can ask at once, so a request card there carries
+ * its requester's face and name through the same turn chrome a post uses
+ * (BossModMessage.renderTurn). A DM or needs-shaped request stays bare: there
+ * the requester is the conversation itself.
+ *
  * That split is spec 4.3 as reconciled: one renderer, one appearance per need.
  * Putting `event.*` in the transcript AND in the composer bar would render one
  * ask twice in the same conversation, which is exactly what the suppression
@@ -148,7 +153,10 @@ const BossModEventCards = (() => {
      *   brain glyph and blue-links its text only when this arrives and the
      *   note has an author; a removed memory's note carries none and stays
      *   plain text.
-     * @returns {HTMLElement}
+     * @returns {HTMLElement}  A `request` with `showAuthor`, a non-empty
+     *   `authorAgentId` and a requester name comes back as a
+     *   `.msg-turn.msg-turn-request` wrapping the card; every other request
+     *   is the bare `.host-path-consent-card`.
      * @throws {Error} When ctx is missing, on a kind with no renderer, on a
      *   `request` or `event` with no card, or on an `event` whose tone has no
      *   treatment — an unrecognised tone must not paint as a neutral row.
@@ -171,7 +179,20 @@ const BossModEventCards = (() => {
             } else {
                 BossModConsentCard.renderHostPathConsentCard(wrapper, message.card, ctx.api);
             }
-            return wrapper;
+            // The stored agent id is what says the row has a requester: the
+            // server writes it with the name, and a source's "Unknown" label
+            // without one is a placeholder, so that row stays a bare card.
+            const name = String(message.authorName || '').trim();
+            const agentId = typeof message.authorAgentId === 'string' ? message.authorAgentId.trim() : '';
+            if (!message.showAuthor || !agentId || !name) return wrapper;
+            return BossModMessage.renderTurn(wrapper, {
+                author: 'agent',
+                name,
+                color: message.authorColor,
+                showName: true,
+                key: String(message.key || '').trim(),
+                modifier: 'request',
+            });
         }
 
         if (message.kind === 'note') {

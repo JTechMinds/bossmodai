@@ -322,6 +322,14 @@
   max-width: 92%;
 }
 
+/* A thread's request card keeps the 92% card measure (long commands need the
+   room) inside its requester's turn; the card fills the stack. */
+.msg-turn-request { max-width: 92%; }
+.msg-turn-request .host-path-consent-card {
+  max-width: none;
+  margin-right: 0;
+}
+
 .msg-face {
   flex: none;
 }
