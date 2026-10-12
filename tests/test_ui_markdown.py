@@ -203,6 +203,13 @@ def test_the_prose_stylesheet_uses_tokens_only() -> None:
     assert not re.search(r"\.md code\s*[,{]", source), "a bare `.md code` rule would beat .hljs"
 
 
+def test_lists_show_their_markers() -> None:
+    """The Tailwind preflight strips list markers; markdown.css restores them."""
+    source = _rules(_read(STYLESHEET))
+    assert re.search(r"\.md ul \{\s*list-style: disc;", source), "markdown lists show no bullets"
+    assert re.search(r"\.md ol \{\s*list-style: decimal;", source), "markdown lists show no numbers"
+
+
 def test_both_surfaces_render_through_the_one_module() -> None:
     """The transcript and the file viewer share the renderer and the styling.
 

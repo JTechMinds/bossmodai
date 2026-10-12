@@ -40,6 +40,13 @@
 
 .md ul,
 .md ol { margin: 0 0 8px; padding-left: 20px; }
+/* The Tailwind preflight sets `list-style: none` on every list, so the
+   markers have to be put back here. A GFM task item shows its checkbox
+   instead of a bullet. */
+.md ul { list-style: disc; }
+.md ol { list-style: decimal; }
+.md ul ul { list-style: circle; }
+.md li:has(> input[type="checkbox"]) { list-style: none; }
 .md li { margin: 0; }
 .md li + li { margin-top: 2px; }
 .md li > ul,

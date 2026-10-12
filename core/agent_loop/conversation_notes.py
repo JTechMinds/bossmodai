@@ -77,6 +77,13 @@ _SHORTER_REQUEST = (
     "Rewrite them shorter, keeping the most important points. Output only the bullets."
 )
 
+# Failure text stored as ``last_error`` and shown to the operator on the
+# transcript divider; technical detail goes to the WARNING log line only.
+RUN_FAILED_EMPTY = "The summarizer returned nothing."
+RUN_FAILED_EMPTY_RETRY = "The summarizer returned nothing when asked for a shorter version."
+RUN_FAILED_TOO_LONG = "The summary came out too long, even after asking for a shorter one."
+RUN_FAILED_UNEXPECTED = "Something went wrong while summarizing. The details are in the log."
+
 
 # ─── Types ───
 
@@ -417,8 +424,10 @@ def load_thread_window(
             trigger's own message, which the prompt shows as the trigger).
         perspective_agent_id: The agent reading, or ``None`` for the
             transcript API. Counts never depend on it: every row is counted in
-            its ``[Name]: content`` form so agent and UI agree exactly. It is
-            only named in the ceiling WARNING.
+            its ``[Name]: content`` form so agent and UI agree exactly. It
+            decides whether the hard-limit WARNING is logged: only on an
+            agent turn (not ``None``), so transcript reads and background
+            runs do not repeat it; the UI shows ``ceiling_hit`` instead.
 
     Returns:
         The window.
@@ -452,11 +461,11 @@ def load_thread_window(
             exclude_message_id=exclude_message_id,
             ceiling_tokens=settings.ceiling_tokens,
         )
-    if ceiling_hit:
+    if ceiling_hit and perspective_agent_id is not None:
         logger.warning(
             "conversation history for %s:%s hit the hard limit (%d tail tokens kept, limit %d, reader %s); "
             "older messages are not in context",
-            scope.kind, scope.key, tail_tokens, settings.ceiling_tokens, perspective_agent_id or "transcript",
+            scope.kind, scope.key, tail_tokens, settings.ceiling_tokens, perspective_agent_id,
         )
     rows.reverse()
     notes_entry = notes_history_entry(scope, notes_row) if anchor is not None and notes_row is not None else None
@@ -620,7 +629,16 @@ def _summarizer_messages(prior_notes: str, rows: list[dict[str, Any]], cap: int)
 
 
 class _RunFailed(Exception):
-    """A run ended without usable notes; the message is shown to the operator."""
+    """A run ended without usable notes; the message is shown to the operator.
+
+    ``tokens`` and ``cap`` are set for an over-cap result and only appear in
+    the WARNING log line, never in the operator text.
+    """
+
+    def __init__(self, message: str, *, tokens: int | None = None, cap: int | None = None) -> None:
+        super().__init__(message)
+        self.tokens = tokens
+        self.cap = cap
 
 
 async def _summarize(messages: list[dict[str, str]], cap: int) -> str:
@@ -633,7 +651,7 @@ async def _summarize(messages: list[dict[str, str]], cap: int) -> str:
     raw = await asyncio.to_thread(complete_text, messages)
     notes = (raw or "").strip()
     if not notes:
-        raise _RunFailed("System AI returned no notes")
+        raise _RunFailed(RUN_FAILED_EMPTY)
     tokens = _count(notes)
     if tokens <= cap:
         return notes
@@ -645,10 +663,10 @@ async def _summarize(messages: list[dict[str, str]], cap: int) -> str:
     raw = await asyncio.to_thread(complete_text, retry)
     shorter = (raw or "").strip()
     if not shorter:
-        raise _RunFailed("System AI returned no notes when asked for a shorter version")
+        raise _RunFailed(RUN_FAILED_EMPTY_RETRY)
     tokens = _count(shorter)
     if tokens > cap:
-        raise _RunFailed(f"The notes were too long ({tokens} tokens, limit {cap})")
+        raise _RunFailed(RUN_FAILED_TOO_LONG, tokens=tokens, cap=cap)
     return shorter
 
 
@@ -664,14 +682,13 @@ async def _run_compaction(scope: ThreadScope) -> None:
     try:
         changed = await _compact(scope)
     except _RunFailed as exc:
-        logger.warning("conversation compaction for %s:%s failed: %s", scope.kind, scope.key, exc)
+        size = f" ({exc.tokens} tokens, limit {exc.cap})" if exc.tokens is not None else ""
+        logger.warning("conversation compaction for %s:%s failed: %s%s", scope.kind, scope.key, exc, size)
         db.fail_conversation_notes_run(scope.kind, scope.key, error=str(exc))
         changed = True
-    except Exception as exc:
+    except Exception:
         logger.warning("conversation compaction for %s:%s failed", scope.kind, scope.key, exc_info=True)
-        db.fail_conversation_notes_run(
-            scope.kind, scope.key, error=f"Unexpected error: {type(exc).__name__}: {exc}"
-        )
+        db.fail_conversation_notes_run(scope.kind, scope.key, error=RUN_FAILED_UNEXPECTED)
         changed = True
     if changed:
         await runtime_events.broadcast_conversation_notes(scope.kind, scope.key)

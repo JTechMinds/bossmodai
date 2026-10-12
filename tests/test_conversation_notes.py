@@ -34,6 +34,9 @@ from core.agent_loop.conversation_notes import (
     NOTES_FROM_NAME,
     NOTES_ID_PREFIX,
     NOTES_LEAD,
+    RUN_FAILED_EMPTY,
+    RUN_FAILED_TOO_LONG,
+    RUN_FAILED_UNEXPECTED,
     ThreadScope,
     _cut_index,
     load_thread_window,
@@ -377,7 +380,9 @@ def test_a_run_overtaken_by_another_commit_is_released(monkeypatch: pytest.Monke
 # ─── 7, 8: failures keep the old notes ───
 
 
-def test_over_cap_notes_get_one_shorter_retry_then_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_over_cap_notes_get_one_shorter_retry_then_fail(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
     _flat_tokens(monkeypatch, long_marker="TOO LONG")
     calls: list = []
     _system_ai(monkeypatch, [NOTES, "TOO LONG draft", "TOO LONG again"], calls)
@@ -388,10 +393,13 @@ def test_over_cap_notes_get_one_shorter_retry_then_fail(monkeypatch: pytest.Monk
     _compact(scope, jobs)
     kept = _notes(scope)
     _dm(agent.id, 6, prefix="later")
+    caplog.set_level(logging.WARNING, logger="core.agent_loop.conversation_notes")
     _compact(scope, jobs)
     row = _notes(scope)
     assert row["run_state"] == "failed"
-    assert row["last_error"] == "The notes were too long (500 tokens, limit 100)"
+    assert row["last_error"] == RUN_FAILED_TOO_LONG
+    # The numbers are for the log, not the operator.
+    assert any("500 tokens, limit 100" in r.getMessage() for r in caplog.records)
     assert (row["notes"], row["through_message_id"]) == (kept["notes"], kept["through_message_id"])
     retry = calls[-1]
     assert retry[-2] == {"role": "assistant", "content": "TOO LONG draft"}
@@ -424,7 +432,7 @@ def test_no_answer_fails_the_run_and_keeps_the_old_notes(
     caplog.set_level(logging.WARNING, logger="core.agent_loop.conversation_notes")
     _compact(scope, jobs)
     row = _notes(scope)
-    assert (row["run_state"], row["last_error"]) == ("failed", "System AI returned no notes")
+    assert (row["run_state"], row["last_error"]) == ("failed", RUN_FAILED_EMPTY)
     assert row["last_run_at"] is not None
     assert (row["notes"], row["through_message_id"]) == (kept["notes"], kept["through_message_id"])
     assert any("failed" in r.getMessage() for r in caplog.records)
@@ -436,7 +444,7 @@ def test_an_exception_fails_the_run_with_exc_info(
     _flat_tokens(monkeypatch)
 
     def _boom() -> str:
-        raise RuntimeError("model server down")
+        raise KeyError("x")
 
     _system_ai(monkeypatch, [_boom], [])
     jobs = _capture()
@@ -447,8 +455,11 @@ def test_an_exception_fails_the_run_with_exc_info(
     _compact(scope, jobs)
     row = _notes(scope)
     assert row["run_state"] == "failed"
-    assert row["last_error"] == "Unexpected error: RuntimeError: model server down"
-    assert any(r.exc_info for r in caplog.records)
+    # The operator sees plain text; the technical error is only in the log.
+    assert row["last_error"] == RUN_FAILED_UNEXPECTED
+    logged = [r for r in caplog.records if r.exc_info]
+    assert logged and isinstance(logged[0].exc_info[1], KeyError)
+    assert str(logged[0].exc_info[1]) == "'x'"
     # A failed run is not in flight: the next turn above the line retries.
     assert maybe_schedule_compaction(scope, _window(scope)) is True
 
@@ -529,7 +540,7 @@ def test_the_delete_paths_delete_the_notes(monkeypatch: pytest.MonkeyPatch) -> N
 # ─── 10: the hard limit ───
 
 
-def test_the_hard_limit_drops_the_oldest_rows_and_warns(
+def test_the_hard_limit_drops_the_oldest_rows_without_warning_on_a_transcript_read(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     _flat_tokens(monkeypatch)
@@ -545,9 +556,25 @@ def test_the_hard_limit_drops_the_oldest_rows_and_warns(
     assert window.tail_tokens == 1500
     assert [row["id"] for row in window.rows] == ids[5:]
     assert window.visible_from_message_id == ids[5]
-    assert any("hard limit" in r.getMessage() and r.levelno == logging.WARNING for r in caplog.records)
+    # Transcript reads repeat on every UI refresh; the UI shows ceiling_hit.
+    assert not any(r.levelno == logging.WARNING for r in caplog.records)
     assert maybe_schedule_compaction(scope, window) is False
     assert jobs == []
+
+
+def test_the_hard_limit_warns_once_on_an_agent_turn(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    _flat_tokens(monkeypatch)
+    _setting("conversation_compaction_enabled", "false")
+    agent = _agent()
+    scope = ThreadScope.human_dm(agent.id)
+    _dm(agent.id, 20)
+    caplog.set_level(logging.WARNING, logger="core.agent_loop.conversation_notes")
+    window = load_thread_window(scope, perspective_agent_id=agent.id)
+    assert window.ceiling_hit is True
+    warned = [r for r in caplog.records if "hard limit" in r.getMessage() and r.levelno == logging.WARNING]
+    assert len(warned) == 1
 
 
 # ─── 11: one state for an agent pair ───
@@ -699,7 +726,7 @@ def test_a_failed_first_run_is_reported_without_notes(monkeypatch: pytest.Monkey
     _compact(ThreadScope.human_dm(agent.id), jobs)
     body = _get(f"/api/conversations/human_dm/{agent.id}/window").json()
     assert body["notes"]["run_state"] == "failed"
-    assert body["notes"]["last_error"] == "System AI returned no notes"
+    assert body["notes"]["last_error"] == RUN_FAILED_EMPTY
     assert body["notes"]["notes"] is None and body["notes"]["through_message_id"] is None
 
 
