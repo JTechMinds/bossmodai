@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,8 +14,14 @@ import pytest
 
 import db
 from core import config
-from core.agent_loop.dispatcher import NOT_RETRIED_NO_REPEAT_REASON, TurnDispatcher
+from core.agent_loop.dispatcher import (
+    NOT_RETRIED_NO_REPEAT_REASON,
+    ORPHAN_CLAIM_AFTER,
+    StrandedClaimError,
+    TurnDispatcher,
+)
 from core.agent_loop.outcomes import TurnOutcome
+from core.llm.call_budget import budget
 
 
 def setup_function() -> None:
@@ -54,7 +61,7 @@ def test_completed_trigger_is_not_replayed_on_forced_requeue() -> None:
     assert completed is not None
     assert completed.status == "completed"
 
-    recovered = db.requeue_stale_triggers(1, force=True)
+    recovered = db.requeue_all_claimed_triggers()
     assert recovered == 0
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
@@ -70,65 +77,65 @@ def test_force_requeue_recovers_mid_claim_once() -> None:
     assert claimed.claim_generation == 1
     assert claimed.claim_lease
 
-    first = db.requeue_stale_triggers(300, force=True)
+    first = db.requeue_all_claimed_triggers()
     assert first == 1
     queued = db.get_agent_trigger(row.id)
     assert queued is not None
     assert queued.status == "queued"
     assert queued.claim_lease is None
 
-    second = db.requeue_stale_triggers(300, force=True)
+    second = db.requeue_all_claimed_triggers()
     assert second == 0
     still = db.get_agent_trigger(row.id)
     assert still is not None
     assert still.status == "queued"
 
 
-def test_live_worker_does_not_steal_an_old_claim() -> None:
+def _age_claim(trigger_id: str, seconds: float) -> None:
+    stale = datetime.now(timezone.utc) - timedelta(seconds=seconds)
+    db.execute("UPDATE agent_triggers SET claimed_at = $1 WHERE id = $2", [stale, trigger_id])
+
+
+def test_list_orphaned_claims_returns_only_claims_older_than_the_cutoff() -> None:
     agent = _create_agent()
-    row = _queued_trigger(agent.id)
-    claimed = db.claim_trigger(row.id)
-    assert claimed is not None
+    old = db.claim_trigger(_queued_trigger(agent.id).id)
+    older = db.claim_trigger(_queued_trigger(agent.id).id)
+    fresh = db.claim_trigger(_queued_trigger(agent.id).id)
+    unstamped = db.claim_trigger(_queued_trigger(agent.id).id)
+    queued = _queued_trigger(agent.id)
+    done = db.claim_trigger(_queued_trigger(agent.id).id)
+    assert old and older and fresh and unstamped and done
+    _age_claim(old.id, 120)
+    _age_claim(older.id, 900)
+    db.execute("UPDATE agent_triggers SET claimed_at = NULL WHERE id = $1", [unstamped.id])
+    _age_claim(done.id, 900)
+    db.complete_agent_trigger(done.id, claim_generation=done.claim_generation)
 
-    db.mark_runtime_worker_running(pid=os.getpid())
-    db.record_runtime_worker_heartbeat(pid=os.getpid())
-    stale = datetime.now(timezone.utc) - timedelta(seconds=900)
-    db.execute(
-        "UPDATE agent_triggers SET claimed_at = $1 WHERE id = $2",
-        [stale, row.id],
-    )
+    rows = db.list_orphaned_claims(claimed_before=datetime.now(timezone.utc) - timedelta(seconds=30))
 
-    recovered = db.requeue_stale_triggers(1, force=False)
-    assert recovered == 0
-    refreshed = db.get_agent_trigger(row.id)
-    assert refreshed is not None
-    assert refreshed.status == "claimed"
+    # Oldest claim first; NULL claimed_at sorts first and still counts.
+    assert [row.id for row in rows] == [unstamped.id, older.id, old.id]
+    assert queued.id not in {row.id for row in rows}
+    assert fresh.id not in {row.id for row in rows}
 
 
-def test_dead_worker_requeues_stale_claim() -> None:
+def test_list_orphaned_claims_includes_retry_blocked_rows() -> None:
     agent = _create_agent()
-    row = _queued_trigger(agent.id)
-    claimed = db.claim_trigger(row.id)
-    assert claimed is not None
-    db.mark_runtime_worker_stopped(pid=os.getpid())
-    stale = datetime.now(timezone.utc) - timedelta(seconds=900)
-    db.execute(
-        "UPDATE agent_triggers SET claimed_at = $1 WHERE id = $2",
-        [stale, row.id],
-    )
+    blocked = _claimed_blocked_trigger(agent.id)
+    _age_claim(blocked.id, 900)
 
-    recovered = db.requeue_stale_triggers(1, force=False)
-    assert recovered == 1
-    refreshed = db.get_agent_trigger(row.id)
-    assert refreshed is not None
-    assert refreshed.status == "queued"
+    rows = db.list_orphaned_claims(claimed_before=datetime.now(timezone.utc) - timedelta(seconds=30))
+
+    assert [(row.id, row.retry_blocked) for row in rows] == [(blocked.id, True)]
+    # Listing changes nothing: the caller decides per row.
+    assert db.get_agent_trigger(blocked.id).status == "claimed"
 
 
 def _reclaim_after_force(agent_id: str):
     row = _queued_trigger(agent_id)
     first = db.claim_trigger(row.id)
     assert first is not None
-    db.requeue_stale_triggers(1, force=True)
+    db.requeue_all_claimed_triggers()
     second = db.claim_trigger(row.id)
     assert second is not None
     assert second.claim_generation == first.claim_generation + 1
@@ -346,22 +353,11 @@ def test_force_requeue_leaves_a_blocked_orphan_claimed_and_lists_it() -> None:
     plain = db.claim_trigger(_queued_trigger(agent.id).id)
     assert plain is not None
 
-    assert db.requeue_stale_triggers(300, force=True) == 1
+    assert db.requeue_all_claimed_triggers() == 1
 
     assert db.get_agent_trigger(blocked.id).status == "claimed"
     assert db.get_agent_trigger(plain.id).status == "queued"
     assert [item.id for item in db.list_claimed_retry_blocked_triggers()] == [blocked.id]
-
-
-def test_stale_requeue_leaves_a_blocked_orphan_claimed() -> None:
-    agent = _create_agent()
-    blocked = _claimed_blocked_trigger(agent.id)
-    db.mark_runtime_worker_stopped(pid=os.getpid())
-    stale = datetime.now(timezone.utc) - timedelta(seconds=900)
-    db.execute("UPDATE agent_triggers SET claimed_at = $1 WHERE id = $2", [stale, blocked.id])
-
-    assert db.requeue_stale_triggers(1, force=False) == 0
-    assert db.get_agent_trigger(blocked.id).status == "claimed"
 
 
 def test_list_claimed_retry_blocked_triggers_skips_queued_and_failed_rows() -> None:
@@ -439,3 +435,262 @@ async def test_dispatcher_start_fails_a_blocked_orphan_whose_agent_is_gone(
     _dispatcher, seen = await _start_until_first_drain(monkeypatch)
 
     assert seen[blocked.id] == "failed"
+
+
+# ─── Claims always end in a turn, a requeue or a failure ───
+
+
+def _lane_rows() -> int:
+    return int(db.query("SELECT COUNT(*) AS cnt FROM model_call_lanes")[0]["cnt"])
+
+
+def _diagnostic_errors(agent_id: str) -> list[str]:
+    return [str(row.get("error") or "") for row in db.get_diagnostics(agent_id=agent_id)]
+
+
+@pytest.mark.asyncio
+async def test_queue_visibility_failure_after_claim_requeues_and_frees_the_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    budget.reset()
+    agent = _create_agent()
+    row = _queued_trigger(agent.id)
+    dispatcher = TurnDispatcher()
+    dispatcher._running = True
+
+    def _boom(_agent_id: str) -> None:
+        raise RuntimeError("busy line write failed")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.schedule_queue_visibility", _boom)
+
+    await dispatcher._drain_queue()
+
+    refreshed = db.get_agent_trigger(row.id)
+    assert refreshed.status == "queued"
+    assert refreshed.retry_count == 1
+    assert "busy line write failed" in refreshed.failure_reason
+    assert _lane_rows() == 0
+    assert dispatcher._turn_lanes == {}
+    assert agent.id not in dispatcher._active_turns
+    assert any("busy line write failed" in error for error in _diagnostic_errors(agent.id))
+
+
+@pytest.mark.asyncio
+async def test_queue_notice_failure_after_claim_requeues_and_frees_the_lane(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    budget.reset()
+    agent = _create_agent()
+    row = _queued_trigger(agent.id)
+    dispatcher = TurnDispatcher()
+    dispatcher._running = True
+
+    async def _boom() -> None:
+        raise RuntimeError("presence broadcast failed")
+
+    monkeypatch.setattr(dispatcher, "_emit_queue_notices", _boom)
+
+    await dispatcher._drain_queue()
+
+    refreshed = db.get_agent_trigger(row.id)
+    assert refreshed.status == "queued"
+    assert refreshed.retry_count == 1
+    assert _lane_rows() == 0
+    assert dispatcher._turn_lanes == {}
+    assert any("presence broadcast failed" in error for error in _diagnostic_errors(agent.id))
+
+
+@pytest.mark.asyncio
+async def test_a_failure_that_is_not_trigger_specific_abandons_one_claim_per_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    budget.reset()
+    ada = _create_agent("Ada")
+    bea = _create_agent("Bea")
+    rows = [_queued_trigger(ada.id), _queued_trigger(bea.id)]
+    dispatcher = TurnDispatcher()
+    dispatcher._running = True
+
+    async def _always_boom() -> None:
+        raise RuntimeError("presence broadcast failed")
+
+    monkeypatch.setattr(dispatcher, "_emit_queue_notices", _always_boom)
+
+    await dispatcher._drain_queue()
+
+    after = sorted(
+        (db.get_agent_trigger(row.id) for row in rows), key=lambda item: item.retry_count,
+    )
+    assert [(item.status, item.retry_count) for item in after] == [("queued", 0), ("queued", 1)]
+    assert _lane_rows() == 0
+    assert dispatcher._turn_lanes == {}
+
+
+@pytest.mark.asyncio
+async def test_launch_failure_at_the_retry_limit_fails_and_frees_the_channel_seat(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.agent_loop.channel_rounds import start_channel_peer_round
+
+    budget.reset()
+    jim = db.create_agent("Jim", role="PM", desk_x=1, desk_y=1)
+    laura = db.create_agent("Laura", role="Eng", desk_x=2, desk_y=1)
+    channel = db.create_channel(name="Ops", member_agent_ids=[jim.id, laura.id], created_by=jim.id)
+    message = db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Human Operator",
+        content="Where are we?",
+        source_channel="channel",
+    )
+    [first, *_rest] = start_channel_peer_round(
+        channel_id=channel.id,
+        message_id=message.id,
+        content=message.content,
+        from_name="Human Operator",
+        author_type="human",
+        channel_name=channel.name,
+    )
+    row = db.create_agent_trigger(
+        agent_id=first["agent_id"],
+        trigger_type=first["trigger_type"],
+        source_channel=first["source_channel"],
+        payload=first["payload"],
+    )
+    speaker = first["agent_id"]
+    peer = laura.id if speaker == jim.id else jim.id
+    dispatcher = TurnDispatcher()
+    db.execute(
+        "UPDATE agent_triggers SET retry_count = $1 WHERE id = $2",
+        [dispatcher._retry_limit(), row.id],
+    )
+    dispatcher._running = True
+
+    def _boom(_agent_id: str) -> None:
+        raise RuntimeError("busy line write failed")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.schedule_queue_visibility", _boom)
+
+    await dispatcher._drain_queue()
+
+    assert db.get_agent_trigger(row.id).status == "failed"
+    assert _lane_rows() == 0
+    # The round moved on: the next member's wake is queued and claimable,
+    # not held behind a dead live speak.
+    assert not db.channel_peer_snapshot_is_drafting(channel.id)
+    claimed = dispatcher._claim_available_trigger()
+    assert claimed is not None
+    assert claimed.agent_id == peer
+    dispatcher._release_turn_lane(peer)
+
+
+def test_raising_claim_releases_the_lane_and_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    budget.reset()
+    agent = _create_agent()
+    row = _queued_trigger(agent.id)
+
+    def _boom(_trigger_id: str) -> None:
+        raise RuntimeError("database is locked")
+
+    monkeypatch.setattr(db, "claim_trigger", _boom)
+    dispatcher = TurnDispatcher()
+
+    with pytest.raises(RuntimeError, match="database is locked"):
+        dispatcher._claim_available_trigger()
+
+    assert _lane_rows() == 0
+    assert dispatcher._turn_lanes == {}
+    assert db.get_agent_trigger(row.id).status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_sweep_requeues_a_stranded_claim_loudly_and_frees_its_leaked_lane(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    budget.reset()
+    agent = _create_agent()
+    claimed = db.claim_trigger(_queued_trigger(agent.id).id)
+    assert claimed is not None
+    _age_claim(claimed.id, ORPHAN_CLAIM_AFTER.total_seconds() + 5)
+    dispatcher = TurnDispatcher()
+    leaked = budget.try_acquire(kind="turn", owner=agent.id)
+    assert leaked is not None
+    dispatcher._turn_lanes[agent.id] = leaked
+
+    # Not running: _drain_queue runs only its once-per-call sweep.
+    with caplog.at_level(logging.ERROR, logger="core.agent_loop.dispatcher"):
+        await dispatcher._drain_queue()
+
+    refreshed = db.get_agent_trigger(claimed.id)
+    assert refreshed.status == "queued"
+    assert refreshed.retry_count == 1
+    assert refreshed.failure_reason == "Turn claim stranded with no live turn"
+    assert _lane_rows() == 0
+    assert dispatcher._turn_lanes == {}
+    assert any(
+        record.levelno == logging.ERROR
+        and record.getMessage().startswith(f"Recovering stranded trigger claim {claimed.id}")
+        for record in caplog.records
+    )
+    assert any("no live turn" in error for error in _diagnostic_errors(agent.id))
+
+
+@pytest.mark.asyncio
+async def test_sweep_leaves_a_stale_claim_whose_turn_is_alive() -> None:
+    agent = _create_agent()
+    claimed = db.claim_trigger(_queued_trigger(agent.id).id)
+    assert claimed is not None
+    _age_claim(claimed.id, ORPHAN_CLAIM_AFTER.total_seconds() + 5)
+    dispatcher = TurnDispatcher()
+    live = asyncio.create_task(asyncio.sleep(60))
+    dispatcher._active_turns[agent.id] = live
+    try:
+        await dispatcher._drain_queue()
+    finally:
+        live.cancel()
+
+    refreshed = db.get_agent_trigger(claimed.id)
+    assert refreshed.status == "claimed"
+    assert refreshed.retry_count == 0
+    assert refreshed.claim_generation == claimed.claim_generation
+    assert _diagnostic_errors(agent.id) == []
+
+
+@pytest.mark.asyncio
+async def test_sweep_fails_a_retry_blocked_orphan_instead_of_requeueing_it() -> None:
+    agent = _create_agent()
+    blocked = _claimed_blocked_trigger(agent.id)
+    _age_claim(blocked.id, ORPHAN_CLAIM_AFTER.total_seconds() + 5)
+
+    await TurnDispatcher()._drain_queue()
+
+    refreshed = db.get_agent_trigger(blocked.id)
+    assert refreshed.status == "failed"
+    assert refreshed.retry_count == 0
+    assert refreshed.failure_reason == "Turn claim stranded with no live turn"
+
+
+@pytest.mark.asyncio
+async def test_start_fails_a_blocked_orphan_through_the_shared_resolver(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _create_agent()
+    blocked = _claimed_blocked_trigger(agent.id)
+    resolved: list[tuple[str, str, Exception]] = []
+    real_resolve = TurnDispatcher._resolve_stranded_claim
+
+    async def _spy(self: TurnDispatcher, row: Any, *, detail: str, exc: Exception) -> None:
+        resolved.append((row.id, detail, exc))
+        await real_resolve(self, row, detail=detail, exc=exc)
+
+    monkeypatch.setattr(TurnDispatcher, "_resolve_stranded_claim", _spy)
+
+    _dispatcher, seen = await _start_until_first_drain(monkeypatch)
+
+    assert seen[blocked.id] == "failed"
+    [(row_id, detail, exc)] = resolved
+    assert row_id == blocked.id
+    assert detail.startswith("The runtime stopped during a turn that had already run")
+    assert isinstance(exc, StrandedClaimError)
+    # Start-up recovery is now visible in Diagnostics too.
+    assert any(error.startswith("The runtime stopped") for error in _diagnostic_errors(agent.id))

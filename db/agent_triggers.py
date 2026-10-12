@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import json
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 
 from core.models import AgentTrigger
 from db.crud import execute, fetch_one, insert_returning, query, query_one
 from db.connection import get_connection
-from db.runtime_control import is_runtime_worker_live
 
 _TRIGGER_COLUMNS = (
     "id, agent_id, trigger_type, source_channel, payload, task_id, status, "
@@ -445,66 +444,29 @@ def retry_agent_trigger(
     )
 
 
-def requeue_stale_triggers(
-    claim_timeout_seconds: int,
-    *,
-    force: bool = False,
-) -> int:
-    """Return orphaned claimed triggers to the queue.
+def requeue_all_claimed_triggers() -> int:
+    """Return every unblocked claimed trigger to the queue.
 
-    A healthy worker (``lifecycle_state=running`` + fresh heartbeat) never
-    loses in-flight claims, even when ``claimed_at`` is older than the
-    timeout. ``force=True`` is for dispatcher start in a new process: every
-    ``claimed`` row is an orphan of the previous worker. Completed rows are
-    never touched.
+    For dispatcher start in a new process only: every ``claimed`` row is an
+    orphan of the previous worker. Completed rows are never touched. While
+    a worker is live, orphans are recovered by the dispatcher's own sweep
+    (:func:`list_orphaned_claims`), which can tell a live turn from an
+    orphan; this layer cannot.
 
     A ``retry_blocked`` orphan is never requeued: its turn already ran a
     command that must not repeat, so re-running it would replay that command.
     It stays ``claimed`` for the dispatcher to fail
     (:func:`list_claimed_retry_blocked_triggers`).
 
-    Args:
-        claim_timeout_seconds: Age past which a claim counts as stale
-            (non-force path only).
-        force: Treat every unblocked claimed row as an orphan. Otherwise
-            nothing is requeued while the worker is live
-            (``is_runtime_worker_live``: its heartbeat is younger than the
-            shared staleness threshold).
-
     Returns:
         How many triggers were returned to ``queued``.
     """
-    if not force and is_runtime_worker_live():
-        return 0
-
-    if force:
-        row = query_one(
-            """
-            SELECT COUNT(*) AS cnt
-            FROM agent_triggers
-            WHERE status = 'claimed' AND retry_blocked = FALSE
-            """,
-        )
-        count = int(row["cnt"]) if row else 0
-        if count:
-            execute(
-                """
-                UPDATE agent_triggers
-                SET status = 'queued', claimed_at = NULL, claim_lease = NULL
-                WHERE status = 'claimed' AND retry_blocked = FALSE
-                """,
-            )
-        return count
-
-    cutoff = datetime.now(timezone.utc) - timedelta(seconds=max(0, claim_timeout_seconds))
     row = query_one(
         """
         SELECT COUNT(*) AS cnt
         FROM agent_triggers
-        WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < $1)
-          AND retry_blocked = FALSE
+        WHERE status = 'claimed' AND retry_blocked = FALSE
         """,
-        [cutoff],
     )
     count = int(row["cnt"]) if row else 0
     if count:
@@ -512,12 +474,37 @@ def requeue_stale_triggers(
             """
             UPDATE agent_triggers
             SET status = 'queued', claimed_at = NULL, claim_lease = NULL
-            WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < $1)
-              AND retry_blocked = FALSE
+            WHERE status = 'claimed' AND retry_blocked = FALSE
             """,
-            [cutoff],
         )
     return count
+
+
+def list_orphaned_claims(*, claimed_before: datetime) -> list[AgentTrigger]:
+    """Return claimed triggers whose lease has not been refreshed since a cutoff.
+
+    A live turn refreshes ``claimed_at`` every heartbeat, so a claim older
+    than the cutoff is a candidate orphan. The caller decides per row (it
+    alone knows which turns are alive), so ``retry_blocked`` rows are
+    included.
+
+    Args:
+        claimed_before: Rows with ``claimed_at`` before this instant (or no
+            ``claimed_at`` at all) are returned.
+
+    Returns:
+        The rows, oldest claim first.
+    """
+    rows = query(
+        f"""
+        SELECT {_TRIGGER_COLUMNS}
+        FROM agent_triggers
+        WHERE status = 'claimed' AND (claimed_at IS NULL OR claimed_at < $1)
+        ORDER BY claimed_at ASC, id ASC
+        """,
+        [claimed_before],
+    )
+    return [AgentTrigger.model_validate(row) for row in rows]
 
 
 def mark_trigger_retry_blocked(trigger_id: str) -> None:
@@ -545,7 +532,7 @@ def list_claimed_retry_blocked_triggers() -> list[AgentTrigger]:
     """Return claimed triggers whose turn already ran a no-retry command.
 
     At dispatcher start these are orphans of the previous worker that
-    :func:`requeue_stale_triggers` deliberately left ``claimed``; the
+    :func:`requeue_all_claimed_triggers` deliberately left ``claimed``; the
     dispatcher fails them instead of re-running them.
 
     Returns:

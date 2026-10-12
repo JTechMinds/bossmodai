@@ -52,6 +52,10 @@ _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "s
 _REBUILDABLE_BACKLOG_TRIGGER_TYPES = ["task_assigned", "activity_resumed", "watchdog_status_ping", "social"]
 _WORK_REPLAN_ACTIONS = {"complete", "blocked", "delegated", "abandoned"}
 LEASE_HEARTBEAT_SECONDS = 10.0
+# A live turn refreshes ``claimed_at`` every heartbeat and the claim->launch
+# window is milliseconds, so three missed heartbeats with no live turn means
+# the claim was stranded. Derived from the heartbeat, not a tunable.
+ORPHAN_CLAIM_AFTER = timedelta(seconds=3 * LEASE_HEARTBEAT_SECONDS)
 # Why a failed trigger was given up on: shown in the stalled task's reason,
 # its status note and the operator's stall notice.
 RETRIES_EXHAUSTED_STALL_REASON = "Runtime exhausted automatic retries"
@@ -61,6 +65,15 @@ _BLOCKED_ORPHAN_DETAIL = (
     "The runtime stopped during a turn that had already run a command that must not repeat, "
     "so it was not restarted"
 )
+
+
+class StrandedClaimError(RuntimeError):
+    """A trigger claim was found with no live turn behind it.
+
+    Recorded in Diagnostics for claims recovered by the live-orphan sweep or
+    by start-up recovery, so the row names what happened instead of a
+    generic error.
+    """
 
 
 def _runtime_is_paused() -> bool:
@@ -104,9 +117,9 @@ class TurnDispatcher:
         if self._running:
             return
         claim_timeout = config.get_int("trigger_claim_timeout_seconds") or 300
-        # New process: every claimed row is an orphan. force=True does not
-        # touch completed triggers (HA-SEC-P1-02).
-        recovered = db.requeue_stale_triggers(claim_timeout, force=True)
+        # New process: every claimed row is an orphan. Completed triggers
+        # are never touched (HA-SEC-P1-02).
+        recovered = db.requeue_all_claimed_triggers()
         if recovered:
             logger.warning("Requeued %d stale claimed triggers", recovered)
         # Left claimed by the requeue: re-running them would replay a command
@@ -628,38 +641,162 @@ class TurnDispatcher:
         """Fail the claimed orphans ``start()`` found with ``retry_blocked`` set.
 
         Each one's turn died after running a command that must not repeat,
-        so it is failed through ``_exhaust_failed_trigger`` (task stalled,
-        operator told) rather than re-run. A row whose agent no longer
-        exists is failed directly (its channel seat released, as at launch)
-        and logged at warning. A row whose handling raises is logged with
-        its traceback and the others are still processed; if it was not yet
-        failed it stays claimed, so the next start tries again.
+        so ``_resolve_stranded_claim`` routes it to ``_exhaust_failed_trigger``
+        (task stalled, operator told) rather than re-running it; a row whose
+        agent no longer exists is failed there directly. A row whose handling
+        raises is logged with its traceback and the others are still
+        processed; if it was not yet failed it stays claimed, so the
+        live-orphan sweep or the next start tries again.
         """
         orphans, self._blocked_orphans = self._blocked_orphans, []
         for row in orphans:
             try:
-                agent = db.get_agent(row.agent_id)
-                if agent is None:
-                    logger.warning(
-                        "Failing retry-blocked trigger %s: agent %s no longer exists",
-                        row.id,
-                        row.agent_id,
-                    )
-                    if db.fail_agent_trigger(
-                        row.id,
-                        _BLOCKED_ORPHAN_DETAIL,
-                        claim_generation=row.claim_generation,
-                    ) is not None:
-                        self._release_channel_seat(row.agent_id, _turn_trigger(row))
-                    continue
-                await self._exhaust_failed_trigger(
-                    agent=agent,
-                    trigger=_turn_trigger(row),
-                    failure_detail=_BLOCKED_ORPHAN_DETAIL,
-                    stall_reason=NOT_RETRIED_NO_REPEAT_REASON,
+                await self._resolve_stranded_claim(
+                    row,
+                    detail=_BLOCKED_ORPHAN_DETAIL,
+                    exc=StrandedClaimError(_BLOCKED_ORPHAN_DETAIL),
                 )
             except Exception:
                 logger.exception("Could not fail retry-blocked trigger %s", row.id)
+
+    async def _resolve_stranded_claim(self, row: Any, *, detail: str, exc: Exception) -> None:
+        """End a claim that has no turn: requeue it, or fail it and surface the stall.
+
+        The one recovery path for every "this claim has no turn" case: a
+        launch that raised after the claim, a claim found by the live-orphan
+        sweep, and a retry-blocked orphan found at start-up. Every DB write
+        is generation-guarded, so a row that something else already
+        completed, failed or requeued is never clobbered.
+
+        Callers guarantee ``row.agent_id`` is not in ``_active_turns``, so
+        any lane held under that agent belongs to this claim and is released
+        (this also frees a lane leaked by an earlier stranded claim).
+
+        Args:
+            row: The claimed ``AgentTrigger``.
+            detail: The failure text stored on the row (retry or failure).
+            exc: The error recorded in Diagnostics.
+
+        Outcomes:
+            - Unreadable JSON payload: failed (it can never be retried).
+            - Missing agent: failed and its channel seat released.
+            - ``retry_blocked``: failed through ``_exhaust_failed_trigger``,
+              since its turn already ran a command that must not repeat.
+            - Otherwise: ``_supervise_failed_turn`` (requeued under the
+              retry limit, else failed and stalled). It is retryable because
+              no command ran in this claim.
+
+        Raises:
+            Exception: Any DB or broadcast error from the recovery itself;
+                the row may then still be claimed and is retried by the
+                next sweep.
+        """
+        self._release_turn_lane(row.agent_id)
+        try:
+            trigger = _turn_trigger(row)
+        except json.JSONDecodeError:
+            logger.error(
+                "Failing stranded trigger %s for agent %s: its payload is not valid JSON",
+                row.id,
+                row.agent_id,
+            )
+            db.fail_agent_trigger(
+                row.id,
+                "Unreadable trigger payload",
+                claim_generation=row.claim_generation,
+            )
+            return
+        agent = db.get_agent(row.agent_id)
+        if agent is None:
+            logger.error(
+                "Failing stranded trigger %s: agent %s no longer exists",
+                row.id,
+                row.agent_id,
+            )
+            if db.fail_agent_trigger(
+                row.id,
+                "Agent not found",
+                claim_generation=row.claim_generation,
+            ) is not None:
+                self._release_channel_seat(row.agent_id, trigger)
+            return
+        await self._record_dispatcher_exception(agent=agent, trigger=trigger, exc=exc)
+        if row.retry_blocked:
+            await self._exhaust_failed_trigger(
+                agent=agent,
+                trigger=trigger,
+                failure_detail=detail,
+                stall_reason=NOT_RETRIED_NO_REPEAT_REASON,
+            )
+            return
+        await self._supervise_failed_turn(
+            agent=agent,
+            trigger=trigger,
+            failure_detail=detail,
+            not_retried_reason=None,
+        )
+
+    async def _abandon_claim(self, candidate: Any, exc: Exception) -> None:
+        """Resolve a claim whose launch raised, without raising into the dispatcher loop.
+
+        Call from the ``except`` that caught ``exc``, so the traceback is
+        logged. If the recovery itself raises, that is logged too and the
+        claim is left for the live-orphan sweep, so the next drain pass
+        still serves every agent.
+
+        Args:
+            candidate: The claimed ``AgentTrigger`` whose launch failed.
+            exc: The exception the launch step raised.
+        """
+        logger.exception("Turn launch failed after claim for trigger %s", candidate.id)
+        try:
+            await self._resolve_stranded_claim(
+                candidate,
+                detail=self._short_error_detail(f"Turn launch failed: {exc}"),
+                exc=exc,
+            )
+        except Exception:
+            logger.exception(
+                "Could not resolve stranded claim for trigger %s; the orphan sweep will retry it",
+                candidate.id,
+            )
+
+    async def _recover_live_orphans(self) -> None:
+        """Recover claims older than ``ORPHAN_CLAIM_AFTER`` that have no live turn.
+
+        A claim whose agent is in ``_active_turns`` is left alone: that turn
+        is alive and only its heartbeat is late, so re-running it would
+        duplicate work. The in-memory check is authoritative because only
+        this process runs turns. Every other stale claim was stranded by
+        some path, so it is logged at error (that path needs fixing) and
+        resolved through ``_resolve_stranded_claim``. One row's failure is
+        logged and does not block the rest.
+
+        Raises:
+            Exception: A DB error listing the candidate rows.
+        """
+        now = datetime.now(timezone.utc)
+        rows = db.list_orphaned_claims(claimed_before=now - ORPHAN_CLAIM_AFTER)
+        for row in rows:
+            if row.agent_id in self._active_turns:
+                continue
+            try:
+                age = (now - row.claimed_at).total_seconds() if row.claimed_at is not None else None
+                logger.error(
+                    "Recovering stranded trigger claim %s for agent %s (claimed %ss ago)",
+                    row.id,
+                    row.agent_id,
+                    f"{age:.0f}" if age is not None else "?",
+                )
+                await self._resolve_stranded_claim(
+                    row,
+                    detail="Turn claim stranded with no live turn",
+                    exc=StrandedClaimError(
+                        f"Trigger {row.id} ({row.trigger_type}) was left claimed with no live turn"
+                    ),
+                )
+            except Exception:
+                logger.exception("Could not recover stranded trigger claim %s", row.id)
 
     async def _loop(self) -> None:
         await self._fail_blocked_orphans()
@@ -678,17 +815,31 @@ class TurnDispatcher:
                 logger.exception("Dispatcher loop error")
 
     async def _drain_queue(self) -> None:
+        """Recover stranded claims, then claim and launch turns until none can start.
+
+        Everything after a successful claim runs in one guarded block, so a
+        claim always ends in a turn, a requeue or a failure: an exception
+        there is resolved by ``_abandon_claim`` and the pass ends. Returning
+        rather than continuing bounds a failure that is not trigger-specific
+        (a broadcast or DB-lock error) to one abandon per pass, instead of
+        burning every queued trigger's retries in a tight loop; the requeued
+        trigger runs on the next wake. ``_launch_claimed_trigger`` creates the task as its last statement,
+        so once it returns True nothing in the block can raise.
+        """
+        await self._recover_live_orphans()
         while self._running:
             candidate = self._claim_available_trigger()
-            await self._emit_queue_notices()
             if not candidate:
+                await self._emit_queue_notices()
                 return
 
             try:
+                await self._emit_queue_notices()
+                schedule_queue_visibility(candidate.agent_id)
                 started = await self._launch_claimed_trigger(candidate)
-            except Exception:
-                self._release_turn_lane(candidate.agent_id)
-                raise
+            except Exception as exc:
+                await self._abandon_claim(candidate, exc)
+                return
             if not started:
                 self._release_turn_lane(candidate.agent_id)
 
@@ -837,12 +988,17 @@ class TurnDispatcher:
             if lane is None:
                 self._note_waiting(runnable, index)
                 return None
-            claimed = db.claim_trigger(trigger.id)
+            try:
+                claimed = db.claim_trigger(trigger.id)
+            except Exception:
+                # The lane was taken for this claim; a raising claim must
+                # not leak it.
+                budget.release(lane)
+                raise
             if claimed is None:
                 budget.release(lane)
                 continue
             self._turn_lanes[claimed.agent_id] = lane
-            schedule_queue_visibility(claimed.agent_id)
             return claimed
         return None
 
