@@ -55,7 +55,7 @@ const WINDOWS = {
             notes: "- Ada owes the plan draft",
             updated_at: "2026-10-12T09:20:00Z",
             run_state: "failed",
-            last_error: "System AI returned no notes",
+            last_error: "The summarizer returned nothing.",
         },
         visible_from_message_id: "m3",
         ceiling_hit: false,

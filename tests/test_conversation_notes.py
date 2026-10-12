@@ -840,7 +840,7 @@ def test_the_transcript_divider_marks_the_agents_context() -> None:
     assert collapsed["expanded"] == "false" and collapsed["bodyHidden"] is True
     assert collapsed["controls"] == f"{divider_id}-body"
     assert collapsed["bodyText"] == "- Ada owes the plan draft"
-    assert collapsed["failure"] == "Last compaction failed: System AI returned no notes"
+    assert collapsed["failure"] == f"Last compaction failed: {RUN_FAILED_EMPTY}"
 
     assert payload["expanded"]["expanded"] == "true"
     assert payload["expanded"]["bodyHidden"] is False

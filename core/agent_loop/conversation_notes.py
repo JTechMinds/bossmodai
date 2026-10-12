@@ -20,7 +20,8 @@ Thresholds, with ``B`` = the history budget and ``T`` = rendered tokens:
   everything older, plus the previous notes, into new notes of at most
   ``B * notes%`` tokens (one shorter retry, never truncated);
 * the loader shows at most ``B * ceiling%`` of tail tokens; reaching that is
-  a safety net for a failing or disabled compaction and logs a WARNING.
+  a safety net for a failing or disabled compaction. It logs a WARNING on
+  agent turns; transcript reads mark it visibly instead (``ceiling_hit``).
 
 The agent turn never waits: the System AI call runs in a worker thread from
 an event-loop task. This module holds policy and orchestration only; the SQL
