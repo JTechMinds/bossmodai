@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class AgentPromptHistoryPolicy(BaseModel):
@@ -12,14 +12,14 @@ class AgentPromptHistoryPolicy(BaseModel):
 
     This is not a separate transcript store. It controls how the backend reads
     from existing authored messages and runtime notifications when building the
-    model-visible history for a turn.
+    model-visible history for a turn. How much history a turn sees is not
+    per agent: it is the per-thread history budget in Settings → Context
+    Window (``conversation_history_budget_tokens``).
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     agent_id: str
-    last_n_histories: int = Field(default=30, ge=0, le=500)
-    max_allowed_history_tokens: int = Field(default=2000, ge=0, le=50_000)
     earliest_ts_allowed: datetime | None = None
     include_notifications: bool = True
     created_at: datetime
@@ -31,7 +31,5 @@ class AgentPromptHistoryPolicyUpdate(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    last_n_histories: int | None = Field(default=None, ge=0, le=500)
-    max_allowed_history_tokens: int | None = Field(default=None, ge=0, le=50_000)
     earliest_ts_allowed: datetime | None = None
     include_notifications: bool | None = None

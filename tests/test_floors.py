@@ -22,7 +22,7 @@ from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import assignment_wake_trigger, persist_result_triggers
 from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.channel_rounds import ordered_channel_members, start_channel_peer_round
-from core.agent_loop.chat_fade import _run_fade_job
+from core.agent_loop.conversation_notes import ThreadScope, _summarizer_input
 from core.agent_loop.soft_blocks import apply_no_progress_block
 from core.agent_loop.sticky_slots import _allowed_sources
 from core.bm_cli.floor_roots import floor_root
@@ -394,7 +394,8 @@ def test_sticky_next_owner_excludes_other_floor_and_keeps_the_row() -> None:
     assert kept and kept[0]["body"] == "still stored"
 
 
-def test_chat_fade_skips_off_floor_authors(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_conversation_notes_skip_off_floor_authors() -> None:
+    """A channel's summarizer never reads a row by an agent no longer on its floor."""
     finance = create_floor("Finance")
     ada = _agent("Ada", 1)
     channel = db.create_channel(
@@ -402,7 +403,7 @@ def test_chat_fade_skips_off_floor_authors(monkeypatch: pytest.MonkeyPatch) -> N
         member_agent_ids=[ada.id],
         created_by=ada.id,
     )
-    message = db.create_channel_message(
+    db.create_channel_message(
         channel_id=channel.id,
         author_type="agent",
         author_agent_id=ada.id,
@@ -410,18 +411,18 @@ def test_chat_fade_skips_off_floor_authors(monkeypatch: pytest.MonkeyPatch) -> N
         content="older turn",
         source_channel="channel",
     )
+    db.create_channel_message(
+        channel_id=channel.id,
+        author_type="human",
+        author_name="Boss",
+        content="human turn",
+        source_channel="channel",
+    )
+    rows = db.get_formatted_channel_messages(channel.id, human_label="Boss")
+    scope = ThreadScope.channel(channel.id)
+    assert [row["content"] for row in _summarizer_input(scope, rows)] == ["older turn", "human turn"]
     db.update_agent(ada.id, floor_id=finance.id)
-    monkeypatch.setattr("core.agent_loop.chat_fade._mode", lambda: "pressure_only")
-    monkeypatch.setattr("core.agent_loop.chat_fade.system_ai_is_configured", lambda: True)
-    called = {"n": 0}
-
-    def _complete(*_args, **_kwargs):
-        called["n"] += 1
-        return "should not land"
-
-    monkeypatch.setattr("core.agent_loop.chat_fade.complete_text", _complete)
-    _run_fade_job(channel.id, (message.id,), "kept summary")
-    assert called["n"] == 0
+    assert [row["content"] for row in _summarizer_input(scope, rows)] == ["human turn"]
 
 
 def test_system_roster_keeps_one_floor_and_drops_a_tie() -> None:

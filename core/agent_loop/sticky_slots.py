@@ -6,16 +6,18 @@ path for the verdict, and an existing blocker event id for an open
 condition. System AI does not create board cards, owners, paths, or
 blocker events.
 
-Chat fade still soft-summarizes older channel turns. When a task-linked
-turn falls off that window, or off the task thread's warm window, the
-stored slots inject. An open blocker stays on the prompt from the event
-or status note already on the task. A fill does not insert or replace
-that blockers row, so a clearing reply cannot hide the condition.
+Conversation notes summarize older channel turns
+(core/agent_loop/conversation_notes.py). When a task-linked turn is folded
+into those notes, or falls off the task thread's warm window, the stored
+slots inject. An open blocker stays on the prompt from the event or status
+note already on the task. A fill does not insert or replace that blockers
+row, so a clearing reply cannot hide the condition.
 
 The agent turn never waits. A background thread asks System AI. If
 System AI is missing, the reply is unusable, or the write fails, stored
-rows stay and the prompt keeps the warm window plus chat fade. Standing
-prefs, desk notes, personal notes, and Soft-block are not read or written.
+rows stay and the prompt keeps the warm window plus the conversation notes.
+Standing prefs, desk notes, personal notes, and Soft-block are not read or
+written.
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 import db
 from core import config
-from core.agent_loop.chat_fade import FADE_ID_PREFIX
+from core.agent_loop.conversation_notes import NOTES_ID_PREFIX, read_settings
 from core.boss import boss_label
 from core.llm.client import count_tokens
 from core.llm.system_completion import complete_text, system_ai_is_configured
@@ -165,9 +167,10 @@ def compose_channel_sticky_slots(
     agent_id: str,
     token_model: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Inject slots for task-linked channel turns that fade or the window dropped.
+    """Inject slots for task-linked channel turns folded into notes or dropped.
 
-    Messages with no task id do not create slots. Chat fade itself is unchanged.
+    Messages with no task id do not create slots. The conversation notes
+    themselves are unchanged.
     """
     shown = visible
     try:
@@ -196,8 +199,6 @@ def _inject_tasks(
     visible_ids: set[str],
 ) -> list[dict[str, Any]]:
     if _mode() != "pressure_only":
-        return visible
-    if int(getattr(policy, "last_n_histories", 0) or 0) <= 0:
         return visible
     if any(_is_slot_message(message) for message in visible):
         return visible
@@ -474,16 +475,14 @@ def _pressure_prefix(
     """Return older turns that sit above the task-headroom line."""
     if _mode() != "pressure_only":
         return None
-    budget = int(getattr(policy, "max_allowed_history_tokens", 0) or 0)
-    if budget <= 0:
-        return None
+    budget = read_settings().budget_tokens
     headroom = _headroom_percent()
     if headroom is None:
         return None
     keep_limit = int(budget * (100 - headroom) / 100)
     if keep_limit < 1:
         keep_limit = 1
-    candidate = _candidate(messages, policy)
+    candidate = _candidate(messages)
     verbatim = [message for message in candidate if not _is_synthetic(message)]
     if len(verbatim) < 2:
         return None
@@ -578,18 +577,15 @@ def _is_synthetic(message: dict[str, Any]) -> bool:
 
 
 def _is_synthetic_id(message_id: str) -> bool:
-    return message_id.startswith(SLOT_ID_PREFIX) or message_id.startswith(FADE_ID_PREFIX)
+    return message_id.startswith(SLOT_ID_PREFIX) or message_id.startswith(NOTES_ID_PREFIX)
 
 
 def _message_ids(messages: list[dict[str, Any]]) -> set[str]:
     return {str(message.get("id") or "") for message in messages if str(message.get("id") or "")}
 
 
-def _candidate(messages: list[dict[str, Any]], policy: Any) -> list[dict[str, Any]]:
-    last_n = int(getattr(policy, "last_n_histories", 0) or 0)
-    if last_n <= 0:
-        return []
-    return list(messages[-last_n:])
+def _candidate(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return list(messages)
 
 
 def _entry_tokens(message: dict[str, Any], agent_id: str, token_model: str | None) -> int:

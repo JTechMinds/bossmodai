@@ -104,6 +104,8 @@ API_BY_INJECTION = {
     "context/schedule-api.js",
     "context/schedule-preview.js",
     "conversation/conversation.js",
+    # The window wrapper fetches what the agents see with the source's `api`.
+    "conversation/conversation-window.js",
     "conversation/message.js",
     "conversation/sources/agent-source.js",
     # The agent source's Rewind requests, with the source's injected `api`.

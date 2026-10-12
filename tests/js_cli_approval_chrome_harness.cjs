@@ -23,7 +23,7 @@ const NAMES = [
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
-    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
+    "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -73,6 +73,10 @@ const REST_MESSAGES = {
 
 const blockers = {};
 const api = async (url) => {
+    // What the agents see (conversation-window.js): no notes, nothing dropped.
+    if (/^\/api\/conversations\/[^/]+\/[^/]+\/window$/.test(String(url))) {
+        return { ok: true, async json() { return { notes: null, visible_from_message_id: null, ceiling_hit: false }; } };
+    }
     const agent = String(url).match(/^\/api\/agents\/([^/]+)\/messages/);
     if (agent) {
         const id = agent[1];

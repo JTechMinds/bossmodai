@@ -101,7 +101,7 @@ const NAMES = [
     "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeedCoalesce", "BossModNeeds", "BossModNeedsBar",
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
-    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation", "BossModPlaces",
+    "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
     "BossModFloorPlan", "BossModMiniOffice", "BossModOfficeChatter",
     "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
@@ -2966,7 +2966,6 @@ async function main() {
         connection_id: "c2", thinking_social: "off", thinking_work: "medium",
         desk_x: 3, desk_y: 4,
         prompt_history_policy: {
-            last_n_histories: 7, max_allowed_history_tokens: 900,
             earliest_ts_allowed: null, include_notifications: false,
         },
         captured_at: "2026-09-20T09:00:00Z", deleted_at: "2026-09-21T10:30:00Z",

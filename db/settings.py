@@ -37,6 +37,13 @@ _OBSOLETE_SETTING_KEYS = {
     "default_model_reasoning",
     "default_model_extraction",
     "default_model_self_queue",
+    # Chat fade's headroom knob. Conversation notes replaced chat fade and
+    # have their own conversation_* knobs (Settings → Context Window).
+    "compaction_chat_budget_headroom_percent",
+    # The per-agent last-N / token history window. History is budgeted per
+    # thread now (conversation_history_budget_tokens).
+    "default_prompt_history_last_n",
+    "default_prompt_history_max_tokens",
 }
 
 
@@ -105,15 +112,15 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # Failed judge attempts (no answer, or a malformed one) on one quiet period
     # before it is recorded as checked.
     ("channel_idle_check_max_attempts", "3", "llm"),
-    # System AI + compaction pressure knobs. The System AI picker is the
-    # first control under Settings → AI Connections. Compaction knobs stay
-    # on Settings → System → AI Output.
-    # Compaction never runs every turn, and it never blocks an agent turn.
-    # Chat fade queues in the background on System AI when chat headroom
-    # is tight. Sticky-slot fill queues in the background on System AI
-    # when task headroom is tight. Slots are task-side and keyed by
-    # existing task, owner, verdict, and blocker ids. These keys are the
-    # only knob surface: mode, headroom, min turns, and cooldown.
+    # System AI + task sticky-slot knobs. The System AI picker is the
+    # first control under Settings → AI Connections. The compaction_* knobs
+    # stay on Settings → System → AI Output and drive task sticky slots only;
+    # conversation history has its own conversation_* knobs (Context Window).
+    # Sticky-slot fill never runs every turn.
+    # It never blocks an agent turn: it queues in the background on System AI
+    # when task headroom is tight. Slots are task-side and keyed by existing
+    # task, owner, verdict, and blocker ids. These keys are the only
+    # sticky-slot knob surface: mode, task headroom, min turns, and cooldown.
     # system_ai_connection is one AI connection id, not a per-agent identity model
     # override. Empty means unset. A saved id that still names a
     # connection is kept on upgrade; this seed does not overwrite it.
@@ -125,15 +132,16 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("system_ai_thinking", "default", "llm"),
     # Default output cap for System AI completions. Reasoning tokens count
     # against it on reasoning models, so a small cap truncates the answer.
-    # Every System AI completion uses it: channel routes, chat fade, sticky
-    # slots, CLI auto-approve.
+    # Every System AI completion uses it: channel routes, conversation notes,
+    # sticky slots, CLI auto-approve.
     ("system_ai_max_tokens", "6144", "llm"),
-    # Wall-clock limit for one System AI completion (routing, idle check, fade,
-    # sticky slots, auto-approve). Slow local models need headroom.
+    # Wall-clock limit for one System AI completion (routing, idle check,
+    # conversation notes, sticky slots, auto-approve). Slow local models need
+    # headroom. Twice this is how old a conversation-notes run claim must be
+    # before another run may take it over.
     ("system_ai_timeout_seconds", "180", "llm"),
     ("compaction_mode", "pressure_only", "llm"),
     ("compaction_task_budget_headroom_percent", "25", "llm"),
-    ("compaction_chat_budget_headroom_percent", "35", "llm"),
     ("compaction_min_turns_between_runs", "8", "llm"),
     ("compaction_cooldown_minutes", "10", "llm"),
     ("managed_writer_max_batch_files", "8", "llm"),
@@ -150,6 +158,25 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # total pref text in one agent's store: storing more than can ever be
     # shown makes no sense. Lowering either never hides a stored pref.
     ("standing_prefs_section_max_chars", "4000", "context"),
+    # Conversation memory (core/agent_loop/conversation_notes.py), for
+    # human↔agent DMs, agent↔agent DMs and channel threads. Product rules:
+    # - The history budget is per thread and covers history only, not the
+    #   whole prompt: [instructions] + [memory] + [notes] + [recent messages].
+    # - The recent tail is never disrupted: a run summarizes the OLDEST
+    #   uncompacted messages, keeps about the newest keep% verbatim, and each
+    #   new set of notes absorbs the previous notes.
+    # - Seamless, no cliff: a run starts in the background at start% of the
+    #   budget and never blocks a turn. A late run means the agent briefly sees
+    #   more than the budget; the ceiling% hard limit is only a safety net for
+    #   repeated failure. Notes are capped at notes% and never truncated.
+    # Percent rules (enforced on write): keep < start <= 100, notes < keep,
+    # ceiling 100..300. The budget has no upper cap: it is the user's choice.
+    ("conversation_compaction_enabled", "true", "context"),
+    ("conversation_history_budget_tokens", "16000", "context"),
+    ("conversation_compaction_start_percent", "80", "context"),
+    ("conversation_compaction_keep_percent", "50", "context"),
+    ("conversation_notes_max_percent", "10", "context"),
+    ("conversation_history_ceiling_percent", "150", "context"),
 
     # ── Desk ──
     ("desk_preview_max_chars", "50000", "desk"),
@@ -263,8 +290,6 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── Agent defaults ──
     ("default_spawn_x", "14", "simulation"),
     ("default_spawn_y", "9", "simulation"),
-    ("default_prompt_history_last_n", "30", "context"),
-    ("default_prompt_history_max_tokens", "2000", "context"),
     # How many agent snapshots Add agent's Recent keeps (db/agent_snapshots.py):
     # the newest by capture time, deleted agents included. No version history.
     ("recent_agents_limit", "20", "advanced"),

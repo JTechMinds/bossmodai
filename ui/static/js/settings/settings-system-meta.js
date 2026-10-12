@@ -22,9 +22,9 @@ const BossModSystemSettingsMeta = (() => {
         profile: 'How your agents address you.',
         simulation: 'Movement speed, simulation cadence, and recovery behavior for the office runtime.',
         social: 'Controls when idle agents may start optional social behavior based on time and proximity.',
-        context: 'Controls how much recent conversation and work history is included in each agent turn.',
+        context: 'Controls how much conversation and work history each agent turn includes, and when older messages are summarized into conversation notes.',
         threads: 'Controls who the System AI wakes in shared threads and how quiet threads are checked for unstarted work.',
-        llm: 'Controls global completion behavior and compaction pressure.',
+        llm: 'Controls global completion behavior and task sticky-slot compaction pressure.',
         desk: 'Controls Desk preview behavior and filesystem browsing limits.',
     };
 
@@ -166,6 +166,37 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Memory Section Limit (chars)',
             description: 'Most characters of memory injected into one agent turn, and the most total memory text one agent can store. Memories past it are listed as \'more: N not shown\'. Must leave room for at least one full memory line. Default 4000.',
         },
+        conversation_compaction_enabled: {
+            order: 50,
+            control: 'switch',
+            label: 'Conversation memory',
+            description: 'When a DM or thread gets long, older messages are summarized into notes in the background, so agents keep the gist without losing the recent messages.',
+        },
+        conversation_history_budget_tokens: {
+            order: 60,
+            label: 'History budget (tokens)',
+            description: 'How much conversation history one DM or thread gives an agent. Pick what fits your model: about half its context window works well. Default 16000.',
+        },
+        conversation_compaction_start_percent: {
+            order: 70,
+            label: 'Start summarizing at (% of budget)',
+            description: 'Summarizing starts in the background once history reaches this share of the budget. Must be higher than Keep recent messages. Default 80.',
+        },
+        conversation_compaction_keep_percent: {
+            order: 80,
+            label: 'Keep recent messages (% of budget)',
+            description: 'How much of the newest conversation always stays word for word. Default 50.',
+        },
+        conversation_notes_max_percent: {
+            order: 90,
+            label: 'Notes size (% of budget)',
+            description: 'Longest the notes may be. Must be lower than Keep recent messages. Default 10.',
+        },
+        conversation_history_ceiling_percent: {
+            order: 100,
+            label: 'Hard limit (% of budget)',
+            description: 'A safety net if summarizing keeps failing: older messages past this are left out of agents\' context. From 100 to 300. Default 150.',
+        },
         default_max_tokens: {
             order: 10,
             label: 'Default Max Completion Tokens',
@@ -216,18 +247,18 @@ const BossModSystemSettingsMeta = (() => {
         system_ai_max_tokens: {
             order: 37,
             label: 'System AI Max Output Tokens',
-            description: 'Output cap for every System AI completion: channel routing, chat fade, sticky slots, and CLI auto-approve. Reasoning models spend hidden reasoning tokens against this cap, so a small value cuts the answer off. Default 6144.',
+            description: 'Output cap for every System AI completion: channel routing, conversation notes, sticky slots, and CLI auto-approve. Reasoning models spend hidden reasoning tokens against this cap, so a small value cuts the answer off. Default 6144.',
         },
         system_ai_timeout_seconds: {
             order: 37,
             label: 'System AI Timeout (seconds)',
-            description: 'Longest one System AI call may take: thread routing, idle check, chat fade, sticky slots, and CLI auto-approve. A call that runs out falls back or is retried. Slow local models need more. Default 180.',
+            description: 'Longest one System AI call may take: thread routing, idle check, conversation notes, sticky slots, and CLI auto-approve. A call that runs out falls back or is retried. Slow local models need more. Default 180.',
         },
         compaction_mode: {
             order: 38,
             control: 'select',
             label: 'Compaction Mode',
-            description: 'Off disables compaction. Pressure-only queues it when a context budget is tight. Compaction never runs every turn, and it never blocks the agent turn — it queues in the background.',
+            description: 'For task sticky slots. Off disables them. Pressure-only queues a fill when a task\'s context budget is tight. It never runs every turn, and it never blocks the agent turn — it queues in the background.',
             options: [
                 { value: 'off', label: 'Off' },
                 { value: 'pressure_only', label: 'Pressure-only' },
@@ -238,20 +269,15 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Task Budget Headroom (%)',
             description: 'How much of the task context budget to leave free before pressure-only task sticky-slot fill may queue.',
         },
-        compaction_chat_budget_headroom_percent: {
-            order: 40,
-            label: 'Chat Budget Headroom (%)',
-            description: 'How much of the chat context budget to leave free before pressure-only compaction may queue.',
-        },
         compaction_min_turns_between_runs: {
             order: 41,
             label: 'Min Turns Between Runs',
-            description: 'Minimum agent turns that must pass between compaction runs. Compaction never runs every turn.',
+            description: 'Minimum agent turns that must pass between task sticky-slot fills. A fill never runs every turn.',
         },
         compaction_cooldown_minutes: {
             order: 42,
             label: 'Cooldown (minutes)',
-            description: 'Minimum minutes between compaction runs. Compaction queues in the background and never blocks the agent turn.',
+            description: 'Minimum minutes between task sticky-slot fills. A fill queues in the background and never blocks the agent turn.',
         },
         managed_writer_max_batch_files: {
             order: 50,

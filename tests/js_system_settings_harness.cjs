@@ -270,7 +270,6 @@ async function main() {
         setting("system_ai_timeout_seconds", "180", "llm"),
         setting("compaction_mode", "pressure_only", "llm"),
         setting("compaction_task_budget_headroom_percent", "25", "llm"),
-        setting("compaction_chat_budget_headroom_percent", "35", "llm"),
         setting("compaction_min_turns_between_runs", "8", "llm"),
         setting("compaction_cooldown_minutes", "10", "llm"),
         setting("max_concurrent_llm_calls", "5", "llm"),
@@ -278,6 +277,12 @@ async function main() {
         setting("context_recent_completed_tasks", "3", "context"),
         setting("standing_prefs_line_max_chars", "400", "context"),
         setting("standing_prefs_section_max_chars", "4000", "context"),
+        setting("conversation_compaction_enabled", "true", "context"),
+        setting("conversation_history_budget_tokens", "16000", "context"),
+        setting("conversation_compaction_start_percent", "80", "context"),
+        setting("conversation_compaction_keep_percent", "50", "context"),
+        setting("conversation_notes_max_percent", "10", "context"),
+        setting("conversation_history_ceiling_percent", "150", "context"),
         setting("channel_response_round_cap", "64", "llm"),
         setting("channel_router_transcript_messages", "10", "llm"),
         setting("channel_idle_check_enabled", "true", "llm"),
@@ -311,6 +316,7 @@ async function main() {
 
     await openCategory(root, "context");
     const context = await snapshot(root);
+    const contextOrder = orderedKeys(root);
     // `saves` in the output is the AI Output / Context story; Threads saves are reported on their own.
     const outputSaves = saves.slice();
 
@@ -444,6 +450,7 @@ async function main() {
         fresh,
         degraded,
         context,
+        contextOrder,
         threadsHeading,
         threadsOrder,
         threadsInputs,

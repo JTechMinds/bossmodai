@@ -1,4 +1,4 @@
-"""System AI picker and compaction pressure knobs. Chat fade uses them."""
+"""System AI picker, task sticky-slot knobs, and the conversation-memory knobs."""
 
 from __future__ import annotations
 
@@ -24,14 +24,31 @@ ROOT = Path(__file__).resolve().parents[1]
 JS = ROOT / "ui" / "static" / "js"
 
 # (key, default). Category is llm. The System AI picker is rendered under
-# AI Connections; compaction knobs stay on Settings → System → AI Output.
+# AI Connections; the compaction_* knobs (task sticky slots only) stay on
+# Settings → System → AI Output.
 COMPACTION_SETTINGS = (
     ("system_ai_connection", ""),
     ("compaction_mode", "pressure_only"),
     ("compaction_task_budget_headroom_percent", "25"),
-    ("compaction_chat_budget_headroom_percent", "35"),
     ("compaction_min_turns_between_runs", "8"),
     ("compaction_cooldown_minutes", "10"),
+)
+
+# (key, default). Category is context: Settings → Context Window.
+CONVERSATION_SETTINGS = (
+    ("conversation_compaction_enabled", "true"),
+    ("conversation_history_budget_tokens", "16000"),
+    ("conversation_compaction_start_percent", "80"),
+    ("conversation_compaction_keep_percent", "50"),
+    ("conversation_notes_max_percent", "10"),
+    ("conversation_history_ceiling_percent", "150"),
+)
+
+# Keys retired with chat fade and the per-agent history window.
+OBSOLETE_KEYS = (
+    "compaction_chat_budget_headroom_percent",
+    "default_prompt_history_last_n",
+    "default_prompt_history_max_tokens",
 )
 
 
@@ -59,7 +76,6 @@ def test_fresh_db_seeds_system_ai_and_compaction_knobs() -> None:
         assert settings[key].category == "llm"
     assert config.get("compaction_mode") == "pressure_only"
     assert config.get("compaction_task_budget_headroom_percent") == "25"
-    assert config.get("compaction_chat_budget_headroom_percent") == "35"
     assert config.get("compaction_min_turns_between_runs") == "8"
     assert config.get("compaction_cooldown_minutes") == "10"
     # Empty means unset. config.get hides blank values.
@@ -72,23 +88,48 @@ def test_system_ai_connection_id_round_trips() -> None:
     assert config.get("system_ai_connection") == "conn-1"
 
 
-def test_seed_comments_state_the_compaction_product_rules() -> None:
+def test_fresh_db_seeds_the_conversation_memory_settings() -> None:
+    settings = {row.key: row for row in db.get_settings()}
+    for key, default in CONVERSATION_SETTINGS:
+        assert get_seed_setting_default(key) == (default, "context")
+        assert settings[key].value == default
+        assert settings[key].category == "context"
+
+
+def test_seed_comments_state_the_product_rules() -> None:
     source = (ROOT / "db" / "settings.py").read_text(encoding="utf-8")
-    assert "never runs every turn" in source
-    assert "never blocks an agent turn" in source
+    # Task sticky slots: the compaction_* knobs.
+    assert "Sticky-slot fill never runs every turn." in source
+    assert "It never blocks an agent turn" in source
     assert "queues in the background" in source
-    assert "chat fade" in source.lower()
-    assert "sticky-slot" in source.lower()
     assert "not a" in source and "per-agent identity model" in source
+    # Conversation memory: per-thread budget, undisturbed tail, no cliff.
+    assert "The history budget is per thread and covers history only" in source
+    assert "The recent tail is never disrupted" in source
+    assert "each\n    #   new set of notes absorbs the previous notes" in source
+    assert "Seamless, no cliff" in source
+    assert "never blocks a turn" in source
+    assert "never truncated" in source
+    assert "chat fade" not in source.lower().replace("chat fade's headroom knob", "").replace(
+        "replaced chat fade", ""
+    )
 
 
-def test_no_compaction_runner_module() -> None:
-    runners = []
-    for folder in ("core", "api", "db"):
-        for path in (ROOT / folder).rglob("*"):
-            if path.is_file() and "compact" in path.name.lower():
-                runners.append(path.relative_to(ROOT).as_posix())
-    assert runners == []
+def test_obsolete_history_and_chat_fade_keys_are_pruned() -> None:
+    # As an older install still has them; set_setting refuses obsolete keys.
+    for key in OBSOLETE_KEYS:
+        db.execute(
+            "INSERT INTO settings (key, value, category) VALUES ($1, '1', 'context')",
+            [key],
+        )
+    assert set(OBSOLETE_KEYS) <= {row.key for row in db.get_settings()}
+    db.close_connection()
+    db.init_db()
+    config.reload()
+    stored = {row.key for row in db.get_settings()}
+    for key in OBSOLETE_KEYS:
+        assert key not in stored
+        assert get_seed_setting_default(key) is None
 
 
 def _render_system_settings() -> dict:
@@ -143,7 +184,6 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
         "system_ai_timeout_seconds",
         "compaction_mode",
         "compaction_task_budget_headroom_percent",
-        "compaction_chat_budget_headroom_percent",
         "compaction_min_turns_between_runs",
         "compaction_cooldown_minutes",
     ]
@@ -177,7 +217,7 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
 
     assert rows["compaction_task_budget_headroom_percent"]["label"] == "Task Budget Headroom (%)"
     assert rows["compaction_task_budget_headroom_percent"]["value"] == "25"
-    assert rows["compaction_chat_budget_headroom_percent"]["value"] == "35"
+    assert "compaction_chat_budget_headroom_percent" not in rows
     assert "never runs every turn" in rows["compaction_min_turns_between_runs"]["paragraphs"][0]
     assert rows["compaction_min_turns_between_runs"]["value"] == "8"
     assert "never blocks the agent turn" in rows["compaction_cooldown_minutes"]["paragraphs"][0]
@@ -382,6 +422,24 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
         "context_recent_completed_tasks",
         "standing_prefs_line_max_chars",
         "standing_prefs_section_max_chars",
+        "conversation_history_budget_tokens",
+        "conversation_compaction_start_percent",
+        "conversation_compaction_keep_percent",
+        "conversation_notes_max_percent",
+        "conversation_history_ceiling_percent",
+    ]
+    # The switch is a switch mount, not a text input, in its own place.
+    assert payload["contextOrder"] == [
+        "context_recent_work_artifacts",
+        "context_recent_completed_tasks",
+        "standing_prefs_line_max_chars",
+        "standing_prefs_section_max_chars",
+        "conversation_compaction_enabled",
+        "conversation_history_budget_tokens",
+        "conversation_compaction_start_percent",
+        "conversation_compaction_keep_percent",
+        "conversation_notes_max_percent",
+        "conversation_history_ceiling_percent",
     ]
     rows = _by_key(payload["context"])
     line = rows["standing_prefs_line_max_chars"]
@@ -401,6 +459,84 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
     assert "Default 4000." in section["paragraphs"][0]
     for row in (line, section):
         assert "restart" not in row["paragraphs"][0].lower()
+    labels = {key: rows[key]["label"] for key, _default in CONVERSATION_SETTINGS if key in rows}
+    assert labels == {
+        "conversation_history_budget_tokens": "History budget (tokens)",
+        "conversation_compaction_start_percent": "Start summarizing at (% of budget)",
+        "conversation_compaction_keep_percent": "Keep recent messages (% of budget)",
+        "conversation_notes_max_percent": "Notes size (% of budget)",
+        "conversation_history_ceiling_percent": "Hard limit (% of budget)",
+    }
+    for key in labels:
+        assert rows[key]["category"] == "context"
+
+
+def test_conversation_budget_is_a_positive_int_with_no_upper_cap() -> None:
+    for bad in ("0", "-1", "16k", ""):
+        res = _put_setting("conversation_history_budget_tokens", bad, "context")
+        assert res.status_code == 400
+        assert res.json()["detail"] == "History budget must be a whole number of at least 1."
+    for good in ("4000", "100000"):
+        res = _put_setting("conversation_history_budget_tokens", good, "context")
+        assert res.status_code == 200, res.text
+        assert config.require_int("conversation_history_budget_tokens") == int(good)
+
+
+def test_conversation_switch_accepts_only_true_or_false() -> None:
+    bad = _put_setting("conversation_compaction_enabled", "yes", "context")
+    assert bad.status_code == 400
+    assert bad.json()["detail"] == "Conversation memory must be true or false."
+    assert _put_setting("conversation_compaction_enabled", "false", "context").status_code == 200
+    assert config.get("conversation_compaction_enabled") == "false"
+
+
+@pytest.mark.parametrize(
+    ("key", "bad", "detail"),
+    [
+        ("conversation_compaction_start_percent", "0", "Start summarizing at must be a whole number from 1 to 100."),
+        ("conversation_compaction_start_percent", "101", "Start summarizing at must be a whole number from 1 to 100."),
+        ("conversation_compaction_keep_percent", "5.5", "Keep recent messages must be a whole number from 1 to 100."),
+        ("conversation_notes_max_percent", "-1", "Notes size must be a whole number from 1 to 100."),
+        ("conversation_history_ceiling_percent", "99", "Hard limit must be a whole number from 100 to 300."),
+        ("conversation_history_ceiling_percent", "301", "Hard limit must be a whole number from 100 to 300."),
+        (
+            "conversation_compaction_keep_percent",
+            "80",
+            "Keep recent messages (80%) must be lower than Start summarizing at (80%), "
+            "or there would be nothing to summarize.",
+        ),
+        (
+            "conversation_compaction_start_percent",
+            "40",
+            "Keep recent messages (50%) must be lower than Start summarizing at (40%), "
+            "or there would be nothing to summarize.",
+        ),
+        ("conversation_notes_max_percent", "50", "Notes size (50%) must be lower than Keep recent messages (50%)."),
+    ],
+)
+def test_conversation_percents_are_refused_out_of_range_or_out_of_order(key: str, bad: str, detail: str) -> None:
+    before = config.get(key)
+    res = _put_setting(key, bad, "context")
+    assert res.status_code == 400
+    assert res.json()["detail"] == detail
+    config.reload()
+    assert config.get(key) == before
+
+
+def test_conversation_percents_accept_a_consistent_set_and_refresh_chat() -> None:
+    for key, value in (
+        ("conversation_compaction_start_percent", "100"),
+        ("conversation_compaction_keep_percent", "30"),
+        ("conversation_notes_max_percent", "5"),
+        ("conversation_history_ceiling_percent", "300"),
+    ):
+        res = _put_setting(key, value, "context")
+        assert res.status_code == 200, res.text
+        assert config.get(key) == value
+    from api.routes.settings import _operator_surfaces_for_setting
+
+    for key, _default in CONVERSATION_SETTINGS:
+        assert _operator_surfaces_for_setting(key, "context") == ["system", "chat"]
 
 
 THREAD_KEYS = [

@@ -412,6 +412,23 @@ class ConnectionManager:
             "data": {"extension_id": extension_id, "agent_id": agent_id},
         })
 
+    async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None:
+        """Nudge open transcripts to refetch one conversation's window.
+
+        Carries no notes, only which conversation changed, so
+        ``GET /api/conversations/{scope_kind}/{scope_key}/window`` stays the
+        one source of truth for what the agent sees.
+
+        Args:
+            scope_kind: ``human_dm``, ``agent_dm`` or ``channel``.
+            scope_key: The agent id, the ``"<lower id>:<higher id>"`` pair, or
+                the channel id.
+        """
+        await self.broadcast({
+            "type": "conversation_notes_updated",
+            "data": {"scope_kind": scope_kind, "scope_key": scope_key},
+        })
+
 
 # Module-level singleton — imported by api.routes and wired into RuntimeServices in main.py
 manager = ConnectionManager()

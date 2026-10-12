@@ -36,7 +36,7 @@ const NAMES = [
     "BossModEmptyState", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts",
     "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource",
-    "BossModAgentSource", "BossModConversationFocus", "BossModConversation",
+    "BossModAgentSource", "BossModConversationFocus", "BossModConversationWindow", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -54,6 +54,10 @@ const threads = {
 
 const api = async (url, opts = {}) => {
     const method = String(opts.method || "GET").toUpperCase();
+    // What the agents see (conversation-window.js): no notes, nothing dropped.
+    if (/^\/api\/conversations\/[^/]+\/[^/]+\/window$/.test(String(url))) {
+        return { ok: true, async json() { return { notes: null, visible_from_message_id: null, ceiling_hit: false }; } };
+    }
     const path = String(url).split("?")[0];
     const open = path.match(/^\/api\/channels\/([^/]+)\/open-tasks$/);
     if (open) return { ok: true, async json() { return { count: 0, tasks: [] }; } };

@@ -56,6 +56,7 @@ CONVERSATION_MODULES = [
     SOURCES / "agent-requests.js",
     SOURCES / "agent-source.js",
     CONVERSATION / "conversation-focus-invalidate.js",
+    CONVERSATION / "conversation-window.js",
     CONVERSATION / "chat-rewind-dialog.js",
     CONVERSATION / "chat-rewind.js",
     CONVERSATION / "consent-activity.js",

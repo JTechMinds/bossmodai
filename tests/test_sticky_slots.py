@@ -13,6 +13,7 @@ import pytest
 
 import db
 from core import config
+from core.agent_loop.conversation_notes import NOTES_LEAD
 from core.agent_loop.loop import run_turn
 from core.agent_loop.prompt_history import build_prompt_history_view
 from core.agent_loop.standing_prefs import standing_prefs_file
@@ -27,7 +28,6 @@ from core.bm_cli import filesystem
 from core.llm import context_builder
 from core.models.message import HUMAN_SENDER_ID
 from core.models.work_contract import DeliverableSpec, WorkContract
-from db.chat_fade import get_chat_fade_gate, upsert_channel_chat_fade
 from db.crud import execute
 from db.sticky_slots import SLOT_KINDS, get_sticky_slot, get_sticky_slot_gate, upsert_sticky_slots
 from db.task_work_contracts import set_task_work_contract
@@ -63,10 +63,30 @@ def _tokens(text: str, model: str | None = None) -> int:
 
 def _patch_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("core.agent_loop.sticky_slots.count_tokens", _tokens)
-    monkeypatch.setattr("core.agent_loop.prompt_history.count_tokens", _tokens)
-    monkeypatch.setattr(
-        "core.agent_loop.chat_fade.count_tokens",
-        lambda text, model=None: 1,
+    # Task and meeting windows: 100 tokens a row against the history budget.
+    monkeypatch.setattr("core.agent_loop.prompt_history.entry_tokens", lambda text: 100)
+    # Channel windows stay far under the conversation-notes start line.
+    monkeypatch.setattr("core.agent_loop.conversation_notes._count", lambda text: 1)
+
+
+def _budget(tokens: int) -> None:
+    """Set the per-thread history budget (Settings → Context Window)."""
+    db.set_setting("conversation_history_budget_tokens", str(tokens), "context")
+    config.reload()
+
+
+def _store_notes(channel_id: str, through_message_id: str, notes: str) -> None:
+    """Store a channel's conversation notes the way a finished run does."""
+    current = db.get_conversation_notes("channel", channel_id)
+    prior = current.get("through_message_id") if current is not None else None
+    assert db.claim_conversation_notes_run("channel", channel_id, stale_after=timedelta(minutes=1))
+    assert db.commit_conversation_notes(
+        "channel",
+        channel_id,
+        expected_prior_through_id=prior,
+        through_message_id=through_message_id,
+        notes=notes,
+        source_tokens=1,
     )
 
 
@@ -83,11 +103,7 @@ def _capture_scheduler() -> list:
 def _agent_channel():
     agent = db.create_agent("Ada", role="QA", desk_x=1, desk_y=1)
     channel = db.create_channel(name="Ops", member_agent_ids=[agent.id], created_by=agent.id)
-    db.update_agent_prompt_history_policy(
-        agent.id,
-        last_n_histories=30,
-        max_allowed_history_tokens=1000,
-    )
+    _budget(1000)
     return agent, channel
 
 
@@ -208,7 +224,6 @@ def test_pressure_gate_is_task_side_and_uses_task_headroom(
 ) -> None:
     _patch_tokens(monkeypatch)
     _knob("compaction_task_budget_headroom_percent", "50")
-    _knob("compaction_chat_budget_headroom_percent", "90")
     agent, channel = _agent_channel()
     task, _blocker = _task(agent)
     jobs = _capture_scheduler()
@@ -249,20 +264,19 @@ def test_pressure_gate_is_task_side_and_uses_task_headroom(
     _knob("compaction_task_budget_headroom_percent", "0")
     assert _task_history(agent, task.id)
     assert jobs == []
-    assert get_chat_fade_gate()["last_run_at"] is None
 
     for index in range(8):
         _say(channel.id, f"chat {index}")
     assert _channel_history(agent, channel.id)
     assert jobs == []
 
-    _knob("compaction_chat_budget_headroom_percent", "0")
     _knob("compaction_task_budget_headroom_percent", "50")
     assert _channel_history(agent, channel.id)
     assert jobs == []
     assert _task_history(agent, task.id)
     assert len(jobs) == 1
-    assert get_chat_fade_gate()["last_run_at"] is None
+    # Conversation notes have their own state; a fill claim is not one.
+    assert db.get_conversation_notes("channel", channel.id) is None
     assert get_sticky_slot_gate()["last_run_at"] is not None
 
     assert _task_history(agent, task.id)
@@ -462,7 +476,7 @@ def test_clearing_fill_cannot_hide_an_open_blocker(monkeypatch: pytest.MonkeyPat
     assert get_sticky_slot(blocker.id, "blockers") is None
     assert db.get_task(task.id).status == "blocked"
 
-    db.update_agent_prompt_history_policy(agent.id, max_allowed_history_tokens=250)
+    _budget(250)
     narrow = _task_history(agent, task.id)
     assert f"blockers ({blocker.id}): {BLOCKERS}" in narrow[0]["content"]
     assert "All clear now." not in narrow[0]["content"]
@@ -475,7 +489,7 @@ def test_open_status_note_stays_when_history_drops_it(monkeypatch: pytest.Monkey
     task = db.create_task(title="Launch", assigned_to=agent.id, owner_id=agent.id)
     db.update_task(task.id, status="blocked", status_note=BLOCKERS)
     _events(task.id, 8)
-    db.update_agent_prompt_history_policy(agent.id, max_allowed_history_tokens=250)
+    _budget(250)
     narrow = _task_history(agent, task.id)
     assert f"blockers ({task.id}): {BLOCKERS}" in narrow[0]["content"]
     assert db.get_task(task.id).status == "blocked"
@@ -489,12 +503,12 @@ def test_injects_when_task_history_drops_an_open_blocker(
     agent, _channel = _agent_channel()
     task, blocker = _task(agent)
     _events(task.id, 8)
-    db.update_agent_prompt_history_policy(agent.id, max_allowed_history_tokens=10_000)
+    _budget(10_000)
     wide = _task_history(agent, task.id)
     assert all(not str(item["id"]).startswith(SLOT_ID_PREFIX) for item in wide)
     assert any(item["id"] == blocker.id for item in wide)
 
-    db.update_agent_prompt_history_policy(agent.id, max_allowed_history_tokens=250)
+    _budget(250)
     narrow = _task_history(agent, task.id)
     assert str(narrow[0]["id"]).startswith(SLOT_ID_PREFIX)
     assert f"blockers ({blocker.id}): {BLOCKERS}" in narrow[0]["content"]
@@ -510,7 +524,7 @@ def test_injects_when_task_history_drops_an_open_blocker(
     assert f"blockers ({blocker.id}): {BLOCKERS}" not in stored[0]["content"]
 
 
-def test_channel_fade_injects_task_slots_without_wiping_chat(
+def test_channel_notes_inject_task_slots_without_wiping_chat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_tokens(monkeypatch)
@@ -524,17 +538,13 @@ def test_channel_fade_injects_task_slots_without_wiping_chat(
         else:
             ids.append(_say(channel.id, f"TAIL-KEEP-{index} current note"))
     before = [(item.id, item.content) for item in db.list_channel_messages(channel.id)]
-    upsert_channel_chat_fade(
-        channel_id=channel.id,
-        through_message_id=ids[2],
-        summary=SUMMARY,
-    )
+    _store_notes(channel.id, ids[2], SUMMARY)
     db.update_agent_state(agent.id, status="blocked")
 
     faded = _channel_history(agent, channel.id)
     contents = [item["content"] for item in faded]
     assert f"blockers ({blocker.id}): {BLOCKERS}" in contents[0]
-    assert contents[1] == SUMMARY
+    assert contents[1] == NOTES_LEAD + SUMMARY
     assert all("OLD-TURN" not in content for content in contents)
     assert all(f"TAIL-KEEP-{index}" in " ".join(contents) for index in range(3, 8))
     assert [(item.id, item.content) for item in db.list_channel_messages(channel.id)] == before
@@ -544,22 +554,14 @@ def test_channel_fade_injects_task_slots_without_wiping_chat(
     plain = []
     for index in range(8):
         plain.append(_say(channel.id, f"PLAIN-{index} no task"))
-    upsert_channel_chat_fade(
-        channel_id=channel.id,
-        through_message_id=plain[2],
-        summary=SUMMARY,
-    )
-    # The earlier task-linked turns are gone from this fetch only if the fade
+    _store_notes(channel.id, plain[2], SUMMARY)
+    # The earlier task-linked turns are gone from this fetch only if the notes'
     # anchor moved forward. Rebuild against a channel that never had a task.
     other = db.create_channel(name="Side", member_agent_ids=[agent.id], created_by=agent.id)
     side_ids = [_say(other.id, f"OLD-TURN-{index} side") for index in range(8)]
-    upsert_channel_chat_fade(
-        channel_id=other.id,
-        through_message_id=side_ids[2],
-        summary=SUMMARY,
-    )
+    _store_notes(other.id, side_ids[2], SUMMARY)
     side = _channel_history(agent, other.id)
-    assert side[0]["content"] == SUMMARY
+    assert side[0]["content"] == NOTES_LEAD + SUMMARY
     assert all(not str(item["id"]).startswith(SLOT_ID_PREFIX) for item in side)
 
 
@@ -617,7 +619,7 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
     agent, _channel = _agent_channel()
     task, blocker = _task(agent)
     _events(task.id, 8)
-    db.update_agent_prompt_history_policy(agent.id, max_allowed_history_tokens=250)
+    _budget(250)
     db.update_agent_state(agent.id, status="blocked")
     path = standing_prefs_file(agent.storage_key)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -680,10 +682,11 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
     prompt_history = (ROOT / "core" / "agent_loop" / "prompt_history.py").read_text(encoding="utf-8")
     assert "compose_task_sticky_slots" in prompt_history
     assert "compose_channel_sticky_slots" in prompt_history
-    assert "apply_channel_chat_fade" in prompt_history
-    assert "consider_channel_chat_fade" in prompt_history
-    fade = (ROOT / "core" / "agent_loop" / "chat_fade.py").read_text(encoding="utf-8")
-    assert "sticky_slot" not in fade
+    assert "load_thread_window" in prompt_history
+    assert "maybe_schedule_compaction" in prompt_history
+    assert not (ROOT / "core" / "agent_loop" / "chat_fade.py").exists()
+    notes_source = (ROOT / "core" / "agent_loop" / "conversation_notes.py").read_text(encoding="utf-8")
+    assert "sticky_slot" not in notes_source
 
 
 @pytest.mark.asyncio

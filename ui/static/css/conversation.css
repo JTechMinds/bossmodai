@@ -495,6 +495,53 @@
 .note-link.is-failed { color: var(--alert); }
 .note.note-ok .note-link.is-failed { color: var(--alert-ink); }
 
+/* ─── Conversation notes: where the agents' word-for-word context starts ───
+   The same centred hairline as a note. With notes it opens, in place, to the
+   notes text the agents get; the toggle is a quiet text button (the Log row's
+   disclosure), so the line stays chrome rather than a card. */
+
+.conversation-notes {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.conversation-notes-toggle {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: inherit;
+  cursor: pointer;
+}
+
+.conversation-notes-toggle:hover .conversation-notes-title { text-decoration: underline; }
+
+.conversation-notes-body {
+  margin: 4px auto 0;
+  max-width: 92%;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--panel);
+  color: var(--ink);
+  font-size: 13px;
+  text-align: left;
+}
+
+/* Muted, not a banner: --alert on the transcript's --bg clears AA. */
+.conversation-notes-failure {
+  margin: 0;
+  color: var(--alert);
+}
+
+/* A row outside the agents' window stays readable and selectable. */
+.msg-turn-faded { opacity: var(--faded-opacity); }
+
 /* ─── Host-path consent ─── */
 
 .host-path-consent-card {

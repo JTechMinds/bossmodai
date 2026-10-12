@@ -169,4 +169,9 @@
    * It is a token for the reason --bar above is one: this was three copies of
    * the same number, and three copies are how they drift apart. */
   --tabbar: 56px;
+
+  /* A transcript row the agents no longer read word for word (it reaches
+   * them only through the conversation notes). Still body text, so the fade
+   * is light: --ink at this opacity on --bg still measures well over 4.5:1. */
+  --faded-opacity: 0.7;
 }

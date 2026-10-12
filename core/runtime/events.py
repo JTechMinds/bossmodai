@@ -86,6 +86,7 @@ class RuntimeEventSink(Protocol):
     ) -> None: ...
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None: ...
     async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None: ...
+    async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None: ...
 
 
 class RuntimeEventTransport(Protocol):
@@ -140,6 +141,9 @@ class NullRuntimeEventSink:
         return None
 
     async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
+        return None
+
+    async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None:
         return None
 
 
@@ -218,6 +222,9 @@ class TransportRuntimeEventSink:
     async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
         await self._emit("extension_live", {"extension_id": extension_id, "agent_id": agent_id})
 
+    async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None:
+        await self._emit("conversation_notes", {"scope_kind": scope_kind, "scope_key": scope_key})
+
 
 class RuntimeEventProxy:
     """Mutable proxy used by runtime code regardless of execution context."""
@@ -286,6 +293,10 @@ class RuntimeEventProxy:
 
     async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
         await self._sink.broadcast_extension_live(extension_id, agent_id)
+
+    async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None:
+        """Tell open transcripts that one conversation's notes changed."""
+        await self._sink.broadcast_conversation_notes(scope_kind, scope_key)
 
 
 runtime_events = RuntimeEventProxy()

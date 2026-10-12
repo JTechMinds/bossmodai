@@ -80,8 +80,6 @@ const BossModAgentSubmit = (() => {
 
         const earliestTsRaw = String(formData.get('prompt_history_earliest_ts') || '').trim();
         const promptHistoryPolicy = {
-            last_n_histories: Number(formData.get('prompt_history_last_n') || BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories),
-            max_allowed_history_tokens: Number(formData.get('prompt_history_max_tokens') || BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens),
             earliest_ts_allowed: earliestTsRaw ? new Date(earliestTsRaw).toISOString() : null,
             include_notifications: formData.get('prompt_history_include_notifications') === 'on',
         };

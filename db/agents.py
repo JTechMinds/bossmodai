@@ -16,6 +16,7 @@ from core import config
 from core.agent_loop.communication_contract import dump_communication_json
 from core.models import Agent, AgentState
 from db.connection import transaction
+from db.conversation_notes import delete_conversation_notes_for_agent
 from db.crud import (
     build_update,
     build_update_returning,
@@ -163,15 +164,12 @@ def create_agent(
             "INSERT INTO agent_cli_state (agent_id, cwd) VALUES ($1, $2)",
             [agent_id, "/me"],
         )
-        history_n = config.get_int("default_prompt_history_last_n")
-        history_tokens = config.get_int("default_prompt_history_max_tokens")
         execute(
             """
-            INSERT INTO agent_prompt_history_policies (
-                agent_id, last_n_histories, max_allowed_history_tokens, include_notifications
-            ) VALUES ($1, $2, $3, $4)
+            INSERT INTO agent_prompt_history_policies (agent_id, include_notifications)
+            VALUES ($1, $2)
             """,
-            [agent_id, history_n, history_tokens, True],
+            [agent_id, True],
         )
 
         agent = get_agent(agent_id)
@@ -432,6 +430,8 @@ def delete_agent_rows(agent_id: str) -> bool:
             [agent_id],
         )
         execute("DELETE FROM diagnostics WHERE agent_id = $1", [agent_id])
+        # Before the DMs go: their conversation notes summarize those rows.
+        delete_conversation_notes_for_agent(agent_id)
         # DMs are private to the agent. HUMAN_SENDER_ID and the other non-agent
         # sender values are never an agent id, so the other side's rows stay.
         execute("DELETE FROM messages WHERE from_agent = $1 OR to_agent = $1", [agent_id])

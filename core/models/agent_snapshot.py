@@ -26,16 +26,19 @@ from core.models.agent import _coerce_communication
 from core.models.thinking import ThinkingChoice
 
 
+# Policy keys older snapshots still store; see _parse_prompt_history_policy.
+_RETIRED_POLICY_KEYS = frozenset({"last_n_histories", "max_allowed_history_tokens"})
+
+
 class AgentSnapshot(BaseModel):
     """One agent's setup as last captured, and whether that agent is gone.
 
     ``agent_id`` is the agent it was taken from; it is not a foreign key, so
     the row outlives a delete. ``captured_at`` is when it was last written —
     Recent lists newest first by it — and ``deleted_at`` is set only by the
-    final capture a delete makes. ``prompt_history_policy`` is the four policy
-    fields the form edits (``last_n_histories``, ``max_allowed_history_tokens``,
-    ``earliest_ts_allowed``, ``include_notifications``), or ``None`` when the
-    agent had no policy row when it was captured.
+    final capture a delete makes. ``prompt_history_policy`` is the policy
+    fields a snapshot keeps (``earliest_ts_allowed``, ``include_notifications``),
+    or ``None`` when the agent had no policy row when it was captured.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -75,17 +78,25 @@ class AgentSnapshot(BaseModel):
         when the column is not a string, is not valid JSON, or does not decode
         to an object. A corrupt row is reported rather than read as "no
         policy", which would silently hand the create form the defaults.
+
+        The retired keys ``last_n_histories`` and ``max_allowed_history_tokens``
+        are dropped on read: snapshots captured before the per-thread history
+        budget replaced them still carry them, and refusing those rows would
+        brick every existing snapshot (stored data is validated on read).
         """
-        if value is None or isinstance(value, dict):
+        if value is None:
             return value
-        if not isinstance(value, str):
+        if isinstance(value, dict):
+            decoded: Any = value
+        elif isinstance(value, str):
+            try:
+                decoded = json.loads(value)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"prompt_history_policy is not valid JSON: {exc}") from exc
+            if not isinstance(decoded, dict):
+                raise ValueError("prompt_history_policy must decode to a JSON object")
+        else:
             raise ValueError(
                 f"prompt_history_policy must be a JSON object string, got {type(value).__name__}"
             )
-        try:
-            decoded = json.loads(value)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"prompt_history_policy is not valid JSON: {exc}") from exc
-        if not isinstance(decoded, dict):
-            raise ValueError("prompt_history_policy must decode to a JSON object")
-        return decoded
+        return {key: item for key, item in decoded.items() if key not in _RETIRED_POLICY_KEYS}

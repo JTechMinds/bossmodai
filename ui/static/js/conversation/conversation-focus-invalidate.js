@@ -15,6 +15,7 @@ const BossModConversationFocus = (() => {
         'channel_message',
         'channel_updated',
         'meeting_message',
+        'conversation_notes_updated',
         'resync',
         'operator_invalidate',
     ]);

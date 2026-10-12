@@ -69,6 +69,8 @@ class EventSink(Protocol):
 
     async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None: ...
 
+    async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None: ...
+
 
 class RuntimeServices:
     """Expose a durable control boundary to the runtime worker process."""
@@ -611,6 +613,9 @@ class RuntimeServices:
             return
         if kind == "extension_live":
             await sink.broadcast_extension_live(**data)
+            return
+        if kind == "conversation_notes":
+            await sink.broadcast_conversation_notes(data["scope_kind"], data["scope_key"])
             return
         logger.warning("Unknown runtime event kind received: %s", kind)
 

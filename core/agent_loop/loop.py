@@ -12,7 +12,6 @@ import logging
 import time
 from typing import Any
 
-from core.agent_loop.chat_fade import note_agent_turn
 from core.agent_loop.sticky_slots import note_sticky_slot_turn
 from core.agent_loop.communication import (
     build_communication_snapshot,
@@ -79,7 +78,6 @@ async def _run_bound_turn(
 ) -> TurnOutcome:
     """Body of :func:`run_turn`, inside the turn's work-binding scope."""
     start = time.monotonic()
-    note_agent_turn()
     note_sticky_slot_turn()
     logger.info("Running turn for %s (trigger: %s)", agent.name, trigger.get("type"))
 

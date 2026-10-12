@@ -27,7 +27,7 @@ const NAMES = [
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
-    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
+    "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -93,6 +93,11 @@ const linkRefusal = () => ({
 const api = async (url, init) => {
     const text = String(url);
     requestLog.push(text);
+    // What the agents see (conversation-window.js): no notes, nothing dropped.
+    // tests/js_conversation_notes_harness.cjs covers the divider itself.
+    if (/^\/api\/conversations\/[^/]+\/[^/]+\/window$/.test(text)) {
+        return { ok: true, async json() { return { notes: null, visible_from_message_id: null, ceiling_hit: false }; } };
+    }
     const activate = text.match(/^\/api\/agents\/([^/]+)\/activate$/);
     if (activate) {
         activations.push({ id: activate[1], body: JSON.parse((init && init.body) || "{}") });

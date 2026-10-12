@@ -134,7 +134,6 @@ function snapshot(overrides) {
         connection_id: "c1", thinking_social: "default", thinking_work: "default",
         desk_x: 3, desk_y: 4,
         prompt_history_policy: {
-            last_n_histories: 7, max_allowed_history_tokens: 900,
             earliest_ts_allowed: null, include_notifications: false,
         },
         captured_at: "2026-09-20T09:00:00Z",

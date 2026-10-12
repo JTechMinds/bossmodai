@@ -616,6 +616,28 @@ def count_tokens(text: str, model: str | None = None) -> int:
         return 0
 
 
+def count_history_tokens(text: str) -> int:
+    """Count tokens of conversation history with litellm's default tokenizer.
+
+    Unlike :func:`count_tokens` this takes no model: conversation history is
+    shared per thread, so every reader (each agent in a thread, and the
+    transcript API) must get the same count whatever connection it uses, and
+    the count must never depend on a configured model.
+
+    Args:
+        text: The rendered history entry.
+
+    Returns:
+        The token count.
+
+    Raises:
+        Exception: Whatever litellm raises. Deliberately not mapped to 0 like
+            :func:`count_tokens`: a 0 count would silently disable both the
+            history budget and conversation compaction.
+    """
+    return litellm.token_counter(text=text)
+
+
 class LLMError(Exception):
     """Raised when an LLM call fails."""
 

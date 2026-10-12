@@ -28,11 +28,9 @@ _SNAPSHOT_COLUMNS = (
     "captured_at, deleted_at"
 )
 
-# The four policy fields the create form edits. Its row's agent_id and its
-# timestamps belong to the agent that had it, not to one made from it.
+# The policy fields a snapshot keeps. Its row's agent_id and its timestamps
+# belong to the agent that had it, not to one made from it.
 _POLICY_FIELDS = {
-    "last_n_histories",
-    "max_allowed_history_tokens",
     "earliest_ts_allowed",
     "include_notifications",
 }
@@ -65,7 +63,7 @@ def capture_agent_snapshot(
         agent: The agent as it stands after the write that changed it — or,
             for a delete, before its rows go.
         policy: Its prompt-history policy, or ``None`` when it has no row;
-            stored as the four fields the create form edits.
+            stored as ``earliest_ts_allowed`` and ``include_notifications``.
         deleted: Whether this is the last capture a delete makes.
 
     Returns:

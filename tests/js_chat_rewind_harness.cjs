@@ -23,7 +23,7 @@ const NAMES = [
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
-    "BossModConversationFocus", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
+    "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -319,6 +319,10 @@ async function conversationCases() {
     const posted = [];
     const api = async (url, init) => {
         const text = String(url);
+        // What the agents see (conversation-window.js): no notes, nothing dropped.
+        if (/^\/api\/conversations\/[^/]+\/[^/]+\/window$/.test(String(url))) {
+            return { ok: true, async json() { return { notes: null, visible_from_message_id: null, ceiling_hit: false }; } };
+        }
         if (/^\/api\/agents\/a\/messages/.test(text)) {
             return {
                 ok: true,

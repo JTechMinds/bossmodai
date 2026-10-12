@@ -44,6 +44,10 @@ def _operator_surfaces_for_setting(key: str, category: str) -> list[str]:
         return ["advanced-system", "chat"]
     if category == "llm" and key.startswith("compaction_"):
         return ["system"]
+    # Conversation memory changes what an open transcript marks as outside
+    # the agent's context, so the open conversation refetches too.
+    if key in CONVERSATION_COMPACTION_SETTINGS:
+        return ["system", "chat"]
     if category in {"profile", "simulation", "social", "context", "desk"}:
         return ["system"]
     if category == "advanced":
@@ -112,6 +116,7 @@ async def reset_setting_to_default(key: str):
     seeded = db.get_seed_setting_default(key)
     if seeded is not None:
         _validate_positive_int_setting(key, seeded[0])
+        _validate_percent_setting(key, seeded[0])
     try:
         result = db.reset_setting_to_seed(key)
     except ValueError as exc:
@@ -166,6 +171,9 @@ POSITIVE_INT_SETTINGS = frozenset({
     "channel_idle_check_max_attempts",
     "schedule_max_sleep_seconds",
     "schedule_fire_grace_seconds",
+    # No upper cap: the history budget is the user's choice (a 4k budget
+    # for a small local model, 100k for a large one).
+    "conversation_history_budget_tokens",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
@@ -180,6 +188,7 @@ _POSITIVE_INT_SETTING_LABELS = {
     "channel_idle_check_max_attempts": "Idle check attempts",
     "schedule_max_sleep_seconds": "Schedule clock re-check",
     "schedule_fire_grace_seconds": "Schedule on-time window",
+    "conversation_history_budget_tokens": "History budget",
 }
 _NON_NEGATIVE_INT_SETTING_LABELS = {
     "channel_router_transcript_messages": "Router transcript lines",
@@ -190,7 +199,21 @@ _BOOLEAN_SETTING_LABELS = {
     GLOBAL_AUTO_APPROVE_SETTING: "Global auto-approve",
     # Written by the one-time "What should your team call you?" dialog.
     "boss_name_prompted": "Name prompt answered",
+    "conversation_compaction_enabled": "Conversation memory",
 }
+
+# Conversation-memory percents: key → (label the 400 names, lowest, highest).
+_PERCENT_SETTINGS = {
+    "conversation_compaction_start_percent": ("Start summarizing at", 1, 100),
+    "conversation_compaction_keep_percent": ("Keep recent messages", 1, 100),
+    "conversation_notes_max_percent": ("Notes size", 1, 100),
+    "conversation_history_ceiling_percent": ("Hard limit", 100, 300),
+}
+CONVERSATION_COMPACTION_SETTINGS = frozenset({
+    "conversation_compaction_enabled",
+    "conversation_history_budget_tokens",
+    *_PERCENT_SETTINGS,
+})
 
 
 def _validate_positive_int_setting(key: str, value: str) -> None:
@@ -283,6 +306,54 @@ def _validate_boolean_setting(key: str, value: str) -> None:
         return
     if value not in {"true", "false"}:
         raise HTTPException(400, f"{label} must be true or false.")
+
+
+def _validate_percent_setting(key: str, value: str) -> None:
+    """Reject a conversation-memory percent that is out of range or breaks the pair rules.
+
+    Each percent is a whole number in its range ([1, 100], and [100, 300] for
+    the hard limit). Across keys, ``keep < start <= 100`` and ``notes < keep``
+    must hold with the value being written and the others read from
+    ``config``, so the stored settings can never stop
+    ``core.agent_loop.conversation_notes.read_settings`` from loading.
+
+    Args:
+        key: Setting key being written. Other keys are not checked.
+        value: Raw value from the request.
+
+    Raises:
+        HTTPException: 400 naming the setting's label and the range, or 400
+            naming the pair rule that the value would break.
+    """
+    spec = _PERCENT_SETTINGS.get(key)
+    if spec is None:
+        return
+    label, low, high = spec
+    stripped = value.strip()
+    # isascii + isdigit: base-10 digits only, so "-1", "+5" and "1_0" are refused.
+    if not (stripped.isascii() and stripped.isdigit()) or not low <= int(stripped, 10) <= high:
+        raise HTTPException(400, f"{label} must be a whole number from {low} to {high}.")
+    written = int(stripped, 10)
+    start = written if key == "conversation_compaction_start_percent" else config.require_int(
+        "conversation_compaction_start_percent"
+    )
+    keep = written if key == "conversation_compaction_keep_percent" else config.require_int(
+        "conversation_compaction_keep_percent"
+    )
+    notes = written if key == "conversation_notes_max_percent" else config.require_int(
+        "conversation_notes_max_percent"
+    )
+    if keep >= start:
+        raise HTTPException(
+            400,
+            f"Keep recent messages ({keep}%) must be lower than Start summarizing at ({start}%), "
+            "or there would be nothing to summarize.",
+        )
+    if notes >= keep:
+        raise HTTPException(
+            400,
+            f"Notes size ({notes}%) must be lower than Keep recent messages ({keep}%).",
+        )
 
 
 def _validate_boss_name_setting(key: str, value: str) -> str:
@@ -406,6 +477,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
     _validate_positive_int_setting(key, value)
     _validate_non_negative_int_setting(key, value)
     _validate_boolean_setting(key, value)
+    _validate_percent_setting(key, value)
     value = _validate_boss_name_setting(key, value)
     _validate_system_ai_thinking(key, value)
     _refuse_orphaning_system_ai_thinking(key, value)

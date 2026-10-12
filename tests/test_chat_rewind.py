@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -486,3 +487,22 @@ async def test_k_the_prompt_no_longer_contains_the_removed_content() -> None:
     assert "connection refused" not in after
     assert "regretted follow-up" not in after
     assert "kept question" in after and "kept answer" in after
+
+
+async def test_a_rewind_deletes_the_dm_conversation_notes() -> None:
+    """Rewound turns may be folded into the notes, so the notes go with the cut."""
+    agent = _agent()
+    kept = _say(agent.id, "kept question", human=True, at="2026-10-08 10:00:00")
+    _say(agent.id, "kept answer", human=False, at="2026-10-08 10:00:01")
+    cut = _say(agent.id, "regretted follow-up", human=True, at="2026-10-08 10:00:02")
+    assert db.claim_conversation_notes_run("human_dm", agent.id, stale_after=timedelta(minutes=5))
+    assert db.commit_conversation_notes(
+        "human_dm", agent.id, expected_prior_through_id=None,
+        through_message_id=kept.id, notes="- an old summary", source_tokens=1,
+    )
+
+    await rewind_human_chat(agent.id, cut.id, services=_Services())
+
+    assert db.get_conversation_notes("human_dm", agent.id) is None
+    history = build_prompt_history_view(db.get_agent(agent.id), {"type": "human_chat"}).conversation_history
+    assert all("an old summary" not in item["content"] for item in history)

@@ -178,6 +178,18 @@ from db.channel_response_rounds import (
     update_channel_response_candidate,
 )
 
+# Conversation notes (compacted DM / thread history)
+from db.conversation_notes import (
+    AnchorMissing,
+    claim_conversation_notes_run,
+    commit_conversation_notes,
+    delete_conversation_notes,
+    delete_conversation_notes_for_agent,
+    fail_conversation_notes_run,
+    get_conversation_notes,
+    release_conversation_notes_run,
+)
+
 # Messages
 from db.messages import (
     create_message,
@@ -447,6 +459,14 @@ __all__ = [
     "ensure_agent_cli_state",
     "build_artifact_title",
     "create_agent_prompt_history_policy",
+    "AnchorMissing",
+    "claim_conversation_notes_run",
+    "commit_conversation_notes",
+    "delete_conversation_notes",
+    "delete_conversation_notes_for_agent",
+    "fail_conversation_notes_run",
+    "get_conversation_notes",
+    "release_conversation_notes_run",
     "ensure_agent_prompt_history_policy",
     "capture_agent_snapshot",
     "list_agent_snapshots",

@@ -176,7 +176,9 @@ const BossModMessage = (() => {
      *
      * @param {object} message  A normalised Message. `showAuthor` decides
      *   whether the name is labelled — threads label it, agent DMs do not,
-     *   because in a DM every non-human turn is the same agent.
+     *   because in a DM every non-human turn is the same agent. `faded`
+     *   (with `describedBy`, the compaction divider's id) marks a row the
+     *   agents no longer see word for word.
      * @returns {HTMLElement}
      * @throws {Error} When called with a kind other than 'message'. The
      *   transcript dispatches on kind, so arriving here with another one means
@@ -219,13 +221,20 @@ const BossModMessage = (() => {
 
         const bubble = h('div', { class: `msg msg-${author}` }, ...bubbleChildren);
 
-        return renderTurn(bubble, {
+        const turn = renderTurn(bubble, {
             author,
             name: message.authorName,
             color: message.authorColor,
             showName,
             key,
         });
+        // Before the agents' window: still readable, but it reaches them only
+        // through the conversation notes, which the divider describes.
+        if (message.faded) {
+            turn.classList.add('msg-turn-faded');
+            if (message.describedBy) turn.setAttribute('aria-describedby', message.describedBy);
+        }
+        return turn;
     }
 
     /**

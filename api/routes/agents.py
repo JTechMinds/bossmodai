@@ -21,6 +21,7 @@ from core.boss import boss_label, ensure_agent_name_allowed
 from core.chat_rewind import rewind_human_chat
 from core.agent_loop import activity_runtime
 from core.agent_loop.standing_prefs import MemoryNotFoundError, list_memories, remove_memory
+from core.agent_loop.conversation_notes import ThreadScope, ThreadWindow, load_thread_window
 from core.agent_pack import agent_is_edited, apply_template_to_agent, template_contract_hash
 from core.agent_repository import agent_repository
 from core.bm_cli.approval_gate import global_auto_approve_enabled
@@ -497,12 +498,19 @@ async def _broadcast_archive_side_effects(posted_lines: list[dict[str, object]])
 
 @router.get("/channels/{channel_id}")
 async def get_channel(channel_id: str, limit: int = 80):
-    """Return one shared channel with roster and transcript."""
+    """Return one shared channel with roster and transcript.
+
+    The transcript is every row the channel's agents see verbatim (their
+    conversation window, bounded by the history hard limit) plus ``limit``
+    rows before it, so the operator always sees what the agents see and
+    some scrollback.
+    """
     channel = db.get_channel(channel_id)
     if channel is None:
         raise HTTPException(404, "Channel not found")
 
-    rows = db.list_channel_messages(channel.id, limit=limit)
+    window = load_thread_window(ThreadScope.channel(channel.id), perspective_agent_id=None)
+    rows = db.list_channel_messages(channel.id, limit=limit + len(window.rows))
     attachments = get_attachments_for_messages([item.id for item in rows])
     messages = [
         _serialize_channel_message(item, attachments[item.id])
@@ -1150,17 +1158,35 @@ async def delete_agent(agent_id: str):
 
 # ─── Agent messages ───
 
+def _human_dm_window(agent_id: str) -> ThreadWindow:
+    """The operator DM window exactly as the agent's prompt reads it."""
+    policy = db.get_agent_prompt_history_policy(agent_id)
+    return load_thread_window(
+        ThreadScope.human_dm(agent_id),
+        earliest_ts=policy.earliest_ts_allowed if policy is not None else None,
+        perspective_agent_id=None,
+    )
+
+
 @router.get("/agents/{agent_id}/messages")
 async def get_agent_messages(agent_id: str, limit: int = 50):
-    """Return formatted chat history for an agent, ready for frontend rendering."""
+    """Return formatted chat history for an agent, ready for frontend rendering.
+
+    Every DM row the agent sees verbatim (its conversation window, bounded by
+    the history hard limit) is returned, plus ``limit`` rows before the
+    oldest of them: ``limit`` caps the scrollback before the window, never
+    the window itself.
+    """
     agent = db.get_agent(agent_id)
     if not agent:
         raise HTTPException(404, "Agent not found")
 
     max_limit = config.get_int("api_message_limit_max") or 200
     limit = min(limit, max_limit)
-    thread = db.get_human_chat_thread(agent_id, limit=limit)
-    notifications = db.list_notifications(agent_id=agent_id, limit=limit, chat_visible=True)
+    window = _human_dm_window(agent_id)
+    fetch = limit + len(window.rows)
+    thread = db.get_human_chat_thread(agent_id, limit=fetch)
+    notifications = db.list_notifications(agent_id=agent_id, limit=fetch, chat_visible=True)
     notification_links = db.list_notification_links([item.id for item in notifications])
     notifications.reverse()
     formatted = db.get_formatted_messages(thread, human_label=boss_label())
@@ -1205,7 +1231,15 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
         ]
     )
     formatted.sort(key=lambda item: item.get("created_at") or "")
-    formatted = formatted[-limit:]
+    visible_from = window.visible_from_message_id
+    visible_index = next(
+        (index for index, item in enumerate(formatted) if item["id"] == visible_from),
+        None,
+    ) if visible_from else None
+    if visible_index is None:
+        formatted = formatted[-limit:]
+    else:
+        formatted = formatted[max(0, visible_index - limit):]
 
     # Notification rows have their own ids and never carry attachments; the
     # batch maps them to empty lists like any message without files.
@@ -1240,6 +1274,69 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
         })
 
     return result
+
+
+def _serialize_window(window: ThreadWindow) -> dict[str, Any]:
+    """The transcript's view of one conversation window (see ``get_conversation_window``)."""
+    row = window.notes_row
+    notes = None
+    if row is not None:
+        has_notes = window.notes_entry is not None
+        notes = {
+            "through_message_id": row.get("through_message_id") if has_notes else None,
+            "notes": row.get("notes") if has_notes else None,
+            "updated_at": row.get("updated_at"),
+            "run_state": row.get("run_state"),
+            "last_error": row.get("last_error"),
+        }
+    return {
+        "notes": notes,
+        "visible_from_message_id": window.visible_from_message_id,
+        "ceiling_hit": window.ceiling_hit,
+    }
+
+
+@router.get("/conversations/{scope_kind}/{scope_key}/window")
+async def get_conversation_window(scope_kind: str, scope_key: str) -> dict[str, Any]:
+    """Return what one conversation's agents see: its notes and where verbatim history starts.
+
+    Computed by the same loader the prompt builder uses, so the transcript
+    marks exactly the agent's context.
+
+    Args:
+        scope_kind: ``human_dm`` (key = agent id), ``agent_dm`` (key =
+            ``"<id>:<id>"``, either order) or ``channel`` (key = channel id).
+        scope_key: The scope key.
+
+    Returns:
+        ``{notes, visible_from_message_id, ceiling_hit}``. ``notes`` is
+        ``{through_message_id, notes, updated_at, run_state, last_error}``
+        (``through_message_id`` and ``notes`` are null while there are no
+        usable notes, e.g. after a failed first run), or null when the
+        conversation has never been compacted.
+
+    Raises:
+        HTTPException: 404 for an unknown kind, an agent or channel that does
+            not exist, or an ``agent_dm`` key that does not name two agents.
+    """
+    if scope_kind == "human_dm":
+        if db.get_agent(scope_key) is None:
+            raise HTTPException(404, "Agent not found")
+        return _serialize_window(_human_dm_window(scope_key))
+    if scope_kind == "agent_dm":
+        first, sep, second = scope_key.partition(":")
+        if not sep or not first or not second or first == second:
+            raise HTTPException(404, "An agent DM key names two agents as '<id>:<id>'")
+        if db.get_agent(first) is None or db.get_agent(second) is None:
+            raise HTTPException(404, "Agent not found")
+        window = load_thread_window(ThreadScope.agent_dm(first, second), perspective_agent_id=None)
+        return _serialize_window(window)
+    if scope_kind == "channel":
+        if db.get_channel(scope_key) is None:
+            raise HTTPException(404, "Channel not found")
+        window = load_thread_window(ThreadScope.channel(scope_key), perspective_agent_id=None)
+        return _serialize_window(window)
+    raise HTTPException(404, f"Unknown conversation kind {scope_kind!r}")
 
 
 @router.get("/agents/{agent_id}/notifications")

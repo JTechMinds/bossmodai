@@ -5,6 +5,8 @@
  * host-path consent or CLI approval ask) and `note` (a task-lifecycle receipt,
  * or an agent's memory change), and nothing else. `event.*` is produced by needs/needs-bar.js, which renders
  * its cards through here rather than owning a second look for them.
+ * `conversation_notes` is the compaction divider, which both sources insert
+ * through conversation-window.js.
  *
  * In a thread several agents can ask at once, so a request card there carries
  * its requester's face and name through the same turn chrome a post uses
@@ -126,6 +128,69 @@ const BossModEventCards = (() => {
         if (typeof BossModIcons === 'undefined' || typeof BossModIcons.paint !== 'function') return;
         if (!note.querySelector('[data-lucide]')) return;
         BossModIcons.paint(note, 'event-cards');
+    }
+
+    /**
+     * The compaction divider: where the agents' word-for-word context starts.
+     *
+     * A `.note` hairline, like every other quiet transcript line. With notes
+     * it is a disclosure (button + aria-expanded, the Log row's pattern) that
+     * opens the same notes text the agents get, rendered as markdown. Its
+     * open state lives in the conversation controller (`ctx.notesDisclosure`)
+     * because every repaint rebuilds this node. A failed last run adds one
+     * muted line under it, in plain words. The node's id is what faded rows
+     * point at with aria-describedby.
+     *
+     * @param {object} message  A `conversation_notes` row from
+     *   BossModConversationWindow.apply.
+     * @param {object} ctx  Conversation capabilities; `notesDisclosure`
+     *   (`{isOpen, setOpen}` keyed by scope) is required for a row with notes.
+     * @returns {HTMLElement}
+     * @throws {Error} When the row has notes but ctx carries no disclosure
+     *   state — a toggle that forgets its state on the next repaint would
+     *   look like it works and then snap shut.
+     */
+    function renderConversationNotes(message, ctx) {
+        const text = String(message.text || '');
+        const title = String(message.title || '');
+        const failure = String(message.failure || '');
+        const divider = h('div', {
+            class: 'note conversation-notes',
+            id: message.dividerId || null,
+            'data-scope': message.scopeKey || null,
+        });
+        if (text) {
+            const disclosure = ctx.notesDisclosure;
+            if (!disclosure || typeof disclosure.isOpen !== 'function' || typeof disclosure.setOpen !== 'function') {
+                throw new Error('[event-cards] a conversation-notes row needs ctx.notesDisclosure');
+            }
+            const bodyId = `${message.dividerId || 'conversation-notes'}-body`;
+            const open = disclosure.isOpen(message.scopeKey) === true;
+            const body = h('div', { class: 'conversation-notes-body md', id: bodyId },
+                BossModMarkdown.render(text));
+            body.hidden = !open;
+            const caret = h('span', { class: 'conversation-notes-caret', 'aria-hidden': 'true' }, open ? '▾' : '▸');
+            const toggle = h('button', {
+                class: 'conversation-notes-toggle',
+                type: 'button',
+                'aria-expanded': open ? 'true' : 'false',
+                'aria-controls': bodyId,
+                onclick: () => {
+                    const next = toggle.getAttribute('aria-expanded') !== 'true';
+                    disclosure.setOpen(message.scopeKey, next);
+                    toggle.setAttribute('aria-expanded', next ? 'true' : 'false');
+                    caret.textContent = next ? '▾' : '▸';
+                    body.hidden = !next;
+                },
+            }, caret, h('span', { class: 'conversation-notes-title' }, title));
+            divider.append(h('p', { class: 'note-text' }, toggle), body);
+        } else if (title) {
+            divider.append(h('p', { class: 'note-text' }, title));
+        }
+        if (failure) {
+            divider.append(h('p', { class: 'conversation-notes-failure' }, `Last compaction failed: ${failure}`));
+        }
+        return divider;
     }
 
     /**
@@ -267,6 +332,10 @@ const BossModEventCards = (() => {
             }
             paintOriginGlyph(note);
             return note;
+        }
+
+        if (message.kind === 'conversation_notes') {
+            return renderConversationNotes(message, ctx);
         }
 
         if (message.kind === 'event') {

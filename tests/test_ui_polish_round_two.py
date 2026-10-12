@@ -110,6 +110,7 @@ CONTEXT_MODULES = [
     JS / "conversation" / "sources" / "agent-requests.js",
     JS / "conversation" / "sources" / "agent-source.js",
     JS / "conversation" / "conversation-focus-invalidate.js",
+    JS / "conversation" / "conversation-window.js",
     JS / "conversation" / "chat-rewind-dialog.js",
     JS / "conversation" / "chat-rewind.js",
     JS / "conversation" / "consent-activity.js",

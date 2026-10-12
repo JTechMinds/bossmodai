@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from core.models import Message
+from db.conversation_notes import AnchorMissing, delete_conversation_notes
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
 
 _MESSAGE_COLUMNS = (
@@ -142,7 +143,12 @@ def get_agent_direct_thread(
     limit: int = 50,
     earliest_ts: datetime | None = None,
 ) -> list[Message]:
-    """Return the direct message thread between two agents (oldest first)."""
+    """Return the direct message thread between two agents (oldest first).
+
+    Ordered by ``(created_at, rowid)`` like ``get_human_chat_thread``, so this
+    reader, the conversation-notes anchor order and the window loader agree
+    on which of two same-second rows came first.
+    """
     conditions = [
         "((from_agent = $1 AND to_agent = $2) OR (from_agent = $2 AND to_agent = $1))",
     ]
@@ -155,13 +161,99 @@ def get_agent_direct_thread(
         f"""
         SELECT {_MESSAGE_COLUMNS} FROM messages
         WHERE {' AND '.join(conditions)}
-        ORDER BY created_at DESC LIMIT ${len(params)}
+        ORDER BY created_at DESC, rowid DESC LIMIT ${len(params)}
         """,
         params,
         Message,
     )
     messages.reverse()
     return messages
+
+
+def _dm_pair(kind: str, key: str) -> tuple[str, str]:
+    """Return the two sender ids of a DM scope, or raise for any other scope."""
+    from core.models.message import HUMAN_SENDER_ID
+
+    if kind == "human_dm":
+        return key, HUMAN_SENDER_ID
+    if kind == "agent_dm":
+        first, sep, second = key.partition(":")
+        if not sep or not first or not second:
+            raise ValueError(f"An agent_dm key must be '<id>:<id>', got {key!r}")
+        return first, second
+    raise ValueError(f"list_thread_rows_newest_first reads DM scopes only, got {kind!r}")
+
+
+def list_thread_rows_newest_first(
+    kind: str,
+    key: str,
+    *,
+    after_message_id: str | None,
+    before: tuple[float, int] | None,
+    limit: int,
+) -> list[tuple[Message, float, int]]:
+    """Return one page of a DM's rows, newest first, with their order cursor.
+
+    The order key is ``(julianday(created_at), rowid)``: ``julianday`` compares
+    timestamps as instants rather than text, and ``rowid`` keeps insertion
+    order inside one second. Rowids are read live and never stored, because a
+    VACUUM may renumber them.
+
+    Args:
+        kind: ``human_dm`` (key = agent id) or ``agent_dm`` (key =
+            ``"<lower id>:<higher id>"``).
+        key: The scope key.
+        after_message_id: Only rows strictly after this row are returned (the
+            conversation-notes anchor). ``None`` reads from the start.
+        before: Keyset cursor ``(julianday, rowid)`` of the oldest row already
+            read; only strictly older rows are returned. ``None`` = newest page.
+        limit: Maximum rows returned.
+
+    Returns:
+        ``(message, julianday, rowid)`` tuples, newest first.
+
+    Raises:
+        AnchorMissing: ``after_message_id`` is not a row of this DM.
+        ValueError: On a scope kind other than the two DM kinds, or a bad key.
+    """
+    first, second = _dm_pair(kind, key)
+    pair = "((from_agent = $1 AND to_agent = $2) OR (from_agent = $2 AND to_agent = $1))"
+    params: list[Any] = [first, second]
+    conditions = [pair]
+    if after_message_id is not None:
+        anchor = query_one(
+            f"SELECT julianday(created_at) AS day, rowid AS rid FROM messages WHERE id = $3 AND {pair}",
+            [first, second, after_message_id],
+        )
+        if anchor is None:
+            raise AnchorMissing(kind, key, after_message_id)
+        params.extend([anchor["day"], anchor["rid"]])
+        day, rid = len(params) - 1, len(params)
+        conditions.append(
+            f"(julianday(created_at) > ${day} OR (julianday(created_at) = ${day} AND rowid > ${rid}))"
+        )
+    if before is not None:
+        params.extend([before[0], before[1]])
+        day, rid = len(params) - 1, len(params)
+        conditions.append(
+            f"(julianday(created_at) < ${day} OR (julianday(created_at) = ${day} AND rowid < ${rid}))"
+        )
+    params.append(limit)
+    rows = query(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}, julianday(created_at) AS order_day, rowid AS order_rowid
+        FROM messages
+        WHERE {' AND '.join(conditions)}
+        ORDER BY julianday(created_at) DESC, rowid DESC LIMIT ${len(params)}
+        """,
+        params,
+    )
+    result: list[tuple[Message, float, int]] = []
+    for row in rows:
+        day = float(row.pop("order_day"))
+        rid = int(row.pop("order_rowid"))
+        result.append((Message.model_validate(row), day, rid))
+    return result
 
 
 def get_recent_work_artifacts(agent_id: str, limit: int = 10) -> list[Message]:
@@ -218,6 +310,8 @@ def delete_human_chat_thread(agent_id: str) -> int:
         """,
         [agent_id, HUMAN_SENDER_ID],
     )
+    # The notes summarize rows that no longer exist.
+    delete_conversation_notes("human_dm", agent_id)
     return count
 
 
@@ -267,6 +361,10 @@ def delete_human_chat_from(agent_id: str, from_message_id: str) -> list[str]:
         """,
         [agent_id, HUMAN_SENDER_ID, cut["cut_day"], cut["cut_rowid"]],
     )
+    # Unconditional, even when the cut lies after the notes' anchor: the
+    # rewound turns may be folded into the notes, and the next turn above the
+    # start threshold compacts again from the rows that remain.
+    delete_conversation_notes("human_dm", agent_id)
     return [str(row["id"]) for row in rows]
 
 

@@ -290,9 +290,11 @@ async function main() {
         // merely the word "connection".
         connections: formValueCount(editForm, "connection_id") === 1
             && THINKING_MODES.every((mode) => formValueCount(editForm, mode.key) === 1),
-        prompt_history: ["prompt_history_last_n", "prompt_history_max_tokens",
-            "prompt_history_earliest_ts", "prompt_history_include_notifications"]
-            .every((name) => editMarkup.includes(`name="${name}"`)),
+        prompt_history: ["prompt_history_earliest_ts", "prompt_history_include_notifications"]
+            .every((name) => editMarkup.includes(`name="${name}"`))
+            // History size is per conversation now (Settings → Context Window).
+            && ["prompt_history_last_n", "prompt_history_max_tokens"]
+                .every((name) => !editMarkup.includes(`name="${name}"`)),
     };
     // The recovery tools and the runtime pill are edit-only and travel with it.
     //

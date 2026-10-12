@@ -35,6 +35,7 @@ const BossModConversation = (() => {
         }
         cardCtx.openDeliverable = openDeliverable;
         cardCtx.openMemory = openMemory;
+        cardCtx.notesDisclosure = BossModConversationWindow.createDisclosure();
 
         let source = null;
         let unsubscribe = null;
@@ -242,6 +243,7 @@ const BossModConversation = (() => {
             },
             presence() { transcript.renderPresence(currentId); },
             chrome() { applyChrome(); composer.applyState(); },
+            refresh() { void refetchOpenConversation(); },  // its notes changed
         };
 
         function disposeSource() {
@@ -252,14 +254,15 @@ const BossModConversation = (() => {
             rewind = null;
         }
 
+        // Each source is wrapped so its transcript marks what the agents see.
         function buildSource(id, kind) {
             if (kind === 'agent') {
-                return BossModAgentSource.createAgentSource(id, {
+                return BossModConversationWindow.attach(api, 'human_dm', BossModAgentSource.createAgentSource(id, {
                     api, bus, store, presence, openDesk, browserView,
-                });
+                }));
             }
             if (kind === 'thread') {
-                return BossModThreadSource.createThreadSource(id, {
+                return BossModConversationWindow.attach(api, 'channel', BossModThreadSource.createThreadSource(id, {
                     api, bus, store, presence,
                     archive: BossModThreadArchive.createThreadArchive({ api }),
                     seat: BossModThreadSeat.createThreadSeat({ api, store }),
@@ -267,7 +270,7 @@ const BossModConversation = (() => {
                         cache.forget(conversationId);
                         drafts.delete(conversationId);
                     },
-                });
+                }));
             }
             throw new Error(`[conversation] unknown conversation kind "${kind}"`);
         }

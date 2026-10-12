@@ -15,6 +15,7 @@ from core.models import (
     THREAD_STALE_SKIP_LINE,
 )
 from db.connection import transaction
+from db.conversation_notes import AnchorMissing, delete_conversation_notes, get_conversation_notes
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
 
 _CHANNEL_COLUMNS = (
@@ -458,8 +459,13 @@ def update_channel_message_content(message_id: str, content: str) -> ChannelMess
 
 
 def delete_channel_message(message_id: str) -> ChannelMessage | None:
-    """Delete one channel message and return the removed row."""
-    return fetch_one(
+    """Delete one channel message and return the removed row.
+
+    When the row was the anchor of the channel's conversation notes (the last
+    row folded into them), the notes are deleted too: they can no longer say
+    where the summarized part ends.
+    """
+    removed = fetch_one(
         f"""
         DELETE FROM channel_messages
         WHERE id = $1
@@ -468,6 +474,11 @@ def delete_channel_message(message_id: str) -> ChannelMessage | None:
         [message_id],
         ChannelMessage,
     )
+    if removed is not None:
+        notes = get_conversation_notes("channel", removed.channel_id)
+        if notes is not None and notes.get("through_message_id") == removed.id:
+            delete_conversation_notes("channel", removed.channel_id)
+    return removed
 
 
 def list_queue_visibility_channel_messages(agent_id: str) -> list[ChannelMessage]:
@@ -534,6 +545,30 @@ def get_formatted_channel_messages(channel_id: str, *, human_label: str, limit: 
             renames and legacy names render as the caller's current label.
         limit: Most recent rows to return.
     """
+    return format_channel_messages(
+        channel_id,
+        list_channel_messages(channel_id, limit=limit),
+        human_label=human_label,
+    )
+
+
+def format_channel_messages(
+    channel_id: str,
+    rows: Sequence[ChannelMessage],
+    *,
+    human_label: str,
+) -> list[dict[str, Any]]:
+    """Render already-fetched channel rows in prompt-history shape.
+
+    The one formatter for channel history: ``get_formatted_channel_messages``
+    and the conversation-notes window loader both go through it.
+
+    Args:
+        channel_id: The thread the rows belong to.
+        rows: The rows, in the order the caller wants them back.
+        human_label: Name shown on human rows (see
+            ``get_formatted_channel_messages``).
+    """
     return [
         {
             "id": item.id,
@@ -545,8 +580,79 @@ def get_formatted_channel_messages(channel_id: str, *, human_label: str, limit: 
             "created_at": item.created_at.isoformat() if item.created_at else None,
             "channel_id": channel_id,
         }
-        for item in list_channel_messages(channel_id, limit=limit)
+        for item in rows
     ]
+
+
+def list_thread_rows_newest_first(
+    kind: str,
+    key: str,
+    *,
+    after_message_id: str | None,
+    before: tuple[float, int] | None,
+    limit: int,
+) -> list[tuple[ChannelMessage, float, int]]:
+    """Return one page of a channel's rows, newest first, with their order cursor.
+
+    The channel counterpart of ``db.messages.list_thread_rows_newest_first``:
+    the order key is ``(julianday(created_at), rowid)``, because channel ids
+    are random uuids and ``created_at`` carries microseconds and an offset
+    that a text comparison would misorder. Rowids are read live, never stored.
+
+    Args:
+        kind: Must be ``channel``.
+        key: The channel id.
+        after_message_id: Only rows strictly after this row are returned (the
+            conversation-notes anchor). ``None`` reads from the start.
+        before: Keyset cursor ``(julianday, rowid)`` of the oldest row already
+            read; only strictly older rows are returned. ``None`` = newest page.
+        limit: Maximum rows returned.
+
+    Returns:
+        ``(message, julianday, rowid)`` tuples, newest first.
+
+    Raises:
+        AnchorMissing: ``after_message_id`` is not a row of this channel.
+        ValueError: On a scope kind other than ``channel``.
+    """
+    if kind != "channel":
+        raise ValueError(f"db.channels.list_thread_rows_newest_first reads channel scopes only, got {kind!r}")
+    params: list[Any] = [key]
+    conditions = ["channel_id = $1"]
+    if after_message_id is not None:
+        anchor = query_one(
+            "SELECT julianday(created_at) AS day, rowid AS rid FROM channel_messages WHERE id = $2 AND channel_id = $1",
+            [key, after_message_id],
+        )
+        if anchor is None:
+            raise AnchorMissing(kind, key, after_message_id)
+        params.extend([anchor["day"], anchor["rid"]])
+        day, rid = len(params) - 1, len(params)
+        conditions.append(
+            f"(julianday(created_at) > ${day} OR (julianday(created_at) = ${day} AND rowid > ${rid}))"
+        )
+    if before is not None:
+        params.extend([before[0], before[1]])
+        day, rid = len(params) - 1, len(params)
+        conditions.append(
+            f"(julianday(created_at) < ${day} OR (julianday(created_at) = ${day} AND rowid < ${rid}))"
+        )
+    params.append(limit)
+    rows = query(
+        f"""
+        SELECT {_MESSAGE_COLUMNS}, julianday(created_at) AS order_day, rowid AS order_rowid
+        FROM channel_messages
+        WHERE {' AND '.join(conditions)}
+        ORDER BY julianday(created_at) DESC, rowid DESC LIMIT ${len(params)}
+        """,
+        params,
+    )
+    result: list[tuple[ChannelMessage, float, int]] = []
+    for row in rows:
+        day = float(row.pop("order_day"))
+        rid = int(row.pop("order_rowid"))
+        result.append((ChannelMessage.model_validate(row), day, rid))
+    return result
 
 
 def get_channel_message_for_approval(approval_id: str) -> ChannelMessage | None:

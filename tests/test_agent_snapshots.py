@@ -101,10 +101,8 @@ def test_create_captures_the_setup_and_its_policy() -> None:
     assert (snap.desk_x, snap.desk_y) == (3, 4)
     assert snap.deleted_at is None
     # create_agent writes the default policy row itself, so the create-time
-    # capture already holds it: the four fields the form edits, and no more.
+    # capture already holds it: the fields the form edits, and no more.
     assert snap.prompt_history_policy == {
-        "last_n_histories": config.get_int("default_prompt_history_last_n"),
-        "max_allowed_history_tokens": config.get_int("default_prompt_history_max_tokens"),
         "earliest_ts_allowed": None,
         "include_notifications": True,
     }
@@ -136,22 +134,42 @@ def test_an_update_that_writes_nothing_captures_nothing() -> None:
 def test_a_policy_change_recaptures() -> None:
     """The create form saves the policy AFTER creating the agent."""
     agent = db.create_agent("Ada", role="Writer")
-    db.update_agent_prompt_history_policy(
-        agent.id, last_n_histories=7, max_allowed_history_tokens=900,
-        include_notifications=False,
-    )
+    db.update_agent_prompt_history_policy(agent.id, include_notifications=False)
     snap = _only(agent.id)
     assert snap.prompt_history_policy == {
-        "last_n_histories": 7,
-        "max_allowed_history_tokens": 900,
         "earliest_ts_allowed": None,
         "include_notifications": False,
     }
 
 
+def test_a_snapshot_with_the_retired_history_keys_still_decodes() -> None:
+    """Snapshots captured before the per-thread budget still store last-N and max tokens.
+
+    Decoding drops the two retired keys rather than refusing the row, so every
+    existing snapshot keeps loading.
+    """
+    agent = db.create_agent("Ada", role="Writer")
+    db.execute(
+        "UPDATE agent_snapshots SET prompt_history_policy = $1 WHERE agent_id = $2",
+        [
+            json.dumps({
+                "last_n_histories": 30,
+                "max_allowed_history_tokens": 2000,
+                "earliest_ts_allowed": None,
+                "include_notifications": True,
+            }),
+            agent.id,
+        ],
+    )
+    snap = _only(agent.id)
+    assert snap.prompt_history_policy == {"earliest_ts_allowed": None, "include_notifications": True}
+    served = [item.model_dump(mode="json") for item in db.list_agent_snapshots()]
+    assert "last_n_histories" not in json.dumps(served)
+
+
 def test_delete_stamps_the_snapshot_and_it_outlives_the_agent() -> None:
     agent = db.create_agent("Ada", role="Writer", description="Drafts.")
-    db.update_agent_prompt_history_policy(agent.id, last_n_histories=12)
+    db.update_agent_prompt_history_policy(agent.id, include_notifications=False)
     assert db.delete_agent_rows(agent.id) is True
     assert db.get_agent(agent.id) is None
     assert db.get_agent_prompt_history_policy(agent.id) is None
@@ -160,7 +178,7 @@ def test_delete_stamps_the_snapshot_and_it_outlives_the_agent() -> None:
     assert snap.deleted_at == snap.captured_at
     assert snap.name == "Ada" and snap.description == "Drafts."
     # Captured BEFORE the policy row went, so it still holds what was set.
-    assert snap.prompt_history_policy["last_n_histories"] == 12
+    assert snap.prompt_history_policy["include_notifications"] is False
     # Deleting what is not there captures nothing.
     assert db.delete_agent_rows("no-such-agent") is False
     assert len(_raw_rows()) == 1
@@ -179,7 +197,7 @@ def test_an_agent_with_credentials_leaves_no_trace_of_them() -> None:
     # means something.
     assert db.get_connection_by_id(agent.connection_id).api_key == SECRET_KEY
     db.update_agent(agent.id, role="Editor")
-    db.update_agent_prompt_history_policy(agent.id, last_n_histories=3)
+    db.update_agent_prompt_history_policy(agent.id, include_notifications=False)
     db.delete_agent_rows(agent.id)
     rows = _raw_rows()
     assert len(rows) == 1

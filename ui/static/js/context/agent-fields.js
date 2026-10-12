@@ -62,8 +62,6 @@ const BossModAgentFields = (() => {
     ];
 
     const DEFAULT_PROMPT_HISTORY_POLICY = {
-        last_n_histories: 30,
-        max_allowed_history_tokens: 2000,
         earliest_ts_allowed: null,
         include_notifications: true,
     };

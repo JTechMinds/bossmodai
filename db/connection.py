@@ -411,6 +411,15 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _drop_column_if_present(con, "channel_host_state", "work_agent_id")
     _drop_column_if_present(con, "channel_host_state", "work_task_id")
     _drop_column_if_present(con, "channel_host_state", "ack_streak")
+    # Chat fade is replaced by per-thread conversation notes
+    # (core/agent_loop/conversation_notes.py). Dropping its tables deletes the
+    # stored channel summaries; approved by the operator on 2026-10-12.
+    con.execute("DROP TABLE IF EXISTS channel_chat_fades")
+    con.execute("DROP TABLE IF EXISTS chat_fade_gate")
+    # The per-agent last-N / token window is replaced by the per-thread
+    # history budget setting (conversation_history_budget_tokens).
+    _drop_column_if_present(con, "agent_prompt_history_policies", "last_n_histories")
+    _drop_column_if_present(con, "agent_prompt_history_policies", "max_allowed_history_tokens")
     _add_column_if_missing(
         con, "channels", "cli_auto_approve",
         "INTEGER NOT NULL DEFAULT 0",

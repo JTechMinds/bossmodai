@@ -9,8 +9,7 @@ from core.models.prompt_history import AgentPromptHistoryPolicy
 from db.crud import execute, fetch_one, insert_returning, query
 
 _POLICY_COLUMNS = (
-    "agent_id, last_n_histories, max_allowed_history_tokens, "
-    "earliest_ts_allowed, include_notifications, created_at, updated_at"
+    "agent_id, earliest_ts_allowed, include_notifications, created_at, updated_at"
 )
 
 
@@ -26,8 +25,6 @@ def get_agent_prompt_history_policy(agent_id: str) -> AgentPromptHistoryPolicy |
 def create_agent_prompt_history_policy(
     agent_id: str,
     *,
-    last_n_histories: int = 30,
-    max_allowed_history_tokens: int = 2000,
     earliest_ts_allowed: datetime | None = None,
     include_notifications: bool = True,
 ) -> AgentPromptHistoryPolicy:
@@ -35,15 +32,12 @@ def create_agent_prompt_history_policy(
     return insert_returning(
         f"""
         INSERT INTO agent_prompt_history_policies (
-            agent_id, last_n_histories, max_allowed_history_tokens,
-            earliest_ts_allowed, include_notifications
-        ) VALUES ($1, $2, $3, $4, $5)
+            agent_id, earliest_ts_allowed, include_notifications
+        ) VALUES ($1, $2, $3)
         RETURNING {_POLICY_COLUMNS}
         """,
         [
             agent_id,
-            last_n_histories,
-            max_allowed_history_tokens,
             earliest_ts_allowed,
             include_notifications,
         ],
@@ -72,8 +66,6 @@ def update_agent_prompt_history_policy(agent_id: str, **fields: Any) -> AgentPro
         key: value
         for key, value in fields.items()
         if key in {
-            "last_n_histories",
-            "max_allowed_history_tokens",
             "earliest_ts_allowed",
             "include_notifications",
         }

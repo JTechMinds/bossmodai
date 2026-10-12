@@ -83,8 +83,6 @@ CREATE TABLE IF NOT EXISTS agent_cli_state (
 
 CREATE TABLE IF NOT EXISTS agent_prompt_history_policies (
     agent_id                    VARCHAR PRIMARY KEY REFERENCES agents(id),
-    last_n_histories            INTEGER NOT NULL DEFAULT 30 CHECK (last_n_histories >= 0),
-    max_allowed_history_tokens  INTEGER NOT NULL DEFAULT 2000 CHECK (max_allowed_history_tokens >= 0),
     earliest_ts_allowed         TIMESTAMP,
     include_notifications       BOOLEAN NOT NULL DEFAULT TRUE,
     created_at                  TIMESTAMP DEFAULT current_timestamp,
@@ -983,24 +981,28 @@ CREATE INDEX IF NOT EXISTS idx_model_call_lanes_kind
     ON model_call_lanes (kind);
 
 -- ───────────────────────────────────────────────────────────────────────────
--- Chat fade — soft summary of older channel turns. Transcript rows stay.
+-- Conversation notes — the compacted part of one DM or thread. Rows stay.
 -- ───────────────────────────────────────────────────────────────────────────
 
--- One summary per channel. through_message_id is the newest transcript row
--- folded into that summary. Original channel_messages are not deleted.
-CREATE TABLE IF NOT EXISTS channel_chat_fades (
-    channel_id         VARCHAR PRIMARY KEY REFERENCES channels(id),
-    through_message_id VARCHAR NOT NULL,
-    summary            TEXT NOT NULL,
-    updated_at         TIMESTAMP DEFAULT current_timestamp
-);
-
--- One global gate so chat fade never runs every turn. Turns count every
--- agent wake. last_run_at is the last time a background fade was queued.
-CREATE TABLE IF NOT EXISTS chat_fade_gate (
-    id              INTEGER PRIMARY KEY CHECK (id = 1),
-    turns_since_run INTEGER NOT NULL DEFAULT 0,
-    last_run_at     TIMESTAMP
+-- One row per conversation scope, holding only the CURRENT notes: a new
+-- compaction replaces them, so the transcript can never show more compaction
+-- history than the agent has. scope_key is the agent id (human_dm), the
+-- sorted "<lower id>:<higher id>" pair (agent_dm) or the channel id (channel),
+-- so there is no FK; the delete paths remove the row explicitly.
+-- through_message_id is the last transcript row folded into the notes. The
+-- run_* columns are the last background run's state, so a failure is visible.
+CREATE TABLE IF NOT EXISTS conversation_notes (
+    scope_kind VARCHAR NOT NULL CHECK (scope_kind IN ('human_dm','agent_dm','channel')),
+    scope_key VARCHAR NOT NULL,
+    through_message_id VARCHAR,
+    notes TEXT,
+    source_tokens INTEGER NOT NULL DEFAULT 0,
+    run_state VARCHAR NOT NULL DEFAULT 'idle' CHECK (run_state IN ('idle','running','failed')),
+    run_started_at TIMESTAMP,
+    last_run_at TIMESTAMP,
+    last_error TEXT,
+    updated_at TIMESTAMP,
+    PRIMARY KEY (scope_kind, scope_key)
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -1020,8 +1022,7 @@ CREATE TABLE IF NOT EXISTS sticky_slots (
     PRIMARY KEY (source_id, slot_kind)
 );
 
--- One gate so sticky-slot fill never runs every turn. Separate from the
--- chat fade gate so a fade claim does not consume this clock. Turns count
+-- One gate so sticky-slot fill never runs every turn. Turns count
 -- every agent wake. last_run_at is the last time a background fill was queued.
 CREATE TABLE IF NOT EXISTS sticky_slot_gate (
     id              INTEGER PRIMARY KEY CHECK (id = 1),

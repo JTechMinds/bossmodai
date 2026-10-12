@@ -36,7 +36,6 @@ const BossModAgentFormAdvanced = (() => {
      */
     function advancedSection(values, view) {
         const { roster, desks, floorId, promptHistoryPolicy } = view;
-        const DEFAULT_PROMPT_HISTORY_POLICY = BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY;
         const { noFreeDesk } = BossModAgentFields.deskChoice(values, roster, desks, floorId);
         const earliestAllowedValue = promptHistoryPolicy.earliest_ts_allowed
             ? new Date(promptHistoryPolicy.earliest_ts_allowed).toISOString().slice(0, 16)
@@ -85,30 +84,8 @@ const BossModAgentFormAdvanced = (() => {
                 <div>
                     <h4 class="advanced-subtitle">AI History</h4>
                     <p class="field-hint">
-                        Controls the backend view used for model-visible conversation history.
+                        How much history an agent sees is set per conversation in Settings → Context Window.
                     </p>
-                </div>
-                <div class="field-row">
-                    <div class="field">
-                        <label class="field-label field-label-sm" for="agent-history-last-n">Last N History Items</label>
-                        <input type="number"
-                               min="0"
-                               max="500"
-                               name="prompt_history_last_n"
-                               id="agent-history-last-n"
-                               value="${BossModFormat.escapeAttribute(String(promptHistoryPolicy.last_n_histories ?? DEFAULT_PROMPT_HISTORY_POLICY.last_n_histories))}"
-                               class="field-input">
-                    </div>
-                    <div class="field">
-                        <label class="field-label field-label-sm" for="agent-history-max-tokens">Max History Tokens</label>
-                        <input type="number"
-                               min="0"
-                               max="50000"
-                               name="prompt_history_max_tokens"
-                               id="agent-history-max-tokens"
-                               value="${BossModFormat.escapeAttribute(String(promptHistoryPolicy.max_allowed_history_tokens ?? DEFAULT_PROMPT_HISTORY_POLICY.max_allowed_history_tokens))}"
-                               class="field-input">
-                    </div>
                 </div>
                 <div class="field">
                     <label class="field-label field-label-sm" for="agent-history-earliest">Earliest Allowed Timestamp</label>

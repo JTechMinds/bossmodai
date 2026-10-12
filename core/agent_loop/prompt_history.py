@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
 import db
 from core.boss import boss_label
-from core.agent_loop.chat_fade import apply_channel_chat_fade, consider_channel_chat_fade
+from core.agent_loop.conversation_notes import (
+    ThreadScope,
+    entry_tokens,
+    load_thread_window,
+    maybe_schedule_compaction,
+    read_settings,
+    render_history_entry,
+    window_entries,
+)
 from core.agent_loop.sticky_slots import compose_channel_sticky_slots, compose_task_sticky_slots
 from core.agent_loop.task_thread_history import load_task_thread_history
-from core.llm.client import count_tokens
 from core.models import Agent, Notification
+
+# Rows a budgeted reader (task thread, meeting) asks for per step, and the
+# channel rows before the visible window handed to sticky slots so a task
+# turn folded into the notes still reaches its slots.
+_FETCH_STEP_ROWS = 100
 
 
 @dataclass(slots=True)
@@ -48,13 +61,17 @@ def _load_conversation_history(
     token_model: str | None = None,
 ) -> list[dict[str, Any]]:
     trigger_type = trigger.get("type")
-    fetch_limit = _history_fetch_limit(policy.last_n_histories)
+    budget = read_settings().budget_tokens
 
     if trigger_type == "activity_resumed" and trigger.get("task_id"):
-        thread = load_task_thread_history(
-            task_id=str(trigger["task_id"]),
-            limit=fetch_limit,
-            earliest_ts=policy.earliest_ts_allowed,
+        thread = _fetch_until_budget(
+            lambda limit: load_task_thread_history(
+                task_id=str(trigger["task_id"]),
+                limit=limit,
+                earliest_ts=policy.earliest_ts_allowed,
+            ),
+            budget,
+            agent.id,
         )
         return _finish_history(
             thread,
@@ -66,12 +83,16 @@ def _load_conversation_history(
         )
 
     if trigger_type in {"task_assigned", "task_follow_up", "task_update"} and trigger.get("task_id"):
-        thread = load_task_thread_history(
-            task_id=str(trigger["task_id"]),
-            limit=fetch_limit,
-            earliest_ts=policy.earliest_ts_allowed,
-            exclude_source_message_id=trigger.get("source_message_id"),
-            exclude_source_task_event_id=trigger.get("source_task_event_id"),
+        thread = _fetch_until_budget(
+            lambda limit: load_task_thread_history(
+                task_id=str(trigger["task_id"]),
+                limit=limit,
+                earliest_ts=policy.earliest_ts_allowed,
+                exclude_source_message_id=trigger.get("source_message_id"),
+                exclude_source_task_event_id=trigger.get("source_task_event_id"),
+            ),
+            budget,
+            agent.id,
         )
         return _finish_history(
             thread,
@@ -83,74 +104,43 @@ def _load_conversation_history(
         )
 
     if trigger_type in ("human_chat", "watchdog_status_ping"):
-        thread = db.get_human_chat_thread(
-            agent.id,
-            limit=fetch_limit,
+        return _thread_history(
+            ThreadScope.human_dm(agent.id),
+            agent,
             earliest_ts=policy.earliest_ts_allowed,
-        )
-        formatted = db.get_formatted_messages(thread, human_label=boss_label())
-        if trigger_type == "human_chat":
-            formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
-        return _finish_history(
-            formatted,
-            agent.id,
-            policy,
-            token_model=token_model,
-            scope_kind="human",
-            scope_id=agent.id,
+            exclude_message_id=trigger.get("source_message_id") if trigger_type == "human_chat" else None,
         )
 
     if trigger_type == "peer_message" and trigger.get("from_agent"):
-        thread = db.get_agent_direct_thread(
-            agent.id,
-            trigger["from_agent"],
-            limit=fetch_limit,
+        return _thread_history(
+            ThreadScope.agent_dm(agent.id, str(trigger["from_agent"])),
+            agent,
             earliest_ts=policy.earliest_ts_allowed,
-        )
-        formatted = db.get_formatted_messages(thread, human_label=boss_label())
-        formatted = _exclude_source_message(formatted, trigger.get("source_message_id"))
-        return _finish_history(
-            formatted,
-            agent.id,
-            policy,
-            token_model=token_model,
-            scope_kind="peer",
-            scope_id=f"{agent.id}:{trigger['from_agent']}",
+            exclude_message_id=trigger.get("source_message_id"),
         )
 
     if trigger_type in {"channel_message", "channel_response"}:
         channel_id = trigger.get("channel_id")
         if channel_id:
-            thread = db.get_formatted_channel_messages(
-                channel_id,
-                human_label=boss_label(),
-                limit=fetch_limit,
-            )
-            verbatim = _exclude_source_message(thread, trigger.get("source_message_id"))
-            faded = apply_channel_chat_fade(str(channel_id), verbatim, policy)
-            consider_channel_chat_fade(
+            return _channel_history(
                 str(channel_id),
-                faded,
+                agent,
                 policy,
-                agent_id=agent.id,
                 token_model=token_model,
-            )
-            windowed = _apply_policy_window(faded, agent.id, policy, token_model=token_model)
-            return compose_channel_sticky_slots(
-                verbatim=verbatim,
-                visible=windowed,
-                policy=policy,
-                agent_id=agent.id,
-                token_model=token_model,
+                exclude_message_id=trigger.get("source_message_id"),
             )
 
     if trigger_type in {"session_message", "session_response"}:
         session_id = trigger.get("session_id")
         if session_id:
-            thread = db.get_formatted_meeting_session_messages(
-                session_id,
-                human_label=boss_label(),
-                limit=fetch_limit,
+            thread = _fetch_until_budget(
+                lambda limit: db.get_formatted_meeting_session_messages(
+                    session_id,
+                    human_label=boss_label(),
+                    limit=limit,
+                ),
+                budget,
+                agent.id,
             )
             thread = _exclude_source_message(thread, trigger.get("source_message_id"))
             return _finish_history(
@@ -167,10 +157,14 @@ def _load_conversation_history(
         if active and active.kind == "meeting":
             session = db.get_active_meeting_session_for_agent(agent.id)
             if session is not None:
-                thread = db.get_formatted_meeting_session_messages(
-                    session.id,
-                    human_label=boss_label(),
-                    limit=fetch_limit,
+                thread = _fetch_until_budget(
+                    lambda limit: db.get_formatted_meeting_session_messages(
+                        session.id,
+                        human_label=boss_label(),
+                        limit=limit,
+                    ),
+                    budget,
+                    agent.id,
                 )
                 return _finish_history(
                     thread,
@@ -181,19 +175,11 @@ def _load_conversation_history(
                     scope_id=session.id,
                 )
         if active and active.kind == "conversation":
-            thread = db.get_human_chat_thread(
-                agent.id,
-                limit=fetch_limit,
+            return _thread_history(
+                ThreadScope.human_dm(agent.id),
+                agent,
                 earliest_ts=policy.earliest_ts_allowed,
-            )
-            formatted = db.get_formatted_messages(thread, human_label=boss_label())
-            return _finish_history(
-                formatted,
-                agent.id,
-                policy,
-                token_model=token_model,
-                scope_kind="human",
-                scope_id=agent.id,
+                exclude_message_id=None,
             )
 
     if trigger_type in {"host_path_consent_resolved", "cli_approval_resolved"}:
@@ -221,13 +207,16 @@ def _load_consent_or_approval_history(
     Prefer the bound task thread when one exists, then the originating
     channel thread, otherwise human chat.
     """
-    fetch_limit = _history_fetch_limit(policy.last_n_histories)
     task_id = trigger.get("task_id")
     if task_id:
-        thread = load_task_thread_history(
-            task_id=str(task_id),
-            limit=fetch_limit,
-            earliest_ts=policy.earliest_ts_allowed,
+        thread = _fetch_until_budget(
+            lambda limit: load_task_thread_history(
+                task_id=str(task_id),
+                limit=limit,
+                earliest_ts=policy.earliest_ts_allowed,
+            ),
+            read_settings().budget_tokens,
+            agent.id,
         )
         if thread:
             return _finish_history(
@@ -241,34 +230,78 @@ def _load_consent_or_approval_history(
 
     channel_id = trigger.get("channel_id")
     if isinstance(channel_id, str) and channel_id.strip():
-        thread = db.get_formatted_channel_messages(
+        history = _channel_history(
             channel_id.strip(),
-            human_label=boss_label(),
-            limit=fetch_limit,
+            agent,
+            policy,
+            token_model=token_model,
+            exclude_message_id=None,
         )
-        if thread:
-            windowed = _apply_policy_window(thread, agent.id, policy, token_model=token_model)
-            return compose_channel_sticky_slots(
-                verbatim=thread,
-                visible=windowed,
-                policy=policy,
-                agent_id=agent.id,
-                token_model=token_model,
-            )
+        if history:
+            return history
 
-    thread = db.get_human_chat_thread(
-        agent.id,
-        limit=fetch_limit,
+    return _thread_history(
+        ThreadScope.human_dm(agent.id),
+        agent,
         earliest_ts=policy.earliest_ts_allowed,
+        exclude_message_id=None,
     )
-    formatted = db.get_formatted_messages(thread, human_label=boss_label())
-    return _finish_history(
-        formatted,
-        agent.id,
-        policy,
+
+
+def _thread_history(
+    scope: ThreadScope,
+    agent: Agent,
+    *,
+    earliest_ts: Any,
+    exclude_message_id: Any,
+) -> list[dict[str, Any]]:
+    """One DM's history: its conversation notes, then the verbatim tail.
+
+    Also starts a background compaction when the window is over the start
+    line; the turn never waits for it.
+    """
+    window = load_thread_window(
+        scope,
+        earliest_ts=earliest_ts,
+        exclude_message_id=str(exclude_message_id or "").strip() or None,
+        perspective_agent_id=agent.id,
+    )
+    maybe_schedule_compaction(scope, window)
+    return window_entries(window)
+
+
+def _channel_history(
+    channel_id: str,
+    agent: Agent,
+    policy: Any,
+    *,
+    token_model: str | None,
+    exclude_message_id: Any,
+) -> list[dict[str, Any]]:
+    """One channel's history, then task-side sticky slots.
+
+    The window is the channel's notes plus its verbatim tail. Sticky slots get
+    that window as ``visible`` and, as ``verbatim``, the window's rows plus up
+    to ``_FETCH_STEP_ROWS`` rows before it, so a task-linked turn that was
+    folded into the notes still counts as dropped and keeps its slots.
+    """
+    scope = ThreadScope.channel(channel_id)
+    exclude = str(exclude_message_id or "").strip() or None
+    window = load_thread_window(scope, exclude_message_id=exclude, perspective_agent_id=agent.id)
+    maybe_schedule_compaction(scope, window)
+    visible = window_entries(window)
+    recent = db.get_formatted_channel_messages(
+        channel_id,
+        human_label=boss_label(),
+        limit=len(window.rows) + _FETCH_STEP_ROWS,
+    )
+    verbatim = _exclude_source_message(recent, exclude)
+    return compose_channel_sticky_slots(
+        verbatim=verbatim,
+        visible=visible,
+        policy=policy,
+        agent_id=agent.id,
         token_model=token_model,
-        scope_kind="human",
-        scope_id=agent.id,
     )
 
 
@@ -300,13 +333,12 @@ def _finish_history(
     scope_id: str,
     verbatim: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Apply the warm window. Task threads then receive task-side slots.
+    """Apply the hard token window. Task threads then receive task-side slots.
 
-    Other scopes stay on the warm window. Channel history composes slots
-    after chat fade in the channel branch, and only for turns that already
-    carry a task id.
+    Only task and meeting history comes here: they are not compacted, so
+    they keep a hard window at the per-thread history budget.
     """
-    windowed = _apply_policy_window(messages, agent_id, policy, token_model=token_model)
+    windowed = _apply_budget_window(messages, agent_id, read_settings().budget_tokens)
     if scope_kind != "task" or not str(scope_id).strip():
         return windowed
     return compose_task_sticky_slots(
@@ -319,42 +351,41 @@ def _finish_history(
     )
 
 
-def _apply_policy_window(
+def _apply_budget_window(
     messages: list[dict[str, Any]],
     agent_id: str,
-    policy: Any,
-    *,
-    token_model: str | None = None,
+    budget: int,
 ) -> list[dict[str, Any]]:
-    if policy.last_n_histories == 0:
-        return []
-
-    selected = list(messages[-policy.last_n_histories :]) if policy.last_n_histories else list(messages)
-    max_tokens = policy.max_allowed_history_tokens
-    if max_tokens <= 0:
-        return selected
-
+    """Keep the newest whole rows within ``budget`` tokens; the newest always stays."""
     kept_reversed: list[dict[str, Any]] = []
     tokens_used = 0
-    for message in reversed(selected):
-        entry_tokens = count_tokens(_render_history_entry(message, agent_id), model=token_model)
-        if entry_tokens > 0 and kept_reversed and tokens_used + entry_tokens > max_tokens:
+    for message in reversed(messages):
+        size = entry_tokens(render_history_entry(message, agent_id))
+        if kept_reversed and tokens_used + size > budget:
             break
-        if entry_tokens > 0:
-            tokens_used += entry_tokens
+        tokens_used += size
         kept_reversed.append(message)
     kept_reversed.reverse()
     return kept_reversed
 
 
-def _render_history_entry(message: dict[str, Any], agent_id: str) -> str:
-    if message.get("from_agent") == agent_id:
-        return str(message.get("content") or "")
-    sender = str(message.get("from_name") or "Unknown")
-    content = str(message.get("content") or "")
-    return f"[{sender}]: {content}"
+def _fetch_until_budget(
+    fetch: Callable[[int], list[dict[str, Any]]],
+    budget: int,
+    agent_id: str,
+) -> list[dict[str, Any]]:
+    """Read the newest rows in steps of ``_FETCH_STEP_ROWS`` until ``budget`` is met.
 
-
-def _history_fetch_limit(last_n_histories: int) -> int:
-    base = max(last_n_histories, 30)
-    return min(max(base * 4, 60), 300)
+    ``fetch(limit)`` returns the newest ``limit`` rows, oldest first. Growth
+    stops once the rows reach the token budget or a larger limit returns no
+    more rows (the thread is exhausted).
+    """
+    limit = _FETCH_STEP_ROWS
+    previous = -1
+    while True:
+        rows = fetch(limit)
+        tokens = sum(entry_tokens(render_history_entry(row, agent_id)) for row in rows)
+        if tokens >= budget or len(rows) <= previous:
+            return rows
+        previous = len(rows)
+        limit += _FETCH_STEP_ROWS

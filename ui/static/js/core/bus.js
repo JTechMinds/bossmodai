@@ -30,6 +30,7 @@ const BossModBus = (() => {
         'floors_updated',
         'operator_invalidate',
         'extension_live',
+        'conversation_notes_updated',
         'resync',
     ]);
 

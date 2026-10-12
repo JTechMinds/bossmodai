@@ -71,6 +71,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "sources" / "agent-requests.js",
     CONVERSATION / "sources" / "agent-source.js",
     CONVERSATION / "conversation-focus-invalidate.js",
+    CONVERSATION / "conversation-window.js",
     CONVERSATION / "chat-rewind-dialog.js",
     CONVERSATION / "chat-rewind.js",
     CONVERSATION / "consent-activity.js",
@@ -649,8 +650,10 @@ def test_agent_edit_modules_stay_focused() -> None:
     # core/world/tilemap.py's DEFAULT_DESKS, so growing the map cannot desync
     # the form.
     assert [path.name for path in modules if "DESK_OPTIONS" in _read(path)] == []
-    for name in ("THINKING_MODES", "DEFAULT_PROMPT_HISTORY_POLICY"):
-        assert f"BossModAgentFields.{name}" in _read(CONTEXT / "agent-submit.js")
+    assert "BossModAgentFields.THINKING_MODES" in _read(CONTEXT / "agent-submit.js")
+    # The policy defaults are what a recreate starts from; the submit path
+    # reads the two remaining policy fields straight off the form.
+    assert "BossModAgentFields.DEFAULT_PROMPT_HISTORY_POLICY" in _read(CONTEXT / "agent-form.js")
 
     # Requests live in one module; nothing else calls the agent endpoints.
     api = _read(CONTEXT / "agent-api.js")
