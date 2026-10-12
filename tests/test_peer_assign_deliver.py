@@ -24,7 +24,9 @@ from core.agent_loop.actions import execute_action
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import persist_result_triggers
 from core.agent_loop.decision_runtime import apply_decision
+from core.agent_loop.turn_claims import turn_trigger
 from core.bm_cli.virtual_fs import resolve_cli_path
+from core.models import AgentTrigger
 from core.models.host_path_consent import WORKSPACE_PREFERENCE_KIND
 from core.models.message import HUMAN_SENDER_ID
 from core.models.work_contract import DeliverableSpec, WorkContract
@@ -689,17 +691,6 @@ async def _complete_active(agent, *, summary: str) -> dict[str, Any]:
     return completed
 
 
-def _turn_trigger(row: dict[str, Any]) -> dict[str, Any]:
-    """The trigger dict a turn runs on (``dispatcher._turn_trigger``)."""
-    return {
-        **_payload(row),
-        "type": row["trigger_type"],
-        "trigger_id": row["id"],
-        "task_id": row["task_id"],
-        "source_channel": row["source_channel"],
-    }
-
-
 def _decide(agent, trigger: dict[str, Any], raw: dict[str, Any]) -> dict[str, Any]:
     """Parse and validate one decision object as the turn would, then apply it."""
     from core.agent_loop.decision_contract import (
@@ -756,7 +747,7 @@ async def _completion_report_to(lead, worker, channel) -> tuple[Any, dict[str, A
     await _complete_active(worker, summary="M0 scaffold is in.")
     rows = _queued(lead.id, trigger_type="task_update", task_id=reported.id)
     assert len(rows) == 1
-    trigger = _turn_trigger(rows[0])
+    trigger = turn_trigger(AgentTrigger.model_validate(rows[0]))
     assert trigger["task_party"] == "stakeholder"
     assert trigger["attention_kind"] == "completion_report"
     assert trigger["from_agent"] == worker.id
@@ -827,7 +818,7 @@ async def test_requester_accepts_the_next_step_from_a_completion_report() -> Non
     await _complete_active(auditor, summary="M0 audit passed.")
     parent_rows = _queued(lead.id, trigger_type="task_update", task_id=coordination.id)
     assert len(parent_rows) == 1
-    parent_trigger = _turn_trigger(parent_rows[0])
+    parent_trigger = turn_trigger(AgentTrigger.model_validate(parent_rows[0]))
     assert parent_trigger["task_party"] == "assignee"
     resumed = _decide(lead, parent_trigger, {"act": "observe", "intent": "other", "th": "audit done"})
     resumes = [item for item in resumed["trigger_requests"] if item.get("trigger_type") == "activity_resumed"]

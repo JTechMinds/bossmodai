@@ -644,6 +644,24 @@ async def test_delete_floor_sends_agents_home_and_archives_its_threads() -> None
     assert get_floor(finance.id) is None
 
 
+async def test_delete_floor_send_home_discards_the_cancelled_turns_claim() -> None:
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    row = db.create_agent_trigger(
+        agent_id=ada.id, trigger_type="human_chat", source_channel="chat", payload={"content": "hi"},
+    )
+    assert db.claim_trigger(row.id) is not None
+    services = _Services()
+
+    await delete_floor(finance.id, occupants="send_home", services=services)
+
+    assert services.resets == [ada.id]
+    # The cancelled turn's claim is gone, so the live-orphan sweep never
+    # re-runs it.
+    assert db.list_agent_triggers(ada.id, status="claimed") == []
+    assert db.get_agent_trigger(row.id) is None
+
+
 async def test_delete_floor_can_delete_its_agents() -> None:
     finance = create_floor("Finance")
     ada = _agent("Ada", 1, floor_id=finance.id)

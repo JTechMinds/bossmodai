@@ -368,8 +368,10 @@ async def apply_move(
 ) -> MoveResult:
     """Move the planned people and threads to a floor, if the plan still holds.
 
-    Each moving agent's live turn is cancelled (``services.reset_agent_runtime``)
-    before anything is written, as a floor delete does. Then, in one
+    Each moving agent's live turn is cancelled and its claim discarded
+    (``cancel_turn_and_discard_claim``) before anything is written, as a
+    floor delete's send-home does, so the cancelled turn never re-runs on
+    the new floor and its channel round seat is closed. Then, in one
     transaction: moving threads take the target floor; moving agents take it
     too; movers leave every thread that is not on the target afterwards
     (split threads, and archived threads elsewhere); their queued triggers
@@ -389,6 +391,7 @@ async def apply_move(
         LookupError, AgentOnVacation, MoveRefused: As ``plan_move``.
     """
     import db
+    from core.agent_loop.turn_claims import cancel_turn_and_discard_claim
     from core.bm_cli.floor_roots import floor_root
     from core.world.seating import reconcile_floor_desks
     from db.connection import transaction
@@ -406,7 +409,7 @@ async def apply_move(
     mover_ids = [ref.id for ref in plan.agents]
     thread_ids = [ref.id for ref in (*plan.threads, *plan.companions)]
     for agent_id in mover_ids:
-        await services.reset_agent_runtime(agent_id)
+        await cancel_turn_and_discard_claim(agent_id, services=services)
 
     moved = set(thread_ids)
     left_behind = {

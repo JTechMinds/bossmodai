@@ -356,9 +356,12 @@ async def delete_floor(
 ) -> FloorDeleteResult:
     """Delete one floor: its agents go home or are deleted, its threads archive.
 
-    Order matters. Agents leave first (a live turn is cancelled through
-    ``services.reset_agent_runtime`` before the agent row changes), so no
-    turn can re-queue into a thread that is about to seal. Then every active
+    Order matters. Agents leave first (a live turn is cancelled before the
+    agent row changes: for send-home through ``cancel_turn_and_discard_claim``,
+    which also deletes the cancelled turn's claim and closes its channel
+    round seat; for delete through ``services.reset_agent_runtime``, since
+    deleting the agent deletes its triggers), so no turn can re-queue into a
+    thread that is about to seal. Then every active
     thread on the floor is archived through the operator path with its open
     origin tasks cancelled. Then the floor's company folder, when it has
     one, moves to ``<company>/.archived-floors/<id>`` (never deleted) and
@@ -373,6 +376,7 @@ async def delete_floor(
         FloorOccupantsChoiceRequired: Agents live here and ``occupants`` is None.
     """
     import db
+    from core.agent_loop.turn_claims import cancel_turn_and_discard_claim
     from core.agent_repository import agent_repository
     from core.channel_archive import archive_thread_as_operator
     from db.floors import delete_floor_row, get_floor
@@ -395,11 +399,13 @@ async def delete_floor(
 
     result = FloorDeleteResult(floor_id=floor.id)
     for agent in residents:
-        await services.reset_agent_runtime(agent.id)
         if occupants == "send_home":
+            await cancel_turn_and_discard_claim(agent.id, services=services)
             send_home(agent.id)
             result.agents_sent_home.append(agent.id)
         else:
+            # Deleting the agent deletes its trigger rows, claim included.
+            await services.reset_agent_runtime(agent.id)
             try:
                 agent_repository.delete(agent.id)
             except LookupError as exc:

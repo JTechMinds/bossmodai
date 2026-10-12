@@ -249,6 +249,24 @@ async def test_apply_also_releases_archived_seats_off_the_target() -> None:
     assert _members(old) == {bob.id}
 
 
+async def test_apply_discards_a_movers_cancelled_turn_claim() -> None:
+    ada = _agent("Ada", 1)
+    row = db.create_agent_trigger(
+        agent_id=ada.id, trigger_type="human_chat", source_channel="chat", payload={"content": "dm"},
+    )
+    assert db.claim_trigger(row.id) is not None
+    finance = create_floor("Finance")
+    plan = plan_move(finance.id, agent_ids=[ada.id], channel_ids=[])
+    services = _Services()
+
+    await apply_move(finance.id, agent_ids=[ada.id], channel_ids=[], fingerprint=plan.fingerprint, services=services)
+
+    assert services.resets == [ada.id]
+    # The cancelled turn must not re-run on the new floor.
+    assert db.list_agent_triggers(ada.id, status="claimed") == []
+    assert db.get_agent_trigger(row.id) is None
+
+
 async def test_apply_refuses_a_plan_that_changed_since_it_was_shown() -> None:
     ada, bob, cy, books, _ledger, ops = _crew()
     finance = create_floor("Finance")

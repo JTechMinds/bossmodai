@@ -131,6 +131,41 @@ def test_list_orphaned_claims_includes_retry_blocked_rows() -> None:
     assert db.get_agent_trigger(blocked.id).status == "claimed"
 
 
+def test_take_claimed_trigger_deletes_the_matching_claim_and_returns_it() -> None:
+    agent = _create_agent()
+    claimed = db.claim_trigger(_queued_trigger(agent.id).id)
+    assert claimed is not None
+
+    taken = db.take_claimed_trigger(claimed.id, claimed.claim_generation)
+
+    assert taken is not None
+    assert (taken.id, taken.status, taken.claim_generation) == (claimed.id, "claimed", claimed.claim_generation)
+    assert db.get_agent_trigger(claimed.id) is None
+
+
+def test_take_claimed_trigger_refuses_a_generation_mismatch() -> None:
+    agent = _create_agent()
+    row = _queued_trigger(agent.id)
+    first = db.claim_trigger(row.id)
+    assert first is not None
+    db.requeue_all_claimed_triggers()
+    second = db.claim_trigger(row.id)
+    assert second is not None and second.claim_generation != first.claim_generation
+
+    assert db.take_claimed_trigger(row.id, first.claim_generation) is None
+    survivor = db.get_agent_trigger(row.id)
+    assert survivor is not None
+    assert (survivor.status, survivor.claim_generation) == ("claimed", second.claim_generation)
+
+
+def test_take_claimed_trigger_refuses_a_queued_row() -> None:
+    agent = _create_agent()
+    queued = _queued_trigger(agent.id)
+
+    assert db.take_claimed_trigger(queued.id, queued.claim_generation) is None
+    assert db.get_agent_trigger(queued.id).status == "queued"
+
+
 def _reclaim_after_force(agent_id: str):
     row = _queued_trigger(agent_id)
     first = db.claim_trigger(row.id)

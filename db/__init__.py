@@ -273,6 +273,7 @@ from db.agent_triggers import (
     retry_agent_trigger,
     prune_finished_triggers,
     requeue_all_claimed_triggers,
+    take_claimed_trigger,
     take_open_human_chat_triggers,
     update_queued_trigger_payload,
 )
@@ -597,6 +598,7 @@ __all__ = [
     "retry_agent_trigger",
     "prune_finished_triggers",
     "requeue_all_claimed_triggers",
+    "take_claimed_trigger",
     "take_open_human_chat_triggers",
     "update_queued_trigger_payload",
     "claim_runtime_command",

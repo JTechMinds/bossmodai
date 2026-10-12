@@ -400,6 +400,36 @@ def release_trigger(trigger_id: str) -> AgentTrigger | None:
     )
 
 
+def take_claimed_trigger(trigger_id: str, claim_generation: int) -> AgentTrigger | None:
+    """Delete one claimed trigger whose turn was cancelled, and return it.
+
+    Used after a turn is cancelled for good (a floor delete's send-home or a
+    floor move), so the claim neither stays stranded nor is re-run by the
+    live-orphan sweep. Guarded by ``claim_generation``: once the cancel
+    finishes, the dispatcher may requeue and reclaim the same row for a new
+    turn, and that live claim must survive.
+
+    Args:
+        trigger_id: The claimed trigger's id.
+        claim_generation: The generation snapshotted before the cancel.
+
+    Returns:
+        The deleted row, or ``None`` when no claimed row with that id and
+        generation exists (already finished, requeued or reclaimed).
+    """
+    return fetch_one(
+        f"""
+        DELETE FROM agent_triggers
+        WHERE id = $1
+          AND status = 'claimed'
+          AND claim_generation = $2
+        RETURNING {_TRIGGER_COLUMNS}
+        """,
+        [trigger_id, claim_generation],
+        AgentTrigger,
+    )
+
+
 def retry_agent_trigger(
     trigger_id: str,
     reason: str,

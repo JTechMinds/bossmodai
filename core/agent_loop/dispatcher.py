@@ -21,6 +21,7 @@ from core.agent_loop.activity_scheduler import (
 )
 from core.agent_loop.channel_rounds import release_channel_seat
 from core.agent_loop.loop import run_turn
+from core.agent_loop.turn_claims import turn_trigger
 from core.llm.call_budget import (
     Lane,
     bind_turn_lane,
@@ -693,7 +694,7 @@ class TurnDispatcher:
         """
         self._release_turn_lane(row.agent_id)
         try:
-            trigger = _turn_trigger(row)
+            trigger = turn_trigger(row)
         except json.JSONDecodeError:
             logger.error(
                 "Failing stranded trigger %s for agent %s: its payload is not valid JSON",
@@ -845,7 +846,7 @@ class TurnDispatcher:
 
     async def _launch_claimed_trigger(self, candidate: Any) -> bool:
         """Start one claimed trigger. False means the lane should be released."""
-        payload = _turn_trigger(candidate)
+        payload = turn_trigger(candidate)
         if db.payload_targets_archived_channel(payload):
             db.complete_agent_trigger(
                 candidate.id,
@@ -1406,34 +1407,6 @@ class TurnDispatcher:
                 "nearby_names": [eligible_peer["name"]],
             },
         )
-
-
-def _turn_trigger(row: Any) -> dict[str, Any]:
-    """Return the trigger dict a turn runs on, built from a claimed trigger row.
-
-    The row's JSON payload with the row's identity and claim laid over it.
-    Shared by the normal launch and start-up recovery, so a recovered
-    orphan is shaped exactly like the trigger its turn ran on.
-
-    Args:
-        row: A claimed ``AgentTrigger``.
-
-    Returns:
-        The payload plus ``type``, ``trigger_id``, ``task_id``,
-        ``source_channel`` and ``claim_generation``.
-
-    Raises:
-        json.JSONDecodeError: The stored payload is not valid JSON.
-    """
-    payload = json.loads(row.payload) if row.payload else {}
-    payload.update({
-        "type": row.trigger_type,
-        "trigger_id": row.id,
-        "task_id": row.task_id,
-        "source_channel": row.source_channel,
-        "claim_generation": row.claim_generation,
-    })
-    return payload
 
 
 def _escaped_not_retried_reason(trigger: dict[str, Any], exc: Exception) -> str | None:
