@@ -108,6 +108,8 @@ def _resolve_or_create_work_task(
     if decision.taskId:
         return _bind_named_task(agent, trigger, decision)
 
+    origin_attachment_ids = trigger.get("attachment_ids")
+
     created_by = agent.id
     if trigger.get("type") == "human_chat":
         created_by = HUMAN_SENDER_ID
@@ -147,6 +149,7 @@ def _resolve_or_create_work_task(
                 audit_author_type="agent",
                 audit_author_agent_id=agent.id,
                 audit_source_trigger_id=trigger.get("trigger_id"),
+                origin_attachment_ids=origin_attachment_ids,
             ),
             agent_name=agent.name,
         )
@@ -168,6 +171,7 @@ def _resolve_or_create_work_task(
             audit_author_type="agent",
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=trigger.get("trigger_id"),
+            origin_attachment_ids=origin_attachment_ids,
         ),
         agent_name=agent.name,
     )

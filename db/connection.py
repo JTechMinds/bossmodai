@@ -452,6 +452,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _create_model_capabilities_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
     _link_agents_to_connections(con)
+    _add_column_if_missing(
+        con, "tasks", "origin_attachment_ids", "TEXT",
+    )
     # After every table rebuild above (a rebuild drops the old table's
     # indexes) and after tasks.owner_id is added.
     _create_hot_path_indexes(con)

@@ -97,6 +97,7 @@ def create_or_bind_task(
     schedule_id: str | None = None,
     severity: TaskSeverity = DEFAULT_TASK_SEVERITY,
     references: list[TaskReference] | None = None,
+    origin_attachment_ids: list[str] | None = None,
 ) -> TaskCreateOrBindResult:
     """Create a task only when the board does not already contain the workstream.
 
@@ -205,6 +206,7 @@ def create_or_bind_task(
         schedule_id=schedule_id,
         severity=severity,
         references=references,
+        origin_attachment_ids=origin_attachment_ids,
     )
 
     rewritten_contract = rewrite_shared_work_contract(
@@ -252,6 +254,7 @@ def create_or_bind_subtask(
     audit_author_type: str,
     audit_author_agent_id: str | None = None,
     audit_source_trigger_id: str | None = None,
+    origin_attachment_ids: list[str] | None = None,
 ) -> TaskCreateOrBindResult:
     """Create or reuse a child task for one parent workstream."""
     result = create_or_bind_task(
@@ -272,6 +275,7 @@ def create_or_bind_subtask(
         audit_author_agent_id=audit_author_agent_id,
         audit_event_type="assignment",
         audit_source_trigger_id=audit_source_trigger_id,
+        origin_attachment_ids=origin_attachment_ids,
     )
     if result.outcome == "create_new_task":
         append_task_event(

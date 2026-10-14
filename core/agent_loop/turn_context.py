@@ -70,6 +70,7 @@ def _get_current_task(agent_id: str) -> dict[str, Any] | None:
         "work_contract": task.work_contract.model_dump() if task.work_contract else None,
         "completion_summary": task.completion_summary,
         "status_note": task.status_note,
+        "origin_attachment_ids": task.origin_attachment_ids,
     }
 
 def _get_current_activity(agent_id: str) -> dict[str, Any] | None:

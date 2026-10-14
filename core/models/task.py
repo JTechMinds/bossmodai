@@ -120,6 +120,7 @@ class Task(BaseModel):
     last_activity: datetime
     created_at: datetime
     closed_at: datetime | None = None
+    origin_attachment_ids: list[str] | None = None
 
 
 # ---------------------------------------------------------------------------

@@ -347,6 +347,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     schedule_id    VARCHAR,
     -- P0 critical … P3 low (core/models/task.py TaskSeverity); never empty.
     severity       VARCHAR NOT NULL DEFAULT 'P3' CHECK (severity IN ('P0','P1','P2','P3')),
+    origin_attachment_ids TEXT,
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
 

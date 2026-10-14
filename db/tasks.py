@@ -22,7 +22,7 @@ _TASK_COLUMNS = (
     "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.schedule_id, t.cost_ceiling, t.completion_summary, "
     "t.status_note, t.watchdog_pinged_at, t.last_progress_at, t.last_heartbeat_at, "
-    "t.last_activity, t.closed_at, t.created_at"
+    "t.last_activity, t.closed_at, t.origin_attachment_ids, t.created_at"
 )
 
 _TASK_VALID_COLUMNS = {
@@ -74,6 +74,7 @@ def create_task(
     schedule_id: str | None = None,
     severity: TaskSeverity = DEFAULT_TASK_SEVERITY,
     references: list[TaskReference] | None = None,
+    origin_attachment_ids: list[str] | None = None,
 ) -> Task:
     """Insert a new task.
 
@@ -102,14 +103,15 @@ def create_task(
         f"""
         INSERT INTO tasks (
             title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id,
-            schedule_id, severity
+            schedule_id, severity, origin_attachment_ids
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         RETURNING id
         """,
         [
             title, description, project, assigned_to, resolved_requester_id, owner_id, created_by,
             parent_task_id, schedule_id, severity,
+            json.dumps(origin_attachment_ids) if origin_attachment_ids else None,
         ],
     )
     task_id = row["id"]
@@ -143,6 +145,8 @@ def _task_from_row(row: dict[str, Any]) -> Task:
         data["work_contract"] = None
     raw_references = data.get("references")
     data["references"] = json.loads(raw_references) if raw_references else []
+    raw_origin_atts = data.get("origin_attachment_ids")
+    data["origin_attachment_ids"] = json.loads(raw_origin_atts) if raw_origin_atts else None
     return Task.model_validate(data)
 
 

@@ -218,7 +218,10 @@ def build_context(
 
     # ─── Trigger event ───
     trigger_message = {"role": "user", "content": _format_trigger(turn.trigger, turn.contract_kind, template_overrides)}
-    messages.append(mark_trigger_attachments(trigger_message, turn.trigger.get("attachment_ids")))
+    attachment_ids = turn.trigger.get("attachment_ids")
+    if not attachment_ids and turn.current_task:
+        attachment_ids = turn.current_task.get("origin_attachment_ids")
+    messages.append(mark_trigger_attachments(trigger_message, attachment_ids))
 
     return messages
 
