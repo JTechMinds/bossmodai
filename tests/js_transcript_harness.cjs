@@ -550,7 +550,9 @@ const groupTranscript = BossModTranscript.createTranscript({
             node.setAttribute("class", "note note-ok");
             return node;
         }
-        return receipt(m.key);
+        const node = receipt(m.key);
+        node.textContent = m.text;
+        return node;
     },
 });
 const groupList = groupTranscript.element.querySelector(".transcript-list");
@@ -661,6 +663,13 @@ groupTranscript.append(liveLine("Busy — 2 queued"));
 if (groupTranscript.messageCount() !== liveCount || groupList.querySelectorAll("[data-note-group]").length !== 1) {
     throw new Error("live replace must keep structure and count");
 }
+if (groupList.children.indexOf(gl) < 0 || groupList.querySelector("[data-note-group]") !== gl) {
+    throw new Error("live replace must keep the same group element, not rebuild it");
+}
+if (slotKeys(gl, "note-group-last").length !== 1
+    || gl.querySelector(".note-group-last").textContent !== "Busy — 2 queued") {
+    throw new Error("live replace must paint the new text in the last slot");
+}
 if (slotKeys(gl, "note-group-last").join() !== "queue-visibility:ada") {
     throw new Error("live replace must stay in the last slot");
 }
@@ -691,6 +700,60 @@ if (counterJump.textContent !== "2 new messages") {
 }
 counterTranscript.append(message("c2", "after"));
 if (counterJump.textContent !== "3 new messages") throw new Error(`got "${counterJump.textContent}"`);
+
+// Extending an expanded group keeps it expanded, with the new note last.
+groupTranscript.setMessages(notes(5));
+const gx = groupList.querySelector("[data-note-group]");
+const gxToggle = gx.querySelector(".note-group-toggle");
+gxToggle.click();
+groupTranscript.append(message("n6", "n6", "note"));
+if (gxToggle.textContent !== "Show less" || gxToggle.getAttribute("aria-expanded") !== "true") {
+    throw new Error("extending an expanded group must keep it expanded");
+}
+if (gx.querySelector(".note-group-overflow").hidden !== false) throw new Error("overflow stays open");
+if (slotKeys(gx, "note-group-last").join() !== "n6") throw new Error("new note is last when expanded");
+
+// A run whose head was never counted still shows once when scrolled up.
+function counterFixture() {
+    const t = BossModTranscript.createTranscript({
+        presence,
+        activitySince: () => null,
+        renderMessage(m) {
+            const node = new FakeEl("div");
+            node.setAttribute("class", "msg");
+            node.textContent = m.text;
+            return node;
+        },
+        renderEventCard: (m) => receipt(m.key),
+    });
+    return {
+        t,
+        scroller: t.element.querySelector("[data-transcript]"),
+        jump: t.element.querySelector(".transcript-jump"),
+    };
+}
+const atBottom = counterFixture();
+atBottom.scroller.clientHeight = 100;
+atBottom.scroller.scrollHeight = 100;
+atBottom.scroller.scrollTop = 0;
+atBottom.t.append(message("x1", "x1", "note"));
+if (atBottom.jump.hidden !== true) throw new Error("at the bottom nothing is counted");
+atBottom.scroller.scrollHeight = 1000;
+atBottom.scroller.scrollTop = 200;
+for (let i = 2; i <= 4; i += 1) atBottom.t.append(message(`x${i}`, `x${i}`, "note"));
+if (atBottom.jump.hidden !== false || atBottom.jump.textContent !== "1 new message") {
+    throw new Error(`a continuing run must show once, got "${atBottom.jump.textContent}"`);
+}
+
+const afterSet = counterFixture();
+afterSet.t.setMessages(notes(5));
+afterSet.scroller.clientHeight = 100;
+afterSet.scroller.scrollHeight = 1000;
+afterSet.scroller.scrollTop = 200;
+afterSet.t.append(message("n6", "n6", "note"));
+if (afterSet.jump.textContent !== "1 new message") {
+    throw new Error(`a note continuing a loaded group must count once, got "${afterSet.jump.textContent}"`);
+}
 
 process.stdout.write(JSON.stringify({
     ok: true,

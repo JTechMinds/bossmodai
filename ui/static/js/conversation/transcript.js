@@ -200,7 +200,8 @@ const BossModTranscript = (() => {
             const stick = isNearBottom();
             const node = nodeFor(message);
             // A run of actions is one thing to catch up on, so only its first
-            // note counts toward "N new messages".
+            // note counts toward "N new messages" — unless nothing is counted
+            // yet (the head arrived while at the bottom), so a run always shows.
             const tail = listEl.children[listEl.children.length - 1];
             const continuesRun = BossModNoteGroup.isGroupable(node)
                 && Boolean(tail && (BossModNoteGroup.isGroupable(tail)
@@ -212,7 +213,7 @@ const BossModTranscript = (() => {
             if (statusKind === 'empty') setStatus('ready');
             keepPresenceLast();
             if (stick) scrollToBottom();
-            else if (!continuesRun) bumpNewCount();
+            else if (!continuesRun || newCount === 0) bumpNewCount();
             return true;
         }
 
