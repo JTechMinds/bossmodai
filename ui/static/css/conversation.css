@@ -502,7 +502,8 @@
   flex-direction: column;
 }
 
-.note-group-visible {
+.note-group-first,
+.note-group-last {
   display: flex;
   flex-direction: column;
 }

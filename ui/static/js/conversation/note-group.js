@@ -4,8 +4,8 @@
  * An agent that does a dozen sequential things (Browsing, Writing, ...) would
  * otherwise bury the real messages under a dozen hairline `.note` rows. A run
  * of NOTE_GROUP_THRESHOLD or more consecutive groupable notes is wrapped in a
- * `.note-group`: the first VISIBLE_COUNT stay on screen, the rest sit behind a
- * "Show N more actions" toggle.
+ * `.note-group`: the first and the last stay on screen (what started the run,
+ * and where it is now); the middle sits behind a "Show N more actions" toggle.
  *
  * This module is DOM-only and owns no transcript state. The notes inside a
  * group keep their `data-message-key`, so the transcript's key bookkeeping and
@@ -16,9 +16,6 @@ const BossModNoteGroup = (() => {
 
     /** Minimum consecutive groupable notes that form a group. */
     const NOTE_GROUP_THRESHOLD = 4;
-
-    /** Notes always shown; the rest collapse behind the toggle. */
-    const VISIBLE_COUNT = 2;
 
     let nextGroupId = 0;
 
@@ -35,7 +32,7 @@ const BossModNoteGroup = (() => {
             && !node.classList.contains('conversation-notes'));
     }
 
-    /** One of the group's three direct parts, by class. */
+    /** One of the group's four direct parts, by class. */
     function part(groupEl, className) {
         const found = Array.from(groupEl.children).find((c) => c.classList.contains(className));
         if (!found) throw new Error(`[note-group] group is missing .${className}`);
@@ -68,10 +65,10 @@ const BossModNoteGroup = (() => {
         }
         nextGroupId += 1;
         const overflowId = `note-group-overflow-${nextGroupId}`;
-        const visible = h('div', { class: 'note-group-visible' },
-            ...entries.slice(0, VISIBLE_COUNT).map((e) => e.node));
+        const first = h('div', { class: 'note-group-first' }, entries[0].node);
+        const last = h('div', { class: 'note-group-last' }, entries[entries.length - 1].node);
         const overflow = h('div', { class: 'note-group-overflow', id: overflowId },
-            ...entries.slice(VISIBLE_COUNT).map((e) => e.node));
+            ...entries.slice(1, -1).map((e) => e.node));
         overflow.hidden = true;
         const toggle = h('button', {
             class: 'note-group-toggle',
@@ -79,7 +76,7 @@ const BossModNoteGroup = (() => {
             'aria-controls': overflowId,
         });
         const group = h('div', { class: 'note-group', 'data-note-group': 'true' },
-            visible, toggle, overflow);
+            first, toggle, overflow, last);
         toggle.addEventListener('click', () => {
             overflow.hidden = !overflow.hidden;
             refresh(group);
@@ -89,13 +86,16 @@ const BossModNoteGroup = (() => {
     }
 
     /**
-     * Add a note to the end of an existing group's overflow.
+     * Add a note as the group's new last; the previous last joins the end of
+     * the overflow so the run's order is preserved.
      * @param {HTMLElement} groupEl
      * @param {{node: HTMLElement, key: string}} entry
      * @returns {void}
      */
     function extendGroup(groupEl, entry) {
-        part(groupEl, 'note-group-overflow').append(entry.node);
+        const last = part(groupEl, 'note-group-last');
+        part(groupEl, 'note-group-overflow').append(...Array.from(last.children));
+        last.append(entry.node);
         refresh(groupEl);
     }
 
@@ -129,16 +129,20 @@ const BossModNoteGroup = (() => {
         const target = Array.from(groupEl.querySelectorAll('[data-message-key]'))
             .find((n) => n.getAttribute('data-message-key') === key);
         if (target) target.remove();
-        const notes = Array.from(groupEl.querySelectorAll('.note'));
+        const first = part(groupEl, 'note-group-first');
+        const overflow = part(groupEl, 'note-group-overflow');
+        const last = part(groupEl, 'note-group-last');
+        const notes = [...first.children, ...overflow.children, ...last.children];
         if (notes.length < NOTE_GROUP_THRESHOLD) {
             groupEl.replaceWith(...notes);
             return true;
         }
-        // Keep the visible slice full so a removal there doesn't leave one row.
-        const visible = part(groupEl, 'note-group-visible');
-        const overflow = part(groupEl, 'note-group-overflow');
-        while (visible.children.length < VISIBLE_COUNT && overflow.children.length) {
-            visible.append(overflow.children[0]);
+        // Each end slot must keep exactly one note, refilled from the nearest
+        // overflow neighbour so the run's order holds.
+        if (first.children.length === 0) first.append(overflow.children[0]);
+        if (last.children.length === 0) last.append(overflow.children[overflow.children.length - 1]);
+        if (first.children.length !== 1 || last.children.length !== 1) {
+            throw new Error('[note-group] an end slot could not be refilled');
         }
         refresh(groupEl);
         return false;

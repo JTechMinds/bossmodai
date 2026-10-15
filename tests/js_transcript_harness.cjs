@@ -563,9 +563,10 @@ const groups = groupList.querySelectorAll("[data-note-group]");
 if (groups.length !== 1) throw new Error(`expected 1 group for the 5-run only, got ${groups.length}`);
 const toggle = groups[0].querySelector(".note-group-toggle");
 if (toggle.textContent !== "Show 3 more actions") throw new Error(`bad label "${toggle.textContent}"`);
-if (groups[0].querySelector(".note-group-visible").children.length !== 2) {
-    throw new Error("a group shows exactly its first 2 notes");
-}
+if (groups[0].querySelector(".note-group-visible")) throw new Error("revision-1 slot must be gone");
+const slotKeys = (g, cls) => g.querySelector(`.${cls}`).children.map((n) => n.getAttribute("data-message-key"));
+if (slotKeys(groups[0], "note-group-first").join() !== "n1") throw new Error("first slot holds the oldest note");
+if (slotKeys(groups[0], "note-group-last").join() !== "n5") throw new Error("last slot holds the newest note");
 const overflow = groups[0].querySelector(".note-group-overflow");
 if (overflow.hidden !== true) throw new Error("overflow starts collapsed");
 toggle.click();
@@ -605,6 +606,91 @@ if (groupList.children.length !== 4 || groupTranscript.messageCount() !== 4) {
 if (groupTranscript.append(message("n1", "n1", "note")) !== false) {
     throw new Error("dissolved notes stay in renderedKeys");
 }
+
+// First + last: build a run of 11.
+groupTranscript.setMessages(notes(11));
+const g11 = groupList.querySelector("[data-note-group]");
+const g11Toggle = g11.querySelector(".note-group-toggle");
+const g11Overflow = g11.querySelector(".note-group-overflow");
+const orderKeys = (g) => g.querySelectorAll(".note").map((n) => n.getAttribute("data-message-key")).join();
+if (slotKeys(g11, "note-group-first").join() !== "n1" || slotKeys(g11, "note-group-last").join() !== "n11") {
+    throw new Error("a run of 11 keeps n1 first and n11 last");
+}
+if (g11Overflow.children.length !== 9 || g11Toggle.textContent !== "Show 9 more actions") {
+    throw new Error(`expected 9 in overflow with label, got ${g11Overflow.children.length} "${g11Toggle.textContent}"`);
+}
+if (orderKeys(g11) !== notes(11).map((m) => m.key).join()) throw new Error("document order must be n1..n11");
+if (g11Toggle.getAttribute("aria-controls") !== g11Overflow.id || !g11Overflow.id) {
+    throw new Error("aria-controls must equal the overflow id");
+}
+if (g11Toggle.getAttribute("aria-expanded") !== "false") throw new Error("aria-expanded starts false");
+g11Toggle.click();
+if (g11Toggle.getAttribute("aria-expanded") !== "true") throw new Error("aria-expanded must flip true");
+g11Toggle.click();
+if (g11Toggle.getAttribute("aria-expanded") !== "false") throw new Error("aria-expanded must flip back");
+
+// Extend: the new note becomes last; the old last ends the overflow.
+groupTranscript.append(message("n12", "n12", "note"));
+if (slotKeys(g11, "note-group-last").join() !== "n12") throw new Error("new note must become last");
+const overflowTail = g11Overflow.children[g11Overflow.children.length - 1];
+if (overflowTail.getAttribute("data-message-key") !== "n11") throw new Error("old last must end the overflow");
+if (g11Toggle.textContent !== "Show 10 more actions") throw new Error("label count must go up by 1");
+if (orderKeys(g11) !== notes(12).map((m) => m.key).join()) throw new Error("order holds after extend");
+
+// Removal refills the end slots from the overflow; dropping below 4 dissolves in order.
+groupTranscript.setMessages(notes(6));
+const g6 = groupList.querySelector("[data-note-group]");
+groupTranscript.append({ key: "n1", cleared: true });
+if (slotKeys(g6, "note-group-first").join() !== "n2") throw new Error("first refills from overflow head");
+groupTranscript.append({ key: "n6", cleared: true });
+if (slotKeys(g6, "note-group-last").join() !== "n5") throw new Error("last refills from overflow tail");
+if (orderKeys(g6) !== "n2,n3,n4,n5") throw new Error("order holds after refills");
+groupTranscript.append({ key: "n3", cleared: true });
+if (groupList.querySelectorAll("[data-note-group]").length !== 0) throw new Error("3 left must dissolve");
+if (groupList.children.map((n) => n.getAttribute("data-message-key")).join() !== "n2,n4,n5") {
+    throw new Error("dissolved notes keep document order");
+}
+if (groupTranscript.append(message("n4", "n4", "note")) !== false) throw new Error("keys stay deduped");
+
+// A live keyed line in a group's last slot updates in place.
+groupTranscript.setMessages([...notes(4), liveLine("Busy — 1 queued")]);
+const gl = groupList.querySelector("[data-note-group]");
+if (slotKeys(gl, "note-group-last").join() !== "queue-visibility:ada") throw new Error("live line sits last");
+const liveCount = groupTranscript.messageCount();
+groupTranscript.append(liveLine("Busy — 2 queued"));
+if (groupTranscript.messageCount() !== liveCount || groupList.querySelectorAll("[data-note-group]").length !== 1) {
+    throw new Error("live replace must keep structure and count");
+}
+if (slotKeys(gl, "note-group-last").join() !== "queue-visibility:ada") {
+    throw new Error("live replace must stay in the last slot");
+}
+if (gl.querySelector(".note-group-overflow").children.length !== 3) throw new Error("overflow unchanged");
+
+// Counter while scrolled up: a run of actions counts once.
+const counterTranscript = BossModTranscript.createTranscript({
+    presence,
+    activitySince: () => null,
+    renderMessage(m) {
+        const node = new FakeEl("div");
+        node.setAttribute("class", "msg");
+        node.textContent = m.text;
+        return node;
+    },
+    renderEventCard: (m) => receipt(m.key),
+});
+const counterScroller = counterTranscript.element.querySelector("[data-transcript]");
+const counterJump = counterTranscript.element.querySelector(".transcript-jump");
+counterScroller.clientHeight = 100;
+counterScroller.scrollHeight = 1000;
+counterScroller.scrollTop = 200;
+counterTranscript.append(message("c1", "hello"));
+if (counterJump.textContent !== "1 new message") throw new Error(`got "${counterJump.textContent}"`);
+for (const n of notes(5)) counterTranscript.append(message(n.key, n.text, "note"));
+if (counterJump.textContent !== "2 new messages") {
+    throw new Error(`a run of 5 must count once, got "${counterJump.textContent}"`);
+}
+counterTranscript.append(message("c2", "after"));
+if (counterJump.textContent !== "3 new messages") throw new Error(`got "${counterJump.textContent}"`);
 
 process.stdout.write(JSON.stringify({
     ok: true,

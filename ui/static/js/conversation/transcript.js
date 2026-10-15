@@ -199,6 +199,12 @@ const BossModTranscript = (() => {
             if (key && renderedKeys.has(key)) return false;
             const stick = isNearBottom();
             const node = nodeFor(message);
+            // A run of actions is one thing to catch up on, so only its first
+            // note counts toward "N new messages".
+            const tail = listEl.children[listEl.children.length - 1];
+            const continuesRun = BossModNoteGroup.isGroupable(node)
+                && Boolean(tail && (BossModNoteGroup.isGroupable(tail)
+                    || tail.classList.contains('note-group')));
             listEl.append(node);
             if (key) renderedKeys.add(key);
             messages += 1;
@@ -206,7 +212,7 @@ const BossModTranscript = (() => {
             if (statusKind === 'empty') setStatus('ready');
             keepPresenceLast();
             if (stick) scrollToBottom();
-            else bumpNewCount();
+            else if (!continuesRun) bumpNewCount();
             return true;
         }
 
