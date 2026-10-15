@@ -111,7 +111,7 @@ def apply_decision(
                 agent_id=agent.id,
                 trigger=trigger,
             )
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "answer":
@@ -129,7 +129,7 @@ def apply_decision(
                 active_work=live_work,
             )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         if decision.workCommit and active_work is None:
             _requeue_declared_commitment(result, agent=agent, trigger=trigger)
         return result
@@ -139,7 +139,7 @@ def apply_decision(
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "cancel":
@@ -175,7 +175,7 @@ def apply_decision(
                 kind="cancelled",
                 reason=decision.reply or decision.detail or "Cancelled by human request.",
             )
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "decline":
@@ -206,7 +206,7 @@ def apply_decision(
                 kind="declined",
                 reason=decision.reply or decision.detail or "Assignment declined.",
             )
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.decision == "defer":
@@ -237,7 +237,7 @@ def apply_decision(
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "work":
@@ -300,7 +300,7 @@ def apply_decision(
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         attach_operator_status_line(result, task=task, agent=agent, kind="accepted")
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "meeting":
@@ -328,7 +328,7 @@ def apply_decision(
         )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     if decision.commitmentKind == "break":
@@ -352,7 +352,7 @@ def apply_decision(
         )
         _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
         _attach_reply_artifacts(result, agent, state, trigger, decision)
-        _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+        _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
         return result
 
     conversation = activity_runtime.begin_commitment_activity(
@@ -376,7 +376,7 @@ def apply_decision(
     )
     _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
     _attach_reply_artifacts(result, agent, state, trigger, decision)
-    _record_watchdog_reply_if_needed(trigger=trigger, reply=decision.reply)
+    _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
     return result
 
 

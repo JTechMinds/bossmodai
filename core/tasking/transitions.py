@@ -2,7 +2,8 @@
 
 Callers must change task status through ``transition_task`` so illegal jumps
 cannot strand work (e.g. ``pending → complete``) and every change leaves a
-``task_events`` row. ``db.update_task(..., status=...)`` uses the same allow-map
+``task_events`` row. A same-status call leaves one only when it sets a new,
+non-empty status note. ``db.update_task(..., status=...)`` uses the same allow-map
 so the graph cannot be bypassed.
 """
 
@@ -162,9 +163,19 @@ def transition_task(
 ) -> Task:
     """Move a task to ``to`` if the allow-map permits it, and log a task event.
 
+    A status change always logs one ``status_update`` event built from
+    ``reason``. A same-status call logs one ``status_update`` event only when
+    ``fields`` sets a non-empty ``status_note`` that differs from the stored
+    one; its content is the new note. Clearing or rewriting the same note logs
+    nothing.
+
     Extra ``fields`` are passed through to ``update_task`` (status_note,
     completion_summary, watchdog_pinged_at, …). The status column is always
     taken from ``to``, not from ``fields``.
+
+    Raises ``ValueError`` for an empty target or unknown task,
+    ``IllegalTaskTransition`` for a jump off the allow-map, and
+    ``RuntimeError`` when the task cannot be reloaded after the update.
     """
     import db
     from core.tasking.service import append_task_event
@@ -178,6 +189,7 @@ def transition_task(
         raise ValueError(f"Task {task_id} not found")
 
     from_status = task.status
+    previous_note = task.status_note
     assert_valid_task_transition(from_status, target)
 
     extra = {key: value for key, value in fields.items() if key != "status"}
@@ -198,4 +210,16 @@ def transition_task(
             content=note,
             source_trigger_id=source_trigger_id,
         )
+    elif "status_note" in fields:
+        new_note = str(fields["status_note"] or "").strip()
+        if new_note and new_note != (previous_note or "").strip():
+            append_task_event(
+                task_id=task_id,
+                author_type=actor_type,
+                author_name=actor,
+                author_agent_id=actor_agent_id,
+                event_type="status_update",
+                content=new_note,
+                source_trigger_id=source_trigger_id,
+            )
     return db.get_task(task_id) or updated

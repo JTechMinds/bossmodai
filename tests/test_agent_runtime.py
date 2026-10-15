@@ -619,8 +619,11 @@ def test_apply_decision_defer_does_not_double_log_status_update() -> None:
     still_pending = db.get_task(pending.id)
     assert still_pending is not None
     assert still_pending.status == "pending"
-    # Identity pending→pending is not a jump, so transition_task writes no event.
-    assert _status_updates(pending.id) == []
+    # pending→pending is not a jump; the new note is the one status_update.
+    pending_updates = _status_updates(pending.id)
+    assert len(pending_updates) == 1
+    assert pending_updates[0].content == "Later."
+    assert pending_updates[0].author_agent_id == agent.id
 
     accepted = _create_task(agent_id=agent.id, title="Draft brief")
     transition_task(accepted.task.id, "accepted", reason="setup accepted", actor="pytest")
@@ -926,6 +929,79 @@ async def test_watchdog_skips_pending_assigned_task() -> None:
     refreshed = db.get_task(task.id)
     assert refreshed is not None
     assert refreshed.status == "pending"
+    assert refreshed.watchdog_pinged_at is None
+
+
+def _watchdog_ping_trigger(task: Any) -> dict[str, Any]:
+    return {
+        "type": "watchdog_status_ping",
+        "trigger_id": "trigger-watchdog-1",
+        "task_id": task.id,
+        "source_channel": "system",
+        "content": f'Watchdog check: are you still working on "{task.title}"? Provide a status update.',
+        "from_name": "System",
+        "task_title": task.title,
+    }
+
+
+def test_watchdog_reply_sets_status_note_and_logs_agent_status_update() -> None:
+    agent = _create_agent()
+    task = _quiet_assigned_task(agent_id=agent.id, title="Accepted review", status="accepted")
+    assert task is not None
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    before = _status_updates(task.id)
+
+    apply_decision(
+        {
+            "decision": "answer",
+            "intentKind": "status_request",
+            "commitmentKind": "none",
+            "workCommit": False,
+            "reply": "Review is in progress. Blocked on one approval gate.",
+        },
+        agent,
+        state,
+        _watchdog_ping_trigger(task),
+    )
+
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status_note == "Review is in progress. Blocked on one approval gate."
+    assert refreshed.watchdog_pinged_at is None
+    new_events = _status_updates(task.id)[len(before) :]
+    assert len(new_events) == 1
+    assert new_events[0].content == "Review is in progress. Blocked on one approval gate."
+    assert new_events[0].author_type == "agent"
+    assert new_events[0].author_agent_id == agent.id
+    assert new_events[0].author_name == agent.name
+    assert new_events[0].source_trigger_id == "trigger-watchdog-1"
+
+
+def test_watchdog_empty_reply_logs_no_status_update() -> None:
+    agent = _create_agent()
+    task = _quiet_assigned_task(agent_id=agent.id, title="Accepted silent", status="accepted")
+    assert task is not None
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    before = _status_updates(task.id)
+
+    apply_decision(
+        {
+            "decision": "answer",
+            "intentKind": "status_request",
+            "commitmentKind": "none",
+            "workCommit": False,
+            "reply": "   ",
+        },
+        agent,
+        state,
+        _watchdog_ping_trigger(task),
+    )
+
+    assert _status_updates(task.id) == before
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
     assert refreshed.watchdog_pinged_at is None
 
 

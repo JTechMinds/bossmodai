@@ -159,3 +159,60 @@ def test_identity_transition_is_allowed() -> None:
     same = transition_task(task.id, "pending", reason="no-op", actor="pytest")
     assert same.status == "pending"
     assert is_allowed_task_transition("complete", "complete")
+
+
+def _status_update_contents(task_id: str) -> list[str]:
+    return [event.content for event in db.list_task_events(task_id) if event.event_type == "status_update"]
+
+
+def test_same_status_transition_with_new_note_logs_one_event() -> None:
+    task = _new_task()
+    _reach_status(task.id, "blocked")
+    before = _status_update_contents(task.id)
+
+    transition_task(
+        task.id,
+        "blocked",
+        reason="still blocked",
+        actor="Ada",
+        actor_type="agent",
+        status_note="  Waiting on the vendor's API key.  ",
+    )
+
+    after = _status_update_contents(task.id)
+    assert after[: len(before)] == before
+    assert after[len(before) :] == ["Waiting on the vendor's API key."]
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.status == "blocked"
+    assert refreshed.status_note == "  Waiting on the vendor's API key.  "
+
+
+@pytest.mark.parametrize("note", ["Same note.", " Same note. ", None, "", "   "])
+def test_same_status_transition_without_new_note_logs_no_event(note: str | None) -> None:
+    task = _new_task()
+    _reach_status(task.id, "blocked")
+    db.update_task(task.id, status_note="Same note.")
+    event_count = len(db.list_task_events(task.id))
+
+    transition_task(task.id, "blocked", reason="still blocked", actor="Ada", status_note=note)
+
+    assert len(db.list_task_events(task.id)) == event_count
+
+
+def test_status_change_with_new_note_logs_exactly_one_event() -> None:
+    task = _new_task()
+    _reach_status(task.id, "accepted")
+    before = _status_update_contents(task.id)
+
+    transition_task(
+        task.id,
+        "active",
+        reason="started drafting",
+        actor="Ada",
+        status_note="Drafting section one.",
+    )
+
+    after = _status_update_contents(task.id)
+    assert len(after) == len(before) + 1
+    assert after[-1] == "Status accepted → active: started drafting"

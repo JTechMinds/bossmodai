@@ -11,6 +11,7 @@ from core.agent_loop.activity_scheduler import build_task_resume_trigger
 from core.agent_loop.decision_contract import ConversationDecision
 from core.agent_loop.soft_blocks import resume_soft_blocked_work
 from core.models import Agent
+from core.tasking.service import append_task_event
 
 
 def _continue_soft_blocked_work_after_status(agent: Agent) -> Any | None:
@@ -119,12 +120,14 @@ def _resume_waiting_work_after_task_update(
         )
     )
 
-def _record_watchdog_reply_if_needed(*, trigger: dict[str, Any], reply: str | None) -> None:
+def _record_watchdog_reply_if_needed(*, agent: Agent, trigger: dict[str, Any], reply: str | None) -> None:
     """Refresh task liveness when the agent answers a watchdog ping.
 
-    The reply becomes the task's operator-facing ``status_note``. It does not
-    overwrite the work activity's detail: the frozen work transcript is the
-    record of what the agent did, and a reply is only what it said.
+    A non-empty reply becomes the task's operator-facing ``status_note`` and a
+    ``status_update`` task event authored by ``agent``, so the Activity log
+    shows what the board's "last activity" refers to. It does not overwrite
+    the work activity's detail: the frozen work transcript is the record of
+    what the agent did, and a reply is only what it said.
     """
     if trigger.get("type") != "watchdog_status_ping":
         return
@@ -142,6 +145,16 @@ def _record_watchdog_reply_if_needed(*, trigger: dict[str, Any], reply: str | No
     if status_note:
         update_fields["status_note"] = status_note
     db.update_task(task_id, **update_fields)
+    if status_note:
+        append_task_event(
+            task_id=task_id,
+            author_type="agent",
+            author_agent_id=agent.id,
+            author_name=agent.name,
+            event_type="status_update",
+            content=status_note,
+            source_trigger_id=trigger.get("trigger_id"),
+        )
 
 def _complete_assignment_if_present(agent_id: str) -> None:
     """Complete the active assignment wrapper, if one exists."""
