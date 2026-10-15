@@ -13,10 +13,11 @@ const { FakeEl, installDom } = require("./js_fake_dom.cjs");
 
 installDom();
 
-const [domPath, gatesPath, transcriptPath] = process.argv.slice(2);
+const [domPath, gatesPath, noteGroupPath, transcriptPath] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(domPath, "BossModDom");
 load(gatesPath, "BossModGates");
+load(noteGroupPath, "BossModNoteGroup");
 load(transcriptPath, "BossModTranscript");
 
 const BossModTranscript = global.BossModTranscript;

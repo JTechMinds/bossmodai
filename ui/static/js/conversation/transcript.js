@@ -135,7 +135,12 @@ const BossModTranscript = (() => {
         function removeByKey(key) {
             const node = key ? listEl.querySelector(`[data-message-key="${key}"]`) : null;
             if (!node) return false;
-            node.remove();
+            const group = node.parentNode && node.parentNode.closest
+                ? node.parentNode.closest('.note-group') : null;
+            // A grouped note leaves through its group, which may dissolve into
+            // plain notes (they keep their keys, so renderedKeys is unaffected).
+            if (group) BossModNoteGroup.removeFromGroup(group, key);
+            else node.remove();
             renderedKeys.delete(key);
             messages = Math.max(0, messages - 1);
             return true;
@@ -147,12 +152,30 @@ const BossModTranscript = (() => {
             renderedKeys.clear();
             messages = 0;
             const rows = Array.isArray(incoming) ? incoming : [];
+            // Consecutive action receipts are buffered so a long run can be
+            // wrapped in one collapsible group instead of flooding the log.
+            let buffer = [];
+            const flushBuffer = () => {
+                if (buffer.length >= BossModNoteGroup.NOTE_GROUP_THRESHOLD) {
+                    listEl.append(BossModNoteGroup.buildNoteGroup(buffer));
+                } else {
+                    for (const entry of buffer) listEl.append(entry.node);
+                }
+                buffer = [];
+            };
             for (const message of rows) {
                 const key = messageKey(message);
                 if (key) renderedKeys.add(key);
-                listEl.append(nodeFor(message));
+                const node = nodeFor(message);
                 messages += 1;
+                if (BossModNoteGroup.isGroupable(node)) {
+                    buffer.push({ node, key });
+                } else {
+                    flushBuffer();
+                    listEl.append(node);
+                }
             }
+            flushBuffer();
             keepPresenceLast();
             resetNewCount();
             scrollToBottom();
@@ -175,14 +198,37 @@ const BossModTranscript = (() => {
             }
             if (key && renderedKeys.has(key)) return false;
             const stick = isNearBottom();
-            listEl.append(nodeFor(message));
+            const node = nodeFor(message);
+            listEl.append(node);
             if (key) renderedKeys.add(key);
             messages += 1;
+            groupAppended(node, key);
             if (statusKind === 'empty') setStatus('ready');
             keepPresenceLast();
             if (stick) scrollToBottom();
             else bumpNewCount();
             return true;
+        }
+
+        /**
+         * Fold a just-appended receipt into the group before it, or promote the
+         * trailing run of receipts into a new group once it is long enough.
+         */
+        function groupAppended(node, key) {
+            if (!BossModNoteGroup.isGroupable(node)) return;
+            const kids = listEl.children;
+            const prev = kids[kids.length - 2];
+            if (prev && prev.classList.contains('note-group')) {
+                BossModNoteGroup.extendGroup(prev, { node, key });
+                return;
+            }
+            const run = [];
+            for (let i = kids.length - 1; i >= 0 && BossModNoteGroup.isGroupable(kids[i]); i -= 1) {
+                run.unshift(kids[i]);
+            }
+            if (run.length >= BossModNoteGroup.NOTE_GROUP_THRESHOLD) {
+                BossModNoteGroup.promoteToGroup(listEl, run);
+            }
         }
 
         function keepPresenceLast() {

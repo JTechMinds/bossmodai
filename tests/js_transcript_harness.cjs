@@ -22,6 +22,37 @@ class FakeEl {
         this._text = "";
     }
 
+    get classList() {
+        const el = this;
+        return { contains: (name) => String(el.className).split(/\s+/).includes(name) };
+    }
+
+    get parentNode() {
+        return this.parent;
+    }
+
+    get nextSibling() {
+        if (!this.parent) return null;
+        const kids = this.parent.children;
+        return kids[kids.indexOf(this) + 1] || null;
+    }
+
+    insertBefore(node, ref) {
+        if (node.parent) node.parent.children = node.parent.children.filter((c) => c !== node);
+        node.parent = this;
+        const idx = ref ? this.children.indexOf(ref) : -1;
+        if (idx < 0) this.children.push(node);
+        else this.children.splice(idx, 0, node);
+        return node;
+    }
+
+    closest(selector) {
+        for (let node = this; node; node = node.parent) {
+            if (node.nodeType === 1 && matches(node, selector)) return node;
+        }
+        return null;
+    }
+
     get id() {
         return this.attrs.id || "";
     }
@@ -83,15 +114,15 @@ class FakeEl {
         this.parent = null;
     }
 
-    replaceWith(node) {
+    replaceWith(...nodes) {
         if (!this.parent) return;
-        const kids = this.parent.children;
-        const idx = kids.indexOf(this);
-        if (node.parent) {
-            node.parent.children = node.parent.children.filter((child) => child !== node);
+        const parent = this.parent;
+        for (const node of nodes) {
+            if (node.parent) node.parent.children = node.parent.children.filter((c) => c !== node);
         }
-        node.parent = this.parent;
-        kids[idx] = node;
+        const idx = parent.children.indexOf(this);
+        parent.children.splice(idx, 1, ...nodes);
+        for (const node of nodes) node.parent = parent;
         this.parent = null;
     }
 
@@ -160,7 +191,7 @@ global.document = documentStub;
 global.window = { document: documentStub };
 
 const [
-    domPath, avatarPath, gatesPath, formatPath, emptyStatePath, transcriptPath, cachePath,
+    domPath, avatarPath, gatesPath, formatPath, emptyStatePath, noteGroupPath, transcriptPath, cachePath,
 ] = process.argv.slice(2);
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
 // The empty state is the one status with a face and controls; it lives in its
@@ -171,6 +202,7 @@ eval(`${fs.readFileSync(gatesPath, "utf8")}\n;global.BossModGates = BossModGates
 // second opinion local to the transcript.
 eval(`${fs.readFileSync(formatPath, "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
 eval(`${fs.readFileSync(emptyStatePath, "utf8")}\n;global.BossModEmptyState = BossModEmptyState;\n`);
+eval(`${fs.readFileSync(noteGroupPath, "utf8")}\n;global.BossModNoteGroup = BossModNoteGroup;\n`);
 eval(`${fs.readFileSync(transcriptPath, "utf8")}\n;global.BossModTranscript = BossModTranscript;\n`);
 eval(`${fs.readFileSync(cachePath, "utf8")}\n;global.BossModTranscriptCache = BossModTranscriptCache;\n`);
 
@@ -493,6 +525,85 @@ if (cache.recall("q")[0].text !== "Busy — 2 queued") {
 }
 if (cache.append("q", liveLine("")) !== true || cache.recall("q").length !== 0) {
     throw new Error("cache clear must drop the live line");
+}
+
+// ─── Note groups: runs of action receipts collapse behind a toggle ───
+
+function receipt(key) {
+    const node = new FakeEl("div");
+    node.setAttribute("class", "note");
+    node.textContent = key;
+    return node;
+}
+const groupTranscript = BossModTranscript.createTranscript({
+    presence,
+    activitySince: () => null,
+    renderMessage(m) {
+        const node = new FakeEl("div");
+        node.setAttribute("class", "msg");
+        node.textContent = m.text;
+        return node;
+    },
+    renderEventCard(m) {
+        if (m.kind === "done") {
+            const node = new FakeEl("div");
+            node.setAttribute("class", "note note-ok");
+            return node;
+        }
+        return receipt(m.key);
+    },
+});
+const groupList = groupTranscript.element.querySelector(".transcript-list");
+const notes = (n, from = 1) => Array.from({ length: n }, (_, i) => message(`n${from + i}`, `n${from + i}`, "note"));
+
+groupTranscript.setMessages(notes(3));
+if (groupList.querySelector("[data-note-group]")) throw new Error("3 receipts must stay ungrouped");
+groupTranscript.setMessages([...notes(5), message("u1", "hello"), ...notes(3, 6)]);
+const groups = groupList.querySelectorAll("[data-note-group]");
+if (groups.length !== 1) throw new Error(`expected 1 group for the 5-run only, got ${groups.length}`);
+const toggle = groups[0].querySelector(".note-group-toggle");
+if (toggle.textContent !== "Show 3 more actions") throw new Error(`bad label "${toggle.textContent}"`);
+if (groups[0].querySelector(".note-group-visible").children.length !== 2) {
+    throw new Error("a group shows exactly its first 2 notes");
+}
+const overflow = groups[0].querySelector(".note-group-overflow");
+if (overflow.hidden !== true) throw new Error("overflow starts collapsed");
+toggle.click();
+if (overflow.hidden !== false || toggle.textContent !== "Show less") throw new Error("toggle must expand");
+toggle.click();
+if (overflow.hidden !== true) throw new Error("toggle must collapse again");
+if (groupTranscript.messageCount() !== 9) throw new Error("grouping must not change the message count");
+
+// Done receipts and non-receipts break a run.
+groupTranscript.setMessages([...notes(2), message("d1", "done", "done"), ...notes(2, 3)]);
+if (groupList.querySelector("[data-note-group]")) throw new Error("a note-ok must split runs");
+
+// Live append: the 4th consecutive receipt promotes, the 5th extends.
+groupTranscript.setMessages([message("u2", "hi"), ...notes(3)]);
+groupTranscript.append(message("n4", "n4", "note"));
+let liveGroups = groupList.querySelectorAll("[data-note-group]");
+if (liveGroups.length !== 1 || groupList.children.length !== 2) throw new Error("4th receipt must promote in place");
+groupTranscript.append(message("n5", "n5", "note"));
+liveGroups = groupList.querySelectorAll("[data-note-group]");
+const liveToggle = liveGroups[0].querySelector(".note-group-toggle");
+if (liveGroups.length !== 1 || groupList.children.length !== 2 || liveToggle.textContent !== "Show 3 more actions") {
+    throw new Error("5th receipt must extend the group");
+}
+if (groupList.querySelector('[data-message-key="n5"]') === null) throw new Error("grouped notes keep keys");
+if (groupTranscript.append(message("n5", "n5", "note")) !== false) {
+    throw new Error("grouped keys still dedupe");
+}
+
+// Removal: leaving 4 keeps the group; leaving 3 dissolves it, keys intact.
+groupTranscript.append({ key: "n5", cleared: true });
+if (groupList.querySelectorAll("[data-note-group]").length !== 1) throw new Error("4 left must stay grouped");
+groupTranscript.append({ key: "n4", cleared: true });
+if (groupList.querySelectorAll("[data-note-group]").length !== 0) throw new Error("3 left must dissolve");
+if (groupList.children.length !== 4 || groupTranscript.messageCount() !== 4) {
+    throw new Error("a dissolved group must hand its notes back to the list");
+}
+if (groupTranscript.append(message("n1", "n1", "note")) !== false) {
+    throw new Error("dissolved notes stay in renderedKeys");
 }
 
 process.stdout.write(JSON.stringify({

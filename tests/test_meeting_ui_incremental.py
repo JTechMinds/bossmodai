@@ -60,6 +60,7 @@ def test_meeting_session_dom_harness_preserves_draft_and_dedups() -> None:
             str(HARNESS),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "gates.js"),
+            str(JS / "conversation" / "note-group.js"),
             str(JS / "conversation" / "transcript.js"),
         ],
         check=False,

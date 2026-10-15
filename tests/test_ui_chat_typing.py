@@ -66,6 +66,7 @@ def test_chat_typing_harness_scopes_indicator_to_selected_agent() -> None:
             str(HARNESS),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "gates.js"),
+            str(JS / "conversation" / "note-group.js"),
             str(JS / "conversation" / "transcript.js"),
         ],
         check=False,

@@ -87,6 +87,7 @@ CONTEXT_MODULES = [
     # The desk Files section and the task file picker share its crumbs and rows.
     JS / "core" / "file-listing.js",
     JS / "conversation" / "empty-state.js",
+    JS / "conversation" / "note-group.js",
     JS / "conversation" / "transcript.js",
     JS / "conversation" / "transcript-cache.js",
     JS / "conversation" / "message.js",
