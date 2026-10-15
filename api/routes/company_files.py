@@ -514,20 +514,8 @@ def _build_company_files_payload(path: str) -> dict[str, object]:
 
 def _company_workspace_note(extras) -> str:
     if extras:
-        return (
-            "Company Files holds one folder per floor (outside the application "
-            "install); agents see only their own floor's folder as /projects. "
-            "The configured host roots shown below are shared by every floor. "
-            "Manage them here or under Settings → CLI Policy. "
-            "This is not a full unrestricted host mount."
-        )
-    return (
-        "Company Files holds one folder per floor (outside the application "
-        "install); agents see only their own floor's folder as /projects. "
-        "Use Add host folder on this "
-        "page (same allowlist as Settings → CLI Policy → Host workspace roots) "
-        "to open a named path on disk. This is not a full unrestricted host mount."
-    )
+        return "Each floor has its own folder. Host folders are shared across floors."
+    return "Each floor has its own folder."
 
 
 def _host_root_entries(extras) -> list[dict[str, object]]:

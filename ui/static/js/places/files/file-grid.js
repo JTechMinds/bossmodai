@@ -220,11 +220,7 @@ const BossModFileGrid = (() => {
         clear(el);
         el.hidden = hidden || !(note || roots.length);
         if (el.hidden) return;
-        el.append(h('div', { class: 'files-notice-copy' },
-            h('p', {}, note),
-            roots.length
-                ? h('p', { class: 'files-notice-roots' }, `Host folders: ${roots.join(', ')}`)
-                : null));
+        el.append(h('div', { class: 'files-notice-copy' }, h('p', {}, note)));
         el.append(h('button', {
             class: 'file-toolbar-btn', type: 'button', onclick: onManage,
         }, BossModHostRoots.buttonLabel(roots)));

@@ -617,7 +617,6 @@ button.task-detail-file-path:disabled { border-bottom-color: transparent; cursor
 
 .files-notice[hidden] { display: none !important; }
 .files-notice p { margin: 0; }
-.files-notice-roots { margin-top: 2px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 .files-error {
   flex: 0 0 auto;
