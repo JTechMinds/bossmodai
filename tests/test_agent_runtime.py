@@ -38,6 +38,7 @@ from core.models.work_contract import DeliverableSpec, WorkContract
 from core.runtime import runtime_services
 from core.tasking import create_or_bind_task
 from core.tasking.transitions import transition_task
+from db.settings import get_seed_setting_default
 
 
 def setup_function() -> None:
@@ -229,20 +230,33 @@ async def test_resume_cli_approval_reject_enqueues_rejected_trigger() -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_watchdog_expires_stale_cli_approvals() -> None:
+async def test_task_watchdog_leaves_old_cli_approval_pending() -> None:
+    # Approvals wait for a human: the watchdog must not lapse an old card.
     agent = _create_agent()
-    past = datetime.now(timezone.utc) - timedelta(minutes=5)
-    request = db.create_cli_approval_request(
-        agent_id=agent.id,
-        command="ls",
-        expires_at=past,
+    request = db.create_cli_approval_request(agent_id=agent.id, command="ls")
+    db.execute(
+        "UPDATE cli_approval_requests SET created_at = $1 WHERE id = $2",
+        [datetime.now(timezone.utc) - timedelta(days=1), request.id],
     )
 
     await TaskWatchdog()._check_tasks()
 
     refreshed = db.get_cli_approval_request(request.id)
     assert refreshed is not None
-    assert refreshed.status == "expired"
+    assert refreshed.status == "pending"
+
+
+def test_cli_approval_timeout_setting_is_pruned_on_init() -> None:
+    db.execute(
+        "INSERT INTO settings (key, value, category) VALUES ($1, '60', 'cli_policy')",
+        ["cli_approval_timeout_minutes"],
+    )
+    db.close_connection()
+    db.init_db()
+    config.reload()
+
+    assert "cli_approval_timeout_minutes" not in {row.key for row in db.get_settings()}
+    assert get_seed_setting_default("cli_approval_timeout_minutes") is None
 
 
 # ---------------------------------------------------------------------------

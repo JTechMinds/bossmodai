@@ -35,12 +35,6 @@ const BossModCliPolicySettings = (() => {
             description: 'Maximum bytes of stdout/stderr captured from a shell command. Output beyond this limit is truncated.',
             type: 'number',
         },
-        cli_approval_timeout_minutes: {
-            order: 40,
-            label: 'Approval Timeout (minutes)',
-            description: 'How long a pending approval request remains valid before auto-expiring.',
-            type: 'number',
-        },
         cli_default_policy: {
             order: 50,
             label: 'Default Policy',

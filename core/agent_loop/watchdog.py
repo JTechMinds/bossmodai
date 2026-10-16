@@ -101,10 +101,6 @@ class TaskWatchdog:
         )
 
     async def _check_tasks(self) -> None:
-        expired = db.expire_stale_cli_approval_requests()
-        if expired:
-            logger.info("Expired %d stale CLI approval request(s)", expired)
-
         soft_minutes = config.require_int("watchdog_soft_ping_minutes")
         escalation_minutes = config.require_int("watchdog_escalation_minutes")
 

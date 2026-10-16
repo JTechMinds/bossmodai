@@ -44,6 +44,8 @@ _OBSOLETE_SETTING_KEYS = {
     # thread now (conversation_history_budget_tokens).
     "default_prompt_history_last_n",
     "default_prompt_history_max_tokens",
+    # Approvals wait for a human; no timer.
+    "cli_approval_timeout_minutes",
 }
 
 
@@ -255,7 +257,6 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("cli_shell_enabled", "false", "cli_policy"),
     ("cli_shell_timeout_seconds", "30", "cli_policy"),
     ("cli_shell_max_output_bytes", "65536", "cli_policy"),
-    ("cli_approval_timeout_minutes", "60", "cli_policy"),
     # Auto-approve review context (core.bm_cli.approval_gate.context):
     # recent conversation lines, and floor-wide operator Approve/Reject
     # precedents, sent to System AI with each reviewed command.

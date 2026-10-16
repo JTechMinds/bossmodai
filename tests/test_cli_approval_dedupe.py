@@ -169,23 +169,25 @@ def test_twin_from_another_cwd_gets_its_own_card() -> None:
     assert len(_pending(agent.id)) == 2
 
 
-def test_expired_twin_is_not_reused() -> None:
+def test_old_pending_twin_is_reused() -> None:
     agent, state = _agent_and_state()
     _project_file()
     set_cli_cwd(agent.id, "/projects/demo")
 
     first = execute_bm_cli(agent, state, _COMMAND)
     assert first.approval_request_id is not None
-    # Past its expiry but not yet swept by expire_stale_requests.
+    # A pending card waits for a human however old it is, so a re-ask a day
+    # later still pauses on it instead of opening a second card.
     execute(
-        "UPDATE cli_approval_requests SET expires_at = $1 WHERE id = $2",
-        [datetime.now(timezone.utc) - timedelta(minutes=1), first.approval_request_id],
+        "UPDATE cli_approval_requests SET created_at = $1 WHERE id = $2",
+        [datetime.now(timezone.utc) - timedelta(days=1), first.approval_request_id],
     )
     second = execute_bm_cli(agent, state, _COMMAND)
 
     assert second.approval_required is True
-    assert second.approval_request_id != first.approval_request_id
-    assert "reused_pending" not in (second.data or {})
+    assert second.approval_request_id == first.approval_request_id
+    assert (second.data or {}).get("reused_pending") is True
+    assert len(_pending(agent.id)) == 1
 
 
 def test_decided_twin_is_not_reused() -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -1107,8 +1106,6 @@ def _maybe_auto_approve(
 
     from core.agent_loop.work_binding import current_turn_detached
 
-    timeout_minutes = config.require_int("cli_approval_timeout_minutes")
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
     try:
         approval = db.create_cli_approval_request(
             agent_id=agent.id,
@@ -1116,7 +1113,6 @@ def _maybe_auto_approve(
             content=content,
             cwd=cwd_before,
             matched_rule_id=getattr(policy, "matched_rule_id", None),
-            expires_at=expires_at,
             channel_id=channel_id,
             detached_origin=current_turn_detached(agent.id),
         )
@@ -1297,9 +1293,6 @@ def _handle_approval_required(
     notes = [script.review_note if script is not None else "", auto.card_why]
     review_note = "\n".join(note for note in notes if note)
 
-    timeout_minutes = config.require_int("cli_approval_timeout_minutes")
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=timeout_minutes)
-
     try:
         approval = db.create_cli_approval_request(
             agent_id=agent.id,
@@ -1307,7 +1300,6 @@ def _handle_approval_required(
             content=content,
             cwd=cwd_before,
             matched_rule_id=policy.matched_rule_id,
-            expires_at=expires_at,
             channel_id=origin_channel,
             review_note=review_note or None,
             detached_origin=detached,

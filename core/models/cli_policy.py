@@ -69,7 +69,6 @@ class CliApprovalRequest(BaseModel):
     decision_note: str | None = None
     review_note: str | None = None
     decided_at: datetime | None = None
-    expires_at: datetime | None = None
     created_at: datetime
     # Opened in a detached turn: the operator's resume runs detached too.
     detached_origin: bool = False

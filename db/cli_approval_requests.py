@@ -9,12 +9,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from core.models.cli_policy import CliApprovalRequest
-from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
+from db.crud import fetch_all, fetch_one, insert_returning, query_one
 
 _ALL_COLUMNS = (
     "id, agent_id, trigger_id, command, content, cwd, matched_rule_id, "
     "channel_id, status, decision_by, decision_note, review_note, "
-    "decided_at, expires_at, created_at, detached_origin"
+    "decided_at, created_at, detached_origin"
 )
 
 
@@ -30,7 +30,6 @@ def create_approval_request(
     cwd: str | None = None,
     matched_rule_id: str | None = None,
     trigger_id: str | None = None,
-    expires_at: datetime | None = None,
     channel_id: str | None = None,
     review_note: str | None = None,
     detached_origin: bool = False,
@@ -61,14 +60,14 @@ def create_approval_request(
         f"""
         INSERT INTO cli_approval_requests (
             agent_id, command, content, cwd,
-            matched_rule_id, trigger_id, expires_at, channel_id, review_note,
+            matched_rule_id, trigger_id, channel_id, review_note,
             detached_origin
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING {_ALL_COLUMNS}
         """,
         [
-            agent_id, command, content, cwd, matched_rule_id, trigger_id, expires_at, origin, note,
+            agent_id, command, content, cwd, matched_rule_id, trigger_id, origin, note,
             bool(detached_origin),
         ],
         CliApprovalRequest,
@@ -118,7 +117,7 @@ def find_pending_request(
     channel_id: str | None,
     detached_origin: bool,
 ) -> CliApprovalRequest | None:
-    """Return the newest live pending request that is a twin of this one.
+    """Return the newest pending request that is a twin of this one.
 
     A twin has the same agent, the exact same command text and cwd, the
     same origin channel and the same detached origin. Two commands that
@@ -138,9 +137,8 @@ def find_pending_request(
         detached_origin: Whether the asking turn is detached.
 
     Returns:
-        The newest matching row whose status is ``pending`` and whose expiry
-        has not passed (a row without an expiry never expires, as in
-        :func:`expire_stale_requests`), or ``None``.
+        The newest pending row, or ``None``. A pending row never lapses:
+        it waits for a human decision, however old it is.
     """
     origin = (channel_id or "").strip() or None
     return fetch_one(
@@ -149,11 +147,10 @@ def find_pending_request(
         FROM cli_approval_requests
         WHERE agent_id = $1 AND command = $2 AND status = 'pending'
           AND cwd IS $3 AND channel_id IS $4 AND detached_origin = $5
-          AND (expires_at IS NULL OR expires_at > $6)
         ORDER BY created_at DESC, id DESC
         LIMIT 1
         """,
-        [agent_id, command, cwd, origin, bool(detached_origin), datetime.now(timezone.utc)],
+        [agent_id, command, cwd, origin, bool(detached_origin)],
         CliApprovalRequest,
     )
 
@@ -341,22 +338,3 @@ def reject_request(
         CliApprovalRequest,
     )
 
-
-# ---------------------------------------------------------------------------
-# Lifecycle — expiration
-# ---------------------------------------------------------------------------
-
-def expire_stale_requests() -> int:
-    """Expire all pending requests whose expiry has passed. Return the count."""
-    now = datetime.now(timezone.utc)
-    row = query_one(
-        "SELECT COUNT(*) AS cnt FROM cli_approval_requests WHERE status = 'pending' AND expires_at < $1",
-        [now],
-    )
-    count = int(row["cnt"]) if row else 0
-    if count > 0:
-        execute(
-            "UPDATE cli_approval_requests SET status = 'expired' WHERE status = 'pending' AND expires_at < $1",
-            [now],
-        )
-    return count

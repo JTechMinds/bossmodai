@@ -442,6 +442,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "cli_approval_requests", "detached_origin",
         "BOOLEAN NOT NULL DEFAULT 0",
     )
+    # Approvals wait for a human, so the request timer is retired. Old
+    # 'expired' rows keep their status; only the deadline column goes.
+    _drop_column_if_present(con, "cli_approval_requests", "expires_at")
     _add_column_if_missing(
         con, "host_path_consent_requests", "detached_origin",
         "BOOLEAN NOT NULL DEFAULT 0",
