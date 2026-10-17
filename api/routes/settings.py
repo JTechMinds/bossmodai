@@ -174,6 +174,10 @@ POSITIVE_INT_SETTINGS = frozenset({
     # No upper cap: the history budget is the user's choice (a 4k budget
     # for a small local model, 100k for a large one).
     "conversation_history_budget_tokens",
+    # Read with require_positive_int at every background launch and Keep.
+    "background_process_checkin_minutes",
+    # Read with require_positive_int at every history prune.
+    "agent_process_retention_days",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
@@ -189,6 +193,8 @@ _POSITIVE_INT_SETTING_LABELS = {
     "schedule_max_sleep_seconds": "Schedule clock re-check",
     "schedule_fire_grace_seconds": "Schedule on-time window",
     "conversation_history_budget_tokens": "History budget",
+    "background_process_checkin_minutes": "Background process check-in (minutes)",
+    "agent_process_retention_days": "Background process history (days)",
 }
 _NON_NEGATIVE_INT_SETTING_LABELS = {
     "channel_router_transcript_messages": "Router transcript lines",

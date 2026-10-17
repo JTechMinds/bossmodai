@@ -18,6 +18,7 @@ from core.agent_loop.channel_idle_check import channel_idle_watch
 from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.meeting_watchdog import meeting_watchdog
 from core.agent_loop.watchdog import watchdog
+from core.bm_cli import background_processes
 from core.extensions.loader import shutdown_loaded_extensions
 from core.extensions.wake_service import extension_wake_watch
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
@@ -153,6 +154,14 @@ class RuntimeController:
     """Own the runtime-only services inside the worker process."""
 
     async def boot(self, *, paused: bool) -> None:
+        """Reconcile what a previous app run left, then start the services unless paused.
+
+        Background processes end with the app (they share its process
+        group), so their rows still say ``running``; one sweep records them
+        as ended before anything reads them. Paused or not: the desk and the
+        agents' prompts read these rows either way.
+        """
+        await asyncio.to_thread(background_processes.sweep, exit_reason=background_processes.APP_STOPPED_REASON)
         if not paused:
             self._start_services()
 

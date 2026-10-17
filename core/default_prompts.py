@@ -17,6 +17,7 @@ _PROMPT_FILE_BY_KEY = {
     "runtime_block_conversation_envelope": "runtime_block_conversation_envelope.md",
     "runtime_block_file_deliverable_guidance": "runtime_block_file_deliverable_guidance.md",
     "runtime_block_communication_snapshot": "runtime_block_communication_snapshot.md",
+    "runtime_block_live_processes": "runtime_block_live_processes.md",
     "runtime_block_trigger_event": "runtime_block_trigger_event.md",
     "internal_cli_result_wrapper": "internal/cli_result_wrapper.md",
     "internal_cli_approval_pause_note": "internal/cli_approval_pause_note.md",

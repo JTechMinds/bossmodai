@@ -45,7 +45,7 @@ def shell_starve_floor_seconds() -> float:
     """Shortest wait that starves Needs and channel paint.
 
     The floor is the smaller of the stall window, the wall backstop, and
-    the CLI shell timeout (default 30s). A ``uv run pytest`` hang of that
+    the CLI shell timeout (default 600s). A ``uv run pytest`` hang of that
     length froze paint while HTTP still returned 200.
     """
     limits = [

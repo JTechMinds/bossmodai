@@ -35,6 +35,8 @@ const BossModNeedsBar = (() => {
     const BAR_CARDS = Object.freeze({
         blocked: 'blocked',
         error: 'warn',
+        // Keep or stop: a question, on the DM of the agent that started it.
+        process_checkin: 'ask',
     });
     const FALLBACK_CARDS = Object.freeze({
         approval: 'ask',

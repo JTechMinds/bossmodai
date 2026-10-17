@@ -34,7 +34,7 @@ const BossModNeedShape = (() => {
     /**
      * @typedef {object} Need
      * @property {string} id
-     * @property {'consent'|'approval'|'blocked'|'error'} kind
+     * @property {'consent'|'approval'|'blocked'|'error'|'process_checkin'} kind
      * @property {string|null} agentId
      * @property {string} agentName
      * @property {string} title
@@ -90,6 +90,8 @@ const BossModNeedShape = (() => {
             conversationId: null, conversationKind: null }),
         consent: (need) => chatTarget(need.conversationId, need.agentId),
         approval: (need) => chatTarget(need.conversationId, need.agentId),
+        // A background process check-in is about the agent that started it.
+        process_checkin: (need) => chatTarget(need.conversationId, need.agentId),
     });
 
     /**
@@ -191,6 +193,10 @@ const BossModNeedShape = (() => {
      * (api/routes/tasks.py). There is no `task_blocked` event; a status check
      * on `task_*` alone would miss every agent-initiated block.
      *
+     * The two `agent_process_*` names are a background process's check-in
+     * being asked (core/agent_loop/watchdog.py) and its rows changing, which
+     * is how an answered or ended check-in leaves (api/routes/agent_processes.py).
+     *
      * An unrecognised name is ignored on purpose; the boot fetch and `resync`
      * bound how stale the queue can become if the engine adds one.
      */
@@ -224,6 +230,8 @@ const BossModNeedShape = (() => {
         'task_completed',
         'task_resumed',
         'task_clarify',
+        'agent_process_checkin',
+        'agent_process_changed',
     ]);
 
     /**

@@ -43,6 +43,7 @@ from core.bm_cli.results import approval_required_result, error_result, shell_re
 from core.bm_cli.retry_policy import NoRetryListError, blocks_retry, load_no_retry_list
 from core.bm_cli.schedule_commands import handle_schedules
 from core.bm_cli.backlog_commands import handle_backlog
+from core.bm_cli.process_commands import handle_processes
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_authorization import (
     ShellAuthorization,
@@ -70,6 +71,7 @@ from core.bm_cli.state_commands import (
     handle_waiting_on_me,
 )
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
+from core.bm_cli.floor_roots import agent_floor_id
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.extensions.cli_bridge import extension_handlers
 from core.models import Agent, AgentState
@@ -104,6 +106,7 @@ _HANDLERS: dict[str, CliHandler] = {
     "tasks": handle_tasks,
     "schedules": handle_schedules,
     "backlog": handle_backlog,
+    "processes": handle_processes,
     "recent-work": handle_recent_work,
     "location": handle_location,
     "my-board": handle_my_board,
@@ -1006,15 +1009,43 @@ def _agent_git_identity_env(agent: Agent) -> dict[str, str]:
     }
 
 
-def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[str, str]:
-    """Agent git identity, plus nest-git auth env on the shared git/gh Shell path.
+def _agent_path_env(agent: Agent) -> dict[str, str]:
+    """The real folders behind ``/me`` and ``/projects``, for programs to read.
 
-    PAT/askpass is applied for every git argv so a saved token reaches push
-    even when the gate's cwd/subcommand check missed. A matching PAT is
-    copied into ``GH_TOKEN`` / ``GITHUB_TOKEN`` only for a gh argv. Values
-    are never logged and never returned in tool output.
+    ``/me`` and ``/projects`` are rewritten only in CLI argv; a program's own
+    code or config that names them hits ENOENT. ``BOSSMOD_ME`` is the agent's
+    workspace and ``BOSSMOD_PROJECTS`` its floor's projects folder, both
+    resolved through the virtual-FS resolver the argv rewrite uses.
+    ``BOSSMOD_PROJECTS`` is left out for an agent with no floor (on
+    vacation), which has no ``/projects``.
+
+    Raises:
+        LookupError: No agent owns ``agent.storage_key``.
     """
-    extra = _agent_git_identity_env(agent)
+    env = {"BOSSMOD_ME": str(_mount_real_path(agent, "/me"))}
+    # Asked of the stored row, as the resolver does: None is vacation.
+    if agent_floor_id(agent.storage_key) is not None:
+        env["BOSSMOD_PROJECTS"] = str(_mount_real_path(agent, "/projects"))
+    return env
+
+
+def _mount_real_path(agent: Agent, mount: str) -> Path:
+    resolved = resolve_cli_path(agent.storage_key, "/", mount)
+    if resolved.real_path is None:
+        raise LookupError(f"{mount} has no real folder for agent {agent.id}")
+    return resolved.real_path
+
+
+def _shell_extra_env(agent: Agent, parsed: ParsedCliCommand, cwd: str) -> dict[str, str]:
+    """Agent git identity and folder env, plus nest-git auth env on the shared git/gh Shell path.
+
+    The folder env is :func:`_agent_path_env`. PAT/askpass is applied for
+    every git argv so a saved token reaches push even when the gate's
+    cwd/subcommand check missed. A matching PAT is copied into ``GH_TOKEN``
+    / ``GITHUB_TOKEN`` only for a gh argv. Values are never logged and never
+    returned in tool output.
+    """
+    extra = {**_agent_git_identity_env(agent), **_agent_path_env(agent)}
     from core.bm_cli.nest_git import is_gh_cli, is_git_cli, nest_git_shell_env
 
     if is_gh_cli(parsed) or is_git_cli(parsed):

@@ -14,6 +14,11 @@ as a native command), and the outcome for the whole line is:
 
 Cards, consents and audit rows carry the full script text, so a resume
 or an approval re-runs the whole script, which is decided again.
+
+A pipeline ended with ``&`` is decided like any other segment; only the
+run differs (core/bm_cli/background_processes.py). A script that started
+one declares ``agent_process_changed`` on its result for the turn to
+broadcast, so the agent's desk repaints.
 """
 
 from __future__ import annotations
@@ -26,9 +31,11 @@ from types import ModuleType
 from core import config
 from core.bm_cli.approval_gate.facts import GateSegment
 from core.bm_cli.audit import record_bm_cli_event
+from core.bm_cli.background_processes import BackgroundOwner
 from core.bm_cli.locked_clone_outcome import prepare_locked_clone_approved, rewrite_virtual_shell_paths
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.policy_strictness import strictest
+from core.bm_cli.process_announce import PROCESS_CHANGED_EVENT, changed_extra
 from core.bm_cli.results import error_result, shell_result
 from core.bm_cli.script_decision import (
     approval_policy,
@@ -45,7 +52,7 @@ from core.bm_cli.shell_authorization import (
     project_env_authorization,
 )
 from core.bm_cli.shell_executor import PathJailError, assert_script_within_path_jail, execute_shell_script
-from core.bm_cli.shell_script import ShellScript, SimpleCommand, Word
+from core.bm_cli.shell_script import Pipeline, ShellScript, SimpleCommand, Word, segment_raw
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.models import Agent, AgentState
 
@@ -261,7 +268,7 @@ def _execute(
             return record(replace(moved, command=prepared.raw), "denied")
     shell_exec = execute_shell_script(
         script, cwd=prepared.cwd_real, timeout_seconds=timeout, max_output_bytes=max_output,
-        allowed_roots=prepared.roots, extra_env=envs,
+        allowed_roots=prepared.roots, extra_env=envs, background=_background_owner(agent, prepared),
     )
     if shell_exec.denied_by_path_jail:
         return record(rt._path_jail_cli_result(agent, shown, cwd_before, shell_exec.stderr), "denied")
@@ -277,6 +284,8 @@ def _execute(
         command=prepared.raw, exit_code=shell_exec.exit_code, stdout=shell_exec.stdout, stderr=shell_exec.stderr,
         timed_out=shell_exec.timed_out, duration_ms=shell_exec.duration_ms, cwd=prepared.cwd,
     )
+    if shell_exec.started_process_ids:
+        result = _with_process_activity(agent, result, shell_exec.started_process_ids)
     if system_audit:
         from core.bm_cli.approval_gate import attach_system_audit
 
@@ -287,16 +296,70 @@ def _execute(
 def _executable(
     agent: Agent, prepared: PreparedScript, decided: list[ParsedCliCommand]
 ) -> tuple[ShellScript, list[dict[str, str]]]:
-    """The decided argv with real paths, and each command's extra env, for the executor."""
+    """The decided argv with real paths, and each command's extra env, for the executor.
+
+    A command in a pipeline ended with ``&`` gets only the agent's git
+    identity and folder env (``BOSSMOD_ME`` / ``BOSSMOD_PROJECTS``), never
+    the nest-git auth env (PAT, askpass, ``GH_TOKEN``): a
+    background pipeline's output goes to a log that ``processes logs`` and the
+    desk show unredacted (the redaction applies to a foreground capture only),
+    so a token must never be in that process at all.
+    """
     rt = _runtime()
+    backgrounded = [
+        connector == "&" for pipeline, connector in prepared.body.items for _command in pipeline.commands
+    ]
     commands: list[SimpleCommand] = []
     envs: list[dict[str, str]] = []
-    for segment, parsed in zip(prepared.segments, decided, strict=True):
+    for segment, parsed, background in zip(prepared.segments, decided, backgrounded, strict=True):
         real = rewrite_virtual_shell_paths(agent, parsed, prepared.cwd)
         argv = tuple(Word(token, False, glob.escape(token)) for token in shlex.split(real.raw))
         commands.append(SimpleCommand(segment.command.assignments, argv, segment.command.redirects))
-        envs.append(rt._shell_extra_env(agent, parsed, prepared.cwd))
+        if background:
+            envs.append({**rt._agent_git_identity_env(agent), **rt._agent_path_env(agent)})
+        else:
+            envs.append(rt._shell_extra_env(agent, parsed, prepared.cwd))
     return prepared.body.with_commands(commands), envs
+
+
+def _background_owner(agent: Agent, prepared: PreparedScript) -> BackgroundOwner:
+    """Who the script's ``&`` pipelines belong to, with each pipeline as the agent wrote it."""
+    return BackgroundOwner(
+        agent_id=agent.id,
+        storage_key=agent.storage_key,
+        cwd_virtual=prepared.cwd,
+        item_commands=tuple(_pipeline_text(pipeline) for pipeline, _connector in prepared.body.items),
+    )
+
+
+def _pipeline_text(pipeline: Pipeline) -> str:
+    """A pipeline's assignments and argv in the agent's ``/me``/``/projects`` world.
+
+    Redirect targets are left out: ``prepare_script`` has already made them
+    real host paths, which the agent never sees.
+    """
+    parts = []
+    for command in pipeline.commands:
+        assignments = [f"{name}={shlex.quote(value)}" for name, value in command.assignments]
+        parts.append(" ".join([*assignments, segment_raw(command)]))
+    return " | ".join(parts)
+
+
+def _with_process_activity(agent: Agent, result: BossModCliResult, process_ids: tuple[str, ...]) -> BossModCliResult:
+    """Declare the desk repaint for started background processes, and block a retry.
+
+    ``activity`` is cli_turn_result's declaration; ``blocks_retry`` keeps an
+    automatic turn retry from launching the same process a second time.
+    """
+    if result.data is None:
+        raise ValueError("a shell result always carries its exit data")
+    count = len(process_ids)
+    detail = f"{agent.name} started {count} background process{'es' if count > 1 else ''}"
+    activity = {"event": PROCESS_CHANGED_EVENT, "detail": detail, "extra": changed_extra(agent.id)}
+    # A retried turn would run the script again and launch a duplicate server.
+    return replace(
+        result, data={**result.data, "activity": activity, "process_ids": list(process_ids)}, blocks_retry=True,
+    )
 
 
 def _materialized(auth: ShellAuthorization, raw: str, *, content: str | None, channel_id: str | None) -> BossModCliResult:

@@ -446,3 +446,22 @@ def test_reaching_a_conversation_never_remounts_chat() -> None:
     # It closes before it navigates, so focus lands on the new place rather
     # than being pulled back to the bell it just left.
     assert go_to.index("close();") < go_to.index("navigate(target.place, target.params);")
+
+
+def test_a_process_checkin_is_shown_by_every_need_surface() -> None:
+    """A background-process check-in (api/routes/needs.py) has a target, a bell group and a bar card.
+
+    Without its popover group the bell would hold it and never draw it; the
+    two activity names are what make the queue re-read when one is asked or
+    answered.
+    """
+    shape = _read(NEEDS / "need-shape.js")
+    assert "process_checkin: (need) => chatTarget(need.conversationId, need.agentId)" in shape
+    triggers = shape.split("ACTIVITY_TRIGGERS = Object.freeze([", 1)[1].split("]);", 1)[0]
+    assert "'agent_process_checkin'" in triggers and "'agent_process_changed'" in triggers
+    popover = _read(NEEDS / "needs-popover.js")
+    order = popover.split("const KIND_ORDER = Object.freeze(", 1)[1].split(");", 1)[0]
+    assert "'process_checkin'" in order
+    assert "process_checkin: 'Background processes'" in popover
+    bar = _read(NEEDS / "needs-bar.js")
+    assert "process_checkin: 'ask'" in bar.split("const BAR_CARDS = Object.freeze({", 1)[1].split("});", 1)[0]

@@ -103,6 +103,8 @@ API_BY_INJECTION = {
     "context/schedule-layer.js",
     "context/schedule-api.js",
     "context/schedule-preview.js",
+    # The desk's Processes section takes the desk's `api` the same way.
+    "context/desk-processes.js",
     "conversation/conversation.js",
     # The window wrapper fetches what the agents see with the source's `api`.
     "conversation/conversation-window.js",
@@ -241,7 +243,8 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "context/desk-schedules.js",
                  "context/schedule-layer.js",
                  "context/schedule-api.js",
-                 "context/schedule-preview.js"):
+                 "context/schedule-preview.js",
+                 "context/desk-processes.js"):
         source = _read(name)
         assert "apiFetch" not in source, f"{name} must take api from ctx"
 

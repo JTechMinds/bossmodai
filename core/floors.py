@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 CROSS_FLOOR_DENY = "Cross-floor access denied"
 VACATION_DENY = "Agent is on vacation"
+# Why a floor change stopped an agent's background processes: their
+# /projects root is about to point at another floor's folder, or none.
+FLOOR_MOVE_STOP_REASON = "Moved floors"
 
 FloorOccupants = Literal["send_home", "delete"]
 
@@ -59,6 +62,9 @@ class FloorDeleteResult:
     threads_archived: list[str] = field(default_factory=list)
     # True when the floor's company folder moved to Company › Archived floors.
     folder_archived: bool = False
+    # Agents sent home whose running background processes were stopped,
+    # so the API can repaint just those desks.
+    process_stopped_agent_ids: list[str] = field(default_factory=list)
 
 
 def home_floor_id(agent_id: str | None) -> str | None:
@@ -288,13 +294,16 @@ def send_home(agent_id: str) -> Any:
     Sets ``floor_id`` to NULL and stamps ``vacation_since`` together, which is
     the invariant every floor gate relies on (no floor denies). Every channel
     membership, active or archived, is released and queued triggers are
-    dropped. Tasks stay where they are, the same policy a floor move
-    (core/floor_moves.py) follows. Idempotent: an agent already on vacation is returned unchanged.
+    dropped. Its running background processes are stopped first: on
+    vacation it has no ``/projects``. Tasks stay where they are, the same
+    policy a floor move (core/floor_moves.py) follows. Idempotent: an agent
+    already on vacation is returned unchanged.
 
     Raises:
         LookupError: No agent has this id.
     """
     import db
+    from core.bm_cli.background_processes import stop_for_agent
     from db.connection import transaction
 
     agent = db.get_agent(agent_id)
@@ -302,6 +311,7 @@ def send_home(agent_id: str) -> Any:
         raise LookupError("Agent not found")
     if is_on_vacation(agent):
         return agent
+    stop_for_agent(agent.id, reason=FLOOR_MOVE_STOP_REASON)
     with transaction():
         updated = db.update_agent(
             agent.id,
@@ -321,12 +331,15 @@ def bring_back(agent_id: str, floor_id: str) -> Any:
     The agent keeps its desk when that chair is free on ``floor_id`` and
     otherwise takes the next free one, never bumping a resident (core/world/seating.py
     ``reconcile_floor_desks``); the returned agent carries the reconciled desk.
+    Any background process still running is stopped before ``/projects``
+    becomes the floor's folder.
 
     Raises:
         LookupError: The agent or the floor does not exist.
         ValueError: The agent is not on vacation.
     """
     import db
+    from core.bm_cli.background_processes import stop_for_agent
     from core.world.seating import reconcile_floor_desks
     from db.floors import get_floor
 
@@ -338,6 +351,7 @@ def bring_back(agent_id: str, floor_id: str) -> Any:
         raise LookupError("Floor not found")
     if not is_on_vacation(agent):
         raise ValueError("Agent is not on vacation")
+    stop_for_agent(agent.id, reason=FLOOR_MOVE_STOP_REASON)
     if db.update_agent(agent.id, floor_id=floor.id, vacation_since=None) is None:
         raise LookupError("Agent not found")
     reconcile_floor_desks(floor.id, newcomers=[agent.id])
@@ -361,7 +375,9 @@ async def delete_floor(
     which also deletes the cancelled turn's claim and closes its channel
     round seat; for delete through ``services.reset_agent_runtime``, since
     deleting the agent deletes its triggers), so no turn can re-queue into a
-    thread that is about to seal. Then every active
+    thread that is about to seal. A sent-home agent's background processes
+    are stopped just before it goes home; the agents that had any are
+    listed in ``process_stopped_agent_ids``. Then every active
     thread on the floor is archived through the operator path with its open
     origin tasks cancelled. Then the floor's company folder, when it has
     one, moves to ``<company>/.archived-floors/<id>`` (never deleted) and
@@ -378,6 +394,7 @@ async def delete_floor(
     import db
     from core.agent_loop.turn_claims import cancel_turn_and_discard_claim
     from core.agent_repository import agent_repository
+    from core.bm_cli.background_processes import stop_for_agent
     from core.channel_archive import archive_thread_as_operator
     from db.floors import delete_floor_row, get_floor
 
@@ -401,6 +418,10 @@ async def delete_floor(
     for agent in residents:
         if occupants == "send_home":
             await cancel_turn_and_discard_claim(agent.id, services=services)
+            # Stopped here rather than left to send_home so the stopped ids are
+            # known; send_home's own stop then finds nothing running.
+            if stop_for_agent(agent.id, reason=FLOOR_MOVE_STOP_REASON):
+                result.process_stopped_agent_ids.append(agent.id)
             send_home(agent.id)
             result.agents_sent_home.append(agent.id)
         else:

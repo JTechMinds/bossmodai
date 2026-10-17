@@ -56,6 +56,14 @@ _RUNTIME_PROMPT_SURFACES: tuple[RuntimePromptSurface, ...] = (
         "setting",
         "runtime_block",
     ),
+    # A default file, not a setting: its one slot is filled by code
+    # (core/llm/live_processes_block.py), not from the authored variables.
+    RuntimePromptSurface(
+        "runtime_block_live_processes",
+        "Live Background Processes Block",
+        "default_file",
+        "runtime_block",
+    ),
     RuntimePromptSurface("internal_loop_decision_cli_followup", "Internal Decision CLI Follow-up", "default_file", "internal_loop"),
     RuntimePromptSurface("internal_loop_decision_repair_primary", "Internal Decision Repair Primary", "default_file", "internal_loop"),
     RuntimePromptSurface("internal_loop_decision_repair_timeout", "Internal Decision Repair Timeout", "default_file", "internal_loop"),

@@ -9,7 +9,9 @@ from pydantic import BaseModel, Field
 
 from api.websocket import manager
 from core.bm_cli.floor_roots import floor_folder_exists, floor_root
+from core.bm_cli.process_announce import announce_processes_changed
 from core.floor_moves import (
+    PROJECT_MOVED_STOP_REASON,
     MovePlanChanged,
     MoveRefused,
     ProjectExists,
@@ -18,7 +20,7 @@ from core.floor_moves import (
     move_project,
     plan_move,
 )
-from core.floors import AgentOnVacation, FloorOccupantsChoiceRequired, delete_floor
+from core.floors import FLOOR_MOVE_STOP_REASON, AgentOnVacation, FloorOccupantsChoiceRequired, delete_floor
 from core.models.floor import Floor
 from core.runtime import runtime_services
 from core.tasking.transitions import IllegalTaskTransition
@@ -28,6 +30,22 @@ import db
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+async def _announce_process_stops(agent_ids: list[str], reason: str) -> None:
+    """Repaint the desk of each agent whose background processes a floor change stopped.
+
+    The core floor functions stop them without a sink; this route layer
+    owns the websocket, so it announces once per agent in the result.
+    """
+    for agent_id in agent_ids:
+        agent = db.get_agent(agent_id)
+        await announce_processes_changed(
+            manager,
+            agent_id=agent_id,
+            agent_name=agent.name if agent is not None else None,
+            detail=f"Background processes stopped: {reason}",
+        )
 
 
 def _floor_payloads() -> list[dict]:
@@ -153,6 +171,7 @@ async def remove_floor(floor_id: str, occupants: str | None = None):
         await manager.broadcast_channel_updated(summary)
     await manager.broadcast_world_state()
     await _broadcast_floors()
+    await _announce_process_stops(result.process_stopped_agent_ids, FLOOR_MOVE_STOP_REASON)
     for agent_id in result.agents_deleted:
         name = doomed.get(agent_id, agent_id)
         await manager.broadcast_activity(
@@ -258,6 +277,7 @@ async def post_move(floor_id: str, body: MoveApplyBody):
             latest_message=db.get_latest_channel_message(channel.id),
         ))
     await _broadcast_floors()
+    await _announce_process_stops(result.process_stopped_agent_ids, FLOOR_MOVE_STOP_REASON)
     return asdict(result)
 
 
@@ -290,4 +310,5 @@ async def post_project_move(floor_id: str, body: ProjectMoveBody) -> dict:
     except OSError as exc:
         logger.error("Project move %r -> floor %s failed: %s", body.project, floor_id, exc)
         raise HTTPException(500, f"The project folder could not be moved: {exc}") from exc
+    await _announce_process_stops(result.process_stopped_agent_ids, PROJECT_MOVED_STOP_REASON)
     return asdict(result)

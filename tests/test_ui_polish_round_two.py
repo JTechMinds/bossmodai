@@ -162,6 +162,7 @@ CONTEXT_MODULES = [
     JS / "context" / "schedule-preview.js",
     JS / "context" / "schedule-layer.js",
     JS / "context" / "desk-schedules.js",
+    JS / "context" / "desk-processes.js",
     JS / "context" / "desk-pack.js",
     JS / "context" / "desk-memory.js",
     JS / "context" / "desk-menu.js",

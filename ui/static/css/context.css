@@ -382,11 +382,13 @@
    radius, the panel ground, and the stronger hairline under the pointer. */
 .desk-tasks,
 .desk-schedules,
+.desk-processes,
 .desk-notes,
 .desk-entries { display: flex; flex-direction: column; gap: 6px; }
 
 .desk-task,
 .desk-schedule,
+.desk-process,
 .desk-note,
 .desk-entry,
 .desk-ext {
@@ -428,6 +430,28 @@
 .desk-schedule-meta { font-size: 11px; color: var(--muted); word-break: break-word; }
 .desk-schedule-tone[data-tone="alert"] { font-size: 11px; color: var(--alert-ink); }
 .desk-schedule-next { flex: none; font-size: 11px; color: var(--hint); white-space: nowrap; }
+
+/* ─── Desk processes (context/desk-processes.js) ───
+   The row: glyph, the command over where it runs and how long (or how it
+   ended), a tone while a check-in waits, and Log / Stop at the far end. Not
+   a button itself, so its two buttons stay separate tab stops. */
+.desk-processes-section { display: flex; flex-direction: column; gap: 6px; }
+.desk-processes-section > .context-error[hidden] { display: none; }
+.desk-process > svg { width: 14px; height: 14px; flex: none; color: var(--hint); }
+.desk-process-main { display: flex; flex-direction: column; flex: 1 1 auto; min-width: 0; }
+.desk-process-command {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.desk-process-meta { font-size: 11px; color: var(--muted); word-break: break-word; }
+.desk-process-tone[data-tone="ask"] { font-size: 11px; color: var(--accent); }
+.desk-process-actions { display: flex; flex: none; gap: 6px; }
+/* The log layer: the command, then its output in the Log place's block. */
+.desk-process-log { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.desk-process-log > .desk-process-command { margin: 0; white-space: normal; word-break: break-word; }
 
 /* The schedule layer (context/schedule-layer.js): its own scroller, as
    .task-detail is, and the same [hidden] guard for its flex children. */

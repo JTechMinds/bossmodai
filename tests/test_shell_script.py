@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from core.bm_cli import shell_lexer
 from core.bm_cli.shell_lexer import (
-    STEER_BACKGROUND,
     STEER_BRACES,
     STEER_DUP,
     STEER_FD,
@@ -56,6 +56,41 @@ def test_newlines_separate_like_semicolons_and_trailing_separators_are_dropped()
     assert _connectors("a\nb\n") == [";", None]
     assert _connectors("a;") == [None]
     assert _connectors("a &&\n b") == ["&&", None]
+
+
+def test_a_lone_ampersand_backgrounds_the_pipeline_before_it() -> None:
+    # A trailing & is kept: it is what backgrounds the last pipeline.
+    assert _connectors("sleep 30 &") == ["&"]
+    assert _argvs("sleep 30 &") == [["sleep", "30"]]
+    assert _connectors("a & b") == ["&", None]
+    assert _argvs("a & b") == [["a"], ["b"]]
+    assert _connectors("a | b & c && d &") == ["&", "&&", "&"]
+    assert _connectors("a &\n b") == ["&", None]
+    assert _connectors("npx vite > vite.log 2>&1 &") == ["&"]
+    assert is_compound("cmd &")
+
+
+def test_double_ampersand_and_redirect_forms_are_unchanged() -> None:
+    assert _connectors("a && b") == ["&&", None]
+    (command,) = parse_shell_script("a &> f").commands()
+    assert command.redirects == (Redirect("both", "write", Word("f", False, "f")),)
+    with pytest.raises(ShellSyntaxError, match="&>> is not supported"):
+        parse_shell_script("a &>> f")
+
+
+@pytest.mark.parametrize(
+    ("text", "fragment"),
+    [("& a", "a command is missing before '&'"), ("a & &", "a command is missing before '&'"),
+     ("a & ; b", "a command is missing before ';'")],
+)
+def test_a_background_needs_a_command_before_it(text: str, fragment: str) -> None:
+    with pytest.raises(ShellSyntaxError) as refused:
+        parse_shell_script(text)
+    assert fragment in refused.value.steer
+
+
+def test_the_background_refusal_is_gone() -> None:
+    assert not hasattr(shell_lexer, "STEER_BACKGROUND")
 
 
 def test_adjacent_2_and_1_is_a_dup_but_spaced_is_refused() -> None:
@@ -140,8 +175,6 @@ def test_dollar_without_a_name_and_single_quoted_variables_are_literals() -> Non
         ("echo ${HOME}", STEER_VARIABLE),
         ('echo "$HOME"', STEER_VARIABLE),
         ("echo $?", STEER_VARIABLE),
-        ("sleep 9 &", STEER_BACKGROUND),
-        ("sleep 9 & ls", STEER_BACKGROUND),
         ("(cd x && ls)", STEER_SUBSHELL),
         ("{ ls; }", STEER_GROUP),
         ("cat <<EOF", STEER_HEREDOC),
@@ -207,7 +240,7 @@ def test_plain_commands_are_not_compound(text: str) -> None:
 @pytest.mark.parametrize(
     "text",
     ["ls | wc -l", "a && b", "a || b", "a; b", "a;", "echo hi > f", "cat < f", "make 2>&1",
-     "FOO=1 make", "ls *.py", "a\nb"],
+     "FOO=1 make", "ls *.py", "a\nb", "sleep 9 &", "a & b"],
 )
 def test_compound_commands_are_compound(text: str) -> None:
     assert is_compound(text)

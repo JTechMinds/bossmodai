@@ -17,7 +17,7 @@ from typing import Any
 import db
 from core.agent_loop import standing_prefs
 from core.agent_loop.meeting_orchestrator import end_meetings_hosted_by, end_meetings_without_host
-from core.bm_cli import filesystem
+from core.bm_cli import background_processes, filesystem
 from core.boss import ensure_agent_name_allowed
 from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
@@ -49,6 +49,7 @@ SHARED_OR_RETAINED: frozenset[tuple[str, str]] = frozenset(
 
 ORPHAN_CANCEL_REASON = "Owner was deleted"
 ORPHAN_MEETING_END_REASON = "host was deleted"
+AGENT_REMOVED_REASON = "Agent removed"
 
 
 class AgentRepository:
@@ -63,9 +64,11 @@ class AgentRepository:
       ``agent_triggers``, ``artifacts`` rows, CLI audit (``bm_cli_events``)
       and approvals, host-path consent, agent-scoped ``cli_policy_rules``
       (deleted, never detached: a NULL ``agent_id`` means a global rule),
-      thread and meeting membership and response candidates, and
+      thread and meeting membership and response candidates,
       ``agent_schedules`` (the runs they created stay on the board with
-      ``tasks.schedule_id`` set to NULL).
+      ``tasks.schedule_id`` set to NULL), and ``agent_processes``.
+    - Background processes it started with ``&``: stopped before its rows
+      go, since their roots (``/me``, its floor's projects) are about to.
     - Shared history, kept with the agent detached (id set to NULL): channel
       and meeting messages, meetings it created or hosted, task events, tasks
       (owner, requester, assignee, creator), threads it created, thread host
@@ -82,13 +85,15 @@ class AgentRepository:
       ``agent_storage_keys`` ledger row, stamped retired. Keys only ever
       increase and are never reissued, so a new hire never inherits files.
     - Files (``owned_paths``): the ``/me`` workspace and the system-owned
-      standing prefs file, both keyed by the storage key.
+      standing prefs file, both keyed by the storage key; and, beside them,
+      its background process logs (``background_processes.process_log_dir``).
 
     A delete runs in this order: the caller has already reset the agent's
     runtime (no turn running); open tasks are cancelled and hosted meetings
     ended while the agent row still exists, since the origin mirror and the
-    meeting line need it; one transaction removes
-    or detaches every row and retires the key; the files go after commit. A
+    meeting line need it; its running background processes are stopped;
+    one transaction removes or detaches every row and retires the key; the
+    files go after commit. A
     file that cannot be removed raises with its path. It cannot leak to a
     later agent, because its key is never issued again.
     """
@@ -165,10 +170,13 @@ class AgentRepository:
             posted_lines.append(
                 {"meeting_message": {**ended.message}, "agent_ids": list(ended.released_agent_ids)}
             )
+        background_processes.stop_for_agent(agent.id, reason=AGENT_REMOVED_REASON)
         if not db.delete_agent_rows(agent.id):
             raise LookupError(f"Agent {agent_id} disappeared before its rows were deleted")
         for path in self.owned_paths(agent.storage_key):
             _remove_owned_path(path)
+        # Kept out of owned_paths: its callers unpack exactly two paths.
+        _remove_owned_path(background_processes.process_log_dir(agent.storage_key))
         return posted_lines
 
     def delete_all(self) -> int:

@@ -366,6 +366,7 @@ async function main() {
         setting("diagnostics_retention_days", "7", "advanced"),
         setting("trigger_retention_days", "7", "advanced"),
         // activity_log_retention_days left out: its field must say so.
+        setting("agent_process_retention_days", "14", "advanced"),
         setting("history_prune_interval_minutes", "60", "advanced"),
         setting("cli_max_read_lines", "200", "advanced"),
         setting("desktop_open_folder_handler", "", "advanced"),
@@ -420,10 +421,10 @@ async function main() {
     };
     const retentionLabels = advancedRoot.querySelectorAll("label")
         .map((label) => label.textContent.trim())
-        .filter((text) => /Retention|Prune/.test(text));
+        .filter((text) => /Retention|Prune|Background Process History/.test(text));
     const retention = {
         labels: retentionLabels,
-        values: ["diag-retention-limit", "diag-retention-days", "trigger-retention-days", "history-prune-interval"]
+        values: ["diag-retention-limit", "diag-retention-days", "trigger-retention-days", "agent-process-retention-days", "history-prune-interval"]
             .map((id) => documentStub.getElementById(id).value),
         zeroDays: await retentionStep("diag-retention-days", "0"),
         fraction: await retentionStep("trigger-retention-days", "1.5"),

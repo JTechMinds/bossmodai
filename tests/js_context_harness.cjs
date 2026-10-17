@@ -125,6 +125,8 @@ const NAMES = [
     // The desk's Schedules section: the recurrence editor, its layer, the section.
     "BossModScheduleApi", "BossModScheduleView",
     "BossModScheduleFields", "BossModSchedulePreview", "BossModScheduleLayer", "BossModDeskSchedules",
+    // The desk's Processes section (its own subject is js_desk_processes_harness.cjs).
+    "BossModDeskProcesses",
     // The desk's pack line, mounted in About.
     "BossModDeskPack",
     // The desk head's Memory layer.

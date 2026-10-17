@@ -15,7 +15,8 @@ does not bypass this check.
 No process started by a shell command outlives it (see
 :mod:`core.bm_cli.process_containment`): every spawned process carries the
 run's ``BOSSMOD_SHELL_RUN`` tag, and whatever still carries it when the run
-ends is terminated.
+ends is terminated, except pipelines started with ``&``, which
+:mod:`core.bm_cli.background_processes` owns under a tag of their own.
 """
 
 from __future__ import annotations
@@ -30,7 +31,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, TYPE_CHECKING, Any
 
 from core.bm_cli.host_roots import allowed_workspace_roots, is_within_roots
 from core.bm_cli.process_containment import RUN_TAG_ENV, ShellRun, contained_run
@@ -42,6 +43,9 @@ from core.loop_breathing import (
     shell_is_long,
     shell_uses_worker_process,
 )
+
+if TYPE_CHECKING:
+    from core.bm_cli.background_processes import BackgroundOwner
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +81,11 @@ _SAFE_ENV_NAMES: set[str] = {
 
 @dataclass(frozen=True, slots=True)
 class ShellExecutionResult:
-    """Result of a native shell command execution."""
+    """Result of a native shell command execution.
+
+    ``started_process_ids`` names the ``agent_processes`` rows a script's
+    ``&`` pipelines created, in order; empty for everything else.
+    """
 
     exit_code: int
     stdout: str
@@ -85,6 +93,7 @@ class ShellExecutionResult:
     timed_out: bool
     duration_ms: int
     denied_by_path_jail: bool = False
+    started_process_ids: tuple[str, ...] = ()
 
 
 class PathJailError(ValueError):
@@ -289,6 +298,7 @@ def _shell_process_main(conn: Any, payload: dict[str, Any]) -> None:
                 allowed_roots=roots or (),
                 extra_env=payload["extra_env"],
                 run=run,
+                background=payload["background"],
             )
         else:
             result = execute_shell_command(
@@ -683,6 +693,7 @@ def execute_shell_script(
     allowed_roots: Sequence[Path],
     extra_env: Sequence[Mapping[str, str]],
     run: ShellRun | None = None,
+    background: BackgroundOwner | None = None,
 ) -> ShellExecutionResult:
     """Run a parsed script as chains of ``shell=False`` processes; never a shell.
 
@@ -696,15 +707,22 @@ def execute_shell_script(
     Connectors follow bash: ``&&`` runs the next pipeline on status 0,
     ``||`` on non-zero, ``;`` always; a skipped pipeline leaves the status
     unchanged. A pipeline's status is its last command's, and the script's
-    is the last run pipeline's. One deadline covers the whole script; on
+    is the last run pipeline's. A pipeline followed by ``&`` (when it runs
+    at all) is launched through :func:`core.bm_cli.background_processes.launch`
+    instead of waited for: its status is 0, one ``Started in background``
+    line goes to the captured stdout, and the next pipeline runs as after
+    ``;``. Unlike bash, ``a && b &`` backgrounds only ``b``: ``&`` applies to
+    the one pipeline before it. One deadline covers the whole script; on
     expiry every live process is killed and the exit is 124. The captured
     stdout (each pipeline's final, unredirected stdout) and stderr are
     capped at *max_output_bytes* each and stripped of injected secrets.
 
-    No process started by the script outlives it: every command runs with
-    ``BOSSMOD_SHELL_RUN`` set to the run's tag (no ``NAME=value`` assignment
-    can override it), and every process still carrying that tag when the
-    call returns is terminated, including ones that detached.
+    No process started by the script outlives it, except its ``&``
+    pipelines: every command runs with ``BOSSMOD_SHELL_RUN`` set to the
+    run's tag (no ``NAME=value`` assignment can override it), and every
+    process still carrying that tag when the call returns is terminated,
+    including ones that detached. An ``&`` pipeline carries a tag of its
+    own, recorded on its ``agent_processes`` row.
 
     Args:
         script: The script with globs already expanded and virtual paths
@@ -722,15 +740,22 @@ def execute_shell_script(
         run: The shell run this script belongs to. ``None`` (every external
             caller) starts and owns a new run; the worker-process path
             passes the parent's run so both sides share one tag.
+        background: Who the script's ``&`` pipelines belong to; required
+            when the script has one, ignored otherwise. It crosses into the
+            worker child with the script, so a launch there records its row
+            from the child.
 
     Returns:
         The combined result. A jail refusal returns ``denied_by_path_jail``
         and nothing runs. A missing program is status 127 for that
         command, an unreadable redirect file status 1, as in bash.
+        ``started_process_ids`` lists the background rows created.
 
     Raises:
         ValueError: *extra_env* does not have one entry per command, a word
-            still needs glob expansion, or *allowed_roots* is empty.
+            still needs glob expansion, *allowed_roots* is empty, or the
+            script has an ``&`` pipeline and *background* is missing or does
+            not name one command per script item.
         ShellOnRequestLoopError: A long wait was asked on the serve loop.
     """
     commands = script.commands()
@@ -741,6 +766,13 @@ def execute_shell_script(
     roots = tuple(Path(root) for root in allowed_roots)
     if not roots:
         raise ValueError("a script needs at least one allowed root")
+    if any(connector == "&" for _pipeline, connector in script.items):
+        if background is None:
+            raise ValueError("a script with & needs the agent its background processes belong to")
+        if len(background.item_commands) != len(script.items):
+            raise ValueError(
+                f"background names {len(background.item_commands)} commands for {len(script.items)} pipelines"
+            )
     try:
         assert_script_within_path_jail(script, cwd=Path(cwd), allowed_roots=roots)
     except PathJailError as exc:
@@ -760,15 +792,19 @@ def execute_shell_script(
                 "allowed_roots": [str(root) for root in roots],
                 "extra_env": envs,
                 "run": {"tag": active.tag, "started_at": active.started_at},
+                "background": background,
             }
             return _wait_in_child_process(
                 payload,
                 timeout_seconds,
                 lambda: _run_script(
-                    script, Path(cwd), timeout_seconds, max_output_bytes, roots, envs, run=active,
+                    script, Path(cwd), timeout_seconds, max_output_bytes, roots, envs,
+                    run=active, background=background,
                 ),
             )
-        return _run_script(script, Path(cwd), timeout_seconds, max_output_bytes, roots, envs, run=active)
+        return _run_script(
+            script, Path(cwd), timeout_seconds, max_output_bytes, roots, envs, run=active, background=background,
+        )
 
 
 def _run_script(
@@ -780,20 +816,32 @@ def _run_script(
     envs: list[dict[str, str]],
     *,
     run: ShellRun,
+    background: BackgroundOwner | None,
 ) -> ShellExecutionResult:
     start = time.monotonic()
     deadline = start + timeout_seconds
     ceiling = os.pathsep.join(sorted({str(root.resolve().parent) for root in roots}))
     status = 0
     timed_out = False
+    started: list[str] = []
     with tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
         first = 0
         previous: Connector | None = None
-        for pipeline, connector in script.items:
+        for index, (pipeline, connector) in enumerate(script.items):
             count = len(pipeline.commands)
-            if _runs_after(previous, status):
+            pipeline_envs = envs[first:first + count]
+            runs = _runs_after(previous, status)
+            if runs and connector == "&":
+                # execute_shell_script refused an & script without an owner.
+                if background is None:
+                    raise ValueError("a script with & needs the agent its background processes belong to")
+                status = _launch_background(
+                    pipeline, pipeline_envs, background, background.item_commands[index],
+                    cwd=cwd, roots=roots, ceiling=ceiling, out=out, err=err, started=started,
+                )
+            elif runs:
                 status, timed_out = _run_pipeline(
-                    pipeline, envs[first:first + count], cwd=cwd, roots=roots, ceiling=ceiling,
+                    pipeline, pipeline_envs, cwd=cwd, roots=roots, ceiling=ceiling,
                     out=out, err=err, deadline=deadline, run_tag=run.tag,
                 )
                 if timed_out:
@@ -811,18 +859,67 @@ def _run_script(
             stderr=stderr or f"Command timed out after {timeout_seconds}s",
             timed_out=True,
             duration_ms=duration_ms,
+            started_process_ids=tuple(started),
         )
     logger.info("shell script commands=%d exit_code=%d duration_ms=%d", len(envs), status, duration_ms)
     return ShellExecutionResult(
         exit_code=status, stdout=stdout, stderr=stderr, timed_out=False, duration_ms=duration_ms,
+        started_process_ids=tuple(started),
     )
 
 
 def _runs_after(previous: Connector | None, status: int) -> bool:
-    """Whether the next pipeline runs, by bash's rules for the connector before it."""
-    if previous is None or previous == ";":
+    """Whether the next pipeline runs, by bash's rules for the connector before it.
+
+    ``&`` is ``;`` for what follows: the backgrounded pipeline's own status
+    (0, or its start failure) gates nothing.
+    """
+    if previous is None or previous in (";", "&"):
         return True
     return status == 0 if previous == "&&" else status != 0
+
+
+def _launch_background(
+    pipeline: Pipeline,
+    envs: list[dict[str, str]],
+    owner: BackgroundOwner,
+    command: str,
+    *,
+    cwd: Path,
+    roots: tuple[Path, ...],
+    ceiling: str,
+    out: IO[bytes],
+    err: IO[bytes],
+    started: list[str],
+) -> int:
+    """Launch one ``&`` pipeline and say so in the capture; return its status.
+
+    0 when it started, with the ``Started in background`` line on stdout and
+    its id appended to *started*; otherwise the start failure's status, with
+    the reason on stderr (after any ``Command not found`` the spawn wrote).
+    """
+    from core.bm_cli.background_processes import BackgroundLaunchError, launch
+
+    def start(run_tag: str, log_fd: int) -> tuple[list[subprocess.Popen[bytes]], int | None]:
+        return _start_pipeline(
+            pipeline, envs, cwd=cwd, roots=roots, ceiling=ceiling,
+            stdout=log_fd, stderr=log_fd, err=err, run_tag=run_tag,
+        )
+
+    try:
+        row = launch(owner=owner, command=command, start_pipeline=start)
+    except BackgroundLaunchError as exc:
+        os.write(err.fileno(), f"{exc}\n".encode())
+        return exc.status
+    started.append(row.id)
+    os.write(
+        out.fileno(),
+        (
+            f"Started in background: {row.short_id} (pid {row.pid}). "
+            f"Logs: processes logs {row.short_id}. Stop: processes stop {row.short_id}.\n"
+        ).encode(),
+    )
+    return 0
 
 
 def _run_pipeline(
@@ -838,34 +935,11 @@ def _run_pipeline(
     run_tag: str,
 ) -> tuple[int, bool]:
     """Start every command of one pipeline, then wait; return ``(status, timed_out)``."""
-    procs: list[subprocess.Popen[bytes]] = []
-    final: int | None = None  # set when the last command could not start
-    parent_fds: set[int] = set()  # pipe ends this process still holds
+    procs, final = _start_pipeline(
+        pipeline, envs, cwd=cwd, roots=roots, ceiling=ceiling,
+        stdout=out.fileno(), stderr=err.fileno(), err=err, run_tag=run_tag,
+    )
     try:
-        stdin = subprocess.DEVNULL
-        for index, command in enumerate(pipeline.commands):
-            last = index == len(pipeline.commands) - 1
-            stdout = out.fileno()
-            read_end: int | None = None
-            if not last:
-                read_end, stdout = os.pipe()
-                parent_fds.update((read_end, stdout))
-            proc, failed = _spawn(
-                command.argv, command.assignments, command.redirects, envs[index],
-                stdin=stdin, stdout=stdout, stderr=err.fileno(),
-                cwd=cwd, roots=roots, ceiling=ceiling, err=err, run_tag=run_tag,
-            )
-            if proc is not None:
-                procs.append(proc)
-            if last:
-                final = failed
-            # The parent's copies must close, or a reader never sees EOF and
-            # a writer whose reader exited never gets SIGPIPE.
-            for fd in (stdin, None if last else stdout):
-                if fd is not None and fd in parent_fds:
-                    os.close(fd)
-                    parent_fds.discard(fd)
-            stdin = read_end if read_end is not None else subprocess.DEVNULL
         for proc in procs:
             proc.wait(timeout=max(deadline - time.monotonic(), 0))
     except subprocess.TimeoutExpired:
@@ -874,12 +948,71 @@ def _run_pipeline(
     except BaseException:
         _kill_all(procs)
         raise
-    finally:
-        for fd in parent_fds:
-            os.close(fd)
     if final is not None:
         return final, False
     return procs[-1].returncode, False
+
+
+def _start_pipeline(
+    pipeline: Pipeline,
+    envs: list[dict[str, str]],
+    *,
+    cwd: Path,
+    roots: tuple[Path, ...],
+    ceiling: str,
+    stdout: int,
+    stderr: int,
+    err: IO[bytes],
+    run_tag: str,
+) -> tuple[list[subprocess.Popen[bytes]], int | None]:
+    """Start every command of one pipeline without waiting.
+
+    Each command's stdout feeds the next one's stdin; the last writes to
+    *stdout*, and every command's stderr goes to *stderr*, unless its own
+    redirects say otherwise. Every pipe end this process held is closed
+    before it returns, so a reader sees EOF and a writer whose reader exited
+    gets SIGPIPE. A spawn failure's reason is written to *err*.
+
+    Returns:
+        The started processes, and the status when the LAST command could
+        not start (None when it started). On any exception the started
+        processes are killed first.
+    """
+    procs: list[subprocess.Popen[bytes]] = []
+    final: int | None = None  # set when the last command could not start
+    parent_fds: set[int] = set()  # pipe ends this process still holds
+    try:
+        stdin = subprocess.DEVNULL
+        for index, command in enumerate(pipeline.commands):
+            last = index == len(pipeline.commands) - 1
+            command_stdout = stdout
+            read_end: int | None = None
+            if not last:
+                read_end, command_stdout = os.pipe()
+                parent_fds.update((read_end, command_stdout))
+            proc, failed = _spawn(
+                command.argv, command.assignments, command.redirects, envs[index],
+                stdin=stdin, stdout=command_stdout, stderr=stderr,
+                cwd=cwd, roots=roots, ceiling=ceiling, err=err, run_tag=run_tag,
+            )
+            if proc is not None:
+                procs.append(proc)
+            if last:
+                final = failed
+            # The parent's copies must close, or a reader never sees EOF and
+            # a writer whose reader exited never gets SIGPIPE.
+            for fd in (stdin, None if last else command_stdout):
+                if fd is not None and fd in parent_fds:
+                    os.close(fd)
+                    parent_fds.discard(fd)
+            stdin = read_end if read_end is not None else subprocess.DEVNULL
+    except BaseException:
+        _kill_all(procs)
+        raise
+    finally:
+        for fd in parent_fds:
+            os.close(fd)
+    return procs, final
 
 
 def _spawn(

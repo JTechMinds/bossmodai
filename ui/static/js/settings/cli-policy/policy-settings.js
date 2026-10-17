@@ -2,9 +2,9 @@
  * BossMod AI — CLI Policy Settings tab.
  *
  * The `cli_policy` settings category: the shell executor switch, its timeout
- * and output ceiling, the approval timeout, the default policy, the host
- * workspace roots, and the commands a failed turn never retries. Ported from
- * cli-policy-section.js unchanged.
+ * and output ceiling, the background process check-in, the approval timeout,
+ * the default policy, the host workspace roots, and the commands a failed
+ * turn never retries. Ported from cli-policy-section.js unchanged.
  *
  * `SETTINGS_META` is the whole tab — the backend returns a flat key/value list
  * and this decides which keys are shown, in what order, as what control, and
@@ -33,6 +33,12 @@ const BossModCliPolicySettings = (() => {
             order: 30,
             label: 'Max Output Size (bytes)',
             description: 'Maximum bytes of stdout/stderr captured from a shell command. Output beyond this limit is truncated.',
+            type: 'number',
+        },
+        background_process_checkin_minutes: {
+            order: 40,
+            label: 'Background process check-in (minutes)',
+            description: 'After this long, you\'re asked whether a background process should keep running. Nothing is stopped unless you say so.',
             type: 'number',
         },
         cli_default_policy: {

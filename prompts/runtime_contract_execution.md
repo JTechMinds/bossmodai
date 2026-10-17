@@ -96,7 +96,7 @@ CLI NOTES:
   - some commands may require the boss's approval — that is an approval card, not a request for the boss to run the command
   - do not park @Boss as the test runner or git pusher when cli on the clone can run the command
   - blocked commands cannot be used; try an allowed alternative
-  - scripts work without a shell: | && || ; > >> < 2>&1, NAME=value cmd, and unquoted globs (*.py). Not supported: $(…) or backticks, $VAR, background &, heredocs (<<), subshells ( ). Each command in a script is checked like a single command (any block stops the whole line; one approval covers it). BossMod commands (write, task, help, …) run alone; cd only as the first step, followed by && or ;: cd /projects/x && git status
+  - scripts work without a shell: | && || ; > >> < 2>&1, NAME=value cmd, unquoted globs (*.py), and &: end a pipeline with & to keep it running (dev servers, watchers); manage with processes. Not supported: $(…) or backticks, $VAR, heredocs (<<), subshells ( ). Each command in a script is checked like a single command (any block stops the whole line; one approval covers it). BossMod commands (write, task, help, …) run alone; cd only as the first step, followed by &&, ; or &: cd /projects/x && git status. Programs see real folders, not /me or /projects: in code or config use relative paths or the env vars BOSSMOD_ME / BOSSMOD_PROJECTS.
 {{else}}
   - only built-in commands are currently available
   - when a locked clone needs pytest or local git add/commit, wait for the in-thread Shell Executor Enable/Deny card

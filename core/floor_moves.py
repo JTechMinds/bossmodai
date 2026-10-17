@@ -45,6 +45,7 @@ MoveReason = Literal["picked", "thread member"]
 
 _PROJECTS_MOUNT = "/projects"
 _ME_MOUNT = "/me"
+PROJECT_MOVED_STOP_REASON = "Project moved"
 
 
 class MoveRefused(ValueError):
@@ -124,6 +125,8 @@ class MoveResult:
     left_threads: list[str] = field(default_factory=list)
     # Movers whose CLI working directory pointed into the floor they left.
     cwd_reset: list[str] = field(default_factory=list)
+    # Movers whose running background processes were stopped.
+    process_stopped_agent_ids: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -136,6 +139,9 @@ class ProjectMoveResult:
     artifacts_rewritten: int
     consent_paths_rewritten: int
     cwd_reset_agent_ids: list[str] = field(default_factory=list)
+    # Agents with a background process working inside the project, stopped
+    # before it moved.
+    process_stopped_agent_ids: list[str] = field(default_factory=list)
 
 
 def _floor_of(row: Any) -> str:
@@ -371,7 +377,9 @@ async def apply_move(
     Each moving agent's live turn is cancelled and its claim discarded
     (``cancel_turn_and_discard_claim``) before anything is written, as a
     floor delete's send-home does, so the cancelled turn never re-runs on
-    the new floor and its channel round seat is closed. Then, in one
+    the new floor and its channel round seat is closed, and its running
+    background processes are stopped (its ``/projects`` is about to be
+    another folder). Then, in one
     transaction: moving threads take the target floor; moving agents take it
     too; movers leave every thread that is not on the target afterwards
     (split threads, and archived threads elsewhere); their queued triggers
@@ -392,7 +400,9 @@ async def apply_move(
     """
     import db
     from core.agent_loop.turn_claims import cancel_turn_and_discard_claim
+    from core.bm_cli.background_processes import stop_for_agent
     from core.bm_cli.floor_roots import floor_root
+    from core.floors import FLOOR_MOVE_STOP_REASON
     from core.world.seating import reconcile_floor_desks
     from db.connection import transaction
 
@@ -408,8 +418,11 @@ async def apply_move(
     target = plan.target_floor_id
     mover_ids = [ref.id for ref in plan.agents]
     thread_ids = [ref.id for ref in (*plan.threads, *plan.companions)]
+    process_stopped: list[str] = []
     for agent_id in mover_ids:
         await cancel_turn_and_discard_claim(agent_id, services=services)
+        if stop_for_agent(agent_id, reason=FLOOR_MOVE_STOP_REASON):
+            process_stopped.append(agent_id)
 
     moved = set(thread_ids)
     left_behind = {
@@ -457,6 +470,7 @@ async def apply_move(
         moved_threads=thread_ids,
         left_threads=[ref.id for ref in plan.split_threads],
         cwd_reset=cwd_reset,
+        process_stopped_agent_ids=process_stopped,
     )
     logger.info(
         "Moved to floor %s: %d agent(s), %d thread(s); left %d thread(s); dropped %d queued trigger(s)",
@@ -500,10 +514,11 @@ def list_projects(floor_id: str) -> list[dict[str, Any]]:
 def move_project(project: str, from_floor_id: str, to_floor_id: str) -> ProjectMoveResult:
     """Move one project folder (a git repo inside moves with it) to another floor.
 
-    Absolute paths stored for artifacts and host-path consent under the old
-    folder are rewritten. Agents still on the source floor whose CLI working
-    directory was inside the project (as ``/projects/<project>/…`` or as its
-    absolute path) are put back at ``/me``: it no longer exists for them.
+    Background processes working inside the folder are stopped before it
+    moves. Absolute paths stored for artifacts and host-path consent under
+    the old folder are rewritten. Agents still on the source floor whose CLI
+    working directory was inside the project (as ``/projects/<project>/…`` or
+    as its absolute path) are put back at ``/me``: it no longer exists for them.
 
     Raises:
         LookupError: A floor, or the project on the source floor, does not exist.
@@ -513,6 +528,7 @@ def move_project(project: str, from_floor_id: str, to_floor_id: str) -> ProjectM
             filesystems); nothing was moved or rewritten.
     """
     import db
+    from core.bm_cli.background_processes import stop_under_path
     from core.bm_cli.floor_roots import floor_root
     from db.host_path_consent import rewrite_host_path_prefix
 
@@ -529,6 +545,7 @@ def move_project(project: str, from_floor_id: str, to_floor_id: str) -> ProjectM
         raise ProjectExists(f"{target_floor.name} already has a project named {name}")
 
     old_path = source.resolve()
+    stopped = stop_under_path(old_path, reason=PROJECT_MOVED_STOP_REASON)
     # Both floors sit under the company root: a same-filesystem rename, atomic,
     # never a half-finished copy.
     os.replace(source, target)
@@ -554,6 +571,8 @@ def move_project(project: str, from_floor_id: str, to_floor_id: str) -> ProjectM
         artifacts_rewritten=artifacts,
         consent_paths_rewritten=consent,
         cwd_reset_agent_ids=reset,
+        # Unique, in stop order: one agent can have several processes there.
+        process_stopped_agent_ids=_unique([row.agent_id for row in stopped]),
     )
 
 

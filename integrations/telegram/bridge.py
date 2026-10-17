@@ -12,7 +12,9 @@ from typing import Any
 from telegram import Bot
 
 import db
+from core.bm_cli.process_announce import PROCESS_CHECKIN_EVENT
 from integrations.telegram import formatters
+from integrations.telegram.process_checkin import format_checkin_card
 from integrations.telegram.sessions import (
     list_active_sessions,
     list_sessions_for_agent,
@@ -93,8 +95,11 @@ class TelegramEventBridge:
             await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
 
     async def _on_activity(self, data: dict[str, Any]) -> None:
-        """Push significant activity events to all active Telegram sessions."""
+        """Push significant activity events, and process check-in cards, to all active sessions."""
         event = data.get("event", "")
+        if event == PROCESS_CHECKIN_EVENT:
+            await self._send_process_checkin(data)
+            return
         if event not in _SIGNIFICANT_ACTIVITY_EVENTS:
             return
 
@@ -104,6 +109,30 @@ class TelegramEventBridge:
 
         for session in list_active_sessions():
             await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
+
+    async def _send_process_checkin(self, data: dict[str, Any]) -> None:
+        """Send the keep-or-stop card for one asked check-in.
+
+        The runtime sink nests the activity's ``extra`` under ``data["extra"]``.
+        The row is re-read: a card goes out only while the process still runs
+        with its check-in asked, so a check-in answered (or a process ended)
+        before this event was drained sends nothing.
+
+        Raises:
+            ValueError: The event carries no ``process_id``; the watchdog
+                always sends one, so this is a bug.
+        """
+        extra = data.get("extra") or {}
+        process_id = extra.get("process_id")
+        if not process_id:
+            raise ValueError(f"agent_process_checkin without a process_id: {data!r}")
+        row = db.get_agent_process(process_id)
+        if row is None or row.status != "running" or row.checkin_requested_at is None:
+            return
+        agent = db.get_agent(row.agent_id)
+        text, keyboard = format_checkin_card(row, agent.name if agent is not None else None)
+        for session in list_active_sessions():
+            await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2", reply_markup=keyboard)
 
     async def _on_feed_update(self, data: dict[str, Any]) -> None:
         """Check feed updates for approval-related notifications."""

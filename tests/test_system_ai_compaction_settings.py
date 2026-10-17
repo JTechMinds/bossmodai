@@ -982,9 +982,10 @@ def test_retention_limits_save_only_whole_numbers_in_range() -> None:
         "Diagnostics Retention (days)",
         "Finished Wake-up Retention (days)",
         "Activity Log Retention (days)",
+        "Background Process History (days)",
         "History Prune Interval (minutes)",
     ]
-    assert flow["values"] == ["5000", "7", "7", "60"]
+    assert flow["values"] == ["5000", "7", "7", "14", "60"]
     for case, message in (
         ("zeroDays", "Enter a whole number, 1 or more."),
         ("fraction", "Enter a whole number, 1 or more."),

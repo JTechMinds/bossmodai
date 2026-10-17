@@ -201,6 +201,33 @@ def paused_work_snapshot(agent_id: str) -> tuple[Activity, WorkSnapshot] | None:
     return activity, snapshot
 
 
+def render_paused_work_for_agent(agent_id: str) -> str | None:
+    """Return the read-only paused-work view for an agent's decision turn, if any.
+
+    Built by code from the frozen execution transcript of the agent's active
+    (else newest paused) work activity (:func:`paused_work_snapshot`), so a
+    status reply is grounded in what the agent actually ran. The view is
+    titled with the activity's task title, else the activity's own title,
+    else "your task". Execution turns get the full restored transcript
+    instead and never this view; ``core.llm.context_builder.build_context``
+    calls this for decision turns only.
+
+    Args:
+        agent_id: The agent whose paused work to show.
+
+    Returns:
+        The rendered view, or ``None`` when there is no frozen work or
+        :func:`render_paused_work_view` has nothing to show.
+    """
+    found = paused_work_snapshot(agent_id)
+    if found is None:
+        return None
+    activity, snapshot = found
+    task = db.get_task(activity.task_id) if activity.task_id else None
+    title = (task.title if task is not None else None) or activity.title or "your task"
+    return render_paused_work_view(snapshot, task_title=title)
+
+
 def step_label(assistant_content: str) -> str:
     """Return the command an assistant step ran, for markers and views."""
     action = parse_action(assistant_content)

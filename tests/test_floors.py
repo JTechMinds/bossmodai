@@ -689,6 +689,7 @@ def test_floor_delete_api_reports_what_it_did(monkeypatch: pytest.MonkeyPatch) -
         "agents_deleted": [],
         "threads_archived": [desk.id],
         "folder_archived": True,
+        "process_stopped_agent_ids": [],
     }
 
 

@@ -1,10 +1,12 @@
 """BossMod AI — Process containment for shell runs.
 
-Invariant: no process started by a shell command outlives it. The lexer
-already refuses ``&``, so a shell command is meant to end with its last
-process; this module enforces that for programs that detach anyway (Node
-``spawn(..., {detached: true})``, ``setsid`` / ``start_new_session``, a
-double fork, a browser launched by Playwright).
+Invariant: no process started by a shell command outlives it. A shell
+command is meant to end with its last process; this module enforces that
+for programs that detach anyway (Node ``spawn(..., {detached: true})``,
+``setsid`` / ``start_new_session``, a double fork, a browser launched by
+Playwright). The one sanctioned exception is a pipeline the agent ends with
+``&``: it runs under a tag of its own, and
+:mod:`core.bm_cli.background_processes` reaps that tag when it is stopped.
 
 Mechanism: every shell run gets a unique tag, set as ``BOSSMOD_SHELL_RUN``
 in each spawned process's environment. Children inherit the environment

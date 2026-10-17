@@ -2,7 +2,7 @@
 
 Read-only. Every query here already exists and is already indexed; this module
 exists so the six UI surfaces that show "needs you" read one shape instead of
-four. It grants no capability the operator did not already have through the
+five. It grants no capability the operator did not already have through the
 per-kind endpoints.
 """
 
@@ -240,12 +240,43 @@ def _blocked_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     return items
 
 
+def _process_checkin_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
+    """Background processes whose check-in is waiting: keep it running, or stop it.
+
+    Running rows only (``db.list_checkin_requested_agent_processes``). An
+    unanswered check-in never stops anything; it just stays here.
+    """
+    items = []
+    for row in db.list_checkin_requested_agent_processes():
+        name = _agent_name(row.agent_id, cache)
+        if row.checkin_requested_at is None:
+            raise ValueError(f"process {row.id} was listed as asked but has no ask time")
+        items.append({
+            "id": row.id,
+            "kind": "process_checkin",
+            "agent_id": row.agent_id,
+            "agent_name": name,
+            "title": f"{name}'s background process is still running",
+            "sub": row.command,
+            "created_at": row.checkin_requested_at.isoformat(),
+            "conversation_id": row.agent_id,
+            "actions": [
+                {"label": "Keep running", "method": "POST", "tone": "primary",
+                 "href": f"/api/agent-processes/{row.id}/keep"},
+                {"label": "Stop", "method": "POST", "tone": "quiet",
+                 "href": f"/api/agent-processes/{row.id}/stop"},
+            ],
+        })
+    return items
+
+
 @router.get("/needs")
 async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     """Everything currently waiting on an operator decision, newest first.
 
     Aggregates pending consents (host path, shell executor, Nest git,
-    workspace preference), pending CLI approvals, and blocked/stalled tasks.
+    workspace preference), pending CLI approvals, blocked/stalled tasks,
+    and background-process check-ins.
     Error needs are client-held (the ``diagnostic`` topic) and never listed
     here. Every action decides something — approve, deny, nudge — and none is
     a read-only inspection: "Show me" is the client's way to look. Actions
@@ -259,6 +290,7 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
         _consent_needs(cache)
         + _approval_needs(cache)
         + _blocked_needs(cache)
+        + _process_checkin_needs(cache)
     )
     needs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
     return needs[:min(max(limit, 0), MAX_LIMIT)]

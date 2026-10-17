@@ -125,6 +125,8 @@ CONTEXT_MODULES = [
     CONTEXT / "schedule-preview.js",
     CONTEXT / "schedule-layer.js",
     CONTEXT / "desk-schedules.js",
+    # The desk's Processes section; the desk mounts it under Schedules.
+    CONTEXT / "desk-processes.js",
     CONTEXT / "desk-pack.js",
     CONTEXT / "desk-memory.js",
     CONTEXT / "desk-menu.js",

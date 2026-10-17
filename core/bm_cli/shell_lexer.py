@@ -28,7 +28,6 @@ _DQ_ESCAPABLE = frozenset('$`"\\\n')
 
 STEER_SUBSTITUTION = "command substitution: run the inner command first, then use its output"
 STEER_VARIABLE = "variables are not expanded: write the value"
-STEER_BACKGROUND = "background jobs are not supported"
 STEER_SUBSHELL = "subshells and ( ) grouping are not supported: run the commands in sequence"
 STEER_GROUP = "{ } command groups are not supported: run the commands in sequence"
 STEER_BRACES = "brace expansion is not supported: write each word out"
@@ -73,7 +72,7 @@ class WordToken:
 
 @dataclass(frozen=True, slots=True)
 class OpToken:
-    """One operator: ``|`` ``||`` ``&&`` ``;`` newline ``>`` ``>>`` ``<`` ``&>`` or ``2>&1``.
+    """One operator: ``|`` ``||`` ``&&`` ``&`` ``;`` newline ``>`` ``>>`` ``<`` ``&>`` or ``2>&1``.
 
     ``fd`` is the redirect's file descriptor (an adjacent ``1``/``2``
     before ``>``/``>>``, 1 when none was written, 0 for ``<``); None for
@@ -202,7 +201,9 @@ def _operator(text: str, index: int, fd: int | None) -> tuple[OpToken, int]:
             raise ShellSyntaxError("&>> is not supported: use >> file 2>&1")
         if rest.startswith("&>"):
             return OpToken("&>"), index + 2
-        raise ShellSyntaxError(STEER_BACKGROUND)
+        # A lone ``&`` runs the pipeline before it in the background
+        # (core/bm_cli/background_processes.py).
+        return OpToken("&"), index + 1
     if char == ";":
         if rest.startswith(";;") or rest.startswith(";&"):
             raise ShellSyntaxError(f"{rest[:2]} is not supported: separate commands with one ;")

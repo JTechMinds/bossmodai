@@ -192,6 +192,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("diagnostics_retention_days", "7", "advanced"),
     ("trigger_retention_days", "7", "advanced"),
     ("activity_log_retention_days", "30", "advanced"),
+    # Ended (exited/stopped) background processes and their log files.
+    ("agent_process_retention_days", "14", "advanced"),
     # How often the task watchdog runs the history prune above.
     ("history_prune_interval_minutes", "60", "advanced"),
     ("desktop_open_folder_handler", "", "advanced"),
@@ -255,8 +257,15 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # ── CLI policy ──
     # HA-SEC-P0-03: native shell stays off until an operator opts in.
     ("cli_shell_enabled", "false", "cli_policy"),
-    ("cli_shell_timeout_seconds", "30", "cli_policy"),
+    # Long enough for real test suites and builds; servers belong in the
+    # background (`&`). Prior factory default was 30;
+    # reconcile_factory_shell_timeout moves an untouched 30 once.
+    ("cli_shell_timeout_seconds", "600", "cli_policy"),
     ("cli_shell_max_output_bytes", "65536", "cli_policy"),
+    # After this long the operator is asked whether a background process
+    # (core/bm_cli/background_processes.py) should keep running. Nothing
+    # is ever stopped on a timer.
+    ("background_process_checkin_minutes", "120", "cli_policy"),
     # Auto-approve review context (core.bm_cli.approval_gate.context):
     # recent conversation lines, and floor-wide operator Approve/Reject
     # precedents, sent to System AI with each reviewed command.
@@ -370,6 +379,7 @@ def seed_defaults() -> None:
     reconcile_factory_max_tokens()
     reconcile_factory_cli_default_policy()
     reconcile_factory_watchdog_interval()
+    reconcile_factory_shell_timeout()
     reconcile_work_commit_prompt_contract()
     reconcile_work_commit_resume_prompt()
     reconcile_extension_event_prompt()
@@ -380,6 +390,9 @@ def seed_defaults() -> None:
     reconcile_memory_notice_prompt_lines()
     reconcile_task_update_prompts()
     reconcile_execution_outs_prompt_line()
+    reconcile_background_script_prompt_line()
+    # After the pass above: its new line is this pass's old line.
+    reconcile_program_paths_prompt_line()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -406,6 +419,12 @@ _CLI_DEFAULT_POLICY_FACTORY_RECONCILED = "cli_default_policy_factory_reconciled"
 _FACTORY_WATCHDOG_INTERVAL = "5"
 _DEFAULT_WATCHDOG_INTERVAL = "30"
 _WATCHDOG_INTERVAL_FACTORY_RECONCILED = "watchdog_check_interval_factory_reconciled"
+
+# Prior shipped cli_shell_timeout_seconds. Only this factory value moves to
+# 600, and only once (marker row), so a 30 the operator sets later is kept.
+_FACTORY_SHELL_TIMEOUT = "30"
+_DEFAULT_SHELL_TIMEOUT = "600"
+_SHELL_TIMEOUT_FACTORY_RECONCILED = "cli_shell_timeout_factory_reconciled"
 
 
 def reconcile_factory_round_cap() -> None:
@@ -477,6 +496,33 @@ def reconcile_factory_watchdog_interval() -> None:
     if row is not None and str(row.get("value") or "") == _FACTORY_WATCHDOG_INTERVAL:
         set_setting("watchdog_check_interval_seconds", _DEFAULT_WATCHDOG_INTERVAL, "simulation")
     set_setting(_WATCHDOG_INTERVAL_FACTORY_RECONCILED, "true", "advanced")
+
+
+def reconcile_factory_shell_timeout() -> None:
+    """Move an untouched factory shell timeout from 30 to 600 seconds once.
+
+    Same marker-guarded pattern as :func:`reconcile_factory_watchdog_interval`:
+    only a stored value of exactly ``30`` (the old seed) is rewritten, and
+    logged at INFO; any other value is the operator's choice and is left
+    alone. After the first pass a saved ``30`` is an operator choice too.
+    """
+    seen = query_one(
+        "SELECT key FROM settings WHERE key = $1",
+        [_SHELL_TIMEOUT_FACTORY_RECONCILED],
+    )
+    if seen is not None:
+        return
+    row = query_one(
+        "SELECT value FROM settings WHERE key = $1",
+        ["cli_shell_timeout_seconds"],
+    )
+    if row is not None and str(row["value"]) == _FACTORY_SHELL_TIMEOUT:
+        set_setting("cli_shell_timeout_seconds", _DEFAULT_SHELL_TIMEOUT, "cli_policy")
+        logger.info(
+            "Shell timeout moved from the old default %ss to %ss",
+            _FACTORY_SHELL_TIMEOUT, _DEFAULT_SHELL_TIMEOUT,
+        )
+    set_setting(_SHELL_TIMEOUT_FACTORY_RECONCILED, "true", "advanced")
 
 
 # The required-``work_commit`` / TURN MODEL contract lives in these two
@@ -915,6 +961,74 @@ def reconcile_execution_outs_prompt_line() -> None:
         _EXECUTION_OUTS_PROMPT_LINE_RECONCILED,
         missing_row_label="execution outs",
         missing_line_label="execution outs",
+    )
+
+
+# The execution contract's script line said `&` is refused. Background
+# pipelines are supported now (core/bm_cli/background_processes.py).
+_BACKGROUND_SCRIPT_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_execution": (
+        (
+            '  - scripts work without a shell: | && || ; > >> < 2>&1, NAME=value cmd, and unquoted globs (*.py). Not supported: $(…) or backticks, $VAR, background &, heredocs (<<), subshells ( ). Each command in a script is checked like a single command (any block stops the whole line; one approval covers it). BossMod commands (write, task, help, …) run alone; cd only as the first step, followed by && or ;: cd /projects/x && git status',
+            '  - scripts work without a shell: | && || ; > >> < 2>&1, NAME=value cmd, unquoted globs (*.py), and & (a background pipeline): end a pipeline with & to keep it running (dev servers, watchers); manage with processes. Not supported: $(…) or backticks, $VAR, heredocs (<<), subshells ( ). Each command in a script is checked like a single command (any block stops the whole line; one approval covers it). BossMod commands (write, task, help, …) run alone; cd only as the first step, followed by &&, ; or &: cd /projects/x && git status',
+        ),
+    ),
+}
+_BACKGROUND_SCRIPT_PROMPT_LINE_RECONCILED = "background_script_prompt_line_reconciled"
+
+
+def reconcile_background_script_prompt_line() -> None:
+    """Teach the stored execution contract that ``&`` starts a background pipeline, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_execution_outs_prompt_line`, driven by
+    ``_BACKGROUND_SCRIPT_PROMPT_LINE_EDITS``: the scripts line stops listing
+    ``background &`` as unsupported, says how to use it, and lets ``cd`` be
+    followed by ``&``. A row equal to the shipped default is skipped. A row
+    without the exact old line keeps its bytes, and a warning names the key
+    and the line. Later calls, once the marker is recorded, are no-ops.
+    """
+    _reconcile_prompt_lines(
+        _BACKGROUND_SCRIPT_PROMPT_LINE_EDITS,
+        _BACKGROUND_SCRIPT_PROMPT_LINE_RECONCILED,
+        missing_row_label="background script",
+        missing_line_label="background script",
+    )
+
+
+# The scripts line, second revision: programs are told the real folders
+# behind /me and /projects (BOSSMOD_ME / BOSSMOD_PROJECTS, set by
+# core/bm_cli/runtime._agent_path_env). Its old line is the first revision's
+# new line, so this pass runs after reconcile_background_script_prompt_line
+# and a stored contract goes original -> first -> second in one seed.
+_PROGRAM_PATHS_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_execution": (
+        (
+            _BACKGROUND_SCRIPT_PROMPT_LINE_EDITS["runtime_contract_execution"][0][1],
+            '  - scripts work without a shell: | && || ; > >> < 2>&1, NAME=value cmd, unquoted globs (*.py), and &: end a pipeline with & to keep it running (dev servers, watchers); manage with processes. Not supported: $(…) or backticks, $VAR, heredocs (<<), subshells ( ). Each command in a script is checked like a single command (any block stops the whole line; one approval covers it). BossMod commands (write, task, help, …) run alone; cd only as the first step, followed by &&, ; or &: cd /projects/x && git status. Programs see real folders, not /me or /projects: in code or config use relative paths or the env vars BOSSMOD_ME / BOSSMOD_PROJECTS.',
+        ),
+    ),
+}
+_PROGRAM_PATHS_PROMPT_LINE_RECONCILED = "program_paths_prompt_line_reconciled"
+
+
+def reconcile_program_paths_prompt_line() -> None:
+    """Teach the stored execution contract the real-folder env vars, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_background_script_prompt_line`, driven by
+    ``_PROGRAM_PATHS_PROMPT_LINE_EDITS``: the scripts line that pass wrote
+    gains "Programs see real folders, …" naming ``BOSSMOD_ME`` /
+    ``BOSSMOD_PROJECTS``. Must run after it (see ``seed_defaults``). A row
+    equal to the shipped default is skipped. A row without the exact old
+    line keeps its bytes, and a warning names the key and the line. Later
+    calls, once the marker is recorded, are no-ops.
+    """
+    _reconcile_prompt_lines(
+        _PROGRAM_PATHS_PROMPT_LINE_EDITS,
+        _PROGRAM_PATHS_PROMPT_LINE_RECONCILED,
+        missing_row_label="program paths",
+        missing_line_label="program paths",
     )
 
 

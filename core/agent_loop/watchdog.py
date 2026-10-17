@@ -12,6 +12,8 @@ from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.task_origin_mirrors import format_origin_status_line, persist_origin_status_line
+from core.bm_cli import background_processes
+from core.bm_cli.process_announce import announce_checkin, announce_processes_changed
 from core.runtime.events import runtime_events as manager
 from core.tasking.transitions import transition_task
 from core.time import ensure_utc
@@ -61,6 +63,14 @@ class TaskWatchdog:
                 break
             except Exception:
                 logger.exception("Task watchdog loop error")
+            # Its own guard, like the prune below: a failing task scan must
+            # not stop background-process bookkeeping, nor the other way round.
+            try:
+                await self._sweep_background_processes()
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Task watchdog background-process sweep failed")
             # Its own guard: a failing task scan must not stop retention, nor
             # a failing prune the task scan.
             try:
@@ -73,9 +83,10 @@ class TaskWatchdog:
     def _prune_history_if_due(self) -> None:
         """Prune old history, at most once per ``history_prune_interval_minutes``.
 
-        Prunes finished triggers, the activity log and diagnostics, per
-        ``trigger_retention_days``, ``activity_log_retention_days`` and
-        ``diagnostics_retention_days``. A missing or non-positive setting
+        Prunes finished triggers, the activity log, diagnostics and ended
+        background processes (with their logs), per ``trigger_retention_days``,
+        ``activity_log_retention_days``, ``diagnostics_retention_days`` and
+        ``agent_process_retention_days``. A missing or non-positive setting
         raises ``ConfigError`` before anything is deleted. The run is stamped
         before it starts, so a failing prune is retried (and logged) once per
         interval, not every tick. The prune runs on the watchdog's own tick,
@@ -90,15 +101,37 @@ class TaskWatchdog:
         trigger_days = config.require_positive_int("trigger_retention_days")
         activity_log_days = config.require_positive_int("activity_log_retention_days")
         diagnostics_days = config.require_positive_int("diagnostics_retention_days")
+        process_days = config.require_positive_int("agent_process_retention_days")
         now = datetime.now(timezone.utc)
         triggers = db.prune_finished_triggers(now - timedelta(days=trigger_days))
         log_rows = db.prune_activity_log(now - timedelta(days=activity_log_days))
         diagnostics = db.prune_diagnostics(now - timedelta(days=diagnostics_days))
+        processes = background_processes.prune_ended(now - timedelta(days=process_days))
         logger.info(
             "History prune removed %d finished trigger(s) (> %d days), "
-            "%d activity-log row(s) (> %d days), %d diagnostic(s) (> %d days)",
+            "%d activity-log row(s) (> %d days), %d diagnostic(s) (> %d days), "
+            "%d ended background process(es) (> %d days)",
             triggers, trigger_days, log_rows, activity_log_days, diagnostics, diagnostics_days,
+            processes, process_days,
         )
+
+    async def _sweep_background_processes(self) -> None:
+        """Record ended background processes, ask due check-ins, and tell the UI.
+
+        ``background_processes.sweep`` runs on a worker thread: reaping what
+        an exited process left can wait a few seconds. Then one
+        ``agent_process_checkin`` per check-in asked (Needs shows it) and one
+        ``agent_process_changed`` per agent whose rows changed (its desk
+        repaints), each carrying ``agent_id``.
+        """
+        result = await asyncio.to_thread(background_processes.sweep)
+        for row in result.checkins:
+            await announce_checkin(manager, row, agent_name=_agent_name(row.agent_id))
+        for agent_id in result.changed_agent_ids:
+            await announce_processes_changed(
+                manager, agent_id=agent_id, agent_name=_agent_name(agent_id),
+                detail="Background processes changed",
+            )
 
     async def _check_tasks(self) -> None:
         soft_minutes = config.require_int("watchdog_soft_ping_minutes")

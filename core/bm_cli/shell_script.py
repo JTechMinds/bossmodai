@@ -1,17 +1,19 @@
 """Parse the small, explicit subset of POSIX sh that agent CLI scripts may use.
 
 Supported: pipes ``|``, connectors ``&&`` ``||`` ``;`` (and a newline as
-``;``), redirects ``>`` ``>>`` ``<`` ``2>&1`` ``&>`` (an adjacent fd 1 or
+``;``), background jobs ``&`` (the pipeline before it keeps running after
+the script returns; :mod:`core.bm_cli.background_processes` owns it),
+redirects ``>`` ``>>`` ``<`` ``2>&1`` ``&>`` (an adjacent fd 1 or
 2 before ``>``/``>>``), leading ``NAME=value`` assignments, and unquoted
 globs. Quoting (single, double, backslash) is tracked per character by
 :mod:`core.bm_cli.shell_lexer`, so a quoted ``|`` or ``*`` is a literal
 and ``\\;`` is a word, not a connector.
 
 Everything a shell would expand or interpret beyond that (substitution,
-variables, background jobs, subshells, groups, heredocs, process
-substitution, brace expansion, other fds) is rejected with a steer the
-agent can act on. No shell ever runs these scripts: the parse is the
-whole interpretation. Pure: no I/O.
+variables, subshells, groups, heredocs, process substitution, brace
+expansion, other fds) is rejected with a steer the agent can act on. No
+shell ever runs these scripts: the parse is the whole interpretation.
+Pure: no I/O.
 
 ``shlex(punctuation_chars=True)`` was rejected: it cannot tell ``'*.py'``
 from ``*.py``, turns ``\\;`` into ``;`` and splits ``2>&1`` without adjacency.
@@ -39,7 +41,7 @@ __all__ = [
     "SimpleCommand", "Word", "is_compound", "parse_shell_script", "segment_raw",
 ]
 
-Connector = Literal["&&", "||", ";"]
+Connector = Literal["&&", "||", ";", "&"]
 RedirectFd = Literal[0, 1, 2, "both"]
 RedirectMode = Literal["write", "append", "read", "dup_out"]
 _ASSIGNMENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
@@ -96,7 +98,11 @@ class Pipeline:
 
 @dataclass(frozen=True, slots=True)
 class ShellScript:
-    """Pipelines in order, each with the connector to the next (None for the last)."""
+    """Pipelines in order, each with the connector after it.
+
+    The last pipeline's connector is None, or ``"&"`` when the script ends
+    by sending that pipeline to the background.
+    """
 
     items: tuple[tuple[Pipeline, Connector | None], ...]
 
@@ -126,7 +132,7 @@ def parse_shell_script(text: str) -> ShellScript:
 
     Grammar::
 
-        script   := pipeline ((&& | '||' | ; | NEWLINE) pipeline)* [; | NEWLINE]
+        script   := pipeline ((&& | '||' | ; | & | NEWLINE) pipeline)* [; | & | NEWLINE]
         pipeline := command ('|' command)*
         command  := (NAME=word)* (word | redirect)+   -- at least one word
         redirect := ['1'|'2'] ('>'|'>>') word | '<' word | '2>&1' | '&>' word
@@ -201,6 +207,13 @@ class _Parser:
                     raise ShellSyntaxError(f"nothing follows {op}: add the next command or remove {op}")
                 items.append((pipeline, op))
                 continue
+            if op == "&":
+                # Kept even when last: a trailing ``&`` is what backgrounds
+                # the final pipeline, unlike a trailing ``;``.
+                items.append((pipeline, "&"))
+                if self._at_end():
+                    break
+                continue
             if op not in (";", "\n"):
                 raise ShellSyntaxError(f"unexpected {op!r}")
             if self._at_end():
@@ -233,7 +246,7 @@ class _Parser:
                 else:
                     argv.append(Word(token.text, token.glob, token.pattern))
                 continue
-            if token.op in ("|", "||", "&&", ";", "\n"):
+            if token.op in ("|", "||", "&&", "&", ";", "\n"):
                 break
             self._pos += 1
             redirects.append(self._redirect(token))

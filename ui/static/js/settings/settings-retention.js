@@ -1,7 +1,7 @@
 /**
  * BossMod AI — Settings → Advanced System Settings, the Retention card.
  *
- * How much history is kept: the diagnostics row limit, the three age limits
+ * How much history is kept: the diagnostics row limit, the four age limits
  * the task watchdog prunes by, and how often it prunes. Split out of
  * settings-advanced.js, which renders the card into its grid and calls
  * mount() once the markup is in the document. Loaded before it.
@@ -33,6 +33,11 @@ const BossModRetentionSettings = (() => {
             key: 'activity_log_retention_days', id: 'activity-log-retention-days', min: 1,
             label: 'Activity Log Retention (days)',
             hint: 'Activity log entries older than this are deleted at each history prune. Default 30.',
+        },
+        {
+            key: 'agent_process_retention_days', id: 'agent-process-retention-days', min: 1,
+            label: 'Background Process History (days)',
+            hint: 'Background processes that ended longer ago than this are deleted at each history prune, with their logs. Running ones are never touched. Default 14.',
         },
         {
             key: 'history_prune_interval_minutes', id: 'history-prune-interval', min: 1,

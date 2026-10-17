@@ -58,6 +58,13 @@ SCHEDULE_FORMS: tuple[str, ...] = (
     "schedules remove <id>",
 )
 
+PROCESSES_FORMS: tuple[str, ...] = (
+    "processes                 — same as processes list",
+    "processes list",
+    "processes logs <id>       — the end of its output",
+    "processes stop <id>",
+)
+
 BACKLOG_FORMS: tuple[str, ...] = (
     "backlog                   — same as backlog list",
     "backlog list [text…]      — the floor's open backlog, searched by title or description",
@@ -444,6 +451,28 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             '       "weekdays": [0, 1, 2, 3, 4], "times": ["09:00"]}}\n'
             "  schedules off 1a2b3c4d   — pause one\n"
             "  schedules                — review what recurs and when it runs next"
+        ),
+    ),
+    "processes": VirtualCommandMeta(
+        name="processes",
+        category="agent",
+        description="List, read and stop your background processes.",
+        usage_syntax="processes [list|logs <id>|stop <id>]",
+        help_text=(
+            "End a command with `&` to keep it running in the background (dev\n"
+            "servers, watchers). It runs until you stop it. Its output goes to\n"
+            "a log you read here. Your processes only.\n"
+            "\n"
+            "Usage:\n"
+            + "".join(f"  {form}\n" for form in PROCESSES_FORMS)
+            + "\n"
+            "<id> is the first 8 characters shown by processes list (or more).\n"
+            "\n"
+            "Examples:\n"
+            "  npx vite --port 5199 &   — start a dev server\n"
+            "  processes                — what is running, and what ended\n"
+            "  processes logs 1a2b3c4d  — its latest output\n"
+            "  processes stop 1a2b3c4d  — stop it when you are done"
         ),
     ),
     "backlog": VirtualCommandMeta(

@@ -2,8 +2,8 @@
  * BossMod AI — the body and head of one agent's desk, for the desk modal.
  *
  * It composes rather than renders: Tasks is context/desk-tasks.js, Schedules
- * is context/desk-schedules.js, Files is
- * context/desk-files.js, Notes is context/desk-notes.js, Extensions is
+ * is context/desk-schedules.js, Processes is context/desk-processes.js, Files
+ * is context/desk-files.js, Notes is context/desk-notes.js, Extensions is
  * context/desk-extensions.js (hidden while no per-agent extension is enabled)
  * and Details is context/desk-actions.js, each owning its own request and its
  * own load generation. It never touches the modal: context/desk-dialog.js
@@ -16,8 +16,8 @@
  * read as one family. A module renders content and nothing else, so a header
  * cannot drift one module at a time.
  *
- * TWO COLUMNS: the work (Tasks, Schedules, Files) in the main column, and who the agent
- * is (About, Details, Notes, Extensions) in the aside. About carries the pack
+ * TWO COLUMNS: the work (Tasks, Schedules, Processes, Files) in the main
+ * column, and who the agent is (About, Details, Notes, Extensions) in the aside. About carries the pack
  * the agent was hired from, and its per-agent update (context/desk-pack.js). The actions on the
  * agent are the HEAD's, as in every other modal, and all of them sit behind
  * its one `⋯` (context/desk-menu.js), so the title bar holds only the agent
@@ -133,6 +133,8 @@ const BossModDeskPanel = (() => {
             api, bus, agentId, agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
             onOpenTask: (taskId) => { void taskOpener.open(taskId); },
         });
+        // What the agent left running in the background (`cmd &`), with Stop and Log.
+        const processes = BossModDeskProcesses.createDeskProcesses({ api, bus, agentId });
         const files = BossModDeskFiles.createDeskFiles({ api, bus, agentId });
         // A folder inside /me/notes is the browser's job, not a second one.
         const notes = BossModDeskNotes.createDeskNotes({
@@ -183,6 +185,7 @@ const BossModDeskPanel = (() => {
                     }, tasks.element),
                     section('Schedules', { label: 'New', icon: 'plus', onSelect: () => schedules.openNew() },
                         schedules.element),
+                    section('Processes', null, processes.element),
                     section('Files', null, files.element)),
                 h('aside', { class: 'desk-aside', 'aria-label': 'About this agent' },
                     section('About', null, h('div', { class: 'desk-about-block' },
@@ -325,6 +328,7 @@ const BossModDeskPanel = (() => {
                 taskOpener.destroy();
                 tasks.destroy();
                 schedules.destroy();
+                processes.destroy();
                 files.destroy();
                 notes.destroy();
                 deskExtensions.destroy();

@@ -396,6 +396,20 @@ from db.extension_agent_configs import (
 )
 from db.extension_wake_status import get_wake_status, record_wake_check
 
+# Background processes agents started with `&` (core/bm_cli/background_processes.py)
+from db.agent_processes import (
+    create_agent_process,
+    find_agent_processes_by_prefix,
+    get_agent_process,
+    list_agent_processes,
+    list_checkin_requested_agent_processes,
+    list_running_agent_processes,
+    mark_agent_process_ended,
+    prune_ended_agent_processes,
+    rearm_agent_process_checkin,
+    request_agent_process_checkin,
+)
+
 # Per-agent recurring schedules (core/scheduling)
 from db.agent_schedules import (
     create_schedule,

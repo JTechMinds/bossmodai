@@ -1120,3 +1120,29 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_schedules_agent ON agent_schedules(agent_id);
+
+-- Background processes an agent started with `&` (core/bm_cli/background_processes.py).
+-- run_tag is the BOSSMOD_SHELL_RUN value every process of the launch carries,
+-- so a stop reaps detached children too; pid + pid_create_time identify the
+-- root process without holding a handle. checkin_due_at is when the operator
+-- is next asked whether to keep it; nothing ever stops it on a timer. An
+-- agent's rows are deleted with the agent (db.agents.delete_agent_rows).
+CREATE TABLE IF NOT EXISTS agent_processes (
+    id                   VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    agent_id             VARCHAR NOT NULL REFERENCES agents(id),
+    command              TEXT    NOT NULL,
+    cwd                  VARCHAR NOT NULL,
+    run_tag              VARCHAR NOT NULL,
+    pid                  INTEGER NOT NULL,
+    pid_create_time      REAL    NOT NULL,
+    log_path             VARCHAR NOT NULL,
+    status               VARCHAR NOT NULL CHECK (status IN ('running', 'exited', 'stopped')),
+    stopped_by           VARCHAR CHECK (stopped_by IN ('agent', 'operator', 'system')),
+    stop_reason          TEXT,
+    started_at           TIMESTAMP NOT NULL,
+    ended_at             TIMESTAMP,
+    checkin_due_at       TIMESTAMP NOT NULL,
+    checkin_requested_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_processes_agent_status ON agent_processes(agent_id, status);
