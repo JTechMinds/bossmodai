@@ -436,6 +436,9 @@ def test_nothing_after_a_leading_cd_never_reaches_segment_preparation(script: st
         ("cd /me | ls", CD_STEER),
         ("cd /me ;", CD_ALONE_STEER),
         ("ol *.md", bossmod_glob_steer("ol")),
+        # A leading cd, not a glob, sent this lone BossMod command down the script path.
+        ("cd /projects/demo && append notes.md", bossmod_only_steer("append")),
+        ("write *.md", bossmod_glob_steer("write")),
         ("echo $HOME", STEER_VARIABLE),
     ],
 )

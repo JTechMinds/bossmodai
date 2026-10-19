@@ -128,8 +128,18 @@ def delete_queued_triggers(
     agent_id: str,
     *,
     trigger_types: list[str] | None = None,
+    task_id: str | None = None,
 ) -> int:
-    """Delete queued triggers for an agent and return the number removed."""
+    """Delete queued triggers for an agent and return the number removed.
+
+    Args:
+        agent_id: The agent whose queued triggers are removed.
+        trigger_types: When given, only these trigger types are removed.
+        task_id: When given, only triggers bound to this Board task are
+            removed.
+
+    Claimed triggers are never touched: a claimed row is a running turn.
+    """
     conditions = ["agent_id = $1", "status = 'queued'"]
     params: list[Any] = [agent_id]
 
@@ -137,6 +147,10 @@ def delete_queued_triggers(
         placeholders = ", ".join(f"${len(params) + i + 1}" for i in range(len(trigger_types)))
         conditions.append(f"trigger_type IN ({placeholders})")
         params.extend(trigger_types)
+
+    if task_id is not None:
+        params.append(task_id)
+        conditions.append(f"task_id = ${len(params)}")
 
     row = query_one(
         f"""

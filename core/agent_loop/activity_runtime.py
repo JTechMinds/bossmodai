@@ -153,6 +153,45 @@ def resolve_live_wake_task(
     return None
 
 
+def work_commit_target(agent_id: str, trigger: dict[str, Any] | None) -> Task | None:
+    """Return the task a reply's ``work_commit: true`` continues, if any.
+
+    This is the one answer to "what does ``work_commit: true`` continue",
+    shared by the decision prompt (which names the task to the agent) and
+    the runtime (which requeues it). The two agree only when both read the
+    same state, so ``apply_decision`` calls it before anything in the
+    decision (such as soft-block reactivation) can change live work.
+
+    Order:
+        1. The task on the agent's active work activity, when live.
+        2. The trigger's ``task_id``, when that task is assigned to
+           ``agent_id`` and live.
+        3. ``resolve_live_wake_task(agent_id)``: paused work first, then any
+           open assigned task.
+
+    Args:
+        agent_id: The replying agent.
+        trigger: The turn's trigger payload, or ``None``.
+
+    Returns:
+        The live Board task, or ``None`` when the agent has nothing to
+        continue (validation then rejects ``work_commit: true``).
+    """
+    active = get_active_work_activity(agent_id)
+    if active and active.task_id:
+        task = db.get_task(active.task_id)
+        if is_live_work_task(task):
+            return task
+
+    task_id = (trigger or {}).get("task_id")
+    if isinstance(task_id, str) and task_id.strip():
+        task = db.get_task(task_id)
+        if task is not None and task.assigned_to == agent_id and is_live_work_task(task):
+            return task
+
+    return resolve_live_wake_task(agent_id)
+
+
 def close_terminal_work_activity(
     agent_id: str,
     *,
@@ -436,6 +475,12 @@ def activate_work_activity(
     Complete Board tasks are never revived (no ``complete → active``). Callers
     that need work should pass a live task, or let ``prepare_trigger_context``
     retarget one.
+
+    When this supersedes live work on another task, that work is paused and
+    the other task's queued ``activity_resumed`` triggers are retired. The
+    paused work comes back through ``activity_scheduler.next_work_after_end``
+    once this work ends. Other trigger types for that task (follow-ups,
+    consent wakes) are messages and stay queued.
     """
     task = db.get_task(task.id) or task
     if not is_live_work_task(task):
@@ -464,7 +509,15 @@ def activate_work_activity(
         return refreshed or active
 
     if active and active.kind == "work" and active.task_id and active.task_id != task.id:
+        superseded_task_id = active.task_id
         pause_active_work(agent_id, supersede_note or "Paused for newer work.")
+        # The paused work returns through next_work_after_end; a queued resume
+        # for it would steal focus from the newer work on its claim.
+        db.delete_queued_triggers(
+            agent_id,
+            trigger_types=["activity_resumed"],
+            task_id=superseded_task_id,
+        )
         active = get_active_activity(agent_id)
 
     active = get_active_activity(agent_id)

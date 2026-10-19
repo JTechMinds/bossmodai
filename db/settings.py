@@ -393,6 +393,7 @@ def seed_defaults() -> None:
     reconcile_background_script_prompt_line()
     # After the pass above: its new line is this pass's old line.
     reconcile_program_paths_prompt_line()
+    reconcile_work_commit_target_prompt_line()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -1029,6 +1030,45 @@ def reconcile_program_paths_prompt_line() -> None:
         _PROGRAM_PATHS_PROMPT_LINE_RECONCILED,
         missing_row_label="program paths",
         missing_line_label="program paths",
+    )
+
+
+# The decision contract's two work_commit lines said "your own open work",
+# which let the agent read "I'll do it now" for a new request as a commit.
+# They now point at the task the board names under WORK_COMMIT CONTINUES
+# (core/llm/context_builder._task_board_context).
+_WORK_COMMIT_TARGET_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_decision": (
+        (
+            "- The one exception is your own open work (active, paused, or waiting): the runtime continues it after you answer when you set `work_commit` true.",
+            "- The one exception is the task shown under WORK_COMMIT CONTINUES on your board: the runtime continues that task after you answer when you set `work_commit` true. It continues nothing else.",
+        ),
+        (
+            "- `true` when this reply commits to continuing your own open work (active, paused, or waiting). The runtime resumes it after you reply.",
+            "- `true` only when this reply commits to continuing the task shown under WORK_COMMIT CONTINUES. Anything else you say you will do now, including a quick fix the boss just asked for, is new work: accept it.",
+        ),
+    ),
+}
+_WORK_COMMIT_TARGET_PROMPT_LINE_RECONCILED = "work_commit_target_prompt_line_reconciled"
+
+
+def reconcile_work_commit_target_prompt_line() -> None:
+    """Point the stored decision contract's ``work_commit`` lines at WORK_COMMIT CONTINUES, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_program_paths_prompt_line`, driven by
+    ``_WORK_COMMIT_TARGET_PROMPT_LINE_EDITS``: the TURN MODEL exception line
+    and the ``true`` bullet stop saying "your own open work" and name the
+    task the board shows under WORK_COMMIT CONTINUES. A row equal to the
+    shipped default is skipped. A row without the exact old line keeps its
+    bytes, and a warning names the key and the line. Later calls, once the
+    marker is recorded, are no-ops.
+    """
+    _reconcile_prompt_lines(
+        _WORK_COMMIT_TARGET_PROMPT_LINE_EDITS,
+        _WORK_COMMIT_TARGET_PROMPT_LINE_RECONCILED,
+        missing_row_label="work_commit target",
+        missing_line_label="work_commit target",
     )
 
 

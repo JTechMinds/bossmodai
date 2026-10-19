@@ -51,7 +51,7 @@ from core.agent_loop.decision_work_plan import (
 )
 from core.agent_loop.channel_work_bind import record_round_work_bind
 from core.agent_loop.task_origin_mirrors import attach_operator_status_line
-from core.models import Agent, AgentState
+from core.models import Agent, AgentState, Task
 from core.tasking.transitions import transition_task
 
 _DECLARED_COMMIT_RESUME_REASON = "You committed to this work in your reply. Continue it now."
@@ -116,6 +116,10 @@ def apply_decision(
 
     if decision.decision == "answer":
         result["detail"] = f"{agent.name} answered the request"
+        # Before soft-block reactivation, which could make other work live:
+        # this is the task the prompt showed under WORK_COMMIT CONTINUES.
+        committed = decision.workCommit and active_work is None
+        commit_target = activity_runtime.work_commit_target(agent.id, trigger) if committed else None
         if trigger.get("type") in {"session_response", "channel_response"}:
             _append_shared_response_follow_up(result, agent_id=agent.id, trigger=trigger, responded=True)
             _continue_soft_blocked_work_after_status(agent)
@@ -130,8 +134,8 @@ def apply_decision(
             )
         _attach_reply_artifacts(result, agent, state, trigger, decision)
         _record_watchdog_reply_if_needed(agent=agent, trigger=trigger, reply=decision.reply)
-        if decision.workCommit and active_work is None:
-            _requeue_declared_commitment(result, agent=agent, trigger=trigger)
+        if committed:
+            _requeue_declared_commitment(result, agent=agent, task=commit_target)
         return result
 
     if decision.decision == "clarify":
@@ -384,25 +388,23 @@ def _requeue_declared_commitment(
     result: dict[str, Any],
     *,
     agent: Agent,
-    trigger: dict[str, Any],
+    task: Task | None,
 ) -> None:
     """Requeue the agent's own open task after a reply declared ``work_commit``.
 
     Validation only lets ``work_commit: true`` through with no live work when
-    the agent has an open task. That is the trigger's ``task_id`` when it is
-    this agent's open task, else ``activity_runtime.resolve_live_wake_task``
-    (paused work first, then the first open assigned task); a trigger task
-    owned by someone else is not this agent's to resume.
+    the agent has an open task.
+
+    ``task`` is ``activity_runtime.work_commit_target`` computed at the top
+    of the ``answer`` branch, before soft-block reactivation could make other
+    work live, so it is the task the prompt showed under WORK_COMMIT
+    CONTINUES. The resume joins ``result["trigger_requests"]`` once.
 
     Raises:
-        ValueError: No open task of this agent resolves; validation should
-            have rejected the decision.
+        ValueError: ``task`` is ``None``; validation should have rejected
+            the decision.
     """
-    task_id = trigger.get("task_id")
-    task = db.get_task(task_id) if isinstance(task_id, str) and task_id.strip() else None
-    if task is None or task.assigned_to != agent.id or not activity_runtime.is_live_work_task(task):
-        task = activity_runtime.resolve_live_wake_task(agent.id)
-    if task is None or task.assigned_to != agent.id or not activity_runtime.is_live_work_task(task):
+    if task is None:
         raise ValueError("work_commit reply reached apply_decision without an open task of this agent")
     queued = {
         (item.get("trigger_type"), item.get("task_id"))

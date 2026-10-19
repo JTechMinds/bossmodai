@@ -142,10 +142,19 @@ def path_candidates_from_token(token: str) -> list[str]:
 
     Handles bare paths, ``--flag=/abs/path``, and attached forms like
     ``-f/etc/passwd``. Flag-only tokens are ignored.
+
+    A ``-``-led token is option-shaped only when ``-`` (or ``--``) is
+    followed by a letter or digit. Getopt-style tools never read other
+    shapes (``---x/…``, ``--/x``, ``-./x``, ``-/x``) as an option carrying
+    an attached path, so they are operands and are returned whole, to be
+    jailed as cwd-relative paths (``..`` is still normalized).
     """
-    if not token or token == "-":
+    if not token or token in {"-", "--"}:
         return []
-    if token.startswith("-"):
+    option_shaped = token.startswith("-") and (
+        token[1].isalnum() or (token[1] == "-" and len(token) > 2 and token[2].isalnum())
+    )
+    if option_shaped:
         if "=" in token:
             return path_candidates_from_token(token.split("=", 1)[1])
         for index, char in enumerate(token):

@@ -197,9 +197,11 @@ def _refuse_bossmod_commands(body: ShellScript, virtual_commands: frozenset[str]
         if name == "cd":
             raise ScriptRefused(CD_STEER, jail=False)
         if name in virtual_commands and name not in NATIVE_VIRTUAL_NAMES:
-            # One plain command reached the script path only for its glob.
+            # One plain command reaches the script path for its glob or for a
+            # leading cd; only the glob case is fixed by quoting.
             lone = len(commands) == 1 and not command.redirects and not command.assignments
-            raise ScriptRefused(bossmod_glob_steer(name) if lone else bossmod_only_steer(name), jail=False)
+            globbed = lone and any(word.glob for word in command.argv)
+            raise ScriptRefused(bossmod_glob_steer(name) if globbed else bossmod_only_steer(name), jail=False)
 
 
 def _prepare_command(

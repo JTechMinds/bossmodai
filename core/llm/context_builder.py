@@ -13,6 +13,7 @@ from typing import Any
 import db
 from core import config
 from core.boss import boss_label
+from core.agent_loop import activity_runtime
 from core.agent_loop.communication import communication_profile_for_trigger
 from core.agent_loop.deliverables import format_deliverables_for_context, get_work_contract
 from core.agent_loop.role_contracts import format_role_contract_block, operator_done_claim_guidance
@@ -23,7 +24,7 @@ from core.agent_loop.work_snapshot import render_paused_work_for_agent
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.extensions.prompt_blocks import render_extension_blocks
-from core.models import SCHEDULE_TRIGGER_FIELDS, Agent, AgentState
+from core.models import SCHEDULE_TRIGGER_FIELDS, Agent, AgentState, Task
 from core.models.notification import Notification
 from core.models.task import TASK_TRIGGER_FIELDS
 from core.llm.attachment_parts import history_manifests, mark_trigger_attachments
@@ -260,7 +261,9 @@ def template_syntax_examples() -> list[str]:
 def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     """Build the structured render context for authored prompts."""
     current_time = _current_time_context(now_local())
-    task_board = _task_board_context(turn.agent.id, turn.current_task)
+    # Execution turns have no work_commit, so naming its target there is noise.
+    commit_target = activity_runtime.work_commit_target(turn.agent.id, turn.trigger) if turn.contract_kind == "decision" else None
+    task_board = _task_board_context(turn.agent.id, turn.current_task, work_commit_target=commit_target)
     world_status = _world_status_context(
         turn.agent,
         turn.state,
@@ -619,8 +622,13 @@ def _format_pending_tasks(agent_id: str, current_task: dict[str, Any] | None) ->
     return "\n".join(lines)
 
 
-def _task_board_context(agent_id: str, current_task: dict[str, Any] | None) -> dict[str, Any]:
-    """Return a compact board-first task summary for authored prompts."""
+def _task_board_context(agent_id: str, current_task: dict[str, Any] | None, *, work_commit_target: Task | None) -> dict[str, Any]:
+    """Return a compact board-first task summary for authored prompts.
+
+    ``work_commit_target`` (``activity_runtime.work_commit_target``) leads the
+    board as WORK_COMMIT CONTINUES so the agent sees what ``work_commit: true``
+    continues; ``None`` omits the section.
+    """
     self_board = build_task_board(agent_id, scope="self")
     owned_board = build_task_board(agent_id, scope="owned")
     current_task_id = str((current_task or {}).get("id") or "").strip() or None
@@ -635,6 +643,8 @@ def _task_board_context(agent_id: str, current_task: dict[str, Any] | None) -> d
     blocked_child_rows = _tasks_from_board_section(owned_board, "blocked_or_stalled_child_tasks")
 
     sections: list[tuple[str, list[str]]] = []
+    if work_commit_target is not None:
+        sections.append(("WORK_COMMIT CONTINUES", _task_board_lines([work_commit_target], limit=1)))
     if open_rows:
         sections.append(("MY OPEN TASKS", _task_board_lines(open_rows, limit=5)))
     if waiting_self_rows:

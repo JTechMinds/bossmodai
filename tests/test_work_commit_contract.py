@@ -353,6 +353,28 @@ def test_committed_reply_resumes_paused_work_with_no_task_on_the_trigger() -> No
     assert live is not None and live.task_id == waiting.id
 
 
+def test_committed_reply_continues_the_shown_target_not_soft_blocked_work_it_reactivates() -> None:
+    agent = db.create_agent("Brad", role="Engineer")
+    shown = _task(agent.id, title="Thread task")
+    activity_runtime.activate_work_activity(agent.id, shown, task_status="active")
+    activity_runtime.pause_active_work(agent.id, "Waiting on the boss.", task_status="waiting")
+    soft_blocked = _task(agent.id, title="Soft-blocked work")
+    activity_runtime.activate_work_activity(agent.id, soft_blocked, task_status="active")
+    activity_runtime.pause_active_work(agent.id, "Blocked — no progress.", task_status="blocked")
+    trigger = {**_human_chat("Keep going on the thread task."), "task_id": shown.id}
+    assert activity_runtime.work_commit_target(agent.id, trigger).id == shown.id
+    decision = ConversationDecision.model_validate(
+        {"decision": "answer", "intentKind": "work_request", "reply": "Continuing it now.", "workCommit": True}
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+
+    result = apply_decision(decision.model_dump(), agent, state, trigger)
+
+    resumes = [item for item in result["trigger_requests"] if item.get("trigger_type") == "activity_resumed"]
+    assert [item["task_id"] for item in resumes] == [shown.id]
+
+
 def test_committed_reply_with_no_open_task_fails_with_the_new_copy() -> None:
     agent = db.create_agent("Brad", role="Engineer")
     decision = ConversationDecision.model_validate(
@@ -377,7 +399,10 @@ _RESUME_MARKER = "work_commit_resume_prompt_reconciled"
 
 def test_shipped_decision_contract_resumes_open_work_and_revises_by_id() -> None:
     text = load_default_prompt("runtime_contract_decision")
-    assert "`true` when this reply commits to continuing your own open work (active, paused, or waiting)." in text
+    assert (
+        "`true` only when this reply commits to continuing the task shown under WORK_COMMIT CONTINUES. "
+        "Anything else you say you will do now, including a quick fix the boss just asked for, is new work: accept it."
+    ) in text
     assert "On your own waiting or blocked task's thread" not in text
     assert "`true` with no active work starts nothing" not in text
     assert '"id":"string (one of your open task ids, to revise that task)"' in text
@@ -390,9 +415,10 @@ def test_shipped_decision_contract_resumes_open_work_and_revises_by_id() -> None
     assert '"act":"defer"' in dm_defer
     assert '"data":{"task":{"title":"string","desc":"string"}}' in dm_defer
     assert (
-        "The one exception is your own open work (active, paused, or waiting): the runtime continues it "
-        "after you answer when you set `work_commit` true."
+        "The one exception is the task shown under WORK_COMMIT CONTINUES on your board: the runtime continues "
+        "that task after you answer when you set `work_commit` true. It continues nothing else."
     ) in text
+    assert "your own open work (active, paused, or waiting)" not in text
     assert "The one exception is work already active on your Board" not in text
 
 
@@ -416,6 +442,125 @@ def test_resume_prompt_reconcile_runs_once() -> None:
     seed_defaults()
     for key in _RESUME_KEYS:
         assert _stored(key) == "operator's own text"
+
+
+_TARGET_MARKER = "work_commit_target_prompt_line_reconciled"
+_OLD_EXCEPTION_LINE = (
+    "- The one exception is your own open work (active, paused, or waiting): the runtime continues it "
+    "after you answer when you set `work_commit` true."
+)
+_OLD_TRUE_LINE = (
+    "- `true` when this reply commits to continuing your own open work (active, paused, or waiting). "
+    "The runtime resumes it after you reply."
+)
+_NEW_EXCEPTION_LINE = (
+    "- The one exception is the task shown under WORK_COMMIT CONTINUES on your board: the runtime continues "
+    "that task after you answer when you set `work_commit` true. It continues nothing else."
+)
+_NEW_TRUE_LINE = (
+    "- `true` only when this reply commits to continuing the task shown under WORK_COMMIT CONTINUES. "
+    "Anything else you say you will do now, including a quick fix the boss just asked for, is new work: accept it."
+)
+
+
+def test_work_commit_target_prompt_lines_reconcile_once() -> None:
+    assert _stored(_TARGET_MARKER) == "true"
+    shipped = load_default_prompt("runtime_contract_decision")
+    old_row = shipped.replace(_NEW_EXCEPTION_LINE, _OLD_EXCEPTION_LINE).replace(_NEW_TRUE_LINE, _OLD_TRUE_LINE)
+    assert old_row != shipped
+    # An operator line elsewhere in the row must survive the line swap.
+    old_row = old_row.replace("# CONVERSATION TURN", "# CONVERSATION TURN (operator)")
+    db.execute("DELETE FROM settings WHERE key = $1", [_TARGET_MARKER])
+    db.set_setting("runtime_contract_decision", old_row, "advanced")
+
+    seed_defaults()
+
+    assert _stored("runtime_contract_decision") == shipped.replace(
+        "# CONVERSATION TURN", "# CONVERSATION TURN (operator)"
+    )
+    assert _stored(_TARGET_MARKER) == "true"
+    db.set_setting("runtime_contract_decision", old_row, "advanced")
+    seed_defaults()
+    assert _stored("runtime_contract_decision") == old_row
+
+
+def _committed_reply() -> ConversationDecision:
+    return ConversationDecision.model_validate(
+        {"decision": "answer", "intentKind": "work_request", "reply": "Continuing it now.", "workCommit": True}
+    )
+
+
+def _validates(agent_id: str, trigger: dict[str, Any]) -> bool:
+    return (
+        validate_decision_for_trigger(
+            _committed_reply(),
+            trigger_type=str(trigger.get("type")),
+            active_task_id=activity_runtime.get_active_task_id(agent_id),
+            has_live_work=activity_runtime.get_active_work_activity(agent_id) is not None,
+            agent_id=agent_id,
+            trigger=trigger,
+        )
+        is None
+    )
+
+
+def test_work_commit_target_prefers_active_work_then_trigger_task_then_paused_work() -> None:
+    agent = db.create_agent("Charles", role="Engineer")
+    assert activity_runtime.work_commit_target(agent.id, _human_chat()) is None
+
+    paused = _task(agent.id, title="Paused contrast fix")
+    activity_runtime.activate_work_activity(agent.id, paused, task_status="active")
+    activity_runtime.pause_active_work(agent.id, "Waiting on audit.", task_status="waiting")
+    on_trigger = _task(agent.id, title="Thread task")
+    other = db.create_agent("Sarah", role="Reviewer")
+    foreign = _task(other.id, title="Sarah's task")
+
+    assert activity_runtime.work_commit_target(agent.id, _human_chat()).id == paused.id
+    own_trigger = {**_human_chat(), "task_id": on_trigger.id}
+    assert activity_runtime.work_commit_target(agent.id, own_trigger).id == on_trigger.id
+    foreign_trigger = {**_human_chat(), "task_id": foreign.id}
+    assert activity_runtime.work_commit_target(agent.id, foreign_trigger).id == paused.id
+    for trigger in (_human_chat(), own_trigger, foreign_trigger):
+        assert _validates(agent.id, trigger)
+
+    live = _task(agent.id, title="Live work")
+    activity_runtime.activate_work_activity(agent.id, live, task_status="active")
+    assert activity_runtime.work_commit_target(agent.id, own_trigger).id == live.id
+    assert _validates(agent.id, own_trigger)
+
+
+def _render_board(agent: Any, trigger: dict[str, Any], *, contract_kind: str) -> str:
+    from core.llm.context_builder import TurnContext, _build_prompt_render_context
+
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    turn = TurnContext(
+        agent=agent,
+        state=state,
+        trigger=trigger,
+        conversation_history=[],
+        prompt_notifications=[],
+        reference_materials=[],
+        contract_kind=contract_kind,
+    )
+    return _build_prompt_render_context(turn)["task_board"]["value"]
+
+
+def test_board_names_the_work_commit_target_on_decision_turns_only() -> None:
+    agent = db.create_agent("Charles", role="Engineer")
+    assert "WORK_COMMIT CONTINUES" not in _render_board(agent, _human_chat(), contract_kind="decision")
+
+    paused = _task(agent.id, title="Paused contrast fix")
+    activity_runtime.activate_work_activity(agent.id, paused, task_status="active")
+    activity_runtime.pause_active_work(agent.id, "Waiting on audit.", task_status="waiting")
+
+    decision_board = _render_board(agent, _human_chat(), contract_kind="decision")
+    lines = decision_board.splitlines()
+    assert lines[0] == "WORK_COMMIT CONTINUES:"
+    assert lines[1] == "task id | datetime | status | assignee | task name | description"
+    assert lines[2].startswith(f"{paused.id} | ")
+    assert " | Paused contrast fix | " in lines[2]
+    assert "WORK_COMMIT CONTINUES" not in _render_board(agent, _human_chat(), contract_kind="execution")
 
 
 _TASK_UPDATE_MARKER = "task_update_prompts_reconciled"

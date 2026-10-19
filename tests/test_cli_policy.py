@@ -24,6 +24,8 @@ from core.bm_cli.shell_executor import (
     PathJailError,
     assert_argv_within_path_jail,
     execute_shell_command,
+    path_candidates_from_token,
+    resolve_jailed_path,
 )
 from db.cli_policy_rules import (
     HARDENED_NEVER_ALLOWED_PATTERNS,
@@ -156,6 +158,40 @@ def test_tilde_other_user_denied(tmp_path: Path) -> None:
             cwd=workspace,
             allowed_roots=[workspace, projects],
         )
+
+
+def test_dash_led_echo_label_is_an_operand_not_an_option_path(tmp_path: Path) -> None:
+    workspace, projects = _seed_jail_tree(tmp_path)
+    assert_argv_within_path_jail(
+        ["echo", "---LICENSE/README tracked on main?---"],
+        cwd=workspace,
+        allowed_roots=[workspace, projects],
+    )
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["-f/etc/passwd", "--file=/etc/passwd", "---x/../../../../etc/passwd"],
+)
+def test_option_attached_and_dash_led_escapes_still_denied(tmp_path: Path, token: str) -> None:
+    workspace, projects = _seed_jail_tree(tmp_path)
+    with pytest.raises(PathJailError):
+        assert_argv_within_path_jail(
+            ["cat", token],
+            cwd=workspace,
+            allowed_roots=[workspace, projects],
+        )
+
+
+def test_double_dash_slash_resolves_cwd_relative(tmp_path: Path) -> None:
+    workspace, projects = _seed_jail_tree(tmp_path)
+    assert path_candidates_from_token("--/etc/passwd") == ["--/etc/passwd"]
+    assert resolve_jailed_path("--/etc/passwd", cwd=workspace) == (workspace / "--/etc/passwd").resolve()
+    assert_argv_within_path_jail(
+        ["cat", "--/etc/passwd"],
+        cwd=workspace,
+        allowed_roots=[workspace, projects],
+    )
 
 
 def test_execute_approved_command_still_applies_path_jail() -> None:
