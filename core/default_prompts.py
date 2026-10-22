@@ -50,6 +50,7 @@ _PROMPT_FILE_BY_KEY = {
     "internal_loop_execution_continue_break": "internal/loop_execution_continue_break.md",
     "internal_loop_execution_continue_generic": "internal/loop_execution_continue_generic.md",
     "internal_loop_execution_resume_frozen": "internal/loop_execution_resume_frozen.md",
+    "internal_loop_execution_checklist_handoff": "internal/loop_execution_checklist_handoff.md",
     "internal_loop_execution_no_progress_checkpoint": "internal/loop_execution_no_progress_checkpoint.md",
     "internal_loop_decision_paused_work_view": "internal/loop_decision_paused_work_view.md",
     "internal_action_requires_workspace": "internal/action_requires_workspace.md",

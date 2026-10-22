@@ -67,6 +67,7 @@ def _get_current_task(agent_id: str) -> dict[str, Any] | None:
         "project": task.project,
         "severity": task.severity,
         "references": [ref.model_dump() for ref in task.references],
+        "checklist": [item.model_dump() for item in task.checklist],
         "work_contract": task.work_contract.model_dump() if task.work_contract else None,
         "completion_summary": task.completion_summary,
         "status_note": task.status_note,

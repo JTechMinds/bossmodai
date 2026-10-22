@@ -12,6 +12,7 @@
  */
 const BossModTaskDetailSections = (() => {
     const { h } = BossModDom;
+    const CHECKLIST = BossModTaskChecklist;
     const COLUMNS = BossModTasksColumns;
     const DELIVERABLES = BossModTaskDeliverables;
     const FORMAT = BossModFormat;
@@ -305,6 +306,20 @@ const BossModTaskDetailSections = (() => {
         return node;
     }
 
+    /**
+     * The assignee's own plan for the task, read-only, with how far it is:
+     * the agent's text and notes as it wrote them, in its order.
+     *
+     * @param {object} task
+     * @returns {HTMLElement|null} null when the task has no checklist.
+     * @throws {Error} What BossModTaskChecklist.rows throws for a malformed item.
+     */
+    function checklist(task) {
+        const { resolved, total } = CHECKLIST.progress(task);
+        if (total === 0) return null;
+        return headed('Checklist', `${resolved} of ${total} checked off`, ...CHECKLIST.rows(task));
+    }
+
     /** A child's state as the checklist draws it. */
     function subtaskState(child) {
         if (child.status === 'complete') return { state: 'done', icon: 'check-circle-2' };
@@ -325,18 +340,12 @@ const BossModTaskDetailSections = (() => {
         if (typeof onNavigate !== 'function') throw new Error('[task-detail] subtasks needs onNavigate');
         const done = children.filter((child) => child.status === 'complete').length;
         return headed('Subtasks', `${done} of ${children.length}`,
-            ...children.map((child) => {
-                const { state, icon } = subtaskState(child);
-                return h('button', {
-                    class: 'task-detail-subtask', type: 'button', 'data-state': state,
-                    onclick: () => onNavigate(child.id),
-                },
-                    h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }),
-                    h('span', { class: 'task-detail-subtask-title' }, child.title || 'Untitled task'),
-                    // The glyph and the strike are visual; the state is said too.
-                    h('span', { class: 'visually-hidden' },
-                        ` — ${COLUMNS.STATUS_LABELS[child.status] || child.status}`));
-            }));
+            ...children.map((child) => CHECKLIST.row({
+                ...subtaskState(child),
+                title: child.title || 'Untitled task',
+                statusLabel: COLUMNS.STATUS_LABELS[child.status] || child.status,
+                onClick: () => onNavigate(child.id),
+            })));
     }
 
     /**
@@ -364,6 +373,6 @@ const BossModTaskDetailSections = (() => {
 
     return {
         statusLine, facts, callout, instructions,
-        references, deliverables, childDeliverableGroups, subtasks, doneContract,
+        references, deliverables, childDeliverableGroups, checklist, subtasks, doneContract,
     };
 })();

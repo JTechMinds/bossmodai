@@ -109,6 +109,12 @@ _RUNTIME_PROMPT_SURFACES: tuple[RuntimePromptSurface, ...] = (
         "internal_loop",
     ),
     RuntimePromptSurface(
+        "internal_loop_execution_checklist_handoff",
+        "Internal Execution Checklist Hand-off",
+        "default_file",
+        "internal_loop",
+    ),
+    RuntimePromptSurface(
         "internal_loop_execution_no_progress_checkpoint",
         "Internal Execution No-Progress Checkpoint",
         "default_file",

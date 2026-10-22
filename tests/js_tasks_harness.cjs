@@ -27,7 +27,7 @@ const NAMES = [
     "BossModAutoGrow",
     "BossModFileListing", "BossModPlaces", "BossModAgentRoutes",
     "BossModFloorScope",
-    "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskCard",
+    "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskChecklist", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetailSections",
     "BossModTaskDetail",
     "BossModAssignOutcomes", "BossModAssignForm",
@@ -220,6 +220,43 @@ function pureChecks() {
     };
 }
 
+/**
+ * The card's glyphs for what a task carries: the subtasks' progress, then the
+ * assignee's checklist, done and skipped both counted as checked off, each
+ * said in words too. A task with no checklist items shows no checklist glyph.
+ *
+ * @returns {{cardShowsChecklistProgress: boolean}}
+ */
+function cardGlyphChecks() {
+    const CARD = global.BossModTaskCard;
+    const options = { onOpen: () => {}, onToggleSelect: () => {}, colorOf: () => undefined };
+    const base = { ...person, id: "t-planned", title: "Audit the codebase", status: "active",
+        last_activity: todayIso, closed_at: null };
+    const planned = CARD.renderCard({
+        ...base,
+        checklist: [
+            { text: "Audit core", status: "done", note: "2 issues" },
+            { text: "Audit plugins", status: "skipped", note: "Dropped by the boss" },
+            { text: "Write the summary", status: "open", note: null },
+        ],
+    }, { ...options, progress: { done: 1, total: 2 } });
+    const read = (card) => card.querySelectorAll(".task-card-glyph").map((glyph) => ({
+        icon: glyph.querySelector("i").getAttribute("data-lucide"),
+        title: glyph.getAttribute("title"),
+        text: glyph.textContent,
+    }));
+    const glyphs = read(planned);
+    const unplanned = read(CARD.renderCard({ ...base, checklist: [] }, { ...options, progress: null }));
+    const cardShowsChecklistProgress = JSON.stringify(glyphs) === JSON.stringify([
+        { icon: "list-checks", title: "1 of 2 subtasks done", text: "1/2 subtasks done" },
+        { icon: "list-todo", title: "2 of 3 checklist items checked off", text: "2/3 checklist items checked off" },
+    ]) && unplanned.length === 0;
+    if (!cardShowsChecklistProgress) {
+        fail(`card glyphs read ${JSON.stringify(glyphs)}; without a checklist ${JSON.stringify(unplanned)}`);
+    }
+    return { cardShowsChecklistProgress };
+}
+
 /** Click the way the browser does: every listener, awaited, then settle. */
 async function click(el, what) {
     if (!el) fail(`nothing to click: ${what}`);
@@ -256,6 +293,7 @@ function storeFor(placeParams) {
 
 async function main() {
     const pure = pureChecks();
+    const cardGlyphs = cardGlyphChecks();
     const store = storeFor({});
     const bus = global.BossModBus.createBus(global.BossModBus.KNOWN_TOPICS);
     const container = document.createElement("div");
@@ -527,6 +565,7 @@ async function main() {
     process.stdout.write(JSON.stringify({
         ok: true,
         ...pure,
+        ...cardGlyphs,
         everyStatusLands,
         doneExcludesClosed,
         closedCardsAreMarked,

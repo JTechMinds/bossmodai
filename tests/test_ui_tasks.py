@@ -36,6 +36,8 @@ HARNESS_MODULES = [
     # tasks-place.js scopes the board to the operator's floor through it.
     JS / "shell" / "floor-scope.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "tasks-grid.js",
+    # The card and the detail's sections both draw checklist rows through it.
+    TASKS / "task-checklist.js",
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
     TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
@@ -59,7 +61,8 @@ DETAIL_MODULES = [
     # The Edit mode file picker draws the desk's crumbs and rows.
     JS / "core" / "file-listing.js",
     JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",
-    TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-deliverables.js",
+    TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-checklist.js",
+    TASKS / "task-deliverables.js",
     TASKS / "task-events.js", TASKS / "task-detail-sections.js",
     # Edit mode ranks assignees as the assign dialog does, so it loads after
     # assign-form.js; the detail builds it when Edit mode is picked.
@@ -333,7 +336,8 @@ def test_assign_form_does_not_judge_specialty() -> None:
 def test_tasks_harness() -> None:
     """The four behavioural promises, plus the two engine facts they rest on.
 
-    The harness mounts the real place against the real modules: every one of the
+    The harness mounts the real place against the real modules: a card shows
+    its subtasks' and its checklist's progress, every one of the
     eleven statuses renders, Done counts only `complete`, and a task event
     arriving mid-typing repaints the columns without replacing the search input
     or forgetting the selection.
@@ -357,6 +361,7 @@ def test_tasks_harness() -> None:
         "chatTargetRules": True,
         "sortFollowsFinishTime": True,
         "unknownWindowThrows": True,
+        "cardShowsChecklistProgress": True,
         "everyStatusLands": True,
         "doneExcludesClosed": True,
         "closedCardsAreMarked": True,
@@ -490,7 +495,10 @@ def test_task_detail_harness() -> None:
     what is done, the head of an unfinished task holds only the pencil (a
     finished one holds nothing), the completer needs a summary and Keep open
     resolves nothing, the role contract folds away, and the activity reads
-    as sentences.
+    as sentences. The assignee's checklist reads as the agent wrote it,
+    between Deliverables and Subtasks, read-only in view and in Edit mode;
+    a task without items has no Checklist section, and a malformed item
+    throws rather than drawing a made-up row.
 
     Edit mode edits the same panel in place: the pencil shows ✓/✕ in its
     place and mounts the title editor in the head; one Deliverables section
@@ -526,9 +534,13 @@ def test_task_detail_harness() -> None:
         "instructionsUseMarkdown": True,
         "clampToggleFollowsOverflow": True,
         "subtasksCountDone": True,
+        "checklistReadsAsWritten": True,
+        "checklistAbsentWithoutItems": True,
+        "malformedChecklistThrows": True,
         "pencilIsTheHeadsOnlyTool": True,
         "editModeEntersInPlace": True,
         "descriptionUncapped": True,
+        "checklistReadOnlyInEditMode": True,
         "assigneeReadsAsAField": True,
         "oneDeliverablesSection": True,
         "statusActionsWaitForTheDraft": True,

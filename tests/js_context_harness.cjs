@@ -136,7 +136,7 @@ const NAMES = [
     // task as a layer over the desk through the Tasks place's own loader,
     // detail, task actions and layer controller; its Chat tool is the one
     // conversation route. All are read at call time.
-    "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables", "BossModTaskEvents",
+    "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables", "BossModTaskEvents",
     "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksComplete",
@@ -1173,7 +1173,7 @@ async function main() {
         && trailOf(topTaskLayer()) === "Jim › Write TDD specs"
         && topTaskLayer().querySelector(".modal-back").getAttribute("aria-label") === "Back to Jim";
     // A subtask link is one step deeper: three crumbs, ‹ back to its parent.
-    await topTaskLayer().querySelector(".task-detail-subtask").dispatchClick();
+    await topTaskLayer().querySelector(".task-detail-check").dispatchClick();
     await drain();
     const aSubtaskPushesAThirdCrumb = taskLayers().length === 2
         && trailOf(topTaskLayer()) === "Jim › Write TDD specs › Draft M5.3 list"

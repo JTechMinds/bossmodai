@@ -368,6 +368,15 @@ CREATE TABLE IF NOT EXISTS task_references (
     updated_at     TIMESTAMP DEFAULT current_timestamp
 );
 
+-- The assignee's checklist for a task: a JSON list of {text, status, note}
+-- (core/models/task.py TaskChecklistItem). No row = no checklist.
+CREATE TABLE IF NOT EXISTS task_checklists (
+    task_id        VARCHAR PRIMARY KEY REFERENCES tasks(id),
+    items          TEXT    NOT NULL,
+    created_at     TIMESTAMP DEFAULT current_timestamp,
+    updated_at     TIMESTAMP DEFAULT current_timestamp
+);
+
 CREATE TABLE IF NOT EXISTS task_notification_policies (
     task_id         VARCHAR PRIMARY KEY REFERENCES tasks(id),
     source_channel  VARCHAR NOT NULL,

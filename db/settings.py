@@ -214,6 +214,11 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # The full transcript is restored on execution resumes; decision turns
     # see only the most recent steps that fit the smaller chat-view budget.
     ("work_snapshot_max_chars", "120000", "simulation"),
+    # Once saved work passes work_snapshot_max_chars, the oldest steps are
+    # dropped until it fits this percentage of it. The gap leaves room for a
+    # run of steps before the next trim. A whole number from 1 to 99
+    # (freeze_work_turn refuses anything else).
+    ("work_snapshot_trim_percent", "50", "simulation"),
     ("work_snapshot_chat_view_max_chars", "24000", "simulation"),
     # Checkpoints (a "you are repeating steps" resume) before a no-progress
     # trip blocks the task.
@@ -394,6 +399,7 @@ def seed_defaults() -> None:
     # After the pass above: its new line is this pass's old line.
     reconcile_program_paths_prompt_line()
     reconcile_work_commit_target_prompt_line()
+    reconcile_checklist_prompt_lines()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -1069,6 +1075,68 @@ def reconcile_work_commit_target_prompt_line() -> None:
         _WORK_COMMIT_TARGET_PROMPT_LINE_RECONCILED,
         missing_row_label="work_commit target",
         missing_line_label="work_commit target",
+    )
+
+
+# The execution contract teaches the checklist (core/tasking/checklist.py):
+# three rules after the taskmsg rule and two examples after the taskmsg
+# example. Each edit keeps its anchor line and inserts the new lines after it.
+# The \n in the checklist add example is a literal backslash-n in the prompt
+# text (a JSON escape the model writes), so the Python string spells it "\\n"
+# and the reconciled row matches the shipped file byte for byte.
+_CHECKLIST_RULES_ANCHOR = "  - use taskmsg to continue an existing task thread"
+_CHECKLIST_EXAMPLES_ANCHOR = (
+    '  {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and '
+    'send it back when ready."},"th":"continue the existing task thread"}'
+)
+_CHECKLIST_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_execution": (
+        (
+            _CHECKLIST_RULES_ANCHOR,
+            _CHECKLIST_RULES_ANCHOR
+            + "\n"
+            + "  - work with several distinct parts: list the parts first with cli `checklist add` (body: one item "
+            "per line), then work one part at a time. When a part is finished, mark it with `checklist done <n>` "
+            "(body: what you found or where the result is), or `checklist skip <n>` (body: why it is not needed). "
+            "Checking an item off clears your steps on that part, and the next part starts fresh with your "
+            "checklist under Current Task; put anything later parts need in the note, or in a file the note names"
+            + "\n"
+            + "  - a part a teammate should own is a child task (assign), not a checklist item"
+            + "\n"
+            + "  - done needs every checklist item marked done or skipped",
+        ),
+        (
+            _CHECKLIST_EXAMPLES_ANCHOR,
+            _CHECKLIST_EXAMPLES_ANCHOR
+            + "\n"
+            + '  {"act":"cli","data":{"cmd":"checklist add","body":"Audit core/tasking\\nAudit db/tasks.py\\n'
+            'Write the findings summary"},"th":"plan the audit in parts"}'
+            + "\n"
+            + '  {"act":"cli","data":{"cmd":"checklist done 1","body":"3 issues, written to /projects/app/audit.md '
+            'under Tasking"},"th":"check off part 1"}',
+        ),
+    ),
+}
+_CHECKLIST_PROMPT_LINES_RECONCILED = "checklist_prompt_lines_reconciled"
+
+
+def reconcile_checklist_prompt_lines() -> None:
+    """Teach the stored execution contract the checklist rules and examples, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_work_commit_target_prompt_line`, driven by
+    ``_CHECKLIST_PROMPT_LINE_EDITS``: each anchor line (the ``taskmsg`` rule
+    and the ``taskmsg`` example) is kept and the checklist lines are inserted
+    after it. A row equal to the shipped default is skipped. A row without an
+    exact anchor line keeps its bytes, and a warning names the key and the
+    line, so the operator can review it by hand. Later calls, once the marker
+    is recorded, are no-ops.
+    """
+    _reconcile_prompt_lines(
+        _CHECKLIST_PROMPT_LINE_EDITS,
+        _CHECKLIST_PROMPT_LINES_RECONCILED,
+        missing_row_label="checklist",
+        missing_line_label="checklist",
     )
 
 

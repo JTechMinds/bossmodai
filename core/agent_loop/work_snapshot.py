@@ -9,6 +9,20 @@ rebuilds the preamble and replays the frozen steps after it, so the agent
 keeps what it read. A decision turn gets a read-only, code-rendered view of
 the latest steps instead, so its status reply is grounded in what actually ran.
 
+Two boundaries keep the saved work small, and both end the execution turn
+after the step that crossed them; the dispatcher's live-work continuation
+queues the next turn, whose preamble is built fresh:
+
+- the item boundary: a checklist item was checked off. The saved transcript
+  is replaced by one short hand-off note (:func:`reset_work_turn`), so the
+  next part starts from the checklist under Current Task, not from the raw
+  output of the parts before it;
+- the budget boundary: the transcript passed ``work_snapshot_max_chars``
+  (:func:`transcript_over_budget`). The freeze drops the oldest steps behind
+  a marker, as at any pause, until the saved work fits
+  ``work_snapshot_trim_percent`` of ``work_snapshot_max_chars``, so the next
+  turn has room for a run of steps before it reaches the budget again.
+
 Snapshot policy lives here. The table itself is ``db/work_snapshots.py``.
 """
 
@@ -29,6 +43,7 @@ from core.models import Activity, Agent, WorkSnapshot
 logger = logging.getLogger(__name__)
 
 MAX_CHARS_SETTING = "work_snapshot_max_chars"
+TRIM_PERCENT_SETTING = "work_snapshot_trim_percent"
 CHAT_VIEW_MAX_CHARS_SETTING = "work_snapshot_chat_view_max_chars"
 
 # Execution triggers that continue a frozen work activity.
@@ -60,7 +75,12 @@ def freeze_work_turn(
     Only ``context[initial_len:]`` is saved; the preamble is rebuilt on every
     resume. The new steps are appended to any transcript already stored, so
     repeated pauses accumulate. Over ``work_snapshot_max_chars`` the oldest
-    whole steps are dropped behind one marker message naming what they ran.
+    whole steps are dropped until it fits ``work_snapshot_trim_percent`` of
+    ``work_snapshot_max_chars``, behind one marker message naming what they
+    ran. Trimming below the trigger leaves room for a run of steps before the
+    next trim, so the budget boundary does not end every later turn after one
+    step. A share of the budget, not a second character count, so lowering
+    the budget never conflicts with the trim.
 
     Args:
         agent: The agent whose turn is pausing.
@@ -72,11 +92,22 @@ def freeze_work_turn(
 
     Returns:
         The stored snapshot.
+
+    Raises:
+        core.config.ConfigError: Either setting is missing or not an integer,
+            or ``work_snapshot_trim_percent`` is not from 1 to 99.
     """
+    budget = config.require_int(MAX_CHARS_SETTING)
+    percent = config.require_int(TRIM_PERCENT_SETTING)
+    if not 1 <= percent <= 99:
+        raise config.ConfigError(
+            f"Required setting '{TRIM_PERCENT_SETTING}' must be a whole number from 1 to 99: {percent!r}"
+        )
+    target = budget * percent // 100
     working = [_plain_message(message) for message in context[initial_len:]]
     existing = db.get_work_snapshot(activity.id)
     transcript = [*(existing.transcript if existing else []), *working]
-    transcript = _compact(transcript, budget=config.require_int(MAX_CHARS_SETTING), agent=agent)
+    transcript = _compact(transcript, budget=budget, target=target, agent=agent)
     return db.save_work_snapshot(
         activity.id,
         agent_id=agent.id,
@@ -85,6 +116,62 @@ def freeze_work_turn(
         fingerprints=list(fingerprints),
         no_progress_checkpoints=no_progress_checkpoints,
     )
+
+
+def reset_work_turn(*, agent: Agent, activity: Activity, handoff: str) -> WorkSnapshot:
+    """Replace the work's saved steps with one hand-off note: the item boundary.
+
+    Called when a checklist item is checked off in an execution turn. The
+    transcript becomes ``[{"role": "user", "content": handoff}]``, the step
+    fingerprints are cleared and the no-progress checkpoint count is reset,
+    so loop detection starts over for the next part. Interludes already
+    recorded on the row are kept (``db.save_work_snapshot`` leaves them),
+    so a message that arrived during the part is still shown on resume.
+
+    Args:
+        agent: The agent whose turn reached the boundary.
+        activity: The live work activity whose saved steps are replaced.
+        handoff: The note the next turn resumes from, as the checklist
+            command rendered it.
+
+    Returns:
+        The stored snapshot.
+    """
+    return db.save_work_snapshot(
+        activity.id,
+        agent_id=agent.id,
+        task_id=activity.task_id,
+        transcript=[{"role": "user", "content": handoff}],
+        fingerprints=[],
+        no_progress_checkpoints=0,
+    )
+
+
+def transcript_over_budget(prior: WorkSnapshot | None, new_messages: list[dict[str, Any]]) -> bool:
+    """Return whether the saved transcript plus this turn's steps passes the budget.
+
+    The budget boundary: the execution loop ends the turn once this is true,
+    so no turn grows past ``work_snapshot_max_chars``, the point where a
+    freeze trims (down to ``work_snapshot_trim_percent`` of
+    ``work_snapshot_max_chars``). Counted the way
+    :func:`_compact` counts, in content characters.
+
+    Args:
+        prior: The snapshot the turn started from, or ``None`` when the work
+            has none yet.
+        new_messages: This turn's working messages so far, including the
+            step that just ran.
+
+    Returns:
+        ``True`` when the characters exceed ``work_snapshot_max_chars``;
+        exactly at the budget is not over it.
+
+    Raises:
+        core.config.ConfigError: ``work_snapshot_max_chars`` is missing or
+            not an integer.
+    """
+    prior_chars = _chars(prior.transcript) if prior is not None else 0
+    return prior_chars + _chars(new_messages) > config.require_int(MAX_CHARS_SETTING)
 
 
 def restore_work_turn(*, activity: Activity, context: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -239,12 +326,18 @@ def step_label(assistant_content: str) -> str:
     return name
 
 
-def _compact(transcript: list[dict[str, str]], *, budget: int, agent: Agent) -> list[dict[str, str]]:
-    """Drop the oldest whole steps until the transcript fits ``budget`` chars.
+def _compact(
+    transcript: list[dict[str, str]], *, budget: int, target: int, agent: Agent,
+) -> list[dict[str, str]]:
+    """Once the transcript passes ``budget`` chars, drop the oldest whole steps until it fits ``target``.
 
-    A step is never split. The newest step is always kept, since it is what
-    the agent was doing. Dropped steps are replaced by one marker message
-    naming what they ran; an earlier marker is folded into the new one.
+    At or under ``budget`` the transcript is returned unchanged. Over it, the
+    oldest steps go until the marker plus what is kept is at most ``target``
+    (``work_snapshot_trim_percent`` of ``budget``, so the next trim is a run
+    of steps away). A step is never split. The newest step is always kept,
+    since it is what the agent was doing, even when it alone is over
+    ``target``. Dropped steps are replaced by one marker message naming what
+    they ran; an earlier marker is folded into the new one.
     """
     if _chars(transcript) <= budget:
         return transcript
@@ -258,7 +351,7 @@ def _compact(transcript: list[dict[str, str]], *, budget: int, agent: Agent) -> 
     dropped_now = 0
     dropped_any = False
     marker = _render_marker(count, commands) if count else ""
-    while len(groups) > 1 and len(marker) + _chars([m for g in groups for m in g]) > budget:
+    while len(groups) > 1 and len(marker) + _chars([m for g in groups for m in g]) > target:
         group = groups.pop(0)
         dropped_any = True
         if group[0]["role"] == "assistant":

@@ -136,6 +136,7 @@ CONTEXT_MODULES = [
     # place's loader, detail, canceller and layer controller, and the desk's
     # opener over them (index.html loads the desk after all of these).
     JS / "places" / "tasks" / "tasks-data.js",
+    JS / "places" / "tasks" / "task-checklist.js",
     JS / "places" / "tasks" / "task-deliverables.js",
     JS / "places" / "tasks" / "task-events.js",
     JS / "places" / "tasks" / "task-detail-sections.js",

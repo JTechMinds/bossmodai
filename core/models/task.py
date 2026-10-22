@@ -80,6 +80,59 @@ class TaskReference(BaseModel):
         return text
 
 
+# Where one checklist item stands: still to do, done, or not needed.
+TaskChecklistStatus = Literal["open", "done", "skipped"]
+
+
+class TaskChecklistItem(BaseModel):
+    """One part of the assignee's own plan for a task: an item on its checklist.
+
+    The assignee writes the checklist to work a large task in parts and
+    checks the parts off as it goes; the rules (append only, resolve by
+    number) live in ``core/tasking/checklist.py``. Items are numbered by
+    position from 1 and are never removed or reordered, so a number names the
+    same item for the life of the task.
+
+    Attributes:
+        text: The part, in the agent's words. Stripped; never blank.
+        status: ``open`` until the agent marks it ``done`` or ``skipped``.
+        note: What the agent found or where the result is (``done``), or why
+            the part is not needed (``skipped``). Stripped; blank is ``None``.
+
+    Raises:
+        pydantic.ValidationError: ``text`` is blank, ``status`` is not
+            open, done or skipped, a ``skipped`` item has no note, or an
+            unknown field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str
+    status: TaskChecklistStatus = "open"
+    note: str | None = None
+
+    @field_validator("text")
+    @classmethod
+    def _strip_text(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("a checklist item needs text")
+        return text
+
+    @field_validator("note")
+    @classmethod
+    def _strip_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @model_validator(mode="after")
+    def _skipped_needs_a_reason(self) -> "TaskChecklistItem":
+        if self.status == "skipped" and self.note is None:
+            raise ValueError("a skipped checklist item needs a note saying why it is not needed")
+        return self
+
+
 # ---------------------------------------------------------------------------
 # Task — a unit of work
 # ---------------------------------------------------------------------------
@@ -103,6 +156,8 @@ class Task(BaseModel):
     work_contract: WorkContract | None = None
     # Documents the assignee reads first (task_references side table).
     references: list[TaskReference] = Field(default_factory=list)
+    # The assignee's checklist, in item order (task_checklists side table).
+    checklist: list[TaskChecklistItem] = Field(default_factory=list)
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
     notification_channel_id: str | None = None

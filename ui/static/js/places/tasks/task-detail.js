@@ -3,8 +3,9 @@
  *
  * A panel modal whose body is one centred column: the status line, the facts,
  * the one callout the state calls for, the task itself, its references, the
- * deliverables, the subtasks, what counts as done, and the activity. The title is the modal's
- * own head and is not repeated below it. The sections are pure builders in
+ * deliverables, the assignee's checklist, the subtasks, what counts as done,
+ * and the activity. The title is the modal's own head and is not repeated
+ * below it. The sections are pure builders in
  * task-detail-sections.js; this file composes them, owns the modal, and owns
  * the head's tools: the pencil that enters Edit mode, and its ✓ and ✕.
  *
@@ -108,6 +109,8 @@ const BossModTaskDetail = (() => {
                 // In Edit mode one Deliverables section holds the task's own
                 // editable rows and its subtasks' read-only ones.
                 editing ? editMode.deliverablesSection : SECTIONS.deliverables(current, children, api),
+                // The assignee's own plan; read-only in Edit mode too.
+                SECTIONS.checklist(current),
                 SECTIONS.subtasks(children, onNavigate),
                 SECTIONS.doneContract(current),
                 events.element,

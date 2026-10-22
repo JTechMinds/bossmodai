@@ -32,6 +32,7 @@ from core.llm.live_processes_block import live_processes_messages
 from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from core.tasking import build_task_board
+from core.tasking.checklist import format_checklist_for_context
 from core.tasking.references import format_references_for_context
 from core.time import ensure_utc, now_local
 from core.world.tilemap import get_room_at
@@ -571,6 +572,7 @@ def _format_task(task: dict[str, Any]) -> str:
     if deliverable_lines:
         details.append("deliverables:")
         details.extend(deliverable_lines)
+    details.extend(format_checklist_for_context(task.get("checklist") or []))
     details.append(
         "done_claim: "
         + operator_done_claim_guidance(

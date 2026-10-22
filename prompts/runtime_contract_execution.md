@@ -45,6 +45,9 @@ RULES:
   - use socialmsg for ordinary coworker chat that does not create or continue task work
   - use assign to create new delegated work
   - use taskmsg to continue an existing task thread
+  - work with several distinct parts: list the parts first with cli `checklist add` (body: one item per line), then work one part at a time. When a part is finished, mark it with `checklist done <n>` (body: what you found or where the result is), or `checklist skip <n>` (body: why it is not needed). Checking an item off clears your steps on that part, and the next part starts fresh with your checklist under Current Task; put anything later parts need in the note, or in a file the note names
+  - a part a teammate should own is a child task (assign), not a checklist item
+  - done needs every checklist item marked done or skipped
   - when you use taskmsg, choose the kind that matches what you need:
     note = passive comment or acknowledgement
     status = progress or completion update that does not need a reply
@@ -111,6 +114,8 @@ EXAMPLES:
   {"act":"socialmsg","data":{"to":"human","msg":"Got it. I'll take a look and report back soon."},"th":"send a non-task social message"}
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
   {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
+  {"act":"cli","data":{"cmd":"checklist add","body":"Audit core/tasking\nAudit db/tasks.py\nWrite the findings summary"},"th":"plan the audit in parts"}
+  {"act":"cli","data":{"cmd":"checklist done 1","body":"3 issues, written to /projects/app/audit.md under Tasking"},"th":"check off part 1"}
   {"act":"wait","data":{"why":"Waiting on Taylor's delegated findings before summarizing."},"th":"pause the task until Taylor reports back"}
   {"act":"mtg","data":{"mode":"room","aids":["agent-123","agent-456"],"topic":"Planning"},"th":"invite participants and join the meeting room"}
   {"act":"mtg","data":{"mode":"remote","aids":["agent-123"],"topic":"Quick sync"},"th":"start a remote meeting"}

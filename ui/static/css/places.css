@@ -409,10 +409,12 @@
   padding-right: 20px; font-size: 13px; font-weight: 500; }            /* clear of the checkbox */
 .task-card-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--alert-ink); }
 .task-card-parent { font-size: 11px; color: var(--hint); }
-.task-card-foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+/* On a narrow card the glyphs drop to their own line, right-aligned, rather
+   than squeezing the owner and age into a broken wrap. */
+.task-card-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 6px; }
 .task-card-meta { display: flex; align-items: center; gap: 5px; min-width: 0; margin: 0; font-size: 11px; color: var(--muted); }
 .task-card-age::before, .task-card-closed::before, .task-card-marker::before { content: '· '; }
-.task-card-glyphs { display: flex; align-items: center; gap: 8px; flex: none; font-size: 11px; color: var(--hint); }
+.task-card-glyphs { display: flex; align-items: center; gap: 8px; flex: none; margin-left: auto; font-size: 11px; color: var(--hint); }
 .task-card-glyph { display: inline-flex; align-items: center; gap: 3px; }
 .task-card-glyph svg { width: 12px; height: 12px; }
 .task-card-actions { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -465,11 +467,16 @@
 .task-detail-file-name { font-weight: 500; }
 .task-detail-file-desc { color: var(--muted); font-size: 12px; }
 .task-detail-file-path { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--hint); word-break: break-all; }
-.task-detail-subtask { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 0; text-align: left; font-size: 13px; }
-.task-detail-subtask svg { width: 14px; height: 14px; flex: none; color: var(--hint); }
-.task-detail-subtask[data-state="done"] svg { color: var(--ok); }
-.task-detail-subtask[data-state="done"] .task-detail-subtask-title,
-.task-detail-subtask[data-state="closed"] .task-detail-subtask-title { text-decoration: line-through; color: var(--muted); }
+/* A checklist row (task-checklist.js): the assignee's checklist items and
+   the subtasks. The glyph's box is one line of the title tall, so the glyph
+   centres on the first line however far the title or its note wraps. */
+.task-detail-check { display: flex; align-items: flex-start; gap: 8px; width: 100%; padding: 4px 0; text-align: left; font-size: 13px; }
+.task-detail-check svg { width: 14px; height: 1lh; flex: none; color: var(--hint); }
+.task-detail-check[data-state="done"] svg { color: var(--ok); }
+.task-detail-check-body { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.task-detail-check[data-state="done"] .task-detail-check-title,
+.task-detail-check[data-state="closed"] .task-detail-check-title,
+.task-detail-check[data-state="skipped"] .task-detail-check-title { text-decoration: line-through; color: var(--muted); }
 .task-detail-contract { padding-top: 10px; border-top: 1px solid var(--line); }
 .task-detail-contract > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .task-detail-contract[open] > summary { margin-bottom: 8px; }

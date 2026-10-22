@@ -12,6 +12,7 @@
  */
 const BossModTaskCard = (() => {
     const { h } = BossModDom;
+    const CHECKLIST = BossModTaskChecklist;
     const COLUMNS = BossModTasksColumns;
 
     /** Statuses whose card carries an explicit marker, and the copy for each. */
@@ -35,7 +36,15 @@ const BossModTaskCard = (() => {
             h('span', { class: 'visually-hidden' }, 'Severity '), severity);
     }
 
-    /** What the task carries: deliverables, and how far its subtasks are. */
+    /**
+     * What the task carries: deliverables, how far its subtasks are, and how
+     * far the assignee's checklist is.
+     *
+     * @param {object} task
+     * @param {{done: number, total: number}|null} progress  The subtasks'.
+     * @returns {HTMLElement|null} null when the task carries none of them.
+     * @throws {Error} What BossModTaskChecklist.progress throws.
+     */
     function glyphs(task, progress) {
         const files = (task.work_contract && task.work_contract.deliverables) || [];
         const nodes = [];
@@ -46,6 +55,12 @@ const BossModTaskCard = (() => {
         if (progress && progress.total > 0) {
             nodes.push(glyph('list-checks', `${progress.done} of ${progress.total} subtasks done`,
                 `${progress.done}/${progress.total}`, ' subtasks done'));
+        }
+        const checklist = CHECKLIST.progress(task);
+        if (checklist.total > 0) {
+            const { resolved: r, total: t } = checklist;
+            nodes.push(glyph('list-todo', `${r} of ${t} checklist items checked off`,
+                `${r}/${t}`, ' checklist items checked off'));
         }
         return nodes.length ? h('span', { class: 'task-card-glyphs' }, ...nodes) : null;
     }

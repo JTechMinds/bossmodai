@@ -29,6 +29,7 @@ from core.agent_loop.task_followups import (
 from core.agent_loop.task_origin_mirrors import attach_operator_status_line
 from core.agent_loop.task_roles import default_task_owner_id
 from core.models import Agent, AgentState
+from core.tasking.checklist import open_checklist_items
 from core.tasking.service import append_task_event, create_or_bind_subtask, list_open_child_tasks
 from core.tasking.transitions import transition_task
 import db
@@ -137,6 +138,20 @@ async def _handle_complete(
                 ),
                 "agent_name": agent.name,
                 "task_ids": [child.id for child in open_children],
+            }
+        # The task's own plan cannot say work remains on a finished task.
+        # Every open item is named: each must be resolved.
+        open_items = open_checklist_items(task)
+        if open_items:
+            listed = ", ".join(f'{number}. "{item.text}"' for number, item in open_items)
+            return {
+                "event": "world_feedback",
+                "detail": (
+                    f"Your checklist still has open items: {listed}. Mark each one with "
+                    "checklist done <n>, or checklist skip <n> with the reason as the body, then finish."
+                ),
+                "agent_name": agent.name,
+                "task_id": task.id,
             }
     if _task_requires_conversational_follow_up(task, actor_id=agent.id) and not (
         isinstance(follow_up_message, str) and follow_up_message.strip()

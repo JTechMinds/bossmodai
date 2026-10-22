@@ -20,7 +20,7 @@ from core.agent_loop.soft_blocks import (
 )
 from core.agent_loop.liveness import classify_step, next_stale_streak, record_action_liveness, step_fingerprint
 from core.agent_loop.work_binding import bound_activity, bound_task_id, bound_work_activity, is_detached
-from core.agent_loop.work_snapshot import freeze_work_turn
+from core.agent_loop.work_snapshot import freeze_work_turn, reset_work_turn, transcript_over_budget
 from core.agent_loop.cli_turn_result import broadcast_cli_activity, map_cli_result
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
@@ -129,6 +129,29 @@ async def _run_execution_turn(
     this turn's working transcript; it is frozen onto the work activity at
     every exit that leaves the work live, and ``seen`` fingerprints carry
     across pauses so a re-read counts as stale.
+
+    Two boundaries end the turn after the step that crossed them, so the
+    working context stays small (see ``work_snapshot``):
+
+    - the item boundary: a CLI result declared ``work_turn_boundary`` (a
+      checklist item was checked off). The saved transcript is replaced by
+      its hand-off note (``reset_work_turn``) and this turn's steps are not
+      frozen back on top of it;
+    - the budget boundary: the saved transcript plus this turn's steps
+      passed ``work_snapshot_max_chars`` while the turn is bound to a work
+      activity. The end-of-loop freeze trims, as at any pause, down to
+      ``work_snapshot_trim_percent`` of ``work_snapshot_max_chars``, so the
+      next turn has room for a run of steps before it reaches the budget
+      again.
+
+    Both return ``TurnOutcome.success``; the dispatcher's live-work
+    continuation queues the next turn for the still-active task. Each turn
+    runs at least one step, so a single step over the budget still moves on.
+
+    Raises:
+        RuntimeError: A CLI result declared ``work_turn_boundary`` in a turn
+            bound to no work activity; the checklist command needs a bound
+            task, so this is a broken invariant, not a case to skip.
     """
     # Everything from here on, including approval/consent results, is this
     # turn's working transcript; the preamble before it is never frozen.
@@ -251,6 +274,9 @@ async def _run_execution_turn(
         )
     retry_blocked = False
     step_messages: list[dict[str, str]] = []
+    # Set at the item boundary: the saved steps were replaced by the hand-off,
+    # so the end-of-loop freeze must not append this turn's steps back.
+    work_reset = False
 
     while True:
         action_count += 1
@@ -907,6 +933,26 @@ async def _run_execution_turn(
         ):
             break
 
+        # Item boundary: the part is finished; the next one starts from the
+        # hand-off and the checklist under Current Task.
+        handoff = result.get("work_turn_boundary")
+        if handoff:
+            if work_activity is None:
+                raise RuntimeError(
+                    f"{agent.name} checked off a checklist item in an execution turn "
+                    "bound to no work activity"
+                )
+            reset_work_turn(agent=agent, activity=work_activity, handoff=handoff)
+            work_reset = True
+            break
+
+        # Budget boundary: end where a freeze would start trimming anyway. A
+        # turn with no work activity has nothing saved or continued to bound.
+        if work_activity is not None and transcript_over_budget(
+            prior_snapshot, [*context[initial_len:], *step_messages]
+        ):
+            break
+
         if _has_pending_interrupts(agent.id):
             break
 
@@ -917,14 +963,15 @@ async def _run_execution_turn(
 
     # The step that ended the loop has not been appended yet; it is part of
     # what the agent did, so the freeze includes it.
-    _freeze_if_live(
-        agent=agent,
-        work_activity=work_activity,
-        initial_len=initial_len,
-        context=[*context, *step_messages],
-        fingerprints=seen_fingerprints,
-        no_progress_checkpoints=no_progress_checkpoints,
-    )
+    if not work_reset:
+        _freeze_if_live(
+            agent=agent,
+            work_activity=work_activity,
+            initial_len=initial_len,
+            context=[*context, *step_messages],
+            fingerprints=seen_fingerprints,
+            no_progress_checkpoints=no_progress_checkpoints,
+        )
     if trigger_type == "host_path_consent_resolved":
         db.consume_turn_once_grants(agent.id)
 

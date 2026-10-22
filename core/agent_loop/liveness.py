@@ -28,7 +28,8 @@ _PROGRESS_ACTIONS = {
     "remoteMeeting",
 }
 
-# Virtual CLI kinds whose success means a file or tree actually changed.
+# Virtual CLI kinds whose success is a durable change to the project or to
+# the task's checklist.
 _PROGRESS_KINDS = frozenset(
     {
         "write",
@@ -38,6 +39,7 @@ _PROGRESS_KINDS = frozenset(
         "rewrite-section",
         "batch-write",
         "git_restore",
+        "checklist_item_resolved",
     }
 )
 _FILE_MUTATIONS = frozenset({"write", "append", "bwrite", "mkdir", "repsect", "rewsect"})

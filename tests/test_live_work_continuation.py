@@ -22,10 +22,13 @@ from core.agent_loop.activity_scheduler import ensure_live_work_continuation
 from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.soft_blocks import apply_no_progress_block
+from core.agent_loop.work_snapshot import freeze_work_turn
+from core.bm_cli.runtime import execute_bm_cli
+from core.default_prompts import render_default_prompt
 from core.llm.client import LLMResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
-from core.tasking import create_or_bind_task
+from core.tasking import add_checklist_items, create_or_bind_task
 
 
 def setup_function() -> None:
@@ -362,3 +365,251 @@ def test_next_work_picks_the_oldest_queued_task_and_never_a_waiting_one() -> Non
         task_id=older.id,
     )
     assert next_work_after_end(agent.id, ended_task_id=None) == []
+
+
+# ─── Context per checklist item: the item and budget boundaries ───
+
+_STATUS_STEP = '{"act":"cli","data":{"cmd":"status"},"th":"check status"}'
+_BOARD_STEP = '{"act":"cli","data":{"cmd":"my-board"},"th":"check board"}'
+_CHECK_OFF_STEP = '{"act":"cli","data":{"cmd":"checklist done 1","body":"2 issues, in /projects/app/audit.md"},"th":"part 1 done"}'
+
+
+def _script_prompts(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> list[list[dict[str, Any]]]:
+    """Like ``_script``, keeping the messages each call was sent."""
+    queue = list(contents)
+    prompts: list[list[dict[str, Any]]] = []
+
+    async def _fake_completion(**kwargs: Any) -> LLMResponse:
+        if not queue:
+            raise AssertionError("unexpected extra LLM completion")
+        prompts.append([dict(item) for item in kwargs.get("messages") or []])
+        return LLMResponse(content=queue.pop(0), model="test/mock", prompt_tokens=8, completion_tokens=4, total_tokens=12)
+
+    monkeypatch.setattr("core.llm.client.completion", _fake_completion)
+    return prompts
+
+
+def _queued_resume(agent_id: str, task_id: str) -> dict[str, Any]:
+    """Claim the one queued resume for the task, as the dispatcher would."""
+    (row,) = [
+        item for item in db.list_queued_triggers()
+        if item.agent_id == agent_id and item.trigger_type == "activity_resumed" and item.task_id == task_id
+    ]
+    return _claimed_payload(row)
+
+
+def _start_resume(agent_id: str, task_id: str) -> dict[str, Any]:
+    db.create_agent_trigger(
+        agent_id=agent_id, trigger_type="activity_resumed", source_channel="work",
+        payload={"content": "Resume work."}, task_id=task_id,
+    )
+    return _queued_resume(agent_id, task_id)
+
+
+def _frozen_steps(agent, *steps: str) -> None:
+    """Freeze earlier steps onto the agent's live work, each with a short result."""
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    context: list[dict[str, Any]] = []
+    for step in steps:
+        context.extend([{"role": "assistant", "content": step}, {"role": "user", "content": f"result of {step}"}])
+    freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=context,
+        fingerprints=["status"], no_progress_checkpoints=1,
+    )
+
+
+def _handoff(number: int, text: str, *, open_items: bool) -> str:
+    return render_default_prompt(
+        "internal_loop_execution_checklist_handoff",
+        {"number": number, "text": text, "open_items": open_items},
+        allowed_paths={"number", "text", "open_items"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_check_off_ends_the_turn_and_leaves_only_the_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    add_checklist_items(task.id, ["Audit core/tasking", "Audit db/tasks.py"])
+    _frozen_steps(agent, _STATUS_STEP)
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    # One reply only: had the turn gone on, the fake would refuse a second call.
+    _script_prompts(monkeypatch, [_CHECK_OFF_STEP])
+
+    payload = _start_resume(agent.id, task.id)
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), payload)
+
+    assert db.get_agent_trigger(payload["trigger_id"]).status == "completed"
+    snapshot = db.get_work_snapshot(activity.id)
+    assert snapshot.transcript == [
+        {"role": "user", "content": _handoff(1, "Audit core/tasking", open_items=True)}
+    ]
+    assert snapshot.fingerprints == [] and snapshot.no_progress_checkpoints == 0
+    stored = db.get_task(task.id)
+    assert [item.status for item in stored.checklist] == ["done", "open"]
+    assert stored.last_progress_at is not None, "a check-off is progress"
+    assert len(_resumes(agent.id, task.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_next_part_starts_from_the_checklist_not_the_earlier_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, task = _working_agent()
+    add_checklist_items(task.id, ["Audit core/tasking", "Audit db/tasks.py"])
+    _frozen_steps(agent, _STATUS_STEP)
+    _script_prompts(monkeypatch, [_CHECK_OFF_STEP])
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+
+    # A waiting message pauses the next turn after its first step; only that
+    # step's prompt matters here.
+    prompts = _script_prompts(monkeypatch, [_BOARD_STEP])
+    db.create_agent_trigger(
+        agent_id=agent.id, trigger_type="human_chat", source_channel="chat",
+        payload={"content": "Status?", "from_name": "Human Operator"},
+    )
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _queued_resume(agent.id, task.id))
+
+    first = prompts[0]
+    text = "\n".join(str(item["content"]) for item in first)
+    current_task = next(item["content"] for item in first if "checklist (1 of 2 checked off):" in item["content"])
+    assert "1. [done] Audit core/tasking — 2 issues, in /projects/app/audit.md" in current_task
+    assert "2. [open] Audit db/tasks.py" in current_task
+    assert _handoff(1, "Audit core/tasking", open_items=True) in text
+    assert _STATUS_STEP not in text and _CHECK_OFF_STEP not in text, "no earlier step survives the hand-off"
+    assert "result of" not in text
+
+
+@pytest.mark.asyncio
+async def test_a_check_off_in_a_decision_turn_clears_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    add_checklist_items(task.id, ["Audit core/tasking", "Audit the plugins"])
+    _frozen_steps(agent, _STATUS_STEP, _BOARD_STEP)
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    before = db.get_work_snapshot(activity.id)
+    row = db.create_agent_trigger(
+        agent_id=agent.id, trigger_type="human_chat", source_channel="chat",
+        payload={"content": "Skip the plugins part.", "from_name": "Human Operator"},
+    )
+    _script(monkeypatch, [
+        '{"act":"cli","data":{"cmd":"checklist skip 2","body":"The boss dropped the plugins."},"th":"skip it"}',
+        '{"act":"reply","intent":"status","msg":"Done, the plugins are off the list.","work_commit":true,"th":"ack"}',
+    ])
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _claimed_payload(row))
+
+    assert db.get_agent_trigger(row.id).status == "completed"
+    assert [item.status for item in db.get_task(task.id).checklist] == ["open", "skipped"]
+    after = db.get_work_snapshot(activity.id)
+    assert after.transcript == before.transcript
+    assert after.fingerprints == before.fingerprints
+    assert after.no_progress_checkpoints == before.no_progress_checkpoints
+
+
+@pytest.mark.asyncio
+async def test_a_turn_past_the_budget_ends_is_trimmed_and_continues(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    db.set_setting("work_snapshot_max_chars", "1500", "simulation")
+    db.set_setting("work_snapshot_trim_percent", "66", "simulation")
+    config.reload()
+    earlier = [
+        '{"act":"cli","data":{"cmd":"cat /me/f%d.md"},"th":"read"}' % index for index in range(4)
+    ]
+    context: list[dict[str, Any]] = []
+    for step in earlier:
+        context.extend([{"role": "assistant", "content": step}, {"role": "user", "content": "y" * 300}])
+    freeze_work_turn(agent=agent, activity=activity, initial_len=0, context=context, fingerprints=[],
+                     no_progress_checkpoints=0)
+    # One reply only: the status step crosses the budget, so the turn ends there.
+    prompts = _script_prompts(monkeypatch, [_STATUS_STEP])
+
+    payload = _start_resume(agent.id, task.id)
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), payload)
+
+    assert len(prompts) == 1
+    assert db.get_agent_trigger(payload["trigger_id"]).status == "completed"
+    snapshot = db.get_work_snapshot(activity.id)
+    assert "earlier steps were dropped for space." in snapshot.transcript[0]["content"]
+    assert "- cat /me/f0.md" in snapshot.transcript[0]["content"]
+    assistant = [item["content"] for item in snapshot.transcript if item["role"] == "assistant"]
+    assert assistant[-1] == _STATUS_STEP, "the step that crossed the budget is kept"
+    assert sum(len(item["content"]) for item in snapshot.transcript) <= 990, "trimmed to 66% of the budget"
+    assert len(_resumes(agent.id, task.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_single_step_over_the_budget_still_moves_on(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    # Smaller than any one CLI result: every turn runs exactly one step.
+    db.set_setting("work_snapshot_max_chars", "50", "simulation")
+    config.reload()
+
+    prompts = _script_prompts(monkeypatch, [_STATUS_STEP])
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+    assert len(prompts) == 1
+    first = db.get_work_snapshot(activity.id)
+    assert [item["content"] for item in first.transcript if item["role"] == "assistant"] == [_STATUS_STEP]
+
+    prompts = _script_prompts(monkeypatch, [_BOARD_STEP])
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _queued_resume(agent.id, task.id))
+    assert len(prompts) == 1
+    second = db.get_work_snapshot(activity.id)
+    assert [item["content"] for item in second.transcript if item["role"] == "assistant"] == [_BOARD_STEP]
+    assert "- status" in second.transcript[0]["content"], "the earlier step is named in the marker"
+    assert len(_resumes(agent.id, task.id)) == 1
+
+
+
+def _cat_step(index: int) -> str:
+    return '{"act":"cli","data":{"cmd":"cat /me/notes/f%d.md"},"th":"read part %d"}' % (index, index)
+
+
+@pytest.mark.asyncio
+async def test_after_a_budget_boundary_the_next_turn_runs_a_run_of_steps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The regression for trimming only to the budget: every later turn then ran one step.
+
+    Each step reads a same-size file, so every step is the same size. The
+    budget is 4.5 steps and the trim keeps 33% of it (about 1.5 steps), so
+    after one budget boundary the next turn has room for several steps before
+    it reaches the budget again.
+    """
+    agent, task = _working_agent()
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    state = db.get_agent_state(agent.id)
+    for index in range(1, 20):
+        assert execute_bm_cli(agent, state, f"write /me/notes/f{index:d}.md", "x" * 400).ok
+
+    # Measure one step: a turn paused by a waiting message after its first step.
+    _script_prompts(monkeypatch, [_cat_step(1)])
+    db.create_agent_trigger(
+        agent_id=agent.id, trigger_type="human_chat", source_channel="chat",
+        payload={"content": "Status?", "from_name": "Human Operator"},
+    )
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+    db.delete_queued_triggers(agent.id)
+    step = sum(len(item["content"]) for item in db.get_work_snapshot(activity.id).transcript)
+    budget = step * 9 // 2
+    target = budget * 33 // 100
+    db.set_setting("work_snapshot_max_chars", str(budget), "simulation")
+    db.set_setting("work_snapshot_trim_percent", "33", "simulation")
+    config.reload()
+
+    # The first boundary: the saved step plus four more passes 4.5 steps.
+    first = _script_prompts(monkeypatch, [_cat_step(index) for index in range(2, 10)])
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+    assert len(first) == 4
+    trimmed = db.get_work_snapshot(activity.id)
+    assert "earlier steps were dropped for space." in trimmed.transcript[0]["content"]
+    assert sum(len(item["content"]) for item in trimmed.transcript) <= target
+
+    # The next turn has room again: more than one step before the next boundary.
+    second = _script_prompts(monkeypatch, [_cat_step(index) for index in range(6, 14)])
+    payload = _queued_resume(agent.id, task.id)
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), payload)
+    assert len(second) >= 2, "a trim to just under the budget would end this turn after one step"
+    assert len(second) < 8, "the turn still ended at the budget"
+    assert db.get_agent_trigger(payload["trigger_id"]).status == "completed"
+    again = db.get_work_snapshot(activity.id)
+    assert sum(len(item["content"]) for item in again.transcript) <= target
+    assert len(_resumes(agent.id, task.id)) == 1

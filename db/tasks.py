@@ -10,6 +10,7 @@ from typing import Any
 from core.models import Task, TaskNotificationSettings, WorkContract
 from core.models.task import DEFAULT_TASK_SEVERITY, TaskReference, TaskSeverity
 from db.crud import build_update, insert_returning_dict, query
+from db.task_checklists import set_task_checklist
 from db.task_notification_policies import delete_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import delete_task_notification_target, set_task_notification_target_channel_id
 from db.task_references import delete_task_references, set_task_references
@@ -17,7 +18,7 @@ from db.task_work_contracts import delete_task_work_contract, set_task_work_cont
 
 _TASK_COLUMNS = (
     "t.id, t.title, t.description, t.project, t.assigned_to, t.requester_id, t.owner_id, t.created_by, "
-    "t.status, t.severity, twc.work_contract, trf.refs AS \"references\", "
+    "t.status, t.severity, twc.work_contract, trf.refs AS \"references\", tcl.items AS checklist, "
     "tnp.source_channel, tnp.policy AS notification_policy, tnp.updated_at AS notification_policy_updated_at, "
     "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.schedule_id, t.cost_ceiling, t.completion_summary, "
@@ -133,9 +134,10 @@ def create_task(
 
 
 def _task_from_row(row: dict[str, Any]) -> Task:
-    """Hydrate a task row, its optional work contract and its references.
+    """Hydrate a task row, its optional work contract, its references and its checklist.
 
-    A task with no ``task_references`` row has no references (``[]``).
+    A task with no ``task_references`` row has no references (``[]``), and
+    one with no ``task_checklists`` row has no checklist (``[]``).
     """
     data = dict(row)
     raw_contract = data.get("work_contract")
@@ -145,6 +147,8 @@ def _task_from_row(row: dict[str, Any]) -> Task:
         data["work_contract"] = None
     raw_references = data.get("references")
     data["references"] = json.loads(raw_references) if raw_references else []
+    raw_checklist = data.get("checklist")
+    data["checklist"] = json.loads(raw_checklist) if raw_checklist else []
     raw_origin_atts = data.get("origin_attachment_ids")
     data["origin_attachment_ids"] = json.loads(raw_origin_atts) if raw_origin_atts else None
     return Task.model_validate(data)
@@ -158,6 +162,7 @@ def get_task(task_id: str) -> Task | None:
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_references trf ON trf.task_id = t.id
+        LEFT JOIN task_checklists tcl ON tcl.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE t.id = $1
@@ -188,6 +193,7 @@ def get_tasks_by_ids(task_ids: Sequence[str]) -> dict[str, Task]:
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_references trf ON trf.task_id = t.id
+        LEFT JOIN task_checklists tcl ON tcl.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE t.id IN ({placeholders})
@@ -251,6 +257,7 @@ def list_tasks(
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_references trf ON trf.task_id = t.id
+        LEFT JOIN task_checklists tcl ON tcl.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         {where}
@@ -308,6 +315,7 @@ def list_tasks_by_statuses(
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_references trf ON trf.task_id = t.id
+        LEFT JOIN task_checklists tcl ON tcl.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE {' AND '.join(conditions)}
@@ -341,6 +349,7 @@ def list_backlog_tasks(*, status: str) -> list[Task]:
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_references trf ON trf.task_id = t.id
+        LEFT JOIN task_checklists tcl ON tcl.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         WHERE t.status = $1 AND t.assigned_to IS NULL AND t.parent_task_id IS NULL
@@ -440,6 +449,7 @@ def list_recent_tasks(
         FROM tasks t
         LEFT JOIN task_work_contracts twc ON twc.task_id = t.id
         LEFT JOIN task_references trf ON trf.task_id = t.id
+        LEFT JOIN task_checklists tcl ON tcl.task_id = t.id
         LEFT JOIN task_notification_policies tnp ON tnp.task_id = t.id
         LEFT JOIN task_notification_targets tnt ON tnt.task_id = t.id
         {where}
@@ -462,6 +472,17 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
 
     ``references`` (a list of ``TaskReference``) replaces the task's
     references; an empty list removes them all.
+
+    ``checklist`` (a list of ``TaskChecklistItem``) replaces the task's
+    checklist. Only ``core/tasking/checklist.py`` passes it, inside a
+    transaction that read the current list first.
+
+    Raises:
+        IllegalTaskTransition: ``status`` is not a legal move from the
+            current status.
+        ValueError: ``checklist`` is an empty list (a checklist's items are
+            never removed), checked before anything is written; or the
+            notification settings are invalid.
     """
     if "status" in fields:
         from core.tasking.transitions import TERMINAL_TASK_STATUSES, assert_valid_task_transition
@@ -478,6 +499,10 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
 
     work_contract = fields.pop("work_contract", None) if "work_contract" in fields else ...
     references = fields.pop("references", None) if "references" in fields else ...
+    checklist = fields.pop("checklist") if "checklist" in fields else ...
+    # Refused before any write, so a bad call changes nothing.
+    if checklist is not ... and not checklist:
+        raise ValueError("A checklist's items are never removed")
     source_channel = fields.pop("source_channel", None) if "source_channel" in fields else ...
     notification_policy = fields.pop("notification_policy", None) if "notification_policy" in fields else ...
     notification_channel_id = fields.pop("notification_channel_id", None) if "notification_channel_id" in fields else ...
@@ -519,6 +544,8 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
             set_task_references(task_id, list(references))
         else:
             delete_task_references(task_id)
+    if checklist is not ...:
+        set_task_checklist(task_id, list(checklist))
     if validated_notification_settings is not ...:
         set_task_notification_settings(
             task_id,

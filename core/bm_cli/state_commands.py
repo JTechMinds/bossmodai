@@ -10,6 +10,7 @@ from core.bm_cli.results import success_result, trim
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.default_prompts import load_default_prompt
 from core.tasking.board import build_task_board, serialize_task_board
+from core.tasking.checklist import format_checklist_for_context
 from core.world.tilemap import get_room_at
 
 
@@ -241,6 +242,7 @@ def handle_task_detail(context: CliExecutionContext, parsed: ParsedCliCommand, c
             "description": task.description or "-",
             "completion_summary": task.completion_summary,
             "status_note": task.status_note,
+            "checklist": [item.model_dump(mode="json") for item in task.checklist],
         }
     )
     sections = [("TASK", lines)]
@@ -298,6 +300,7 @@ def _build_status_snapshot(context: CliExecutionContext) -> dict[str, Any]:
             "description": current_task.description or "-",
             "completion_summary": current_task.completion_summary,
             "status_note": current_task.status_note,
+            "checklist": [item.model_dump(mode="json") for item in current_task.checklist],
         }
 
     return {
@@ -362,7 +365,7 @@ def _activity_lines(activity: dict[str, Any]) -> list[str]:
 
 
 def _current_task_lines(task: dict[str, Any]) -> list[str]:
-    """Render current task detail lines."""
+    """Render current task detail lines, ending with the task's checklist when it has one."""
     lines = [
         f"id: {task['id']}",
         f"title: {task['title']}",
@@ -373,6 +376,9 @@ def _current_task_lines(task: dict[str, Any]) -> list[str]:
         lines.append(f"completion_summary: {task['completion_summary']}")
     if task.get("status_note"):
         lines.append(f"status_note: {task['status_note']}")
+    # Every caller passes the key: the two hand-built dicts here and the
+    # serialized board rows (core/tasking/board.py spreads model_dump).
+    lines.extend(format_checklist_for_context(task["checklist"]))
     return lines
 
 

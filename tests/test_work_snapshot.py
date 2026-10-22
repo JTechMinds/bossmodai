@@ -22,7 +22,13 @@ from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.loop import run_turn
 from core.agent_loop.turn_context import _get_current_activity, _get_current_task
-from core.agent_loop.work_snapshot import finish_restored_turn, freeze_work_turn, render_paused_work_view
+from core.agent_loop.work_snapshot import (
+    finish_restored_turn,
+    freeze_work_turn,
+    render_paused_work_view,
+    reset_work_turn,
+    transcript_over_budget,
+)
 from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN
 from core.llm import context_builder
 from core.llm.client import LLMError, LLMResponse
@@ -281,6 +287,7 @@ async def test_approval_result_lands_after_the_restored_transcript(monkeypatch: 
 def test_oldest_steps_compact_behind_a_marker() -> None:
     agent, _task_row, activity = _working_agent()
     db.set_setting("work_snapshot_max_chars", "900", "simulation")
+    db.set_setting("work_snapshot_trim_percent", "88", "simulation")
     config.reload()
     context = [{"role": "system", "content": "preamble"}]
     for index in range(5):
@@ -299,7 +306,8 @@ def test_oldest_steps_compact_behind_a_marker() -> None:
     for index, item in enumerate(snapshot.transcript[1:], start=1):
         if item["role"] == "user":
             assert snapshot.transcript[index - 1]["role"] == "assistant", "no half pair survives"
-    assert sum(len(item["content"]) for item in snapshot.transcript) <= 900
+    # Trimmed to the target (88% of 900), not just under the 900 trigger.
+    assert sum(len(item["content"]) for item in snapshot.transcript) <= 792
 
     # A later freeze folds the old marker into the new one.
     more = [{"role": "assistant", "content": '{"act":"cli","data":{"cmd":"cat /me/f9.md"},"th":"r"}'},
@@ -539,3 +547,154 @@ async def test_thread_wake_with_no_live_speaker_ends_the_work_turn(monkeypatch: 
     state = db.get_agent_state(agent.id)
     await run_turn(agent, state, _resume_trigger(task.id))
     assert len(prompts) == 1
+
+
+# ─── Context per checklist item (the item and budget boundaries) ───
+
+_HANDOFF = "You checked off item 1 of your checklist. Continue with the next open item."
+
+
+def test_reset_replaces_the_steps_fingerprints_and_checkpoints_but_keeps_interludes() -> None:
+    agent, _task_row, activity = _working_agent()
+    freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0,
+        context=[{"role": "assistant", "content": _STATUS_STEP}, {"role": "user", "content": "ok"}],
+        fingerprints=["status"], no_progress_checkpoints=2,
+    )
+    db.append_work_interlude(activity.id, {"from_name": "Human Operator", "content": "Hi", "reply": "Hello"})
+
+    reset = reset_work_turn(agent=agent, activity=activity, handoff=_HANDOFF)
+
+    assert reset.transcript == [{"role": "user", "content": _HANDOFF}]
+    assert reset.fingerprints == []
+    assert reset.no_progress_checkpoints == 0
+    stored = db.get_work_snapshot(activity.id)
+    assert stored.transcript == [{"role": "user", "content": _HANDOFF}]
+    assert [item.model_dump() for item in stored.interludes] == [
+        {"from_name": "Human Operator", "content": "Hi", "reply": "Hello"}
+    ]
+    # Only the hand-off is left: no steps, so a decision turn gets no paused-work view.
+    assert render_paused_work_view(stored, task_title="Execute the 9 fixes") is None
+
+
+def test_the_budget_is_crossed_one_character_past_it() -> None:
+    agent, _task_row, activity = _working_agent()
+    db.set_setting("work_snapshot_max_chars", "100", "simulation")
+    config.reload()
+    prior = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0,
+        context=[{"role": "assistant", "content": "a" * 30}, {"role": "user", "content": "b" * 30}],
+        fingerprints=[], no_progress_checkpoints=0,
+    )
+    assert transcript_over_budget(prior, [{"role": "user", "content": "c" * 40}]) is False
+    assert transcript_over_budget(prior, [{"role": "user", "content": "c" * 41}]) is True
+    assert transcript_over_budget(None, [{"role": "user", "content": "c" * 100}]) is False
+    assert transcript_over_budget(None, [{"role": "user", "content": "c" * 101}]) is True
+
+
+@pytest.mark.asyncio
+async def test_a_restore_after_a_reset_is_the_preamble_the_handoff_then_the_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, task, activity = _working_agent()
+    await _interrupted_step(monkeypatch, agent, task, _STATUS_STEP)
+    db.delete_queued_triggers(agent.id)
+    reset_work_turn(agent=agent, activity=activity, handoff=_HANDOFF)
+
+    prompts = await _interrupted_step(monkeypatch, agent, task, _BOARD_STEP)
+    resumed = prompts[0]
+    handoff_index = next(i for i, item in enumerate(resumed) if item["content"] == _HANDOFF)
+    assert resumed[0]["role"] == "system", "the preamble is rebuilt fresh"
+    assert all(item["role"] != "assistant" for item in resumed[:handoff_index]), "no cleared step precedes it"
+    assert resumed[handoff_index]["role"] == "user"
+    assert handoff_index == len(resumed) - 2, "the hand-off, then the resume message, close the context"
+    assert "Continue from where you left off" in resumed[-1]["content"]
+    assert not any(item["content"] == _STATUS_STEP for item in resumed), "the cleared step is gone"
+
+
+# ─── The trim target: trim below the trigger so the next trim is a run of steps away ───
+
+
+def _steps(count: int, *, result_chars: int, first: int = 0) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for index in range(first, first + count):
+        messages.append({"role": "assistant", "content": '{"act":"cli","data":{"cmd":"cat /me/f%d.md"},"th":"r"}' % index})
+        messages.append({"role": "user", "content": "y" * result_chars})
+    return messages
+
+
+def _limits(max_chars: int, trim_percent: int) -> None:
+    db.set_setting("work_snapshot_max_chars", str(max_chars), "simulation")
+    db.set_setting("work_snapshot_trim_percent", str(trim_percent), "simulation")
+    config.reload()
+
+
+def test_the_trim_share_is_seeded_at_half_the_budget() -> None:
+    assert config.require_int("work_snapshot_trim_percent") == 50
+
+
+def test_a_transcript_at_the_budget_is_kept_as_is() -> None:
+    agent, _task_row, activity = _working_agent()
+    steps = _steps(4, result_chars=197)  # 4 × (53 + 197) = exactly 1000 characters
+    assert sum(len(item["content"]) for item in steps) == 1000
+    _limits(1000, 40)
+    snapshot = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0
+    )
+    assert snapshot.transcript == steps
+
+
+def test_over_the_budget_the_trim_goes_down_to_the_target() -> None:
+    agent, _task_row, activity = _working_agent()
+    steps = _steps(4, result_chars=198)  # 1004 characters: just over the 1000 trigger
+    _limits(1000, 40)
+    snapshot = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0
+    )
+    total = sum(len(item["content"]) for item in snapshot.transcript)
+    assert total <= 400, "the marker and the kept steps fit 40% of the budget"
+    marker = snapshot.transcript[0]["content"]
+    assert "earlier steps were dropped for space." in marker
+    assert "- cat /me/f0.md" in marker and "- cat /me/f2.md" in marker
+    assistant = [item["content"] for item in snapshot.transcript if item["role"] == "assistant"]
+    assert assistant == [steps[-2]["content"]], "only the newest step fits, and it is kept whole"
+
+
+def test_the_newest_step_is_kept_even_when_it_alone_is_over_the_target() -> None:
+    agent, _task_row, activity = _working_agent()
+    steps = [*_steps(1, result_chars=100), *_steps(1, result_chars=900, first=1)]
+    _limits(1000, 40)
+    snapshot = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0
+    )
+    assert [item["content"] for item in snapshot.transcript[1:]] == [item["content"] for item in steps[2:]]
+    assert "- cat /me/f0.md" in snapshot.transcript[0]["content"]
+
+
+@pytest.mark.parametrize("trim_percent", [0, 100, -5])
+def test_a_trim_share_outside_1_to_99_is_refused(trim_percent: int) -> None:
+    agent, _task_row, activity = _working_agent()
+    _limits(1000, trim_percent)
+    with pytest.raises(config.ConfigError) as excinfo:
+        freeze_work_turn(
+            agent=agent, activity=activity, initial_len=0, context=_steps(1, result_chars=10),
+            fingerprints=[], no_progress_checkpoints=0,
+        )
+    message = str(excinfo.value)
+    assert "work_snapshot_trim_percent" in message and str(trim_percent) in message
+    assert db.get_work_snapshot(activity.id) is None, "nothing is saved under a broken setting"
+
+
+def test_a_lowered_budget_works_with_the_seeded_share() -> None:
+    """A budget lowered below the old 60000 trim count needs no second edit."""
+    agent, _task_row, activity = _working_agent()
+    db.set_setting("work_snapshot_max_chars", "1000", "simulation")
+    config.reload()
+    assert config.require_int("work_snapshot_trim_percent") == 50
+    steps = _steps(6, result_chars=147)  # 6 × 200 = 1200 characters, over the 1000 budget
+    snapshot = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0
+    )
+    assert sum(len(item["content"]) for item in snapshot.transcript) <= 500
+    assert "earlier steps were dropped for space." in snapshot.transcript[0]["content"]
+    assert snapshot.transcript[-2]["content"] == steps[-2]["content"], "the newest step is kept"

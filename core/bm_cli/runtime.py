@@ -43,6 +43,7 @@ from core.bm_cli.results import approval_required_result, error_result, shell_re
 from core.bm_cli.retry_policy import NoRetryListError, blocks_retry, load_no_retry_list
 from core.bm_cli.schedule_commands import handle_schedules
 from core.bm_cli.backlog_commands import handle_backlog
+from core.bm_cli.checklist_commands import handle_checklist
 from core.bm_cli.process_commands import handle_processes
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.shell_authorization import (
@@ -106,6 +107,7 @@ _HANDLERS: dict[str, CliHandler] = {
     "tasks": handle_tasks,
     "schedules": handle_schedules,
     "backlog": handle_backlog,
+    "checklist": handle_checklist,
     "processes": handle_processes,
     "recent-work": handle_recent_work,
     "location": handle_location,

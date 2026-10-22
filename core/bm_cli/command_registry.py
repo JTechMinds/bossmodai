@@ -71,6 +71,13 @@ BACKLOG_FORMS: tuple[str, ...] = (
     "backlog add               — with body: the item as JSON",
 )
 
+CHECKLIST_FORMS: tuple[str, ...] = (
+    "checklist                 — your current task's checklist",
+    "checklist add             — with body: one item per line",
+    "checklist done <n>        — with body (optional): what you found or where the result is",
+    "checklist skip <n>        — with body: why the item is not needed",
+)
+
 # ---------------------------------------------------------------------------
 # Command registry — every built-in virtual command
 # ---------------------------------------------------------------------------
@@ -586,6 +593,37 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
             "Examples:\n"
             "  task 1234         — inspect task 1234 and its thread"
         ),
+    ),
+    "checklist": VirtualCommandMeta(
+        name="checklist",
+        category="agent",
+        description="Plan your current task in parts and check them off.",
+        usage_syntax="checklist [add|done <n>|skip <n>]",
+        help_text=(
+            "Your plan for the task you are working on, in parts. It is shown\n"
+            "under Current Task on every turn and keeps your place across pauses.\n"
+            "\n"
+            "Forms:\n"
+            + "".join(f"  {form}\n" for form in CHECKLIST_FORMS)
+            + "\n"
+            "Rules:\n"
+            "  - items are numbered and never removed: skip an item you no longer\n"
+            "    need (with the reason), and add items at any time\n"
+            "  - done needs every item done or skipped\n"
+            "  - a part a teammate should own is a child task (assign), not an item\n"
+            "  - during work, checking an item off clears your steps on that part,\n"
+            "    and the next part starts fresh from the checklist: put what later\n"
+            "    parts need in the note, or in a file the note names\n"
+            "  - a leading -, *, •, N. or N) on a line of the add body is dropped\n"
+            "\n"
+            "Examples:\n"
+            "  checklist add      — with body:\n"
+            "                       Audit core/tasking\n"
+            "                       Audit db/tasks.py\n"
+            "                       Write the findings summary\n"
+            '  checklist done 1   — with body: "3 issues, written to /projects/app/audit.md"'
+        ),
+        discovery_hint="body = one item per line for add; done/skip <n> take the note as the body",
     ),
     "memory": VirtualCommandMeta(
         name="memory",

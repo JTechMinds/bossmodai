@@ -6,6 +6,7 @@
  * Opens real tasks in the real modal and reads what it shows: a status line
  * measured the way the watchdog measures, the facts as pairs, the callout for
  * each kind of state, the instruction clamp, the subtask checklist, the
+ * assignee's own checklist as written (read-only, in Edit mode too), the
  * pencil that enters Edit mode (open tasks only), the role contract, and the
  * activity as sentences. Then it drives the real operator actions: Edit mode
  * edits the same panel in place — ✓ sends only what changed, a refused
@@ -47,7 +48,7 @@ const NAMES = [
     // The instructions' clamp is the shared component the desk's description
     // uses too; it renders through the stubbed BossModMarkdown above.
     "BossModClampedMarkdown",
-    "BossModTasksColumns", "BossModTasksData", "BossModTaskDeliverables",
+    "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskDetailSections",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
@@ -84,6 +85,13 @@ const BLOCKED = {
     created_at: ago(24 * HOUR),
     closed_at: null,
     work_contract: { deliverables: [{ type: "file", path: "/me/out/report.md", description: "The report" }] },
+    // The assignee's plan, one item in each state, as the server sends it.
+    checklist: [
+        { text: "Reproduce the failure", status: "done",
+            note: "Fails on every second login — steps in /projects/app/login.md" },
+        { text: "Check the mobile client", status: "skipped", note: "The mobile app has no login of its own." },
+        { text: "Patch the session check", status: "open", note: null },
+    ],
     operator_can_complete: true,
     operator_can_resume: true,
 };
@@ -276,13 +284,50 @@ async function main() {
     // ── subtasksCountDone ───────────────────────────────────────────────
     const subtasks = sectionHeaded(detail, "Subtasks");
     const subCount = subtasks && subtasks.querySelector(".task-detail-count").textContent;
-    const rows = subtasks ? subtasks.querySelectorAll(".task-detail-subtask") : [];
+    const rows = subtasks ? subtasks.querySelectorAll(".task-detail-check") : [];
     const doneRows = rows.filter((row) => row.getAttribute("data-state") === "done");
     const openRow = rows.find((row) => row.getAttribute("data-state") === "open");
     await click(openRow, "the open subtask");
     const subtasksCountDone = subCount === "1 of 2" && doneRows.length === 1
         && calls.navigated.join(",") === "c-open";
     if (!subtasksCountDone) fail(`subtasks read "${subCount}", navigated [${calls.navigated}]`);
+
+    // ── checklistReadsAsWritten ─────────────────────────────────────────
+    // Read-only rows, in order, with the agent's text and notes verbatim.
+    // Done and skipped both count as checked off.
+    const checklist = sectionHeaded(detail, "Checklist");
+    const checklistCount = checklist && checklist.querySelector(".task-detail-count").textContent;
+    const checks = checklist ? checklist.querySelectorAll(".task-detail-check") : [];
+    const readCheck = (node) => ({
+        tag: node.tagName,
+        state: node.getAttribute("data-state"),
+        title: node.querySelector(".task-detail-check-title").textContent,
+        note: node.querySelector(".task-detail-meta") ? node.querySelector(".task-detail-meta").textContent : null,
+        said: node.querySelector(".visually-hidden").textContent,
+    });
+    const sections = detail.querySelectorAll(".task-detail-section");
+    const checklistReadsAsWritten = checklistCount === "2 of 3 checked off"
+        && same(checks.map(readCheck), BLOCKED.checklist.map((item, index) => ({
+            tag: "DIV",
+            state: item.status,
+            title: item.text,
+            note: item.note,
+            said: [" — Done", " — Skipped", " — Open"][index],
+        })))
+        && checklist.querySelectorAll("button").length === 0
+        // Between what the task produces and who else works on it.
+        && sections.indexOf(sectionHeaded(detail, "Deliverables")) + 1 === sections.indexOf(checklist)
+        && sections.indexOf(checklist) + 1 === sections.indexOf(subtasks);
+    if (!checklistReadsAsWritten) fail(`checklist read "${checklistCount}": ${JSON.stringify(checks.map(readCheck))}`);
+
+    // ── checklistAbsentWithoutItems, malformedChecklistThrows ───────────
+    const throws = (fn) => { try { fn(); return false; } catch (err) { return true; } };
+    const checklistAbsentWithoutItems = SECTIONS.checklist({ ...BLOCKED, checklist: [] }) === null
+        && SECTIONS.checklist(DONE) === null;
+    if (!checklistAbsentWithoutItems) fail("a task without checklist items still drew a Checklist section");
+    const malformedChecklistThrows = throws(() => SECTIONS.checklist({ id: "x", checklist: [{ text: "", status: "open" }] }))
+        && throws(() => SECTIONS.checklist({ id: "x", checklist: [{ text: "A part", status: "maybe" }] }));
+    if (!malformedChecklistThrows) fail("a malformed checklist item drew a row instead of throwing");
 
     // ── deliverablesCounted ─────────────────────────────────────────────
     const deliverables = sectionHeaded(detail, "Deliverables");
@@ -362,6 +407,9 @@ async function main() {
         instructionsUseMarkdown,
         clampToggleFollowsOverflow,
         subtasksCountDone,
+        checklistReadsAsWritten,
+        checklistAbsentWithoutItems,
+        malformedChecklistThrows,
         pencilIsTheHeadsOnlyTool,
         ...edit,
         ...status,
@@ -481,6 +529,16 @@ async function editMode() {
     // The description is the agent's instructions: no length cap in markup.
     const descriptionUncapped = !panel.querySelector(".task-detail-instructions").hasAttribute("maxlength");
     if (!descriptionUncapped) fail("the task description carries a maxlength");
+
+    // ── checklistReadOnlyInEditMode ─────────────────────────────────────
+    const editChecklist = sectionHeaded(panel, "Checklist");
+    const checklistReadOnlyInEditMode = Boolean(editChecklist)
+        && editChecklist.querySelector(".task-detail-count").textContent === "2 of 3 checked off"
+        && editChecklist.querySelectorAll(".task-detail-check").length === 3
+        && editChecklist.querySelectorAll("button").length === 0
+        && editChecklist.querySelectorAll("input").length === 0
+        && editChecklist.querySelectorAll("textarea").length === 0;
+    if (!checklistReadOnlyInEditMode) fail("Edit mode dropped the checklist or made it editable");
 
     // ── assigneeReadsAsAField ───────────────────────────────────────────
     // The fact cell's dropdown is the field look: no .btn, the short name
@@ -686,6 +744,7 @@ async function editMode() {
     return {
         editModeEntersInPlace,
         descriptionUncapped,
+        checklistReadOnlyInEditMode,
         assigneeReadsAsAField,
         oneDeliverablesSection,
         statusActionsWaitForTheDraft,
