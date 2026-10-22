@@ -82,6 +82,9 @@ class _RecordingSink:
     async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None:
         self.calls.append(("extension_live", {"extension_id": extension_id, "agent_id": agent_id}))
 
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None:
+        self.calls.append(("task_step", step))
+
 
 @pytest.mark.asyncio
 async def test_dispatch_event_uses_injected_sink() -> None:
@@ -314,3 +317,47 @@ async def test_the_connection_manager_broadcasts_peer_message(monkeypatch: pytes
     monkeypatch.setattr(manager, "broadcast", record)
     await manager.broadcast_peer_message(**_PEER)
     assert sent == [{"type": "peer_message", "data": _PEER}]
+
+
+# ─── task_step (the task detail's Recent steps) ───
+
+
+_STEP = {
+    "id": "s1", "task_id": "t1", "agent_id": "a1", "agent_name": "Ettie", "action": "bm_cli",
+    "note": "Run the tests", "command": "cargo test", "outcome": None, "result": None,
+    "started_at": "2026-10-22T21:15:49+00:00", "ended_at": None,
+}
+
+
+@pytest.mark.asyncio
+async def test_task_step_crosses_every_sink_layer() -> None:
+    transport = _RecordingTransport()
+    await TransportRuntimeEventSink(transport).broadcast_task_step(_STEP)
+    assert transport.envelopes == [{"type": "event", "payload": {"kind": "task_step", "data": {"step": _STEP}}}]
+
+    proxy = RuntimeEventProxy()
+    sink = _RecordingSink()
+    proxy.set_sink(sink)
+    await proxy.broadcast_task_step(_STEP)
+    assert sink.calls == [("task_step", _STEP)]
+    proxy.set_sink(NullRuntimeEventSink())
+    await proxy.broadcast_task_step(_STEP)
+
+    services = RuntimeServices()
+    routed = _RecordingSink()
+    services.set_event_sink(routed)
+    await services._dispatch_event(transport.envelopes[0]["payload"])
+    assert routed.calls == [("task_step", _STEP)]
+
+
+@pytest.mark.asyncio
+async def test_the_connection_manager_broadcasts_task_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    manager = ConnectionManager()
+    sent: list[dict[str, Any]] = []
+
+    async def record(message: dict[str, Any]) -> None:
+        sent.append(message)
+
+    monkeypatch.setattr(manager, "broadcast", record)
+    await manager.broadcast_task_step(_STEP)
+    assert sent == [{"type": "task_step", "data": _STEP}]

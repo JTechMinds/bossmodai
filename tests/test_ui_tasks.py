@@ -39,6 +39,8 @@ HARNESS_MODULES = [
     # The card and the detail's sections both draw checklist rows through it.
     TASKS / "task-checklist.js",
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
+    # The detail's Recent steps and the step history layer it opens.
+    TASKS / "task-steps.js", TASKS / "task-steps-history.js",
     TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
@@ -54,6 +56,8 @@ DETAIL_HARNESS = Path(__file__).resolve().parent / "js_task_detail_harness.cjs"
 DETAIL_MODULES = [
     JS / "core" / "dom.js", JS / "core" / "avatar.js", JS / "core" / "format.js",
     JS / "core" / "specialty.js", JS / "core" / "gates.js",
+    # The detail's Recent steps and its history follow `task_step` on the bus.
+    JS / "core" / "bus.js",
     JS / "core" / "overlay-focus.js", JS / "core" / "modal-trail.js", JS / "core" / "overlay-actions.js", JS / "core" / "overlays.js", JS / "core" / "menu.js",
     JS / "core" / "menu-select.js",
     # Edit mode grows the task's description with its text.
@@ -63,7 +67,10 @@ DETAIL_MODULES = [
     JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-checklist.js",
     TASKS / "task-deliverables.js",
-    TASKS / "task-events.js", TASKS / "task-detail-sections.js",
+    TASKS / "task-events.js",
+    # The detail's Recent steps and the step history layer it opens.
+    TASKS / "task-steps.js", TASKS / "task-steps-history.js",
+    TASKS / "task-detail-sections.js",
     # Edit mode ranks assignees as the assign dialog does, so it loads after
     # assign-form.js; the detail builds it when Edit mode is picked.
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
@@ -381,6 +388,7 @@ def test_tasks_harness() -> None:
         "opensLinkedTask": True,
         "offFloorTaskHidden": True,
         "staleLoadDropped": True,
+        "layersRequireBus": True,
     }
 
     # Every refresh trigger must still be emitted somewhere in the engine.
@@ -565,6 +573,23 @@ def test_task_detail_harness() -> None:
         "contractIsCollapsible": True,
         "activityReadsAsSentences": True,
         "deliverablesCounted": True,
+        # Recent steps (task-steps.js) and the history layer (task-steps-history.js).
+        "detailRequiresBus": True,
+        "recentLoadsThenShowsRows": True,
+        "outcomeWordsFollowTheRules": True,
+        "openStepSaysSoInWords": True,
+        "stepTimeKeepsTheDay": True,
+        "liveStepUpdatesInPlaceOrPrependsAndTrims": True,
+        "otherTaskIgnored": True,
+        "seeAllOnlyWhileMore": True,
+        "historyOpensAsLayer": True,
+        "olderSendsOldestId": True,
+        "historyLivePrepends": True,
+        "resyncReloadsRecentAndHistory": True,
+        "closingHistoryUnsubscribes": True,
+        "closingDetailUnsubscribes": True,
+        "liveDuringLoadIsHeld": True,
+        "recentEmptyAndErrorRetry": True,
     }
 
 

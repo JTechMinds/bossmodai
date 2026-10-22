@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 
@@ -19,6 +20,7 @@ from core.agent_loop.soft_blocks import (
     apply_no_progress_checkpoint,
 )
 from core.agent_loop.liveness import classify_step, next_stale_streak, record_action_liveness, step_fingerprint
+from core.agent_loop.task_steps import cli_step_result, finish_task_step, start_task_step, task_step_event
 from core.agent_loop.work_binding import bound_activity, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import freeze_work_turn, reset_work_turn, transcript_over_budget
 from core.agent_loop.cli_turn_result import broadcast_cli_activity, map_cli_result
@@ -59,6 +61,7 @@ from core.bm_cli.managed_writer import (
     run_managed_write,
 )
 from core.bm_cli.results import cli_approval_result_messages, cli_continuation_messages
+from core.bm_cli.types import BossModCliResult
 from core import config
 from core.default_prompts import load_default_prompt
 from core.llm import client
@@ -105,6 +108,51 @@ def _resume_fields(trigger: dict[str, Any]) -> dict[str, Any]:
         if key in trigger:
             fields[key] = trigger[key]
     return fields
+
+
+async def _run_resumed_command_as_step(
+    *,
+    agent: Agent,
+    command: str,
+    run: Callable[[], Awaitable[BossModCliResult]],
+) -> BossModCliResult:
+    """Run a command the operator approved or permitted as one task step.
+
+    The resume prelude runs that command before the action loop, so the
+    loop's own step bracket never sees it; without this the operator would
+    see the earlier "Waiting for your approval" step and then nothing for the
+    run itself, which is often the long one. The step is written and sent
+    before ``run`` starts, so it shows while it runs, and finished and sent
+    again from its CLI result. The agent wrote no new note for it, so the
+    step has none.
+
+    Args:
+        agent: The agent whose command it is.
+        command: The command as approved; it is the step's command.
+        run: Runs the command and returns its CLI result.
+
+    Returns:
+        The command's CLI result, unchanged.
+
+    Raises:
+        Whatever ``run`` raises; the step then stays open, as a step does
+        whenever its turn dies mid-step.
+    """
+    # bound_task_id is None in a detached resume (work_binding), so its run
+    # never lands on the paused task.
+    step = start_task_step(
+        task_id=bound_task_id(agent.id),
+        agent=agent,
+        action={"action": "bm_cli", "command": command},
+        at=datetime.now(timezone.utc),
+    )
+    if step is not None:
+        await manager.broadcast_task_step(task_step_event(step))
+    cli_result = await run()
+    if step is not None:
+        step = finish_task_step(step, result=cli_step_result(cli_result), at=datetime.now(timezone.utc))
+        await manager.broadcast_task_step(task_step_event(step))
+    return cli_result
 
 
 async def _run_execution_turn(
@@ -169,16 +217,20 @@ async def _run_execution_turn(
         approval_status = approval_fields.get("status") or "rejected"
         if approval_status in _CLI_RESUME_EXECUTE_STATUSES:
             from core.bm_cli.runtime import execute_approved_command
-            cli_result = await run_shell_off_request_loop(
-                execute_approved_command,
-                agent,
-                state,
-                approval_fields.get("command", ""),
-                approval_fields.get("content"),
-                approval_request_id=approval_fields.get("approval_request_id", ""),
-                cwd=approval_fields.get("cwd"),
-                trigger_type=trigger_type,
-                channel_id=consent_origin_channel_id(trigger),
+            cli_result = await _run_resumed_command_as_step(
+                agent=agent,
+                command=approval_fields.get("command", ""),
+                run=lambda: run_shell_off_request_loop(
+                    execute_approved_command,
+                    agent,
+                    state,
+                    approval_fields.get("command", ""),
+                    approval_fields.get("content"),
+                    approval_request_id=approval_fields.get("approval_request_id", ""),
+                    cwd=approval_fields.get("cwd"),
+                    trigger_type=trigger_type,
+                    channel_id=consent_origin_channel_id(trigger),
+                ),
             )
             approval_context_msg = cli_result.prompt_content
             # Only a shell result means the command actually ran; a jail
@@ -220,14 +272,18 @@ async def _run_execution_turn(
                     f"Host-path access granted for {path}. Use cli on that path now."
                 )
             else:
-                cli_result = await run_shell_off_request_loop(
-                    execute_bm_cli,
-                    agent,
-                    state,
-                    command,
-                    consent_fields.get("content"),
-                    trigger_type=trigger_type,
-                    channel_id=consent_origin_channel_id(trigger),
+                cli_result = await _run_resumed_command_as_step(
+                    agent=agent,
+                    command=command,
+                    run=lambda: run_shell_off_request_loop(
+                        execute_bm_cli,
+                        agent,
+                        state,
+                        command,
+                        consent_fields.get("content"),
+                        trigger_type=trigger_type,
+                        channel_id=consent_origin_channel_id(trigger),
+                    ),
                 )
                 approval_context_msg = cli_result.prompt_content
         elif consent_status in {"cloned", "branched"}:
@@ -565,6 +621,15 @@ async def _run_execution_turn(
         )
         executed_actions.append(action_name)
 
+        # Written before the action runs, so a long command shows while it
+        # runs. active_task_id is None in a detached turn (work_binding), so
+        # a detached step never lands on the paused task.
+        step = start_task_step(
+            task_id=active_task_id, agent=agent, action=action, at=datetime.now(timezone.utc),
+        )
+        if step is not None:
+            await manager.broadcast_task_step(task_step_event(step))
+
         active_activity_before_action = active_activity
 
         # Execute action
@@ -627,6 +692,12 @@ async def _run_execution_turn(
             retry_blocked = retry_blocked or record_retry_block(trigger, result)
         else:
             result = await execute_action(action, agent, state, trigger, token_model=response.model)
+        # By step id, not by task: the action may have changed the binding
+        # (`complete` ends it). An exception out of the action skips this and
+        # leaves the step open, which is what the operator is then shown.
+        if step is not None:
+            step = finish_task_step(step, result=result, at=datetime.now(timezone.utc))
+            await manager.broadcast_task_step(task_step_event(step))
         active_task_id = bound_task_id(agent.id)
         if action_name == "bm_cli":
             await post_cli_status_lines(

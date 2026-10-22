@@ -40,7 +40,7 @@ global.BossModMarkdown = {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates",
+    "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates", "BossModBus",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
     "BossModAutoGrow",
     "BossModFileListing",
@@ -49,7 +49,7 @@ const NAMES = [
     // uses too; it renders through the stubbed BossModMarkdown above.
     "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables",
-    "BossModTaskEvents", "BossModTaskDetailSections",
+    "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTaskActions",
@@ -60,6 +60,9 @@ if (paths.length !== NAMES.length) {
 NAMES.forEach((name, index) => {
     eval(`${fs.readFileSync(paths[index], "utf8")}\n;global.${name} = ${name};\n`);
 });
+
+/** The one bus every detail here follows `task_step` on. */
+const bus = global.BossModBus.createBus(global.BossModBus.KNOWN_TOPICS);
 
 const NOW = Date.now();
 const ago = (ms) => new Date(NOW - ms).toISOString();
@@ -147,10 +150,23 @@ const PROJECTS = {
 /** Every desk listing the file picker asked for: `{agent, path}`. */
 const deskReads = [];
 
+/** Every steps request, in order. */
+const stepReads = [];
+/** How GET …/steps/recent and …/steps answer; steps() swaps it per case. */
+let stepsReply = (url) => Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve(url.includes("/steps/recent")
+        ? { steps: [], has_more: false, limit: 5 } : { steps: [], has_more: false }),
+});
+
 function api(url) {
     if (String(url).includes("/events")) {
         eventReads += 1;
         return Promise.resolve({ ok: true, json: () => Promise.resolve(EVENTS) });
+    }
+    if (/^\/api\/tasks\/[^/]+\/steps/.test(String(url))) {
+        stepReads.push(String(url));
+        return stepsReply(String(url));
     }
     const desk = /^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/.exec(String(url));
     if (desk) {
@@ -191,6 +207,7 @@ function sectionHeaded(root, label) {
 function open(task, calls) {
     return global.BossModTaskDetail.openTaskDetail({
         api,
+        bus,
         taskId: task.id,
         tasks: TASKS,
         colorOf: (agentId) => (agentId === "a1" ? "#3b82f6" : undefined),
@@ -315,9 +332,11 @@ async function main() {
             said: [" — Done", " — Skipped", " — Open"][index],
         })))
         && checklist.querySelectorAll("button").length === 0
-        // Between what the task produces and who else works on it.
+        // Between what the task produces and what is being done about it;
+        // Recent steps follows the plan, and the subtasks come after both.
         && sections.indexOf(sectionHeaded(detail, "Deliverables")) + 1 === sections.indexOf(checklist)
-        && sections.indexOf(checklist) + 1 === sections.indexOf(subtasks);
+        && sections.indexOf(checklist) + 1 === sections.indexOf(sectionHeaded(detail, "Recent steps"))
+        && sections.indexOf(sectionHeaded(detail, "Recent steps")) + 1 === sections.indexOf(subtasks);
     if (!checklistReadsAsWritten) fail(`checklist read "${checklistCount}": ${JSON.stringify(checks.map(readCheck))}`);
 
     // ── checklistAbsentWithoutItems, malformedChecklistThrows ───────────
@@ -395,6 +414,7 @@ async function main() {
     const edit = await editMode();
     const status = await statusActions();
     const { completeNeedsSummary, summaryUncapped } = await operatorActions();
+    const stepCases = await steps();
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -418,6 +438,7 @@ async function main() {
         contractIsCollapsible,
         activityReadsAsSentences,
         deliverablesCounted,
+        ...stepCases,
     }));
 }
 
@@ -486,6 +507,7 @@ async function editMode() {
     const { actions, requests, replies, updated } = recordingActions();
     global.BossModTaskDetail.openTaskDetail({
         api,
+        bus,
         taskId: BLOCKED.id,
         tasks: TASKS,
         colorOf: () => undefined,
@@ -771,7 +793,7 @@ async function statusActions() {
     const reply = (status, body) => replies.push({ status, body });
     const openLive = (task) => {
         const handle = global.BossModTaskDetail.openTaskDetail({
-            api, taskId: task.id, tasks: TASKS, colorOf: () => undefined,
+            api, bus, taskId: task.id, tasks: TASKS, colorOf: () => undefined,
             onNavigate: () => {}, actions, onOpenChat: () => {},
         });
         return drain().then(() => ({ handle, panel: top() }));
@@ -924,6 +946,366 @@ async function operatorActions() {
         fail(`an open-subtask refusal said [${err && err.message}]`);
     }
     return { completeNeedsSummary, summaryUncapped };
+}
+
+// ─── Recent steps and the step history ──────────────────────────────────
+
+const SECOND = 1000;
+
+/** A step row as GET …/steps and the `task_step` topic carry it. */
+function stepRow(id, startedAgoMs, fields) {
+    return {
+        id, task_id: BLOCKED.id, agent_id: "a1", agent_name: "Jim", action: "bm_cli",
+        note: null, command: null, outcome: null, result: null,
+        started_at: ago(startedAgoMs), ended_at: null, ...fields,
+    };
+}
+/** Finished `tookMs` after a start `startedAgoMs` ago. */
+const endedAt = (startedAgoMs, tookMs) => ago(startedAgoMs - tookMs);
+const answer = (body) => Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+
+const RUNNING = stepRow("s5", 5 * SECOND, {
+    note: "Run the workspace tests", command: "cargo +1.67.1 test --workspace",
+});
+const DONE_STEP = stepRow("s4", 2 * MINUTE, {
+    note: "Check the clone", command: "git status", outcome: "ok",
+    result: "command completed (exit 0, 10ms)", ended_at: endedAt(2 * MINUTE, 3 * SECOND),
+});
+const FAILED_STEP = stepRow("s3", 4 * MINUTE, {
+    note: "Read the host log", command: "cat /var/log/app.log", outcome: "failed",
+    result: "BossMod CLI error: Blocked — host path is outside the locked clone",
+    ended_at: endedAt(4 * MINUTE, SECOND),
+});
+const APPROVAL_STEP = stepRow("s2", 6 * MINUTE, {
+    note: "Start the database", command: "docker run postgres", outcome: "approval",
+    result: "Jim requests approval: docker run postgres", ended_at: endedAt(6 * MINUTE, SECOND),
+});
+const CONSENT_STEP = stepRow("s1", 8 * MINUTE, {
+    note: "Read the deploy folder", command: "ls /srv/app", outcome: "consent",
+    result: "Jim asks to use /srv/app", ended_at: endedAt(8 * MINUTE, SECOND),
+});
+
+/** Actions for a detail these cases never edit. */
+const NO_ACTIONS = {
+    update: () => { throw new Error("[task-detail-harness] no save here"); },
+    roster: () => [],
+    complete: () => { throw new Error("[task-detail-harness] no completion here"); },
+    cancel: () => { throw new Error("[task-detail-harness] no cancel here"); },
+    resume: () => { throw new Error("[task-detail-harness] no resume here"); },
+};
+
+/**
+ * Recent steps in the real detail and the history layer it opens: loading,
+ * rows and their outcome words (an open step's on its visible result line),
+ * start times that keep an earlier day, live upserts and the trim, empty and
+ * error states, paging, a resync reloading both, and every subscription
+ * released on close.
+ */
+async function steps() {
+    const rowsIn = (root) => root.querySelectorAll(".task-step");
+    const textOf = (li, selector) => {
+        const el = li.querySelector(selector);
+        return el ? el.textContent : null;
+    };
+    /** The mark's word for a screen reader; an open step's mark has none. */
+    const hiddenWord = (li) => textOf(li, ".visually-hidden");
+    /** What each row says it came to: a finished step's hidden word, an open one's visible result line. */
+    const words = (root) => rowsIn(root).map((li) => hiddenWord(li) || textOf(li, ".task-step-result"));
+    const notes = (root) => rowsIn(root).map((li) => textOf(li, ".task-step-note"));
+    // The clock time today, the date and time on an earlier day (a case near
+    // midnight can start a step yesterday).
+    const sameLocalDay = (iso) => new Date(iso).toDateString() === new Date().toDateString();
+    const clock = (iso) => (sameLocalDay(iso)
+        ? global.BossModFormat.formatActivityTime(iso) : global.BossModFormat.formatDateTime(iso));
+    const base = bus.subscriberCount();
+    const calls = { navigated: [], chats: [] };
+
+    // ── detailRequiresBus ───────────────────────────────────────────────
+    let busError = null;
+    try {
+        global.BossModTaskDetail.openTaskDetail({
+            api, taskId: BLOCKED.id, tasks: TASKS, colorOf: () => undefined,
+            onNavigate: () => {}, actions: NO_ACTIONS, onOpenChat: () => {},
+        });
+    } catch (err) {
+        busError = err.message;
+    }
+    const detailRequiresBus = busError === "[task-detail] deps.bus is required" && top() === null;
+    if (!detailRequiresBus) fail(`a detail without a bus said [${busError}]`);
+
+    // ── recentLoadsThenShowsRows ────────────────────────────────────────
+    let release = null;
+    stepsReply = () => new Promise((resolve) => { release = resolve; });
+    const handle = open(BLOCKED, calls);
+    await drain();
+    const panel = top();
+    const recent = sectionHeaded(panel, "Recent steps");
+    const seeAll = recent && recent.querySelector(".task-steps-more");
+    const loading = Boolean(recent) && recent.textContent.includes("Loading steps…")
+        && rowsIn(recent).length === 0 && seeAll.hidden === true
+        && stepReads[stepReads.length - 1] === `/api/tasks/${BLOCKED.id}/steps/recent`;
+    release(await answer({
+        steps: [RUNNING, DONE_STEP, FAILED_STEP, APPROVAL_STEP, CONSENT_STEP], has_more: false, limit: 5,
+    }));
+    await drain();
+    const loaded = rowsIn(recent);
+    const command = loaded[0].querySelector(".task-step-command");
+    const recentLoadsThenShowsRows = loading && loaded.length === 5
+        && !recent.textContent.includes("Loading steps…")
+        && same(notes(recent), [RUNNING, DONE_STEP, FAILED_STEP, APPROVAL_STEP, CONSENT_STEP].map((step) => step.note))
+        && command.tagName === "CODE" && command.classList.contains("field-mono")
+        && command.textContent === RUNNING.command
+        // Open: when and who, no duration, and a result line that says there is none yet.
+        && loaded[0].querySelector(".task-step-meta").textContent === `${clock(RUNNING.started_at)} · Jim`
+        && textOf(loaded[0], ".task-step-result") === "No result yet"
+        && loaded[1].querySelector(".task-step-meta").textContent === `${clock(DONE_STEP.started_at)} · < 1m · Jim`
+        && loaded[1].querySelector(".task-step-result").textContent === DONE_STEP.result
+        && loaded[2].querySelector(".task-step-result").textContent === FAILED_STEP.result;
+    if (!recentLoadsThenShowsRows) {
+        fail(`Recent steps loaded ${loaded.length} rows: ${JSON.stringify(notes(recent))}, loading ${loading}`);
+    }
+
+    // ── outcomeWordsFollowTheRules ──────────────────────────────────────
+    const ROW = global.BossModTaskSteps.row;
+    const wordOf = (step, newest) => {
+        const li = ROW(step, { newest });
+        return hiddenWord(li) || textOf(li, ".task-step-result");
+    };
+    const actionOnly = ROW(stepRow("x1", 0, { action: "complete", outcome: "ok", ended_at: ago(0) }), { newest: false });
+    const commandOnly = ROW(stepRow("x2", 0, { command: "ls" }), { newest: false });
+    let malformed = false;
+    try {
+        global.BossModTaskSteps.checkStep({ ...DONE_STEP, outcome: "maybe" });
+    } catch (err) {
+        malformed = err instanceof TypeError;
+    }
+    const outcomeWordsFollowTheRules = same(words(recent),
+        ["No result yet", "Done", "Failed", "Waiting for your approval", "Waiting for your permission"])
+        && same(loaded.map((li) => li.getAttribute("data-outcome")), ["open", "ok", "failed", "approval", "consent"])
+        && wordOf(RUNNING, false) === "No result recorded"
+        && wordOf(RUNNING, true) === "No result yet"
+        && wordOf(DONE_STEP, true) === "Done"
+        // The action's name stands in only when there is neither a note nor a command.
+        && actionOnly.querySelector(".task-step-note").textContent === "complete"
+        && !actionOnly.querySelector(".task-step-command")
+        && !commandOnly.querySelector(".task-step-note")
+        && ROW(DONE_STEP, { newest: false }).querySelector(".task-step-note").textContent === DONE_STEP.note
+        && malformed;
+    if (!outcomeWordsFollowTheRules) fail(`outcome words read ${JSON.stringify(words(recent))}`);
+
+    // ── openStepSaysSoInWords ───────────────────────────────────────────
+    // An open step says it has no result on its visible result line, and its
+    // mark is the icon alone, so a screen reader reads the word once. A
+    // finished step keeps its mark's hidden word next to its own result.
+    const openNewest = ROW(RUNNING, { newest: true });
+    const openOlder = ROW(RUNNING, { newest: false });
+    const finishedRow = ROW(DONE_STEP, { newest: true });
+    const iconOnly = (li) => {
+        const mark = li.querySelector(".task-step-mark");
+        return mark.children.length === 1 && mark.children[0].getAttribute("aria-hidden") === "true"
+            && hiddenWord(li) === null;
+    };
+    const openStepSaysSoInWords = iconOnly(openNewest) && iconOnly(openOlder) && iconOnly(loaded[0])
+        && textOf(openNewest, ".task-step-result") === "No result yet"
+        && textOf(openOlder, ".task-step-result") === "No result recorded"
+        && hiddenWord(finishedRow) === "Done" && textOf(finishedRow, ".task-step-result") === DONE_STEP.result
+        && same(loaded.slice(1).map(hiddenWord),
+            ["Done", "Failed", "Waiting for your approval", "Waiting for your permission"])
+        // A finished step that left no result has no result line; nothing stands in for it.
+        && textOf(ROW({ ...DONE_STEP, result: null }, { newest: true }), ".task-step-result") === null;
+    if (!openStepSaysSoInWords) {
+        fail(`an open step read [${textOf(openNewest, ".task-step-result")}], `
+            + `hidden [${hiddenWord(openNewest)}]`);
+    }
+
+    // ── stepTimeKeepsTheDay ─────────────────────────────────────────────
+    // Today: the clock time alone. An earlier day: the date and the time,
+    // which formatActivityTime alone would drop.
+    const timeOf = (step) => textOf(ROW(step, { newest: false }), "time");
+    // Started this moment rather than at the harness's NOW, which a run
+    // across midnight would put on yesterday.
+    const todayStep = stepRow("d1", 0, { started_at: new Date().toISOString() });
+    const earlierStep = stepRow("d2", 3 * 24 * HOUR, {});
+    const stepTimeKeepsTheDay = sameLocalDay(todayStep.started_at)
+        && timeOf(todayStep) === global.BossModFormat.formatActivityTime(todayStep.started_at)
+        && /^\d{1,2}:\d{2} [AP]M$/.test(timeOf(todayStep))
+        && timeOf(earlierStep) === global.BossModFormat.formatDateTime(earlierStep.started_at)
+        && /^[A-Z][a-z]{2} \d{1,2}(, \d{4})?, \d{1,2}:\d{2} [AP]M$/.test(timeOf(earlierStep));
+    if (!stepTimeKeepsTheDay) fail(`step times read [${timeOf(todayStep)}] and [${timeOf(earlierStep)}]`);
+
+    // ── liveStepUpdatesInPlaceOrPrependsAndTrims, otherTaskIgnored ──────
+    const hiddenWhileAllShown = seeAll.hidden === true;
+    const finished = { ...RUNNING, outcome: "ok", result: "command completed (exit 0, 225s)", ended_at: ago(0) };
+    bus.publish("task_step", finished);
+    await drain();
+    const inPlace = rowsIn(recent).length === 5
+        && same(words(recent), ["Done", "Done", "Failed", "Waiting for your approval", "Waiting for your permission"])
+        && rowsIn(recent)[0].querySelector(".task-step-result").textContent === finished.result
+        && seeAll.hidden === true;
+    const NEWER = stepRow("s6", 0, { note: "Open the report", command: "cat /me/report.md" });
+    bus.publish("task_step", NEWER);
+    await drain();
+    const prependedAndTrimmed = same(notes(recent),
+        ["Open the report", "Run the workspace tests", "Check the clone", "Read the host log", "Start the database"])
+        && words(recent)[0] === "No result yet" && seeAll.hidden === false;
+    const liveStepUpdatesInPlaceOrPrependsAndTrims = inPlace && prependedAndTrimmed;
+    if (!liveStepUpdatesInPlaceOrPrependsAndTrims) {
+        fail(`live steps: in place ${inPlace}, prepended ${JSON.stringify(notes(recent))}`);
+    }
+    const beforeOther = notes(recent).join("|");
+    bus.publish("task_step", { ...NEWER, id: "elsewhere", task_id: CHILD_OPEN.id, started_at: ago(-MINUTE) });
+    await drain();
+    const otherTaskIgnored = notes(recent).join("|") === beforeOther;
+    if (!otherTaskIgnored) fail("a step for another task reached this detail");
+
+    // ── historyOpensAsLayer ─────────────────────────────────────────────
+    const PAGE_ONE = [NEWER, finished, DONE_STEP];
+    const PAGE_TWO = [FAILED_STEP, APPROVAL_STEP, CONSENT_STEP];
+    stepsReply = (url) => answer(url.includes("before=")
+        ? { steps: PAGE_TWO, has_more: false } : { steps: PAGE_ONE, has_more: true });
+    const readsBefore = stepReads.length;
+    const subscribedBefore = bus.subscriberCount();
+    await click(seeAll, "See all steps");
+    const layer = top();
+    const trail = layer.querySelector(".modal-trail").querySelectorAll("li").map((li) => li.textContent).join(" › ");
+    const historyOpensAsLayer = layer !== panel && layer.getAttribute("aria-label") === "Steps"
+        && trail === `${BLOCKED.title} › Steps` && panel.hidden === true
+        && stepReads[readsBefore] === `/api/tasks/${BLOCKED.id}/steps`
+        && same(notes(layer), PAGE_ONE.map((step) => step.note))
+        // It follows `task_step` and `resync`.
+        && bus.subscriberCount() === subscribedBefore + 2;
+    if (!historyOpensAsLayer) fail(`the history opened as "${trail}" with ${JSON.stringify(notes(layer))}`);
+
+    // ── olderSendsOldestId ──────────────────────────────────────────────
+    const older = layer.querySelector(".task-steps-older");
+    const olderShown = Boolean(older) && older.hidden === false && older.textContent === "Load older steps";
+    await click(older, "Load older steps");
+    const olderSendsOldestId = olderShown
+        && stepReads[stepReads.length - 1] === `/api/tasks/${BLOCKED.id}/steps?before=${DONE_STEP.id}`
+        && same(notes(layer), [...PAGE_ONE, ...PAGE_TWO].map((step) => step.note))
+        && older.hidden === true;
+    if (!olderSendsOldestId) fail(`Load older steps read ${stepReads[stepReads.length - 1]}`);
+
+    // ── historyLivePrepends ─────────────────────────────────────────────
+    const NEWEST = stepRow("s7", -SECOND, { note: "Write the summary", command: "write /me/summary.md" });
+    bus.publish("task_step", NEWEST);
+    await drain();
+    // The open step it displaced is no longer the newest: nothing came back for it.
+    const historyLivePrepends = notes(layer).length === 7 && notes(layer)[0] === NEWEST.note
+        && same(words(layer).slice(0, 2), ["No result yet", "No result recorded"]);
+    if (!historyLivePrepends) fail(`a live step in the history read ${JSON.stringify(notes(layer))}`);
+
+    // ── resyncReloadsRecentAndHistory ───────────────────────────────────
+    // A reconnect lost whatever steps were sent while the socket was down:
+    // Recent steps (under the layer) and the history both read page 1 again,
+    // and the history forgets the older page it had loaded.
+    const RESYNC_RECENT = [NEWEST, NEWER, finished];
+    const RESYNC_PAGE = [NEWEST, NEWER];
+    stepsReply = (url) => answer(url.includes("/steps/recent")
+        ? { steps: RESYNC_RECENT, has_more: true, limit: 5 } : { steps: RESYNC_PAGE, has_more: true });
+    const readsBeforeResync = stepReads.length;
+    bus.publish("resync", { downtimeMs: 1200 });
+    await drain();
+    const resyncReads = stepReads.slice(readsBeforeResync).sort();
+    const resyncReloadsRecentAndHistory = same(resyncReads,
+        [`/api/tasks/${BLOCKED.id}/steps`, `/api/tasks/${BLOCKED.id}/steps/recent`])
+        && same(notes(recent), RESYNC_RECENT.map((step) => step.note))
+        && same(notes(layer), RESYNC_PAGE.map((step) => step.note))
+        && older.hidden === false;
+    if (!resyncReloadsRecentAndHistory) {
+        fail(`a resync read ${JSON.stringify(resyncReads)}: recent ${JSON.stringify(notes(recent))}, `
+            + `history ${JSON.stringify(notes(layer))}`);
+    }
+
+    // ── closingHistoryUnsubscribes ──────────────────────────────────────
+    await click(layer.querySelector(".modal-back"), "the history's ‹");
+    // Only the detail's Recent steps still answers a resync.
+    const readsAtHistoryClose = stepReads.length;
+    bus.publish("resync", { downtimeMs: 0 });
+    await drain();
+    const closingHistoryUnsubscribes = bus.subscriberCount() === subscribedBefore
+        && top() === panel && panel.hidden === false
+        && same(stepReads.slice(readsAtHistoryClose), [`/api/tasks/${BLOCKED.id}/steps/recent`]);
+    if (!closingHistoryUnsubscribes) {
+        fail(`closing the history left ${bus.subscriberCount()} subscribers; `
+            + `a resync then read ${JSON.stringify(stepReads.slice(readsAtHistoryClose))}`);
+    }
+    handle.close();
+    await drain();
+    const readsAtDetailClose = stepReads.length;
+    bus.publish("resync", { downtimeMs: 0 });
+    await drain();
+    const closingDetailUnsubscribes = bus.subscriberCount() === base && top() === null
+        && stepReads.length === readsAtDetailClose;
+    if (!closingDetailUnsubscribes) {
+        fail(`closing the detail left ${bus.subscriberCount() - base} subscribers; `
+            + `a resync then read ${stepReads.length - readsAtDetailClose} times`);
+    }
+
+    // ── liveDuringLoadIsHeld, recentEmptyAndErrorRetry ──────────────────
+    stepsReply = () => new Promise((resolve) => { release = resolve; });
+    const heldHandle = open(BLOCKED, calls);
+    await drain();
+    bus.publish("task_step", RUNNING);
+    release(await answer({ steps: [], has_more: false, limit: 5 }));
+    await drain();
+    const heldRecent = sectionHeaded(top(), "Recent steps");
+    const liveDuringLoadIsHeld = same(notes(heldRecent), [RUNNING.note])
+        && !heldRecent.textContent.includes("No steps recorded yet.");
+    heldHandle.close();
+    await drain();
+    if (!liveDuringLoadIsHeld) fail(`a step sent mid-load read ${JSON.stringify(notes(heldRecent))}`);
+
+    stepsReply = () => answer({ steps: [], has_more: false, limit: 5 });
+    const emptyHandle = open(BLOCKED, calls);
+    await drain();
+    const emptyRecent = sectionHeaded(top(), "Recent steps");
+    const emptyShown = emptyRecent.textContent.includes("No steps recorded yet.")
+        && rowsIn(emptyRecent).length === 0 && emptyRecent.querySelector(".task-steps-more").hidden === true;
+    emptyHandle.close();
+    await drain();
+
+    stepsReply = () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ detail: "boom" }) });
+    const errorHandle = open(BLOCKED, calls);
+    await drain();
+    const errorRecent = sectionHeaded(top(), "Recent steps");
+    const alertLine = errorRecent.querySelector(".place-error-detail");
+    const retry = errorRecent.querySelectorAll("button").find((button) => button.textContent === "Try again");
+    const errorShown = Boolean(alertLine) && alertLine.textContent === "Could not load steps."
+        && alertLine.getAttribute("role") === "alert" && Boolean(retry)
+        && errorRecent.querySelector(".task-steps-more").hidden === true;
+    // The server says there is more: See all shows from the first load.
+    stepsReply = () => answer({ steps: [DONE_STEP], has_more: true, limit: 5 });
+    await click(retry, "Try again");
+    const retried = same(notes(errorRecent), [DONE_STEP.note]) && !errorRecent.querySelector(".place-error-detail")
+        && errorRecent.querySelector(".task-steps-more").hidden === false;
+    errorHandle.close();
+    await drain();
+    const recentEmptyAndErrorRetry = emptyShown && errorShown && retried;
+    if (!recentEmptyAndErrorRetry) fail(`empty ${emptyShown}, error ${errorShown}, retried ${retried}`);
+
+    // ── seeAllOnlyWhileMore ─────────────────────────────────────────────
+    const seeAllOnlyWhileMore = hiddenWhileAllShown && prependedAndTrimmed && retried && emptyShown;
+    if (bus.subscriberCount() !== base || top() !== null) fail("a steps case outlived its close");
+
+    return {
+        detailRequiresBus,
+        recentLoadsThenShowsRows,
+        outcomeWordsFollowTheRules,
+        openStepSaysSoInWords,
+        stepTimeKeepsTheDay,
+        liveStepUpdatesInPlaceOrPrependsAndTrims,
+        otherTaskIgnored,
+        seeAllOnlyWhileMore,
+        historyOpensAsLayer,
+        olderSendsOldestId,
+        historyLivePrepends,
+        resyncReloadsRecentAndHistory,
+        closingHistoryUnsubscribes,
+        closingDetailUnsubscribes,
+        liveDuringLoadIsHeld,
+        recentEmptyAndErrorRetry,
+    };
 }
 
 main().catch((err) => {

@@ -28,7 +28,8 @@ const NAMES = [
     "BossModFileListing", "BossModPlaces", "BossModAgentRoutes",
     "BossModFloorScope",
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskChecklist", "BossModTaskCard",
-    "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskDetailSections",
+    "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory",
+    "BossModTaskDetailSections",
     "BossModTaskDetail",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksCancel", "BossModTasksComplete",
@@ -115,6 +116,10 @@ let taskFetches = 0;
 function api(url) {
     if (String(url).includes("/events")) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    }
+    // An open detail's Recent steps; its own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/steps/.test(String(url))) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ steps: [], has_more: false, limit: 5 }) });
     }
     if (url.startsWith("/api/tasks")) {
         taskFetches += 1;
@@ -562,6 +567,24 @@ async function main() {
     if (!staleLoadDropped) fail("a list read from a left mount painted the next one");
     place.unmount();
 
+    // ── layersRequireBus ────────────────────────────────────────────────
+    // Every detail follows `task_step` on the bus, so a task door built
+    // without one fails where it is built, not at the first click.
+    let layersError = null;
+    try {
+        global.BossModTaskLayers.create({
+            api,
+            getTasks: () => [],
+            colorOf: () => undefined,
+            actions: { cancel() {}, complete() {}, resume() {}, update() {}, roster() {} },
+            onOpenChat: () => {},
+        });
+    } catch (err) {
+        layersError = err.message;
+    }
+    const layersRequireBus = layersError === "[task-layers] deps.bus is required";
+    if (!layersRequireBus) fail(`task layers without a bus said [${layersError}]`);
+
     process.stdout.write(JSON.stringify({
         ok: true,
         ...pure,
@@ -585,6 +608,7 @@ async function main() {
         opensLinkedTask,
         offFloorTaskHidden,
         staleLoadDropped,
+        layersRequireBus,
     }));
 }
 

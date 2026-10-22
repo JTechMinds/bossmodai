@@ -87,6 +87,7 @@ class RuntimeEventSink(Protocol):
     async def broadcast_feed_update(self, entry: dict[str, Any]) -> None: ...
     async def broadcast_extension_live(self, extension_id: str | None, agent_id: str | None) -> None: ...
     async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None: ...
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None: ...
 
 
 class RuntimeEventTransport(Protocol):
@@ -144,6 +145,9 @@ class NullRuntimeEventSink:
         return None
 
     async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None:
+        return None
+
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None:
         return None
 
 
@@ -225,6 +229,9 @@ class TransportRuntimeEventSink:
     async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None:
         await self._emit("conversation_notes", {"scope_kind": scope_kind, "scope_key": scope_key})
 
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None:
+        await self._emit("task_step", {"step": step})
+
 
 class RuntimeEventProxy:
     """Mutable proxy used by runtime code regardless of execution context."""
@@ -297,6 +304,10 @@ class RuntimeEventProxy:
     async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None:
         """Tell open transcripts that one conversation's notes changed."""
         await self._sink.broadcast_conversation_notes(scope_kind, scope_key)
+
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None:
+        """Send one task step as it starts or ends (``task_steps.task_step_event``'s shape)."""
+        await self._sink.broadcast_task_step(step)
 
 
 runtime_events = RuntimeEventProxy()

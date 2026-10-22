@@ -38,8 +38,28 @@ def validate_api_base(url: str) -> str:
 
 
 def canonicalize_openai_compatible_model(model: str, api_base: str | None = None) -> str:
-    """Normalize model names for OpenAI-compatible custom endpoints."""
-    if api_base and "/" not in model:
+    """Build the litellm model string that sends ``model`` to ``api_base`` unchanged.
+
+    The configured model is the endpoint's exact id, as ``GET {base}/models``
+    lists it and as the connection test compares it. Ids may contain ``/``,
+    for example ``openai/gpt-5.6-sol`` or ``z-ai/glm-5.2``.
+
+    The ``openai/`` prefix only selects litellm's OpenAI-compatible transport;
+    it is not part of the id. litellm strips exactly one leading segment as the
+    provider name, so exactly one prefix is always added and the id is never
+    inspected. Skipping the prefix for an id that already contains ``/`` would
+    let litellm eat the id's first segment.
+
+    Args:
+        model: The endpoint's model id, exactly as configured.
+        api_base: The connection's base URL. When it is set, the endpoint is
+            OpenAI-compatible.
+
+    Returns:
+        ``openai/{model}`` when ``api_base`` is set; otherwise ``model``
+        unchanged, so litellm picks the provider from the name itself.
+    """
+    if api_base:
         return f"openai/{model}"
     return model
 

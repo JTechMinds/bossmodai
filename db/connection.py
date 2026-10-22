@@ -1754,6 +1754,7 @@ _HOT_PATH_INDEXES: tuple[tuple[str, str, str], ...] = (
     ("idx_tasks_assigned_status", "tasks", "assigned_to, status"),
     ("idx_tasks_owner_status", "tasks", "owner_id, status"),
     ("idx_task_events_task_created", "task_events", "task_id, created_at"),
+    ("idx_task_steps_task_started", "task_steps", "task_id, started_at"),
     ("idx_agent_triggers_status_created", "agent_triggers", "status, created_at"),
     ("idx_activity_log_created", "activity_log", "created_at"),
     ("idx_notifications_created", "notifications", "created_at"),

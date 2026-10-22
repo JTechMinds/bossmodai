@@ -21,6 +21,8 @@ const BossModDeskTaskOpener = (() => {
      * @param {object} deps.store  Application store; the roster colours the
      *   detail's avatars and is who a detail's Edit mode can assign.
      * @param {Function} deps.api  Authenticated fetch helper.
+     * @param {object} deps.bus  Event bus, handed to each task layer for its
+     *   live Recent steps.
      * @param {{refresh: () => Promise<void>, showError: (message: string) => void}} deps.tasks
      *   The desk's Tasks section (context/desk-tasks.js): a failure here is
      *   said above its rows, and a cancel, completion, resume or edit
@@ -37,9 +39,10 @@ const BossModDeskTaskOpener = (() => {
      * @throws {Error} When any dependency is missing.
      */
     function create(deps) {
-        const { store, api, tasks, openConversation } = deps || {};
+        const { store, api, bus, tasks, openConversation } = deps || {};
         if (!store) throw new Error('[desk-task-opener] deps.store is required');
         if (typeof api !== 'function') throw new Error('[desk-task-opener] deps.api is required');
+        if (!bus || typeof bus.subscribe !== 'function') throw new Error('[desk-task-opener] deps.bus is required');
         if (!tasks || typeof tasks.refresh !== 'function' || typeof tasks.showError !== 'function') {
             throw new Error('[desk-task-opener] deps.tasks must be the desk Tasks section');
         }
@@ -67,6 +70,7 @@ const BossModDeskTaskOpener = (() => {
         });
         const taskLayers = BossModTaskLayers.create({
             api,
+            bus,
             getTasks: () => loadedTasks,
             // The roster colour; undefined (not rostered) is the avatar's
             // neutral treatment — the Tasks place's own lookup.

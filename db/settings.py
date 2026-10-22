@@ -66,6 +66,9 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("movement_tiles_per_second", "4", "simulation"),
     ("thought_bubble_duration_ms", "4000", "simulation"),
     ("office_chatter_page_size", "30", "simulation"),
+    # The task detail's Recent steps and its full step history (api/routes/tasks.py).
+    ("task_steps_recent_count", "5", "simulation"),
+    ("task_steps_page_size", "50", "simulation"),
 
     # ── Social triggers ──
     ("social_idle_threshold_minutes", "5", "social"),

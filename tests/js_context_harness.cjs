@@ -137,6 +137,7 @@ const NAMES = [
     // detail, task actions and layer controller; its Chat tool is the one
     // conversation route. All are read at call time.
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables", "BossModTaskEvents",
+    "BossModTaskSteps", "BossModTaskStepsHistory",
     "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksComplete",
@@ -525,6 +526,10 @@ function api(url, init) {
         creates.push(JSON.parse(init.body));
         if (!createSucceeds) return jsonResponse({ detail: "Name already taken" }, 409);
         return jsonResponse({ id: `new-${creates.length}` });
+    }
+    // A task layer's Recent steps; its own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/steps/.test(String(url))) {
+        return jsonResponse({ steps: [], has_more: false, limit: 5 });
     }
     if (String(url) === "/api/tasks") {
         if (taskListFails) return jsonResponse({ detail: "boom" }, 500);
@@ -1260,6 +1265,18 @@ async function main() {
     if (!seeAllOpensTheAgentsTasks) {
         throw new Error(`See all must close the desk and open Tasks, got ${JSON.stringify(allNav)}`);
     }
+    // Every task layer follows `task_step` on the bus, so the opener refuses
+    // to be built without one rather than failing at a row's click.
+    let openerError = null;
+    try {
+        global.BossModDeskTaskOpener.create({
+            store, api, tasks: { refresh: async () => {}, showError: () => {} }, openConversation: () => {},
+        });
+    } catch (err) {
+        openerError = err.message;
+    }
+    const taskOpenerRequiresBus = openerError === "[desk-task-opener] deps.bus is required";
+    if (!taskOpenerRequiresBus) throw new Error(`a desk task opener without a bus said [${openerError}]`);
 
     // ─── Remove says what a delete destroys, and whose ───
     //
@@ -3138,6 +3155,7 @@ async function main() {
         aRemovalClosesTheWholeStack,
         closingTheDeskClosesTheViewerOverIt,
         seeAllOpensTheAgentsTasks,
+        taskOpenerRequiresBus,
         removeClosesTheDesk,
         aRenameRetitlesTheDesk,
         anAgentGoneFromTheRosterClosesTheDesk,

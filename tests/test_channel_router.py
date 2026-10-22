@@ -1230,6 +1230,29 @@ def test_system_completion_uses_the_connection_model_not_an_identity_model(
     assert seen["timeout"] == 300
 
 
+def test_system_completion_sends_a_slashed_connection_id_intact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    connection = db.create_connection(
+        name="System",
+        api_base_url="http://127.0.0.1:9/v1",
+        api_key="secret",
+        model="z-ai/glm-5.2",
+    )
+    db.set_setting("system_ai_connection", connection.id, "llm")
+    config.reload()
+    seen: dict[str, Any] = {}
+
+    def _fake(**kwargs: Any) -> dict[str, Any]:
+        seen.update(kwargs)
+        return {"choices": [{"message": {"content": "{\"ok\":true}"}}]}
+
+    monkeypatch.setattr("core.llm.system_completion.litellm.completion", _fake)
+    assert complete_text([{"role": "user", "content": "hi"}]) == '{"ok":true}'
+    # litellm strips the one transport prefix; the endpoint gets z-ai/glm-5.2.
+    assert seen["model"] == "openai/z-ai/glm-5.2"
+
+
 def test_system_completion_cap_follows_the_setting_and_explicit_caps_win(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

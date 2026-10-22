@@ -1,6 +1,7 @@
-"""Task list, create/bind, board, events, and operator cancel/edit/complete."""
+"""Task list, create/bind, board, events, steps, and operator cancel/edit/complete."""
 
-from typing import Literal
+import logging
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -15,7 +16,9 @@ from core.agent_loop.role_contracts import (
 )
 from core.agent_loop.task_origin_mirrors import BOSS_CANCEL_REASON, broadcast_origin_line
 from core.agent_loop.task_roles import default_task_owner_id
+from core.agent_loop.task_steps import task_step_event
 from core.boss import boss_label
+from core import config
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.floors import FloorDenied
 from core.models import (
@@ -43,7 +46,13 @@ from core.tasking.service import cancel_task_as_operator, cancel_tasks_as_operat
 from core.tasking.transitions import IllegalTaskTransition, is_allowed_task_transition, is_terminal_task_status
 import db
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+# (setting key, its Settings label): the label is what an error tells the operator.
+_RECENT_STEPS_SETTING = ("task_steps_recent_count", "Recent Task Steps")
+_STEPS_PAGE_SETTING = ("task_steps_page_size", "Task Steps Page Size")
 
 
 # ─── Tasks CRUD ───
@@ -395,6 +404,106 @@ async def get_task_events(task_id: str, limit: int = 100):
     events = db.list_task_events(task_id, limit=limit)
     events.reverse()  # profile/task activity is newest-first; list_task_events stays oldest-first for prompts
     return [event.model_dump(mode="json") for event in events]
+
+
+def _step_count(setting: tuple[str, str]) -> int:
+    """Read a task-steps count setting, which must be a whole number of at least 1.
+
+    Args:
+        setting: ``(key, Settings label)``.
+
+    Returns:
+        The configured count.
+
+    Raises:
+        HTTPException: 500 when the setting is missing, not a whole number, or
+            below 1. The bad value is logged at ERROR with its key and not
+            clamped, so it gets fixed; the detail names the setting by its
+            Settings label, as the office-chatter route's does.
+    """
+    key, label = setting
+    detail = f"The {label} setting must be a whole number of at least 1. Change it in Settings."
+    try:
+        value = config.require_int(key)
+    except config.ConfigError as exc:
+        logger.error("Setting %s is invalid; it must be an integer of at least 1: %s", key, exc)
+        raise HTTPException(500, detail) from exc
+    if value < 1:
+        logger.error("Setting %s=%r is invalid; it must be an integer of at least 1", key, value)
+        raise HTTPException(500, detail)
+    return value
+
+
+@router.get("/tasks/{task_id}/steps/recent")
+async def get_recent_task_steps(task_id: str) -> dict[str, Any]:
+    """Return a task's newest steps for the task detail's Recent steps, newest first.
+
+    How many is the server-owned ``task_steps_recent_count`` setting, and it
+    is returned as ``limit`` so the detail trims live rows to the same count
+    without a number of its own.
+
+    Args:
+        task_id: The task whose steps are listed.
+
+    Returns:
+        ``{"steps": [row, ...], "has_more": bool, "limit": int}``. Each row is
+        ``core.agent_loop.task_steps.task_step_event``'s shape, the same one
+        the ``task_step`` WebSocket event carries. ``has_more`` says whether
+        older steps exist past these.
+
+    Raises:
+        HTTPException: 404 ``"Task not found"``. 500 when the setting is
+            missing or below 1 (see ``_step_count``).
+    """
+    if db.get_task(task_id) is None:
+        raise HTTPException(404, "Task not found")
+    limit = _step_count(_RECENT_STEPS_SETTING)
+    # One extra row says whether older steps exist, without a count query.
+    rows = db.list_task_steps(task_id, limit=limit + 1)
+    return {
+        "steps": [task_step_event(step) for step in rows[:limit]],
+        "has_more": len(rows) > limit,
+        "limit": limit,
+    }
+
+
+@router.get("/tasks/{task_id}/steps")
+async def get_task_steps(task_id: str, before: str | None = None) -> dict[str, Any]:
+    """Return one page of a task's full step history, newest first.
+
+    The page size is the server-owned ``task_steps_page_size`` setting; the
+    client sends only a cursor, so it cannot inflate the page.
+
+    Args:
+        task_id: The task whose steps are listed.
+        before: The id of the oldest step already shown. Only strictly older
+            steps (by start time, then id) are returned. Omit it for the
+            newest page.
+
+    Returns:
+        ``{"steps": [row, ...], "has_more": bool}``, rows in
+        ``task_step_event``'s shape. ``has_more`` says whether older steps
+        exist past this page.
+
+    Raises:
+        HTTPException: 404 ``"Task not found"``. 400 ``"Unknown cursor"`` when
+            ``before`` names no step of this task. 500 when the setting is
+            missing or below 1 (see ``_step_count``).
+    """
+    if db.get_task(task_id) is None:
+        raise HTTPException(404, "Task not found")
+    cursor = None
+    if before is not None:
+        anchor = db.get_task_step(before)
+        if anchor is None or anchor.task_id != task_id:
+            raise HTTPException(400, "Unknown cursor")
+        cursor = (anchor.started_at, anchor.id)
+    page_size = _step_count(_STEPS_PAGE_SETTING)
+    rows = db.list_task_steps(task_id, limit=page_size + 1, before=cursor)
+    return {
+        "steps": [task_step_event(step) for step in rows[:page_size]],
+        "has_more": len(rows) > page_size,
+    }
 
 
 @router.get("/tasks/{task_id}")

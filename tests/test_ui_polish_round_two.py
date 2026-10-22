@@ -175,6 +175,8 @@ CONTEXT_MODULES = [
     JS / "places" / "tasks" / "task-checklist.js",
     JS / "places" / "tasks" / "task-deliverables.js",
     JS / "places" / "tasks" / "task-events.js",
+    JS / "places" / "tasks" / "task-steps.js",
+    JS / "places" / "tasks" / "task-steps-history.js",
     JS / "places" / "tasks" / "task-detail-sections.js",
     JS / "places" / "tasks" / "task-detail.js",
     JS / "places" / "tasks" / "tasks-cancel.js",

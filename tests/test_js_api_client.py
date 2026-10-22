@@ -125,6 +125,10 @@ API_BY_INJECTION = {
     "places/tasks/tasks-place.js",
     "places/tasks/task-deliverables.js",
     "places/tasks/task-events.js",
+    # The detail's Recent steps and the step history page their steps through
+    # the api the task detail hands them.
+    "places/tasks/task-steps.js",
+    "places/tasks/task-steps-history.js",
     "places/tasks/assign-form.js",
     "places/tasks/tasks-cancel.js",
     "places/tasks/tasks-complete.js",
@@ -235,6 +239,8 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "places/tasks/tasks-place.js",
                  "places/tasks/task-deliverables.js",
                  "places/tasks/task-events.js",
+                 "places/tasks/task-steps.js",
+                 "places/tasks/task-steps-history.js",
                  "places/tasks/assign-form.js",
                  "places/tasks/tasks-cancel.js",
                  "places/tasks/tasks-complete.js",

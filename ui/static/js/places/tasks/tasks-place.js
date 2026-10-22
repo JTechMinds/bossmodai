@@ -291,6 +291,7 @@ const BossModTasksPlace = (() => {
             });
             layers = BossModTaskLayers.create({
                 api: ctx.api,
+                bus: ctx.bus,
                 getTasks: () => tasks,
                 colorOf,
                 actions,

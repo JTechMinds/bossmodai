@@ -418,6 +418,27 @@ CREATE TABLE IF NOT EXISTS task_events (
     created_at        TIMESTAMP DEFAULT current_timestamp
 );
 
+-- One row per execution step an agent takes on a task, written when the step
+-- starts and finished with its outcome when it ends (db/task_steps.py). A
+-- separate table, never task_events: steps would flood Activity and the
+-- agent's own task-thread prompt history. Values are stored verbatim; a step
+-- whose turn died mid-step keeps outcome, result and ended_at NULL.
+CREATE TABLE IF NOT EXISTS task_steps (
+    id          VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+    task_id     VARCHAR NOT NULL REFERENCES tasks(id),
+    -- Detached to NULL when the agent is deleted (db/agents.py delete_agent_rows).
+    agent_id    VARCHAR REFERENCES agents(id),
+    -- The name when the step ran, as task_events.author_name keeps it.
+    agent_name  VARCHAR NOT NULL,
+    action      VARCHAR NOT NULL,
+    note        TEXT,
+    command     TEXT,
+    outcome     VARCHAR CHECK (outcome IN ('ok', 'failed', 'approval', 'consent')),
+    result      TEXT,
+    started_at  TIMESTAMP NOT NULL,
+    ended_at    TIMESTAMP
+);
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- AI Connections — saved LLM provider configurations
 -- ───────────────────────────────────────────────────────────────────────────
@@ -884,6 +905,10 @@ CREATE INDEX IF NOT EXISTS idx_tasks_assigned_status
 -- A task's newest events (board, task thread).
 CREATE INDEX IF NOT EXISTS idx_task_events_task_created
     ON task_events (task_id, created_at);
+
+-- A task's steps, newest first (task detail's Recent steps and its history).
+CREATE INDEX IF NOT EXISTS idx_task_steps_task_started
+    ON task_steps (task_id, started_at);
 
 -- Dispatcher queued scan, and the finished-trigger prune.
 CREATE INDEX IF NOT EXISTS idx_agent_triggers_status_created

@@ -322,6 +322,7 @@ from db.tasks import (
     update_task,
 )
 from db.task_events import create_task_event, list_recent_task_events, list_task_events
+from db.task_steps import create_task_step, finish_task_step, get_task_step, list_task_steps
 from db.task_notification_policies import get_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import (
     delete_task_notification_target,
@@ -663,6 +664,10 @@ __all__ = [
     "list_tasks_by_statuses",
     "list_recent_task_events",
     "list_task_events",
+    "create_task_step",
+    "finish_task_step",
+    "get_task_step",
+    "list_task_steps",
     "update_task",
     "get_task_notification_settings",
     "set_task_notification_settings",

@@ -31,6 +31,7 @@ const BossModBus = (() => {
         'operator_invalidate',
         'extension_live',
         'conversation_notes_updated',
+        'task_step',
         'resync',
     ]);
 

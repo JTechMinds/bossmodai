@@ -139,6 +139,8 @@ CONTEXT_MODULES = [
     JS / "places" / "tasks" / "task-checklist.js",
     JS / "places" / "tasks" / "task-deliverables.js",
     JS / "places" / "tasks" / "task-events.js",
+    JS / "places" / "tasks" / "task-steps.js",
+    JS / "places" / "tasks" / "task-steps-history.js",
     JS / "places" / "tasks" / "task-detail-sections.js",
     JS / "places" / "tasks" / "task-detail.js",
     JS / "places" / "tasks" / "tasks-cancel.js",
@@ -774,7 +776,7 @@ def test_a_desk_task_opens_as_a_layer_over_the_desk() -> None:
         "taskBackReturnsToTheDesk", "aFailedTaskListIsSaidOnTheDesk",
         "anotherDeskClosesTheWholeStack", "aRemovalClosesTheWholeStack",
         "closingTheDeskClosesTheViewerOverIt", "seeAllOpensTheAgentsTasks",
-        "chatToolOpensTheConversation",
+        "chatToolOpensTheConversation", "taskOpenerRequiresBus",
     ):
         assert payload[key] is True, key
     panel = _read(CONTEXT / "desk-panel.js")

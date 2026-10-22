@@ -3,11 +3,15 @@
  *
  * A panel modal whose body is one centred column: the status line, the facts,
  * the one callout the state calls for, the task itself, its references, the
- * deliverables, the assignee's checklist, the subtasks, what counts as done,
- * and the activity. The title is the modal's own head and is not repeated
- * below it. The sections are pure builders in
+ * deliverables, the assignee's checklist, its recent steps, the subtasks,
+ * what counts as done, and the activity. The title is the modal's own head
+ * and is not repeated below it. The sections are pure builders in
  * task-detail-sections.js; this file composes them, owns the modal, and owns
  * the head's tools: the pencil that enters Edit mode, and its ✓ and ✕.
+ *
+ * Recent steps (task-steps.js) is the one live part: built once, it follows
+ * the `task_step` topic for as long as the detail is open, and its "See all
+ * steps" opens the full history as a layer (task-steps-history.js).
  *
  * Edit mode (task-edit-mode.js) makes the same panel editable in place; one
  * renderColumn() paints the view, the edit and every repaint after a change.
@@ -34,6 +38,8 @@ const BossModTaskDetail = (() => {
      *
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper.
+     * @param {object} deps.bus  Event bus; Recent steps and the step history
+     *   follow `task_step` on it while they are open.
      * @param {string} deps.taskId
      * @param {object[]} deps.tasks  The place's current list, used to resolve
      *   the parent and children without a second request.
@@ -56,9 +62,10 @@ const BossModTaskDetail = (() => {
      */
     function openTaskDetail(deps) {
         const {
-            api, taskId, tasks, colorOf, onNavigate, actions, onOpenChat, onClose,
+            api, bus, taskId, tasks, colorOf, onNavigate, actions, onOpenChat, onClose,
         } = deps || {};
         if (typeof api !== 'function') throw new Error('[task-detail] deps.api is required');
+        if (!bus || typeof bus.subscribe !== 'function') throw new Error('[task-detail] deps.bus is required');
         if (typeof colorOf !== 'function') throw new Error('[task-detail] deps.colorOf is required');
         if (typeof onNavigate !== 'function') throw new Error('[task-detail] deps.onNavigate is required');
         if (!actions || typeof actions.cancel !== 'function' || typeof actions.complete !== 'function'
@@ -72,6 +79,9 @@ const BossModTaskDetail = (() => {
         if (!task) throw new Error(`[task-detail] no task "${taskId}" in the current list`);
 
         const events = BossModTaskEvents.createTaskEvents({ api, taskId: task.id, colorOf });
+        const recent = BossModTaskSteps.createRecent({
+            api, bus, taskId: task.id, onSeeAll: () => BossModTaskStepsHistory.open({ api, bus, task }),
+        });
         const column = h('div', { class: 'task-detail-column' });
         const body = h('div', { class: 'task-detail' }, column);
         /** The live edit state while Edit mode is on, else null. */
@@ -111,6 +121,9 @@ const BossModTaskDetail = (() => {
                 editing ? editMode.deliverablesSection : SECTIONS.deliverables(current, children, api),
                 // The assignee's own plan; read-only in Edit mode too.
                 SECTIONS.checklist(current),
+                // What is being done, right after the plan: the same live
+                // node in view and in Edit mode, and read-only in both.
+                recent.element,
                 SECTIONS.subtasks(children, onNavigate),
                 SECTIONS.doneContract(current),
                 events.element,
@@ -214,6 +227,7 @@ const BossModTaskDetail = (() => {
                 closed = true;
                 if (editMode) editMode.destroy();
                 events.destroy();
+                recent.destroy();
                 if (onClose) onClose();
             },
         });

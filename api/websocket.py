@@ -429,6 +429,19 @@ class ConnectionManager:
             "data": {"scope_kind": scope_kind, "scope_key": scope_key},
         })
 
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None:
+        """Broadcast one task step as it starts or as it ends.
+
+        Carries the whole row, in the shape ``GET /api/tasks/{id}/steps``
+        returns (``core.agent_loop.task_steps.task_step_event``), so an open
+        task detail upserts it by id. Persists nothing: the runtime wrote the
+        row before it sent this.
+
+        Args:
+            step: The step row; ``ended_at`` is ``None`` while it is open.
+        """
+        await self.broadcast({"type": "task_step", "data": step})
+
 
 # Module-level singleton — imported by api.routes and wired into RuntimeServices in main.py
 manager = ConnectionManager()

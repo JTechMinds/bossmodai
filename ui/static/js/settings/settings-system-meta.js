@@ -106,6 +106,16 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Office Chatter Page Size',
             description: 'How many agent-to-agent messages the Office chatter panel in Chat loads at a time. Must be at least 1.',
         },
+        task_steps_recent_count: {
+            order: 89,
+            label: 'Recent Task Steps',
+            description: 'How many of an agent\'s latest steps the task detail shows. Must be at least 1.',
+        },
+        task_steps_page_size: {
+            order: 90,
+            label: 'Task Steps Page Size',
+            description: 'How many steps the full step history loads at a time. Must be at least 1.',
+        },
         // Stored under 'advanced' (db/settings.py); shown with the runtime cadence settings.
         runtime_command_fallback_poll_seconds: {
             order: 82,

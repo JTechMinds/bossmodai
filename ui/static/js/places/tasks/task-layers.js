@@ -21,6 +21,8 @@ const BossModTaskLayers = (() => {
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper, for the detail's
      *   own reads.
+     * @param {object} deps.bus  Event bus, handed to every detail for its live
+     *   Recent steps.
      * @param {() => object[]} deps.getTasks  The caller's current task list,
      *   read at every open so a layer resolves its parent and children from
      *   the latest load rather than the one this was built with.
@@ -43,8 +45,9 @@ const BossModTaskLayers = (() => {
      *   at the click is worse than one that fails where it is built.
      */
     function create(deps) {
-        const { api, getTasks, colorOf, actions, onOpenChat } = deps || {};
+        const { api, bus, getTasks, colorOf, actions, onOpenChat } = deps || {};
         if (typeof api !== 'function') throw new Error('[task-layers] deps.api is required');
+        if (!bus || typeof bus.subscribe !== 'function') throw new Error('[task-layers] deps.bus is required');
         if (typeof getTasks !== 'function') throw new Error('[task-layers] deps.getTasks is required');
         if (typeof colorOf !== 'function') throw new Error('[task-layers] deps.colorOf is required');
         if (!actions || typeof actions.cancel !== 'function' || typeof actions.complete !== 'function'
@@ -67,6 +70,7 @@ const BossModTaskLayers = (() => {
         function push(taskId) {
             const handle = BossModTaskDetail.openTaskDetail({
                 api,
+                bus,
                 taskId,
                 tasks: getTasks(),
                 colorOf,

@@ -22,14 +22,14 @@ global.BossModFileViewer = { open: (path) => { viewed.push(path); return Promise
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates",
+    "BossModDom", "BossModAvatar", "BossModFormat", "BossModSpecialty", "BossModGates", "BossModBus",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuSelect",
     "BossModAutoGrow",
     "BossModFileListing",
     "BossModFactList",
     "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskCard", "BossModTaskDeliverables",
-    "BossModTaskEvents", "BossModTaskDetailSections",
+    "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTaskActions",
@@ -77,6 +77,10 @@ const replies = [];
 function api(url, opts) {
     const text = String(url);
     if (text.includes("/events")) return Promise.resolve({ ok: true, json: () => Promise.resolve([]) });
+    // The detail's Recent steps; its own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/steps/.test(text)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ steps: [], has_more: false, limit: 5 }) });
+    }
     const desk = /^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/.exec(text);
     if (desk) {
         const path = decodeURIComponent(desk[2]);
@@ -144,7 +148,8 @@ async function main() {
         api, store, onChanged: () => {}, onUpdated: () => {}, onError: () => {},
     });
     global.BossModTaskDetail.openTaskDetail({
-        api, taskId: FILED.id, tasks: TASKS, colorOf: () => undefined,
+        api, bus: global.BossModBus.createBus(global.BossModBus.KNOWN_TOPICS),
+        taskId: FILED.id, tasks: TASKS, colorOf: () => undefined,
         onNavigate: () => {}, actions, onOpenChat: () => {},
     });
     await drain();

@@ -104,8 +104,10 @@ def record_task_progress(task_id: str | None, *, at: datetime | None = None) -> 
 
 StepKind = Literal["progress", "novel", "stale"]
 
-# Non-CLI results that mean the step did not do what it asked for.
-_FAILED_EVENTS = frozenset({"agent_error", "bm_cli_error"})
+# Results that mean the step did not do what it asked for. Public because a
+# task step's "failed" outcome (core/agent_loop/task_steps.py) reads the same
+# definition the no-progress guardian does.
+FAILED_STEP_EVENTS = frozenset({"agent_error", "bm_cli_error"})
 
 
 def classify_step(
@@ -128,7 +130,7 @@ def classify_step(
     """
     if outcome_resets_no_progress(action, result):
         return "progress"
-    if result.get("event") in _FAILED_EVENTS:
+    if result.get("event") in FAILED_STEP_EVENTS:
         return "stale"
     if step_fingerprint(action) in seen_fingerprints:
         return "stale"

@@ -136,6 +136,14 @@ def test_newest_task_events_use_the_index(monkeypatch: pytest.MonkeyPatch) -> No
     assert _uses(plan, "task_events", "idx_task_events_task_created"), plan
 
 
+def test_task_step_pages_use_the_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    cursor = (datetime(2026, 10, 22, 21, 0, tzinfo=timezone.utc), "s1")
+    newest = _plan_of(lambda: db.list_task_steps("t1", limit=6), "FROM task_steps", monkeypatch)
+    older = _plan_of(lambda: db.list_task_steps("t1", limit=51, before=cursor), "FROM task_steps", monkeypatch)
+    for plan in (newest, older):
+        assert _uses(plan, "task_steps", "idx_task_steps_task_started"), plan
+
+
 def test_dispatcher_queued_scan_uses_the_index(monkeypatch: pytest.MonkeyPatch) -> None:
     plan = _plan_of(db.list_queued_triggers, "FROM agent_triggers", monkeypatch)
     assert _uses(plan, "agent_triggers", "idx_agent_triggers_status_created"), plan

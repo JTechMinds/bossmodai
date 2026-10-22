@@ -485,6 +485,29 @@
 .task-detail-event-time { color: var(--hint); }
 .task-detail-event-text { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 4px; margin: 0; word-break: break-word; }
 
+/* ─── Task steps (task-steps.js, task-steps-history.js) ───
+   One row per step: the outcome glyph, then when, how long and who, then the
+   agent's note, the command and the result as written. The glyph's box is
+   one meta line tall, so it centres on that line however far the rest wraps.
+   Long commands and results wrap in place; nothing scrolls sideways. */
+.task-steps { margin: 0; padding: 0; list-style: none; }
+.task-step { display: flex; align-items: flex-start; gap: 8px; padding: 6px 0; font-size: 13px; }
+.task-step-mark { display: flex; flex: none; font-size: 12px; }
+.task-step-mark svg { width: 14px; height: 1lh; color: var(--hint); }
+.task-step[data-outcome="ok"] .task-step-mark svg { color: var(--muted); }
+/* Failed, and waiting on the operator: the alert ink .task-card-note uses. */
+.task-step[data-outcome="failed"] .task-step-mark svg,
+.task-step[data-outcome="approval"] .task-step-mark svg,
+.task-step[data-outcome="consent"] .task-step-mark svg { color: var(--alert-ink); }
+.task-step-body { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 0; }
+.task-step-meta { margin: 0; font-size: 12px; color: var(--muted); }
+.task-step-note { margin: 0; overflow-wrap: anywhere; }
+/* The font is .field-mono's; line breaks the agent wrote are kept. */
+.task-step-command { display: block; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-step-result { margin: 0; font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.task-steps-more { font-size: 12px; font-weight: 500; }
+.task-steps-older { align-self: flex-start; font-size: 12px; }
+
 /* ─── Task detail: Edit mode (task-edit-mode.js) ───
    The fields are the shared Edit-mode look (controls.css `.edit-field`,
    `.edit-field-title`, `.edit-field-multiline`); only the file rows' own

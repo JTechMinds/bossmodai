@@ -71,6 +71,8 @@ class EventSink(Protocol):
 
     async def broadcast_conversation_notes(self, scope_kind: str, scope_key: str) -> None: ...
 
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None: ...
+
 
 class RuntimeServices:
     """Expose a durable control boundary to the runtime worker process."""
@@ -645,6 +647,9 @@ class RuntimeServices:
             return
         if kind == "conversation_notes":
             await sink.broadcast_conversation_notes(data["scope_kind"], data["scope_key"])
+            return
+        if kind == "task_step":
+            await sink.broadcast_task_step(data["step"])
             return
         logger.warning("Unknown runtime event kind received: %s", kind)
 

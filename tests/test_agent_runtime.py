@@ -5,7 +5,8 @@ wake the assignee), HA-CORR-P0-02 (CLI approval resume),
 HA-CORR-P0-03 (skip-turn must not exhaust the trigger),
 HA-CORR-P1-05 (reset-runtime blocks every open work task),
 HA-CORR-P1-06 (ambiguous match must not create a duplicate), and
-HA-PROD-P1-01 (Assign Task API outcomes, including unassigned backlog).
+HA-PROD-P1-01 (Assign Task API outcomes, including unassigned backlog),
+and the task steps an execution turn writes for its bound task.
 """
 
 from __future__ import annotations
@@ -33,12 +34,16 @@ from core.agent_loop.loop import run_turn
 from core.agent_loop.watchdog import TaskWatchdog
 from core.bm_cli.approvals import resume_cli_approval
 from core.bm_cli.filesystem import resolve_relative_path
+from core.bm_cli.types import BossModCliResult
 from core.models.message import HUMAN_SENDER_ID
 from core.models.work_contract import DeliverableSpec, WorkContract
 from core.runtime import runtime_services
 from core.tasking import create_or_bind_task
 from core.tasking.transitions import transition_task
+from core.llm.client import LLMResponse
+from core.runtime.events import NullRuntimeEventSink, runtime_events
 from db.settings import get_seed_setting_default
+from tests._connections import model_connection
 
 
 def setup_function() -> None:
@@ -1127,3 +1132,303 @@ async def test_skip_turn_does_not_block_either_of_two_open_work_tasks() -> None:
     assert refreshed_second.status not in {"blocked", "stalled"}
     assert refreshed_first.status == "active"
     assert refreshed_second.status == "active"
+
+
+# ---------------------------------------------------------------------------
+# Task steps — each execution step on the bound task is one durable row
+# ---------------------------------------------------------------------------
+
+# idle is refused on an active task; each refusal is fed back until the repair
+# budget (execution_max_consecutive_repairs, 2) is spent, which ends the turn.
+_IDLE_UNTIL_THE_TURN_ENDS = ['{"act":"idle","data":{},"th":"looked"}'] * 3
+
+
+class _StepSink(NullRuntimeEventSink):
+    """Records every ``task_step`` event the turn sends."""
+
+    def __init__(self) -> None:
+        self.steps: list[dict[str, Any]] = []
+
+    async def broadcast_task_step(self, step: dict[str, Any]) -> None:
+        self.steps.append(step)
+
+
+@pytest.fixture()
+def step_sink():
+    sink = _StepSink()
+    runtime_events.set_sink(sink)
+    yield sink
+    runtime_events.set_sink(NullRuntimeEventSink())
+
+
+def _script_llm(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> None:
+    queue = list(contents)
+
+    async def _fake_completion(**_kwargs: Any) -> LLMResponse:
+        if not queue:
+            raise AssertionError("unexpected extra LLM completion")
+        return LLMResponse(content=queue.pop(0), model="test/mock", prompt_tokens=8,
+                           completion_tokens=4, total_tokens=12)
+
+    monkeypatch.setattr("core.llm.client.completion", _fake_completion)
+
+
+def _working_agent():
+    """An agent on a model, with an active task as its live, bound work."""
+    agent = db.create_agent("Ettie", role="Eng", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
+    task = _create_task(agent_id=agent.id).task
+    activity_runtime.activate_work_activity(agent.id, task, task_status="active")
+    return agent, task
+
+
+def _stub_cli(monkeypatch: pytest.MonkeyPatch, result: dict[str, Any], seen: list[Any] | None = None, *, task_id: str = "",
+              sink: _StepSink | None = None) -> None:
+    """Answer every ``bm_cli`` action with ``result``; record what was stored and sent when it ran."""
+    import core.agent_loop.execution_turn as execution_turn
+
+    real = execution_turn.execute_action
+
+    async def _fake_execute(action: dict[str, Any], agent: Any, state: Any, trigger: Any, **kwargs: Any) -> dict[str, Any]:
+        if action["action"] != "bm_cli":
+            return await real(action, agent, state, trigger, **kwargs)
+        if seen is not None:
+            seen.append((db.list_task_steps(task_id, limit=10), list(sink.steps) if sink else []))
+        return {**result, "agent_name": agent.name}
+
+    monkeypatch.setattr(execution_turn, "execute_action", _fake_execute)
+
+
+@pytest.mark.asyncio
+async def test_a_bound_cli_step_is_stored_and_sent_before_it_runs_then_finished(
+    monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink,
+) -> None:
+    agent, task = _working_agent()
+    seen: list[Any] = []
+    blocked = "BossMod CLI error: Blocked — host path is outside the locked clone"
+    _stub_cli(
+        monkeypatch,
+        {"event": "bm_cli_error", "detail": blocked, "suppress_world_broadcast": True,
+         "suppress_activity_broadcast": True},
+        seen, task_id=task.id, sink=step_sink,
+    )
+    _script_llm(monkeypatch, [
+        '{"act":"cli","data":{"cmd":"cat /srv/app/log"},"th":"Read the host log"}',
+        *_IDLE_UNTIL_THE_TURN_ENDS,
+    ])
+    trigger = {"type": "activity_resumed", "task_id": task.id, "content": "Resume.", "source_channel": "work"}
+
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    # While the command ran, its row was already stored, open, and announced.
+    [(stored, sent)] = seen
+    [running] = stored
+    assert (running.action, running.note, running.command) == ("bm_cli", "Read the host log", "cat /srv/app/log")
+    assert (running.agent_id, running.agent_name) == (agent.id, "Ettie")
+    assert (running.outcome, running.result, running.ended_at) == (None, None, None)
+    assert [(event["id"], event["ended_at"]) for event in sent] == [(running.id, None)]
+    # Afterwards it is finished with the outcome its result calls for, and sent again.
+    [finished] = db.list_task_steps(task.id, limit=10)
+    assert finished.id == running.id
+    assert (finished.outcome, finished.result) == ("failed", blocked)
+    assert finished.ended_at is not None and finished.ended_at >= finished.started_at
+    assert [(event["id"], event["outcome"]) for event in step_sink.steps] == [(running.id, None), (running.id, "failed")]
+    assert step_sink.steps[-1]["result"] == blocked
+    # Steps are their own record: the task's thread got none of it.
+    assert all(blocked not in event.content for event in db.list_task_events(task.id, limit=50))
+
+
+@pytest.mark.asyncio
+async def test_a_detached_turn_writes_no_steps_on_the_paused_task(
+    monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink,
+) -> None:
+    agent, task = _working_agent()
+    ran: list[Any] = []
+    _stub_cli(monkeypatch, {"event": "bm_cli_result", "detail": "command completed (exit 0, 1ms)"}, ran,
+              task_id=task.id)
+    _script_llm(monkeypatch, [
+        '{"act":"cli","data":{"cmd":"status"},"th":"check what arrived"}',
+        '{"act":"idle","th":"handled the email"}',
+    ])
+    trigger = {
+        "type": "extension_event", "source_channel": "system", "task_id": None,
+        "extension_id": "ms365-mail", "extension_name": "Microsoft 365 Mailbox",
+        "from_name": "Microsoft 365 Mailbox", "title": "New email", "lines": [], "content": "New email",
+    }
+
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    assert outcome.trigger_status == "completed"
+    assert len(ran) == 1, "the detached turn never ran its command"
+    assert db.list_task_steps(task.id, limit=10) == []
+    assert step_sink.steps == []
+    assert db.get_task(task.id).status == "active"
+
+
+@pytest.mark.asyncio
+async def test_a_parse_failure_writes_no_step(monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink) -> None:
+    agent, task = _working_agent()
+    _stub_cli(monkeypatch, {"event": "bm_cli_result", "detail": "command completed (exit 0, 1ms)"})
+    _script_llm(monkeypatch, [
+        "I will look around first.",
+        '{"act":"cli","data":{"cmd":"pwd"},"th":"Where am I"}',
+        *_IDLE_UNTIL_THE_TURN_ENDS,
+    ])
+    trigger = {"type": "activity_resumed", "task_id": task.id, "content": "Resume.", "source_channel": "work"}
+
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    # Only the valid action is a step; the unparseable reply and the refused
+    # idles never reached the action.
+    [step] = db.list_task_steps(task.id, limit=10)
+    assert (step.note, step.command, step.outcome) == ("Where am I", "pwd", "ok")
+    assert [event["outcome"] for event in step_sink.steps] == [None, "ok"]
+
+
+# A command the operator approved or permitted runs in the resume prelude,
+# before the action loop; it is a step of its own.
+
+_APPROVED_COMMAND = "cargo test --workspace"
+
+
+def _stub_resumed_command(
+    monkeypatch: pytest.MonkeyPatch, name: str, cli_result: BossModCliResult, *, task_id: str, sink: _StepSink,
+) -> list[Any]:
+    """Answer ``core.bm_cli.runtime.<name>`` with ``cli_result``, never a real shell.
+
+    Returns the list it fills, one entry per run: the command, and the steps
+    stored and sent at the moment it ran.
+    """
+    seen: list[Any] = []
+
+    def _fake(agent: Any, state: Any, command: str, content: str | None = None, **kwargs: Any) -> BossModCliResult:
+        seen.append((command, db.list_task_steps(task_id, limit=10), list(sink.steps)))
+        return cli_result
+
+    monkeypatch.setattr(f"core.bm_cli.runtime.{name}", _fake)
+    return seen
+
+
+def _cli_result(command: str, *, ok: bool, detail: str) -> BossModCliResult:
+    return BossModCliResult(command=command, ok=ok, detail=detail, kind="shell",
+                            prompt_content=f"BOSSMOD CLI RESULT\ncommand: {command}\n\n{detail}")
+
+
+def _assert_one_resumed_step(seen: list[Any], sink: _StepSink, task_id: str, *, command: str, outcome: str,
+                             result: str) -> None:
+    """The run was one step: stored and sent open before it ran, finished after."""
+    [(ran, stored, sent)] = seen
+    assert ran == command
+    [running] = stored
+    assert (running.action, running.command, running.note) == ("bm_cli", command, None)
+    assert (running.outcome, running.result, running.ended_at) == (None, None, None)
+    assert [(event["id"], event["ended_at"]) for event in sent] == [(running.id, None)]
+    [finished] = db.list_task_steps(task_id, limit=10)
+    assert finished.id == running.id
+    assert (finished.outcome, finished.result) == (outcome, result)
+    assert finished.ended_at is not None and finished.ended_at >= finished.started_at
+    assert [(event["id"], event["outcome"]) for event in sink.steps] == [(running.id, None), (running.id, outcome)]
+    assert sink.steps[-1]["result"] == result
+
+
+@pytest.mark.asyncio
+async def test_an_approved_command_resumed_on_its_task_is_one_step(
+    monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink,
+) -> None:
+    agent, task = _working_agent()
+    detail = "command completed (exit 0, 225s)"
+    seen = _stub_resumed_command(monkeypatch, "execute_approved_command",
+                                 _cli_result(_APPROVED_COMMAND, ok=True, detail=detail),
+                                 task_id=task.id, sink=step_sink)
+    _script_llm(monkeypatch, _IDLE_UNTIL_THE_TURN_ENDS)
+    trigger = {
+        "type": "cli_approval_resolved", "task_id": task.id, "source_channel": "work", "status": "approved",
+        "command": _APPROVED_COMMAND, "cwd": "/me", "approval_request_id": "approval-1",
+    }
+
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    _assert_one_resumed_step(seen, step_sink, task.id, command=_APPROVED_COMMAND, outcome="ok", result=detail)
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_approval_runs_nothing_and_writes_no_step(
+    monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink,
+) -> None:
+    agent, task = _working_agent()
+    seen = _stub_resumed_command(monkeypatch, "execute_approved_command",
+                                 _cli_result(_APPROVED_COMMAND, ok=True, detail="ran"),
+                                 task_id=task.id, sink=step_sink)
+    _script_llm(monkeypatch, _IDLE_UNTIL_THE_TURN_ENDS)
+    trigger = {
+        "type": "cli_approval_resolved", "task_id": task.id, "source_channel": "work", "status": "rejected",
+        "command": _APPROVED_COMMAND, "decision_note": "Not now.", "approval_request_id": "approval-1",
+    }
+
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    assert seen == []
+    assert db.list_task_steps(task.id, limit=10) == []
+    assert step_sink.steps == []
+
+
+@pytest.mark.asyncio
+async def test_a_detached_approved_resume_runs_its_command_but_writes_no_step(
+    monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink,
+) -> None:
+    agent, task = _working_agent()
+    seen = _stub_resumed_command(monkeypatch, "execute_approved_command",
+                                 _cli_result("pip install pytest", ok=True, detail="command completed (exit 0, 2s)"),
+                                 task_id=task.id, sink=step_sink)
+    _script_llm(monkeypatch, ['{"act":"idle","th":"handled the email"}'])
+    trigger = {
+        "type": "cli_approval_resolved", "source_channel": "system", "task_id": None, "detached_origin": True,
+        "status": "approved", "command": "pip install pytest", "approval_request_id": "approval-1",
+    }
+
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    assert [command for command, _stored, _sent in seen] == ["pip install pytest"]
+    assert db.list_task_steps(task.id, limit=10) == []
+    assert step_sink.steps == []
+
+
+@pytest.mark.asyncio
+async def test_a_permitted_command_resumed_on_its_task_is_one_step(
+    monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink,
+) -> None:
+    agent, task = _working_agent()
+    command = "cat /srv/app/log"
+    detail = "BossMod CLI error: cat: /srv/app/log: No such file or directory"
+    seen = _stub_resumed_command(monkeypatch, "execute_bm_cli", _cli_result(command, ok=False, detail=detail),
+                                 task_id=task.id, sink=step_sink)
+    _script_llm(monkeypatch, _IDLE_UNTIL_THE_TURN_ENDS)
+    trigger = {
+        "type": "host_path_consent_resolved", "task_id": task.id, "source_channel": "work",
+        "status": "allowed_once", "command": command, "consent_request_id": "consent-1",
+    }
+
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    _assert_one_resumed_step(seen, step_sink, task.id, command=command, outcome="failed", result=detail)
+
+
+@pytest.mark.asyncio
+async def test_a_host_access_grant_runs_no_command_and_writes_no_step(
+    monkeypatch: pytest.MonkeyPatch, step_sink: _StepSink,
+) -> None:
+    agent, task = _working_agent()
+    seen = _stub_resumed_command(monkeypatch, "execute_bm_cli",
+                                 _cli_result("request_host_access", ok=True, detail="granted"),
+                                 task_id=task.id, sink=step_sink)
+    _script_llm(monkeypatch, _IDLE_UNTIL_THE_TURN_ENDS)
+    trigger = {
+        "type": "host_path_consent_resolved", "task_id": task.id, "source_channel": "work",
+        "status": "allowed_once", "command": "request_host_access", "path": "/srv/app",
+        "consent_request_id": "consent-1",
+    }
+
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    assert seen == []
+    assert db.list_task_steps(task.id, limit=10) == []
+    assert step_sink.steps == []

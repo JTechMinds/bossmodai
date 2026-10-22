@@ -397,7 +397,7 @@ def delete_agent_rows(agent_id: str) -> bool:
     activities, CLI audit and approvals, agent-scoped CLI policy rules,
     per-agent extension settings and wake checks, schedules, background
     process rows, the companion rows) are deleted. Shared history (channel and meeting
-    messages, task events, tasks, channels, meetings it created or hosted)
+    messages, task events, task steps, tasks, channels, meetings it created or hosted)
     stays with this agent's id detached to NULL so teammates' transcripts stay
     whole. The storage key
     is retired in the ledger, never freed.
@@ -458,8 +458,9 @@ def delete_agent_rows(agent_id: str) -> bool:
             [agent_id],
         )
         execute("DELETE FROM activities WHERE agent_id = $1", [agent_id])
-        # tasks & task events
+        # tasks, task events & task steps
         execute("UPDATE task_events SET author_agent_id = NULL WHERE author_agent_id = $1", [agent_id])
+        execute("UPDATE task_steps SET agent_id = NULL WHERE agent_id = $1", [agent_id])
         execute("UPDATE tasks SET owner_id = NULL WHERE owner_id = $1", [agent_id])
         execute("UPDATE tasks SET requester_id = NULL WHERE requester_id = $1", [agent_id])
         execute("UPDATE tasks SET assigned_to = NULL WHERE assigned_to = $1", [agent_id])

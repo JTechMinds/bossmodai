@@ -70,6 +70,7 @@ from core.models.task import (
     TaskUpdateRequest,
 )
 from core.models.task_event import TaskEvent
+from core.models.task_step import TaskStep, TaskStepOutcome
 from core.models.trigger import AgentTrigger
 from core.models.work_contract import DeliverableSpec, TaskWorkContract, WorkContract
 from core.models.work_snapshot import WorkInterlude, WorkSnapshot
@@ -118,6 +119,8 @@ __all__ = [
     "TaskCreateOutcome",
     "TaskCreateResponse",
     "TaskEvent",
+    "TaskStep",
+    "TaskStepOutcome",
     "AgentTrigger",
     "DeliverableSpec",
     "TaskWorkContract",

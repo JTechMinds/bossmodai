@@ -126,7 +126,7 @@ const BossModDeskPanel = (() => {
             api, agentId, onOpenTask: (taskId) => { void taskOpener.open(taskId); },
         });
         // A row opens its task as a layer over this desk (context/desk-task-opener.js).
-        const taskOpener = BossModDeskTaskOpener.create({ store, api, tasks, openConversation });
+        const taskOpener = BossModDeskTaskOpener.create({ store, api, bus, tasks, openConversation });
         const actions = BossModDeskActions.createDeskActions({ api, agentId, onRemoved });
         // Recurring work; a run's task opens over the desk like a task row.
         const schedules = BossModDeskSchedules.createDeskSchedules({

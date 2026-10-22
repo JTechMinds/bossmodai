@@ -166,10 +166,10 @@ const BossModConnectionForm = (() => {
                     </div>
                     <div>
                         <label class="block text-sm font-medium mb-1">Model Name</label>
-                        <p class="text-xs text-bm-muted mb-1.5">Model name exposed by the server. Raw names like <code>llama3</code> work for local OpenAI-compatible endpoints; provider-prefixed names also work.</p>
+                        <p class="text-xs text-bm-muted mb-1.5">Use the model id exactly as your server lists it. Test shows the list.</p>
                         <input type="text" name="model"
                                value="${BossModFormat.escapeAttribute(conn?.model || '')}"
-                               placeholder="e.g. llama3 or openai/gpt-4.1-mini"
+                               placeholder="e.g. llama3 or gpt-4.1-mini"
                                class="field-input">
                         <div id="connection-supports-images" class="mt-2"></div>
                         <p class="text-xs text-bm-muted mt-1">Applies to every agent using this model. Names match exactly: <code>gpt-4o</code> and <code>openai/gpt-4o</code> are separate.</p>
