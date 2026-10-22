@@ -1,6 +1,6 @@
 /**
- * BossMod AI — the calls the Extensions dialog, its live view and the
- * per-agent desk surfaces (settings and view) make.
+ * BossMod AI — the calls the Extensions dialog, its live view, its Configure
+ * agents table and the per-agent desk surfaces (settings and view) make.
  *
  * The routes answer a refusal as `HTTPException(409, {error, message})`, so
  * the useful part is nested under `detail`; FastAPI's own validation errors
@@ -117,6 +117,25 @@ const BossModExtensionsApi = (() => {
     }
 
     /**
+     * Every agent and whether one extension is on for it: the Configure
+     * agents table's one read.
+     *
+     * @param {string} id  An enabled extension with per-agent settings.
+     * @returns {Promise<{label: string, help: string, quick_enable: boolean,
+     *   requires_image_model: boolean, agents: Array<{id: string, name: string,
+     *   role: string|null, color: string, configured: boolean,
+     *   summary: string|null, image_capable: boolean}>}>} `quick_enable` says
+     *   saving `{}` turns it on with its defaults (no field is required).
+     * @throws {Error} `code` is `EXTENSION_DISABLED`, `INVALID_EXTENSION` or
+     *   `NO_AGENT_CONFIG` for the server's refusals.
+     */
+    async function extensionAgents(id) {
+        const res = await apiFetch(`/api/extensions/${enc(id)}/agents`, { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t load the agents.');
+        return res.json();
+    }
+
+    /**
      * The desk's one read: enabled extensions with per-agent settings.
      *
      * @param {string} agentId
@@ -124,8 +143,9 @@ const BossModExtensionsApi = (() => {
      *   view_label: string|null, configured: boolean, summary: string|null,
      *   wakes: boolean, wake: {checked_at: string, ok: boolean, error: string|null,
      *     last_new_at: string|null, last_new_count: number|null}|null}>>}
-     *   `wakes` says whether the extension wakes agents; `wake` is its last
-     *   check, null when it does not wake agents or before the first check.
+     *   `wakes` says whether the desk shows a wake health line (the
+     *   extension wakes agents and declares desk status); `wake` is its last
+     *   check, null when there is no line or before the first check.
      * @throws {Error} On any non-2xx.
      */
     async function agentExtensions(agentId) {
@@ -219,6 +239,6 @@ const BossModExtensionsApi = (() => {
 
     return {
         listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
-        agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
+        extensionAgents, agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
     };
 })();

@@ -6,10 +6,10 @@ const BossModConversation = (() => {
 
     /** @param {object} deps store, bus, api, navigate, needs, drafts (Map), cache (a transcript
      *   cache); optional openDesk `(agentId, path?) => void` (the desk modal), openMemory
-     *   `(agentId, memoryId) => void` (that desk's Memory layer on one memory), browserView.
+     *   `(agentId, memoryId) => void` (that desk's Memory layer on one memory), liveViews.
      *   drafts/cache are the caller's so a draft outlives destroy(). */
     function createConversation(deps) {
-        const { store, bus, api, navigate, needs, openDesk, openMemory, browserView, drafts, cache } = deps || {};
+        const { store, bus, api, navigate, needs, openDesk, openMemory, liveViews, drafts, cache } = deps || {};
         if (!store) throw new Error('[conversation] deps.store is required');
         if (!bus) throw new Error('[conversation] deps.bus is required');
         if (typeof api !== 'function') throw new Error('[conversation] deps.api is required');
@@ -258,7 +258,7 @@ const BossModConversation = (() => {
         function buildSource(id, kind) {
             if (kind === 'agent') {
                 return BossModConversationWindow.attach(api, 'human_dm', BossModAgentSource.createAgentSource(id, {
-                    api, bus, store, presence, openDesk, browserView,
+                    api, bus, store, presence, openDesk, liveViews,
                 }));
             }
             if (kind === 'thread') {

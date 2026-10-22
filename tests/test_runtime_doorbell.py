@@ -9,6 +9,7 @@ process against the test database.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
@@ -116,17 +117,19 @@ async def test_an_extension_config_change_reaches_the_worker() -> None:
     await services.start()
     try:
         await _warm_up(services)
-        services.extension_config_changed()
-        [row] = db.query("SELECT id FROM runtime_commands WHERE command_type = 'extension_config_changed'")
+        services.extension_config_changed("ms365-mail", "agent-1")
+        [row] = db.query("SELECT id, payload FROM runtime_commands WHERE command_type = 'extension_config_changed'")
+        assert json.loads(row["payload"]) == {"extension_id": "ms365-mail", "agent_id": "agent-1"}
         # Completed, not failed: the worker knows the type (it invalidates
-        # the wake service's cached configs).
+        # the wake service's cached configs and tells the extension, here
+        # one that is off, so nothing is called).
         await _wait_for_status(row["id"], {"completed"}, timeout=5.0)
     finally:
         await services.stop()
 
 
 def test_no_worker_means_no_extension_config_command() -> None:
-    RuntimeServices().extension_config_changed()
+    RuntimeServices().extension_config_changed("ms365-mail", "agent-1")
     assert not db.has_open_runtime_command(["extension_config_changed"])
 
 
@@ -156,8 +159,39 @@ def test_an_older_command_table_is_rebuilt_to_accept_the_new_type() -> None:
     kept = db.create_runtime_command("reload_schedules")
     _ensure_runtime_command_types(con)
     assert db.get_runtime_command(kept.id) is not None
-    added = db.create_runtime_command("extension_config_changed")
-    assert db.get_runtime_command(added.id).command_type == "extension_config_changed"
+    for command_type in ("extension_config_changed", "extensions_reconcile"):
+        added = db.create_runtime_command(command_type)
+        assert db.get_runtime_command(added.id).command_type == command_type
+
+
+def test_a_table_that_lacks_only_the_newest_type_is_rebuilt_too() -> None:
+    con = get_connection()
+    con.execute("DROP TABLE runtime_commands")
+    con.execute(
+        """
+        CREATE TABLE runtime_commands (
+            id             VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+            command_type   VARCHAR NOT NULL
+                              CHECK (command_type IN (
+                                  'wake_dispatcher', 'pause_runtime', 'resume_runtime',
+                                  'reset_agent_runtime', 'shutdown_runtime', 'reload_schedules',
+                                  'extension_config_changed'
+                              )),
+            payload        TEXT NOT NULL,
+            status         VARCHAR NOT NULL DEFAULT 'queued'
+                              CHECK (status IN ('queued', 'claimed', 'completed', 'failed')),
+            failure_reason TEXT,
+            claimed_at     TIMESTAMP,
+            completed_at   TIMESTAMP,
+            failed_at      TIMESTAMP,
+            created_at     TIMESTAMP DEFAULT current_timestamp
+        )
+        """
+    )
+    kept = db.create_runtime_command("extension_config_changed", {"extension_id": "x", "agent_id": "a"})
+    _ensure_runtime_command_types(con)
+    assert db.get_runtime_command(kept.id).payload == kept.payload
+    assert db.get_runtime_command(db.create_runtime_command("extensions_reconcile").id).status == "queued"
 
 
 @pytest.mark.asyncio

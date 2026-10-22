@@ -1,0 +1,61 @@
+#!/bin/bash
+# The container's main process (under tini): start the X display, then the
+# agent's XFCE session on it. BossMod writes /etc/bossmod/desktop.env before
+# every start, so the screen size always matches the agent's settings.
+#
+# Run with --session (as agent, in a login shell) it is the session itself:
+# it starts the D-Bus session bus, writes the bus address for every later
+# login shell (vm run, vm launch, the terminal; see /etc/profile.d/bm-session.sh),
+# then becomes XFCE.
+#
+# Run with --session-env (by the session's XDG autostart entry
+# bm-session-env.desktop) it adds the session manager's address, which only
+# exists inside the session, so programs started from vm run / vm launch
+# join the session like ones started from its menu.
+set -euo pipefail
+
+SESSION_ENV=/tmp/bm-session.env
+
+if [ "${1:-}" = "--session-env" ]; then
+    printf 'export SESSION_MANAGER=%q\n' "$SESSION_MANAGER" >> "$SESSION_ENV"
+    exit 0
+fi
+
+if [ "${1:-}" = "--session" ]; then
+    eval "$(dbus-launch --sh-syntax)"
+    printf 'export DBUS_SESSION_BUS_ADDRESS=%q\n' "$DBUS_SESSION_BUS_ADDRESS" > "$SESSION_ENV"
+    exec startxfce4
+fi
+
+ENV_FILE=/etc/bossmod/desktop.env
+if [ ! -r "$ENV_FILE" ]; then
+    echo "bm-desktop-start: $ENV_FILE is missing; BossMod writes it before every start" >&2
+    exit 1
+fi
+. "$ENV_FILE"
+: "${SCREEN_WIDTH:?bm-desktop-start: SCREEN_WIDTH is not set in $ENV_FILE}"
+: "${SCREEN_HEIGHT:?bm-desktop-start: SCREEN_HEIGHT is not set in $ENV_FILE}"
+
+# A stopped container keeps /tmp, so the previous run's display lock and
+# socket, and its session bus address, are still there. Nothing of that run
+# is alive at this point (the container's processes all ended when it
+# stopped), so they are stale.
+rm -f /tmp/.X0-lock /tmp/.X11-unix/X0 "$SESSION_ENV"
+
+Xvfb :0 -screen 0 "${SCREEN_WIDTH}x${SCREEN_HEIGHT}x24" -nolisten tcp &
+
+tries=0
+until [ -S /tmp/.X11-unix/X0 ]; do
+    tries=$((tries + 1))
+    if [ "$tries" -gt 100 ]; then
+        echo "bm-desktop-start: Xvfb did not open display :0 within 10 seconds" >&2
+        exit 1
+    fi
+    sleep 0.1
+done
+
+export DISPLAY=:0
+# bash -l reads Debian's /etc/profile and ~/.profile, so the session (and
+# the terminal started from it) has ~/.local/bin on PATH like vm run does;
+# su without -l keeps DISPLAY, the cursor theme and PIP_BREAK_SYSTEM_PACKAGES.
+exec su agent -c "exec bash -l /usr/local/bin/bm-desktop-start --session"

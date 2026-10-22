@@ -7,8 +7,11 @@
  * action (BossModAgentConfigDialog) and, once configured, the extension's
  * view action (BossModAgentViewDialog, e.g. "Open inbox").
  *
- * A configured extension that wakes agents (manifest `wake`) adds one health
- * line: "Last checked 1:42 PM" (local, absolute, so it is never stale on
+ * A configured extension whose wake declares desk status (manifest `wake`
+ * with `desk_status` true, the default) adds one health line. The server
+ * sends `item.wakes` false for a `desk_status: false` wake (one whose check
+ * never reaches an outside service), so that extension gets no line.
+ * The line is "Last checked 1:42 PM" (local, absolute, so it is never stale on
  * screen) with "· 2 new at 1:41 PM" when the last find was new, "Can't check
  * <setting group>: <sentence>" in the alert ink, or "Waiting for first check".
  * It is re-read when the desk opens and after the settings dialog closes;

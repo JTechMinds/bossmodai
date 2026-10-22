@@ -18,12 +18,13 @@
  *                           refusal with the server's message on the card;
  *   enabled + excluded    → which agents cannot use it, and why.
  *
- * An extension with per-agent settings (`agent_config`) says where they are
- * set: each agent's desk, not this dialog.
+ * An enabled extension with per-agent settings (`agent_config`) has a
+ * Configure agents button under its switch, which opens a layer listing
+ * every agent (BossModExtensionAgentsLayer); each agent's desk sets them too.
  *
- * A live view is not shown here: it is the screen button in each browsing
- * agent's chat header. After a successful toggle this asks
- * BossModBrowserVisionStatus to re-read, so those buttons follow at once.
+ * A live view is not shown here: it is a screen button in each agent's chat
+ * header. After a successful toggle this asks BossModLiveStatus to re-read,
+ * so those buttons follow at once.
  */
 const BossModExtensionsDialog = (() => {
     const { h, clear } = BossModDom;
@@ -43,7 +44,7 @@ const BossModExtensionsDialog = (() => {
         excludedLead: 'Not available to: ',
         excludedTail: ' — their models aren’t marked image-capable (Settings → Connections).',
         noModel: 'no model',
-        perAgentLead: 'Set up per agent: open an agent’s desk → Extensions → ',
+        configureAgents: 'Configure agents',
     });
 
     /**
@@ -115,7 +116,7 @@ const BossModExtensionsDialog = (() => {
             render();
             try {
                 replaceItem(await API.setEnabled(item.id, pressed));
-                void BossModBrowserVisionStatus.refresh();
+                void BossModLiveStatus.refresh();
             } catch (err) {
                 // Never show a state the server refused: the item is unchanged,
                 // so the re-render puts the switch back where it was.
@@ -185,6 +186,14 @@ const BossModExtensionsDialog = (() => {
             } else {
                 rows.push(switchFor(item, item.enabled, busy, (pressed) => toggleEnabled(item, pressed)));
             }
+            // Every branch puts the switch first; Configure agents follows it
+            // while the extension is on.
+            if (item.enabled && item.agent_config) {
+                rows.splice(1, 0, h('button', {
+                    class: 'btn btn-sm ext-card-agents', type: 'button', id: `ext-agents-${item.id}`, disabled: busy,
+                    onclick: () => BossModExtensionAgentsLayer.open({ extensionId: item.id, extensionName: item.name }),
+                }, COPY.configureAgents));
+            }
 
             const excluded = item.excluded_agents || [];
             if (item.enabled && excluded.length) {
@@ -221,9 +230,6 @@ const BossModExtensionsDialog = (() => {
                 ? h('p', { class: 'market-card-specialty' }, `${item.command.name} — ${item.command.summary}`)
                 : null,
             item.description ? h('p', { class: 'market-card-desc' }, item.description) : null,
-            item.agent_config
-                ? h('p', { class: 'market-card-note' }, COPY.perAgentLead + item.agent_config.label + '.')
-                : null,
             item.valid
                 ? controls(item)
                 : h('p', { class: 'market-card-note' }, item.invalid_reason || COPY.unavailable));

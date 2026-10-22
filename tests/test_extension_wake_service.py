@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -39,7 +40,8 @@ def teardown_function() -> None:
     db.close_connection()
 
 
-def _entry(tmp_path: Path) -> ExtensionEntry:
+def _entry(tmp_path: Path, *, wake: dict[str, Any] | None = None) -> ExtensionEntry:
+    """The fake extension's entry; ``wake`` replaces the ms365-style per-agent interval field."""
     manifest = ExtensionManifest.model_validate({
         "id": EXT, "name": "Fake Wake", "version": "1", "description": "d",
         "command": {"name": "fakewake", "summary": "s", "usage": "u", "help": "h"},
@@ -48,7 +50,7 @@ def _entry(tmp_path: Path) -> ExtensionEntry:
             {"key": "address", "label": "Address", "kind": "email"},
             {"key": "every", "label": "Every", "kind": "number", "min": 15, "max": 3600, "default": "90", "required": False},
         ]},
-        "wake": {"interval_field": "every"},
+        "wake": wake if wake is not None else {"interval_field": "every"},
     })
     return ExtensionEntry(id=EXT, root=tmp_path, manifest=manifest, invalid_reason=None)
 
@@ -60,6 +62,7 @@ class FakeWake:
         self.calls: list[tuple] = []
         self.batches: dict[str, list[WakeBatch | None]] = {}
         self.error: Exception | None = None
+        self.sentence = SENTENCE
 
     def handle(self, ctx, parsed, body):
         raise AssertionError("not used")
@@ -81,7 +84,7 @@ class FakeWake:
         self.calls.append(("skip", agent_id))
 
     def describe_wake_error(self, exc: Exception) -> str:
-        return SENTENCE
+        return self.sentence
 
 
 class FakeDispatcher:
@@ -111,7 +114,16 @@ class Clock:
 
 @pytest.fixture()
 def env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    entry = _entry(tmp_path)
+    return _env(_entry(tmp_path), monkeypatch)
+
+
+@pytest.fixture()
+def fixed_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """A wake with one fixed cadence and no desk status (like an idle reminder)."""
+    return _env(_entry(tmp_path, wake={"interval_seconds": 60, "desk_status": False}), monkeypatch)
+
+
+def _env(entry: ExtensionEntry, monkeypatch: pytest.MonkeyPatch):
     ext = FakeWake()
     dispatcher = FakeDispatcher()
     enabled = {"ids": frozenset({EXT})}
@@ -294,10 +306,79 @@ async def test_a_settings_change_rebuilds_the_cached_pairs(env) -> None:
 async def test_the_worker_command_invalidates_the_cache(monkeypatch) -> None:
     from core.runtime import worker
 
-    invalidated: list[bool] = []
-    monkeypatch.setattr(worker.extension_wake_watch, "invalidate", lambda: invalidated.append(True))
-    await worker.RuntimeWorker()._execute("extension_config_changed", {})
-    assert invalidated == [True]
+    calls: list[tuple] = []
+    monkeypatch.setattr(worker.extension_wake_watch, "invalidate", lambda: calls.append(("invalidate",)))
+    monkeypatch.setattr(
+        worker, "notify_agent_config_changed",
+        lambda ext_id, agent_id: calls.append(("notify", ext_id, agent_id)) or frozenset(),
+    )
+    runtime_worker = worker.RuntimeWorker()
+    lane = runtime_worker._controller.extension_lane
+    lane.start()
+    try:
+        await runtime_worker._execute("extension_config_changed", {"extension_id": EXT, "agent_id": "a1"})
+        # The cache is dropped at once; the extension's hook runs later in the lane.
+        assert calls == [("invalidate",)]
+        done = asyncio.Event()
+
+        async def _mark() -> None:
+            done.set()
+
+        lane.submit(_mark)
+        await asyncio.wait_for(done.wait(), timeout=5.0)
+    finally:
+        await lane.stop()
+    assert calls == [("invalidate",), ("notify", EXT, "a1")]
+
+
+@pytest.mark.asyncio
+async def test_a_fixed_interval_wake_polls_every_agent_on_its_cadence(fixed_env) -> None:
+    # A stored interval field is not read: the manifest's interval_seconds governs.
+    fast = _agent("Iris", every="30")
+    other = _agent("Vera", every=None)
+    await fixed_env.watch.run_once()
+    assert sorted(call[1] for call in fixed_env.ext.calls) == sorted([fast.id, other.id])
+    fixed_env.ext.calls.clear()
+    fixed_env.clock.now += 59
+    await fixed_env.watch.run_once()
+    assert fixed_env.ext.calls == []
+    fixed_env.clock.now += 1
+    await fixed_env.watch.run_once()
+    assert sorted(call[1] for call in fixed_env.ext.calls) == sorted([fast.id, other.id])
+
+
+@pytest.mark.asyncio
+async def test_a_wake_without_desk_status_records_nothing_but_logs_failures_once_per_change(
+    fixed_env, caplog,
+) -> None:
+    agent = _agent()
+    fixed_env.ext.batches[agent.id] = [_batch(agent.id, ["It is still running."], cursor="c1")]
+    await fixed_env.watch.run_once()
+    assert fixed_env.ext.calls == [("poll", agent.id), ("commit", agent.id, "c1")]
+    assert len(_events(agent.id)) == 1, "the event is delivered as usual"
+
+    async def tick() -> None:
+        fixed_env.clock.now += 60
+        await fixed_env.watch.run_once()
+
+    with caplog.at_level(logging.INFO, logger=wake_service.__name__):
+        await tick()  # an ok check with nothing new: nothing to say
+        fixed_env.ext.error = ValueError("corrupt row")
+        await tick()
+        await tick()  # the same sentence again: not logged again
+        fixed_env.ext.sentence = "Its desktop settings can't be read."
+        await tick()  # a new sentence: logged
+        fixed_env.ext.error = None
+        await tick()  # cleared: one info line
+        await tick()
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2, warnings
+    assert SENTENCE in warnings[0] and "corrupt row" in warnings[0]
+    assert "Its desktop settings can't be read." in warnings[1]
+    recovered = [r for r in caplog.records if r.levelno == logging.INFO and "works again" in r.getMessage()]
+    assert len(recovered) == 1
+    assert db.get_wake_status(EXT, agent.id) is None
+    assert db.query("SELECT * FROM extension_wake_status") == []
 
 
 @pytest.mark.asyncio

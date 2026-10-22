@@ -826,13 +826,21 @@ def test_every_agent_column_is_handled_by_the_delete_or_declared_retained() -> N
 
 
 class _Services:
-    """Records runtime resets and whether the agent still existed at the time."""
+    """Records runtime resets and whether the agent still existed at the time.
+
+    Also records each extensions reconcile with the agent ids that existed
+    when it was filed.
+    """
 
     def __init__(self) -> None:
         self.events: list[tuple[str, str, bool]] = []
+        self.reconciled: list[list[str]] = []
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         self.events.append(("reset", agent_id, db.get_agent(agent_id) is not None))
+
+    def extensions_reconcile(self) -> None:
+        self.reconciled.append(sorted(agent.id for agent in db.list_agents()))
 
 
 def _client() -> tuple[TestClient, dict[str, str]]:
@@ -863,7 +871,24 @@ def test_the_api_delete_resets_the_runtime_before_the_repository_deletes(
     assert services.events == [("reset", ada.id, True)]
     assert seen == [ada.id]
     assert db.get_agent(ada.id) is None
+    # The extensions reconcile is filed after the rows are gone, so it sees Ada missing.
+    assert services.reconciled == [[]]
     assert client.delete(f"/api/agents/{ada.id}", headers=headers).status_code == 404
+    assert services.reconciled == [[]], "a refused delete reconciles nothing"
+
+
+def test_an_api_delete_whose_repository_delete_fails_reconciles_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    services = _Services()
+    monkeypatch.setattr("api.routes.agents.runtime_services", services)
+    ada = agent_repository.create(name="Ada")
+
+    def _gone(agent_id: str) -> list[dict[str, Any]]:
+        raise LookupError(agent_id)
+
+    monkeypatch.setattr(agent_repository, "delete", _gone)
+    client, headers = _client()
+    assert client.delete(f"/api/agents/{ada.id}", headers=headers).status_code == 404
+    assert services.reconciled == []
 
 
 def test_the_api_delete_all_resets_every_runtime_then_uses_the_repository(
@@ -888,6 +913,8 @@ def test_the_api_delete_all_resets_every_runtime_then_uses_the_repository(
     assert sorted(services.events) == sorted([("reset", ada.id, True), ("reset", bob.id, True)])
     assert calls == ["delete_all"]
     assert db.list_agents() == []
+    # One extensions reconcile, filed after every row is gone.
+    assert services.reconciled == [[]]
 
 
 async def test_the_floor_delete_deletes_its_agents_through_the_repository(

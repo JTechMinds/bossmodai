@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Print the desktop's state as one JSON line on stdout.
+
+    {"screen": [w, h], "pointer": [x, y], "pointer_window": "...", "active_window": "..."}
+
+Coordinates are screen pixels. A window title is "" when the window has no
+title or there is no such window (no window under the pointer but the
+desktop background, or nothing focused). Any other failure of the X tools
+exits non-zero with their stderr, so BossMod reports it instead of empty
+values.
+"""
+
+import json
+import os
+import re
+import subprocess
+import sys
+
+os.environ["DISPLAY"] = ":0"
+
+# xprop's answer when the property is set: "... window id # 0x1a00004".
+_WINDOW_ID = re.compile(r"window id # (0x[0-9a-fA-F]+)")
+
+
+def _run(*argv: str) -> str:
+    done = subprocess.run(argv, capture_output=True, check=False)
+    if done.returncode != 0:
+        sys.stderr.write(f"{' '.join(argv)} failed (exit {done.returncode}): ")
+        sys.stderr.write(done.stderr.decode("utf-8", errors="replace"))
+        sys.exit(1)
+    return done.stdout.decode("utf-8", errors="replace")
+
+
+def _window_name(window_id: int) -> str:
+    # 0 is "no window"; the root window (the bare background) has no name.
+    if window_id == 0:
+        return ""
+    return _run("xdotool", "getwindowname", str(window_id)).rstrip("\n")
+
+
+def _active_window_id() -> int:
+    # Read the window manager's hint directly: xdotool getactivewindow fails
+    # outright when nothing is focused, which must not be mistaken for an
+    # X error.
+    text = _run("xprop", "-root", "-notype", "_NET_ACTIVE_WINDOW")
+    match = _WINDOW_ID.search(text)
+    return int(match.group(1), 16) if match else 0
+
+
+def main() -> None:
+    width, height = (int(part) for part in _run("xdotool", "getdisplaygeometry").split())
+    location = dict(
+        line.split("=", 1)
+        for line in _run("xdotool", "getmouselocation", "--shell").splitlines()
+        if "=" in line
+    )
+    pointer_id = int(location["WINDOW"])
+    state = {
+        "screen": [width, height],
+        "pointer": [int(location["X"]), int(location["Y"])],
+        "pointer_window": _window_name(pointer_id),
+        "active_window": _window_name(_active_window_id()),
+    }
+    sys.stdout.write(json.dumps(state, ensure_ascii=False) + "\n")
+
+
+if __name__ == "__main__":
+    main()

@@ -155,6 +155,9 @@ async def remove_floor(floor_id: str, occupants: str | None = None):
         raise HTTPException(404, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if occupants == "delete":
+        # After the residents' rows are gone, so extensions drop what they held for them.
+        runtime_services.extensions_reconcile()
 
     for channel_id in result.threads_archived:
         channel = db.get_channel(channel_id)

@@ -153,7 +153,7 @@ def _agent_config_reader(ext_id: str) -> Callable[[str], dict[str, str] | None]:
 
 def _broken_contract(manifest: ExtensionManifest, instance: object) -> str | None:
     """Name the first capability the manifest declares that the instance lacks."""
-    if manifest.live_view and not isinstance(instance, SupportsLiveView):
+    if manifest.live_view is not None and not isinstance(instance, SupportsLiveView):
         return "manifest declares live_view but the extension has no live_view() method"
     if manifest.agent_config is not None and not isinstance(instance, SupportsAgentConfig):
         return "manifest declares agent_config but the extension has no verify_agent_config() method"
@@ -170,10 +170,32 @@ def contract_failure(ext_id: str) -> str | None:
         return _contract_failures.get(ext_id)
 
 
-def loaded_extension(ext_id: str) -> Extension | None:
-    """Return the instance if this process already created it, else ``None``."""
+def loaded_extensions() -> dict[str, Extension]:
+    """Return every instance this process has created, by extension id.
+
+    Returns:
+        A copy taken under the lock, so callers may shut instances down or
+        unload them while iterating it.
+    """
     with _lock:
-        return _loaded.get(ext_id)
+        return dict(_loaded)
+
+
+def unload_extension(ext_id: str) -> None:
+    """Forget this process's instance of an extension, so the next load creates a fresh one.
+
+    Call it after the instance's ``shutdown()``: a turned-off extension is
+    released, and turning it on again constructs it anew. A recorded contract
+    failure stays (the extension's code has not changed), and the imported
+    package stays in ``sys.modules`` (re-importing the same files would only
+    re-run them). Unloading an id that is not loaded does nothing: the
+    requested state, not loaded, already holds.
+
+    Args:
+        ext_id: The extension id.
+    """
+    with _lock:
+        _loaded.pop(ext_id, None)
 
 
 def shutdown_loaded_extensions() -> None:

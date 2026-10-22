@@ -592,7 +592,7 @@ CONTEXT_MODULES = [
     JS / "shell" / "agent-routes.js",
     JS / "context" / "desk-dialog.js",
     JS / "extensions" / "extensions-api.js",
-    JS / "extensions" / "browser-vision-status.js",
+    JS / "extensions" / "live-status.js",
     JS / "extensions" / "extensions-live.js",
     JS / "context" / "desk-extensions.js",
     JS / "places" / "chat" / "chat-place.js",

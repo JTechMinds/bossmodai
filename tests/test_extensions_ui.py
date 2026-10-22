@@ -1,4 +1,4 @@
-"""Extensions dialog, Browser Vision status reader and viewer, and the per-agent surfaces, in the fake DOM."""
+"""Extensions dialog, live-view status reader and viewer, Configure agents layer and the per-agent surfaces, in the fake DOM."""
 
 from __future__ import annotations
 
@@ -14,14 +14,16 @@ MODULES = [
     JS / "core" / "bus.js",
     JS / "core" / "format.js",
     JS / "core" / "switch.js",
+    JS / "core" / "avatar.js",
     JS / "extensions" / "extensions-api.js",
-    JS / "extensions" / "browser-vision-status.js",
+    JS / "extensions" / "live-status.js",
     JS / "extensions" / "extensions-live.js",
     JS / "extensions" / "extensions-dialog.js",
     JS / "core" / "gates.js",
     JS / "core" / "secret-field.js",
     JS / "core" / "data-table.js",
     JS / "extensions" / "agent-config-dialog.js",
+    JS / "extensions" / "extension-agents-layer.js",
     JS / "context" / "desk-extensions.js",
     JS / "core" / "tabs.js",
     JS / "core" / "fact-list.js",
@@ -45,27 +47,36 @@ def test_status_reader_viewer_and_card() -> None:
     for key in (
         "cardHasNoWatchButton",
         "noFetchesWithoutSubscribers", "subscribingReadsAtOnce", "noPollingOverSixtySeconds",
-        "anEventReadsExactlyOnce", "aNullEventReadsExactlyOnce", "anotherExtensionsEventReadsNothing",
-        "aBurstOfFiveReadsAtMostTwice", "resyncReadsOnce",
+        "anEventReadsExactlyOnce", "aNullEventReadsEverythingOnce", "anUnlistedEventReadsEverythingOnce",
+        "aBurstOfFiveReadsAtMostTwice", "resyncReadsEverythingOnce",
         "failureKeepsLastStateAndLogs", "disabledIsAnEmptySet",
         "noSubscribersMeansNoFetches", "toggleRefreshesTheStatus",
+        "twoViewsAreBothRead", "eachEventReadsItsOwnView", "aBurstAcrossTwoViewsCoalesces",
+        "anUnlistedLabelThrows", "aViewTurnedOffLeavesTheList", "anUnknownIconIsLeftOutAndLogged",
         "viewerTitleAndHeadFocus", "viewerImageHasRealAlt", "viewerShowsTheQuietBand",
         "viewerInventsNothingForABlankTitle", "viewerFileUrlOpensItsFolder", "viewerOtherSchemesAreInert",
         "viewerDoesNotRefetchAnUnchangedShot", "viewerUpdatesOnANewShotAndRevokesTheOld",
         "viewerSaysSessionEnded", "viewerStopsReadingOnClose",
+        "viewerTitleFromTheLabel", "viewerDesktopBandShowsTheTitleAlone",
+        "viewerNoPageLineWithNeitherTitleNorUrl", "viewerRefusesAnUnlistedExtension",
     ):
         assert payload.get(key) is True, (key, payload)
 
 
 def test_the_status_module_has_no_timer() -> None:
-    source = (JS / "extensions" / "browser-vision-status.js").read_text(encoding="utf-8")
+    source = (JS / "extensions" / "live-status.js").read_text(encoding="utf-8")
+    assert "setInterval" not in source and "setTimeout" not in source
+
+
+def test_the_agents_layer_has_no_timer() -> None:
+    source = (JS / "extensions" / "extension-agents-layer.js").read_text(encoding="utf-8")
     assert "setInterval" not in source and "setTimeout" not in source
 
 
 def test_the_shell_wires_the_status_to_the_bus_before_the_socket() -> None:
     shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
-    assert "BossModBrowserVisionStatus.attach({ bus });" in shell
-    assert shell.index("BossModBrowserVisionStatus.attach({ bus });") < shell.index("socket.connect();")
+    assert "BossModLiveStatus.attach({ bus });" in shell
+    assert shell.index("BossModLiveStatus.attach({ bus });") < shell.index("socket.connect();")
 
 
 def test_the_live_tone_colours_the_icon_soft_green() -> None:
@@ -97,6 +108,22 @@ def test_the_per_agent_surfaces() -> None:
         "viewTabsRendered", "viewOnlyTheShownTabIsRead", "viewSentTabBuildsItsOwnTable",
         "viewSwitchingBackReadsNothingNew", "viewItemOpensWithItsView", "viewCloseDestroysEveryTable",
         "viewOneListHasNoTabRow",
+    ):
+        assert payload.get(key) is True, (key, payload)
+
+
+def test_the_configure_agents_layer() -> None:
+    payload = _payload()
+    for key in (
+        "configureAgentsOnlyWhenOnWithAgentConfig",
+        "agentsLayerShowsLoading", "agentsLayerFailedOffersRetry", "agentsLayerRetryLoadsTheTable",
+        "agentsTableIsSemantic", "agentsRowsShowEachAgent", "agentsImageIncapableOffRowIsDisabled",
+        "agentsQuickEnableSavesDefaults",
+        "agentsTurnOffAsksFirst", "agentsTurnOffCancelKeepsIt", "agentsTurnOffRemovesTheSettings",
+        "agentsRowErrorRevertsTheSwitch", "agentsRowErrorClearsOnTheNextTry",
+        "agentsSettingsOpensTheDialog", "agentsSettingsCloseRereadsAndRefocuses",
+        "agentsEmptySaysSo", "agentsSummaryShowsWhenOn",
+        "agentsSwitchOpensSettingsWhenAFieldIsRequired", "agentsDialogCloseRereadsAndRefocusesTheSwitch",
     ):
         assert payload.get(key) is True, (key, payload)
 

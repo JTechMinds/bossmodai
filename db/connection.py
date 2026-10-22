@@ -1776,14 +1776,16 @@ def _create_hot_path_indexes(con: SQLiteCompatConnection) -> None:
 def _ensure_runtime_command_types(con: SQLiteCompatConnection) -> None:
     """Rebuild runtime_commands if its command_type CHECK lacks the newest type.
 
-    The newest is ``extension_config_changed`` (the app queues it after an
-    extension's per-agent settings are saved or removed); before it,
-    ``reload_schedules`` (after every schedule edit). One rebuild brings any
-    older table up to the full list. Rows are copied as they are, and the
-    status index the rebuild drops with the old table is recreated.
+    The newest is ``extensions_reconcile`` (the app queues it after an
+    extension is turned on or off and after an agent is deleted); before
+    it, ``extension_config_changed`` (after an extension's per-agent
+    settings are saved or removed) and ``reload_schedules`` (after every
+    schedule edit). One rebuild brings any older table up to the full list.
+    Rows are copied as they are, and the status index the rebuild drops
+    with the old table is recreated.
     """
     sql = _table_sql(con, "runtime_commands")
-    if not sql or "'extension_config_changed'" in sql:
+    if not sql or "'extensions_reconcile'" in sql:
         return
     con.execute("PRAGMA foreign_keys = OFF")
     try:
@@ -1799,7 +1801,8 @@ def _ensure_runtime_command_types(con: SQLiteCompatConnection) -> None:
                                       'reset_agent_runtime',
                                       'shutdown_runtime',
                                       'reload_schedules',
-                                      'extension_config_changed'
+                                      'extension_config_changed',
+                                      'extensions_reconcile'
                                   )),
                 payload        TEXT NOT NULL,
                 status         VARCHAR NOT NULL DEFAULT 'queued'

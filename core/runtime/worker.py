@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import os
@@ -10,7 +11,7 @@ import signal
 import sys
 import threading
 from contextlib import suppress
-from typing import Any, Callable
+from typing import Any, Awaitable, Callable
 
 import db
 from core import config
@@ -19,6 +20,7 @@ from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.meeting_watchdog import meeting_watchdog
 from core.agent_loop.watchdog import watchdog
 from core.bm_cli import background_processes
+from core.extensions.agent_hooks import apply_extension_states, notify_agent_config_changed, reconcile_agents
 from core.extensions.loader import shutdown_loaded_extensions
 from core.extensions.wake_service import extension_wake_watch
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
@@ -150,8 +152,96 @@ class StdinDoorbell:
                 return
 
 
+ExtensionJob = Callable[[], Awaitable[None]]
+
+
+class ExtensionLane:
+    """Run the worker's extension jobs one at a time, off the runtime command loop.
+
+    The command loop handles one command at a time, and the app waits only
+    seconds for a pause, a shutdown or the worker's ``ready``. An extension
+    hook can take far longer (a desktop restart, a reconcile that stops
+    desktops), so the command handlers queue it here and return at once.
+    One consumer task runs the jobs sequentially, so they keep their filing
+    order (a reconcile filed after a settings change runs after it).
+
+    A job that raises is logged with its traceback and the next job runs.
+    The ``agent_hooks`` functions log extension failures themselves, so what
+    reaches the lane is a host bug (e.g. an unreadable enabled setting).
+    """
+
+    def __init__(self) -> None:
+        self._queue: asyncio.Queue[ExtensionJob] | None = None
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Create the consumer task on the running event loop.
+
+        Raises:
+            RuntimeError: The lane is already running.
+        """
+        if self._task is not None:
+            raise RuntimeError("the extension lane is already running")
+        self._queue = asyncio.Queue()
+        self._task = asyncio.create_task(self._consume(self._queue), name="extension-lane")
+
+    def submit(self, job: ExtensionJob) -> None:
+        """Queue a job after every job already queued; the caller never awaits it.
+
+        Args:
+            job: A zero-argument async callable.
+
+        Raises:
+            RuntimeError: The lane is not running (not started yet, or
+                stopped), so the job would never run.
+        """
+        if self._queue is None:
+            raise RuntimeError("the extension lane is not running")
+        self._queue.put_nowait(job)
+
+    async def stop(self) -> None:
+        """Drop the queued jobs, cancel the consumer and wait for it to exit.
+
+        A job whose hook is already running in a thread (``asyncio.to_thread``
+        cannot be interrupted) finishes there on its own; an extension orders
+        its own ``shutdown()`` after such a hook. Dropped jobs are logged at
+        info: the next worker boot reconciles anyway. Stopping a lane that is
+        not running does nothing.
+        """
+        task, queue = self._task, self._queue
+        self._task = None
+        self._queue = None
+        if task is None or queue is None:
+            return
+        dropped = queue.qsize()
+        if dropped:
+            logger.info("Extension lane stopped; %d queued job(s) dropped", dropped)
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+    @staticmethod
+    async def _consume(queue: asyncio.Queue[ExtensionJob]) -> None:
+        while True:
+            job = await queue.get()
+            try:
+                await job()
+            except Exception:
+                # One failed job must not stop the jobs filed after it.
+                logger.exception("Extension lane job %r failed; the next job still runs", job)
+
+
 class RuntimeController:
-    """Own the runtime-only services inside the worker process."""
+    """Own the runtime-only services inside the worker process.
+
+    Attributes:
+        extension_lane: Runs the extension hook jobs (settings changes,
+            reconciles) off the command loop. ``RuntimeWorker.run`` starts it
+            once the worker has reported ready.
+    """
+
+    def __init__(self) -> None:
+        self.extension_lane = ExtensionLane()
 
     async def boot(self, *, paused: bool) -> None:
         """Reconcile what a previous app run left, then start the services unless paused.
@@ -159,7 +249,11 @@ class RuntimeController:
         Background processes end with the app (they share its process
         group), so their rows still say ``running``; one sweep records them
         as ended before anything reads them. Paused or not: the desk and the
-        agents' prompts read these rows either way.
+        agents' prompts read these rows either way. The extensions' boot
+        reconcile is not here: ``RuntimeWorker.run`` queues
+        :meth:`reconcile_after_boot` in the extension lane after the worker
+        reports ready, because stopping what an earlier worker left can take
+        longer than the app waits for ready.
         """
         await asyncio.to_thread(background_processes.sweep, exit_reason=background_processes.APP_STOPPED_REASON)
         if not paused:
@@ -167,6 +261,9 @@ class RuntimeController:
 
     async def shutdown(self) -> None:
         await self._stop_services()
+        # Before the extensions shut down, so no queued hook starts on an
+        # extension being released.
+        await self.extension_lane.stop()
         # Closes browsers and other resources extensions hold in this process.
         await asyncio.to_thread(shutdown_loaded_extensions)
 
@@ -188,13 +285,87 @@ class RuntimeController:
         """
         schedule_watch.reload()
 
-    async def extension_config_changed(self) -> None:
-        """Make the extension wake service re-read stored per-agent configs.
+    async def extension_config_changed(self, extension_id: str, agent_id: str) -> None:
+        """Apply one agent's saved or removed settings for one extension.
 
         The command comes from ``RuntimeServices.extension_config_changed``
         after the app saved or removed one agent's settings for an extension.
+        The wake service's cached configs are dropped here, so its next tick
+        re-reads them. The extension's reaction (e.g. restarting a running
+        desktop with new specs) is queued in the extension lane and this
+        returns at once, so the command completes without waiting for it;
+        see :meth:`_apply_settings_change`.
+
+        Args:
+            extension_id: The extension whose settings changed.
+            agent_id: The agent whose settings changed.
+
+        Raises:
+            RuntimeError: The extension lane is not running.
         """
         extension_wake_watch.invalidate()
+        self.extension_lane.submit(functools.partial(self._apply_settings_change, extension_id, agent_id))
+
+    async def extensions_reconcile(self) -> None:
+        """Release turned-off extensions, then drop what extensions hold for deleted agents.
+
+        The command comes from ``RuntimeServices.extensions_reconcile`` after
+        an extension was turned on or off or agents were deleted. The work
+        is queued in the extension lane and this returns at once; see
+        :meth:`_reconcile_extensions`.
+
+        Raises:
+            RuntimeError: The extension lane is not running.
+        """
+        self.extension_lane.submit(self._reconcile_extensions)
+
+    async def reconcile_after_boot(self) -> None:
+        """The boot job: tell every enabled extension which agents exist.
+
+        Queued first in the extension lane by ``RuntimeWorker.run``, paused or
+        not, so what an earlier or crashed worker left (e.g. a running
+        desktop) is stopped or removed (``agent_hooks.reconcile_agents``,
+        in a thread); then open live views of the extensions it touched
+        re-read.
+        """
+        await self._announce_live_views(await asyncio.to_thread(reconcile_agents))
+
+    async def _apply_settings_change(self, extension_id: str, agent_id: str) -> None:
+        """Extension-lane job: let the extension react, then nudge its live view.
+
+        ``agent_hooks.notify_agent_config_changed`` runs in a thread; open
+        live views of the extension then re-read, since the change may have
+        removed an agent's live item.
+        """
+        changed = await asyncio.to_thread(notify_agent_config_changed, extension_id, agent_id)
+        await self._announce_live_views(changed)
+
+    async def _reconcile_extensions(self) -> None:
+        """Extension-lane job: apply enable states, reconcile agents, nudge live views.
+
+        ``agent_hooks.apply_extension_states`` then
+        ``agent_hooks.reconcile_agents``, each in a thread; then open live
+        views of every extension either step touched re-read.
+        """
+        released = await asyncio.to_thread(apply_extension_states)
+        reconciled = await asyncio.to_thread(reconcile_agents)
+        await self._announce_live_views(released | reconciled)
+
+    @staticmethod
+    async def _announce_live_views(extension_ids: frozenset[str]) -> None:
+        """Tell open live views of these extensions to re-read their ``/live`` route.
+
+        A worker-side change (settings applied, an extension released, a
+        reconcile) can remove an agent's live item without any CLI result to
+        announce it. The event carries no state, as in
+        ``turn_helpers.announce_extension_result``.
+
+        Args:
+            extension_ids: Live-view extension ids an ``agent_hooks`` call
+                returned; sorted so the events go out in a stable order.
+        """
+        for ext_id in sorted(extension_ids):
+            await runtime_events.broadcast_extension_live(ext_id, None)
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         await dispatcher.reset_agent(agent_id)
@@ -263,6 +434,21 @@ class RuntimeWorker:
                 loop.add_signal_handler(sig, _request_stop)
 
     async def run(self) -> int:
+        """Boot, report ready, then serve runtime commands until told to stop.
+
+        Order: settings and the doorbell; ``RuntimeController.boot`` (the
+        process sweep, services unless paused); ``{"type": "ready"}`` to the
+        app; then the extension lane starts with the boot reconcile
+        (``RuntimeController.reconcile_after_boot``) as its first job, paused
+        or not; then the command, heartbeat and parent-watch loops. On the
+        way out the controller shuts down (services, then the lane, then the
+        extensions).
+
+        Returns:
+            0 after a requested stop, 1 when starting failed (the failure is
+            logged, recorded on the worker row and sent to the app as
+            ``fatal``).
+        """
         runtime_events.set_sink(TransportRuntimeEventSink(self._transport))
         self._install_stop_signals()
         try:
@@ -280,6 +466,10 @@ class RuntimeWorker:
             await self._controller.boot(paused=self._is_paused())
             db.mark_runtime_worker_running(os.getpid(), worker_name=_WORKER_NAME)
             await self._transport.send_message({"type": "ready"})
+            # After ready, not in boot(): stopping what an earlier worker left
+            # can take longer than the app waits for ready.
+            self._controller.extension_lane.start()
+            self._controller.extension_lane.submit(self._controller.reconcile_after_boot)
             self._background_tasks = [
                 asyncio.create_task(self._command_loop()),
                 asyncio.create_task(self._heartbeat_loop()),
@@ -402,7 +592,10 @@ class RuntimeWorker:
             await self._controller.reload_schedules()
             return
         if command_type == "extension_config_changed":
-            await self._controller.extension_config_changed()
+            await self._controller.extension_config_changed(payload["extension_id"], payload["agent_id"])
+            return
+        if command_type == "extensions_reconcile":
+            await self._controller.extensions_reconcile()
             return
         if command_type == "reset_agent_runtime":
             await self._controller.reset_agent_runtime(payload["agent_id"])

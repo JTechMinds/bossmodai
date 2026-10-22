@@ -1,13 +1,13 @@
-/* ─── Extensions: the browser view ───
+/* ─── Extensions: the live view ───
 
    The Extensions dialog itself is built from marketplace.css's card classes;
-   this sheet adds only what those do not cover for the single-agent browser
+   this sheet adds only what those do not cover for the single-agent live
    viewer — a band of the image's facts pinned above a scroller (panel bodies
    do not scroll themselves, see overlays.css) and the full-size image. The
    band is three quiet lines of soft grey text — the page (title, then its
-   URL), the command, and the extension's facts — with no fill, border or
-   dividers: spacing alone sets it apart from the image. Linked after
-   marketplace.css. */
+   URL, each when the item has one), the command, and the extension's facts —
+   with no fill, border or dividers: spacing alone sets it apart from the
+   image. Linked after marketplace.css. */
 
 /* The viewer's body: the band stays put while the image pans beneath it —
    the focal content scrolls, its context does not. */
@@ -60,7 +60,8 @@ a.ext-live-url:hover { text-decoration-color: var(--muted); }
 /* Any other scheme (about:blank, data:) is plain text: no link affordance. */
 span.ext-live-url { text-decoration: none; }
 
-.ext-live-taken { flex: none; font-size: 12px; color: var(--muted); white-space: nowrap; }
+/* Pinned right even when the item has no page line (no title, no URL). */
+.ext-live-taken { flex: none; margin-left: auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
 
 /* The command and the facts: full text, wrapping, never truncated. */
 .ext-live-line {
@@ -94,6 +95,67 @@ span.ext-live-url { text-decoration: none; }
 .ext-config-help .field-hint { white-space: pre-wrap; word-break: break-word; }
 .ext-config-secret { display: flex; gap: 6px; align-items: center; }
 .ext-config-status:empty { display: none; }
+
+/* An Extensions card's Configure agents button, under its switch. The card
+   is a flex column that stretches its children; a button keeps its width. */
+.ext-card-agents { align-self: flex-start; }
+
+/* ─── Configure agents (extensions/extension-agents-layer.js) ───
+
+   One extension, every agent: its help, then a plain table — hairline rules
+   between rows, quiet column heads in the viewer band's label ink, and the
+   switch and Settings columns only as wide as they need. Centred in the
+   panel's reading column, like the task detail, so a wide window adds margin
+   rather than pulling four columns apart. */
+
+.ext-agents {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: var(--panel-column);
+  margin: 0 auto;
+}
+
+.ext-agents-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ext-agents-table th,
+.ext-agents-table td {
+  padding: 8px;
+  border-top: 1px solid var(--line);
+  text-align: left;
+  vertical-align: middle;
+}
+
+/* The column heads: .ext-live-label's ink at the band's size, not a th's bold. */
+.ext-agents-table thead th {
+  padding-top: 0;
+  border-top: 0;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--hint);
+}
+
+/* One height for every agent's row, whether or not it holds a button. */
+.ext-agents-table tbody tr { height: var(--table-row); }
+
+/* Each row's header is its agent. */
+.ext-agents-table tbody th { font-weight: 500; }
+
+.ext-agents-table .ext-agents-control { width: 1%; white-space: nowrap; }
+
+/* A refusal under its row reads as part of that row: no rule between them. */
+.ext-agents-table .ext-agents-error-row { height: auto; }
+.ext-agents-error-row > td { padding-top: 0; border-top: 0; }
+.ext-agents-error-row .market-failed { margin: 0; }
+
+.ext-agents-who { display: inline-flex; align-items: center; gap: 8px; }
+
+.ext-agents-note { font-size: 12px; color: var(--muted); }
 
 /* ─── Per-agent view (extensions/agent-view-dialog.js) ─── */
 

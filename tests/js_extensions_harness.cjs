@@ -1,14 +1,15 @@
 /**
- * Node harness: the Extensions dialog, the Browser Vision status reader, the
- * single-agent browser viewer, and the per-agent surfaces — the data table's
- * wrapper contract (over an injected table factory: Tabulator needs real
- * layout, so its rendering is checked in the real app), the desk's
- * Extensions section and the per-agent settings dialog.
+ * Node harness: the Extensions dialog, the live-view status reader, the
+ * single-agent live viewer, the Configure agents layer, and the per-agent
+ * surfaces — the data table's wrapper contract (over an injected table
+ * factory: Tabulator needs real layout, so its rendering is checked in the
+ * real app), the desk's Extensions section and the per-agent settings dialog.
  *
  * Invoked by tests/test_extensions_ui.py with the module paths in load order.
  * The modal frame, the confirm strip, the clock and the network are stubbed;
- * the bus, the dialog, the status module, the viewer, the switch and the DOM
- * helpers are the real modules. Prints one JSON object of named verdicts.
+ * the bus, the dialog, the status module, the viewer, the agents layer, the
+ * switch, the avatar and the DOM helpers are the real modules. Prints one
+ * JSON object of named verdicts.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -17,9 +18,10 @@ installDom();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModExtensionsApi",
-    "BossModBrowserVisionStatus", "BossModExtensionsLive", "BossModExtensionsDialog",
-    "BossModGates", "BossModSecretField", "BossModDataTable", "BossModAgentConfigDialog", "BossModDeskExtensions",
+    "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModAvatar", "BossModExtensionsApi",
+    "BossModLiveStatus", "BossModExtensionsLive", "BossModExtensionsDialog",
+    "BossModGates", "BossModSecretField", "BossModDataTable", "BossModAgentConfigDialog",
+    "BossModExtensionAgentsLayer", "BossModDeskExtensions",
     "BossModTabs", "BossModFactList", "BossModAgentViewDialog", "BossModExternalOpen", "BossModDeskOpener",
 ];
 if (paths.length !== NAMES.length) {
@@ -125,9 +127,21 @@ global.BossModFileOps = { readApiError: async () => "" };
 const bv = {
     id: "browser-vision", name: "Browser Vision", version: "1.0.0", description: "d",
     command: { name: "bv", summary: "s" }, enabled: true, valid: true, invalid_reason: null,
-    requires_image_model: true, live_view: true, setup: { state: "ready", detail: null },
-    setup_label: "Download browser (~120 MB)", excluded_agents: [],
+    requires_image_model: true, live_view: { label: "Browser view", icon: "globe" }, setup: { state: "ready", detail: null },
+    setup_label: "Download browser (~120 MB)", excluded_agents: [], agent_config: null,
 };
+// A second live-view extension, with per-agent settings: the desktop has no
+// URL, only the active window's title.
+const vd = {
+    ...bv, id: "virtual-desktop", name: "Virtual Desktop", command: { name: "vm", summary: "s" },
+    live_view: { label: "Desktop view", icon: "monitor" }, setup_label: "Build the desktop",
+    agent_config: { label: "Virtual desktop" },
+};
+const desktopItem = (takenAt, title) => ({
+    agent_id: "a1", agent_name: "Iris", taken_at: takenAt, command: "vm view", url: null, title,
+    facts: [{ label: "screen", value: "1280x800" }, { label: "pointer", value: "(412, 488) px" }],
+    image_url: `/api/extensions/virtual-desktop/live/a1/image?t=${Date.parse(takenAt)}`,
+});
 const liveItem = (takenAt) => ({
     agent_id: "a1", agent_name: "Iris", taken_at: takenAt, command: "bv open example.com",
     url: "https://example.com", title: "Example Domain",
@@ -137,7 +151,9 @@ const liveItem = (takenAt) => ({
     ],
     image_url: `/api/extensions/browser-vision/live/a1/image?t=${Date.parse(takenAt)}`,
 });
+// Browser Vision's /live reply; any other extension's is in otherLive.
 let liveReply = { kind: "ok", body: { items: [] } };
+const otherLive = {};
 let deskReply = [];
 const configCalls = [];
 const storedConfig = {
@@ -154,13 +170,16 @@ let putReply = () => ({
     ok: false, status: 422,
     json: async () => ({ detail: { error: "CONFIG_VERIFY_FAILED", message: "The client secret is wrong or has expired. Create a new secret and try again." } }),
 });
+// Every /live read, and per extension; every GET /api/extensions.
 let liveCalls = 0;
+const liveCallsBy = {};
+let listCalls = 0;
 const folderOpens = [];
 let listReply = [bv];
 let deskReads = 0;
 const viewCalls = [];
 const mailItem = {
-    ...bv, id: "mail", name: "Microsoft 365 Mailbox", command: { name: "mail", summary: "s" }, live_view: false,
+    ...bv, id: "mail", name: "Microsoft 365 Mailbox", command: { name: "mail", summary: "s" }, live_view: null,
     requires_image_model: false, setup: { state: "not_required", detail: null }, setup_label: null,
     agent_config: { label: "Microsoft 365 mailbox" },
     agent_view: { label: "Open inbox", views: [{ key: "inbox", label: "Inbox" }, { key: "sent", label: "Sent" }] },
@@ -171,9 +190,56 @@ const viewPage = (view) => ({
     has_more: false,
     caption: view === "sent" ? "Sent from reports@contoso.com" : "Inbox of reports@contoso.com",
 });
+// The Configure agents layer's server: who has each extension on, and the
+// replies its switch gets. `agentsReply` is "ok", "broken", or a promise the
+// read waits on; `configReply` is null (stored) or a refusal's body.
+const layerAgents = {
+    "virtual-desktop": {
+        label: "Virtual desktop", help: "Gives this agent its own Linux desktop.\n\nMemory and CPUs are upper limits.",
+        quick_enable: true, requires_image_model: true,
+        agents: [
+            { id: "a1", name: "Iris", role: "Researcher", color: "#3b82f6", configured: true, summary: null, image_capable: true },
+            { id: "a2", name: "Jim", role: "Engineer", color: "#f59e0b", configured: false, summary: null, image_capable: true },
+            { id: "a3", name: "Ada", role: null, color: "#10b981", configured: false, summary: null, image_capable: false },
+            { id: "a4", name: "Laura", role: null, color: null, configured: true, summary: null, image_capable: false },
+        ],
+    },
+    mail: {
+        label: "Microsoft 365 mailbox", help: "Step one.", quick_enable: false, requires_image_model: false,
+        agents: [
+            { id: "a1", name: "Iris", role: null, color: "#3b82f6", configured: false, summary: null, image_capable: true },
+            { id: "a2", name: "Jim", role: null, color: "#f59e0b", configured: true, summary: "jim@contoso.com", image_capable: false },
+        ],
+    },
+};
+let agentsReply = "ok";
+let agentsReads = 0;
+let configReply = null;
+const layerCalls = [];
 global.apiFetch = async (url, init) => {
     const ok = (body) => ({ ok: true, status: 200, json: async () => body });
-    if (url === "/api/extensions") return ok(listReply);
+    if (url === "/api/extensions") { listCalls += 1; return ok(listReply); }
+    const agentsMatch = url.match(/^\/api\/extensions\/([\w-]+)\/agents$/);
+    if (agentsMatch) {
+        agentsReads += 1;
+        if (agentsReply === "broken") {
+            return { ok: false, status: 500, json: async () => ({ detail: { error: "BOOM", message: "The agents could not be read." } }) };
+        }
+        if (agentsReply !== "ok") await agentsReply;
+        return ok(JSON.parse(JSON.stringify(layerAgents[agentsMatch[1]])));
+    }
+    const pairMatch = url.match(/^\/api\/extensions\/virtual-desktop\/agents\/(\w+)\/config$/);
+    if (pairMatch) {
+        const method = (init && init.method) || "GET";
+        layerCalls.push({ method, agent: pairMatch[1], body: init && init.body ? JSON.parse(init.body) : null });
+        const agent = layerAgents["virtual-desktop"].agents.find((row) => row.id === pairMatch[1]);
+        if (method === "GET") {
+            return ok({ label: "Virtual desktop", help: "h", configured: agent.configured, updated_at: null, fields: [] });
+        }
+        if (configReply) return { ok: false, status: 422, json: async () => ({ detail: configReply }) };
+        agent.configured = method === "PUT";
+        return method === "PUT" ? ok({ verified: "Ready." }) : { ok: true, status: 204, json: async () => ({}) };
+    }
     const viewMatch = url.match(/^\/api\/extensions\/mail\/agents\/a1\/view\?view=(\w+)&skip=(\d+)&top=(\d+)$/);
     if (viewMatch) {
         viewCalls.push({ view: viewMatch[1], skip: Number(viewMatch[2]), top: Number(viewMatch[3]) });
@@ -188,15 +254,20 @@ global.apiFetch = async (url, init) => {
         folderOpens.push({ url, method: init && init.method });
         return ok({ status: "ok", path: "/tmp/x" });
     }
-    if (url.endsWith("/live")) {
+    const liveMatch = url.match(/^\/api\/extensions\/([\w-]+)\/live$/);
+    if (liveMatch) {
+        const id = liveMatch[1];
         liveCalls += 1;
-        if (liveReply.kind === "disabled") {
-            return { ok: false, status: 409, json: async () => ({ detail: { error: "EXTENSION_DISABLED", message: "Browser Vision is off." } }) };
+        liveCallsBy[id] = (liveCallsBy[id] || 0) + 1;
+        const reply = id === "browser-vision" ? liveReply : otherLive[id];
+        if (!reply) throw new Error(`unexpected live read of ${id}`);
+        if (reply.kind === "disabled") {
+            return { ok: false, status: 409, json: async () => ({ detail: { error: "EXTENSION_DISABLED", message: "It is off." } }) };
         }
-        if (liveReply.kind === "broken") {
+        if (reply.kind === "broken") {
             return { ok: false, status: 500, json: async () => ({ detail: "boom" }) };
         }
-        return ok(liveReply.body);
+        return ok(reply.body);
     }
     if (url.endsWith("/enabled")) return ok({ ...bv, enabled: JSON.parse(init.body).enabled });
     if (url === "/api/agents/a1/extensions") { deskReads += 1; return ok(deskReply); }
@@ -211,7 +282,7 @@ global.apiFetch = async (url, init) => {
 NAMES.slice(1).forEach((name, index) => {
     eval(`${fs.readFileSync(paths[index + 1], "utf8")}\n;global.${name} = ${name};\n`);
 });
-const Status = global.BossModBrowserVisionStatus;
+const Status = global.BossModLiveStatus;
 const bus = global.BossModBus.createBus(global.BossModBus.KNOWN_TOPICS);
 Status.attach({ bus });
 const push = (extensionId, agentId) => bus.publish("extension_live", { extension_id: extensionId, agent_id: agentId });
@@ -219,6 +290,8 @@ const push = (extensionId, agentId) => bus.publish("extension_live", { extension
 const drain = async () => { for (let i = 0; i < 8; i += 1) await new Promise((r) => setImmediate(r)); };
 const text = () => document.body.textContent;
 const byId = (id) => document.body.querySelector(`#${id}`);
+const throwsError = (fn) => { try { fn(); return false; } catch (_err) { return true; } };
+const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const verdict = {};
 
 (async () => {
@@ -231,85 +304,169 @@ const verdict = {};
 
     // 2. Nothing is read while no one is subscribed, whatever arrives.
     await drain();
+    let listBefore = listCalls;
     push("browser-vision", "a1");
     push(null, null);
     bus.publish("resync", { downtimeMs: 0 });
     await drain();
-    verdict.noFetchesWithoutSubscribers = liveCalls === 0 && timers.size === 0;
+    verdict.noFetchesWithoutSubscribers = liveCalls === 0 && listCalls === listBefore && timers.size === 0;
 
-    // 3. The first subscriber reads once; then time alone reads nothing.
+    // 3. The first subscriber reads everything once — the list, then each
+    //    listed view; then time alone reads nothing.
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
     let notified = 0;
     const off = Status.subscribe(() => { notified += 1; });
     await drain();
-    verdict.subscribingReadsAtOnce = liveCalls === 1 && notified === 1 && Status.hasView("a1")
-        && Status.latest("a1").title === "Example Domain" && timers.size === 0;
+    verdict.subscribingReadsAtOnce = listCalls === listBefore + 1 && liveCalls === 1 && notified === 1
+        && sameJson(Status.views("a1"), [{ extensionId: "browser-vision", label: "Browser view", icon: "globe" }])
+        && sameJson(Status.views("a2"), [])
+        && Status.latest("browser-vision", "a1").title === "Example Domain"
+        && Status.label("browser-vision") === "Browser view" && timers.size === 0;
     await advance(60000);
     verdict.noPollingOverSixtySeconds = liveCalls === 1 && timers.size === 0;
 
-    // 4. Pushes: ours or null reads once each; another extension's reads nothing.
+    // 4. Pushes: a listed extension's reads its /live once; null, an unlisted
+    //    id (it may have just been turned on) and a resync read everything once.
     let before = liveCalls;
+    listBefore = listCalls;
     push("browser-vision", "a1");
     await drain();
-    verdict.anEventReadsExactlyOnce = liveCalls === before + 1;
+    verdict.anEventReadsExactlyOnce = liveCalls === before + 1 && listCalls === listBefore;
     before = liveCalls;
+    listBefore = listCalls;
     push(null, null);
     await drain();
-    verdict.aNullEventReadsExactlyOnce = liveCalls === before + 1;
+    verdict.aNullEventReadsEverythingOnce = liveCalls === before + 1 && listCalls === listBefore + 1;
     before = liveCalls;
+    listBefore = listCalls;
     push("some-other-extension", "a1");
     await drain();
-    verdict.anotherExtensionsEventReadsNothing = liveCalls === before;
+    verdict.anUnlistedEventReadsEverythingOnce = liveCalls === before + 1 && listCalls === listBefore + 1
+        && !liveCallsBy["some-other-extension"];
     before = liveCalls;
+    listBefore = listCalls;
     for (let i = 0; i < 5; i += 1) push("browser-vision", "a1");
     await drain();
-    verdict.aBurstOfFiveReadsAtMostTwice = liveCalls - before >= 1 && liveCalls - before <= 2;
+    verdict.aBurstOfFiveReadsAtMostTwice = liveCalls - before >= 1 && liveCalls - before <= 2 && listCalls === listBefore;
     before = liveCalls;
+    listBefore = listCalls;
     bus.publish("resync", { downtimeMs: 1200 });
     await drain();
-    verdict.resyncReadsOnce = liveCalls === before + 1;
+    verdict.resyncReadsEverythingOnce = liveCalls === before + 1 && listCalls === listBefore + 1;
 
     // 5. Another failure keeps the last known state and logs; disabled empties it.
     liveReply = { kind: "broken" };
     push("browser-vision", "a1");
     await drain();
-    verdict.failureKeepsLastStateAndLogs = Status.hasView("a1")
-        && errors.some((line) => line.includes("[browser-vision-status]"));
+    verdict.failureKeepsLastStateAndLogs = Status.views("a1").length === 1
+        && errors.some((line) => line.includes("[live-status]"));
     liveReply = { kind: "disabled" };
     push("browser-vision", null);
     await drain();
-    verdict.disabledIsAnEmptySet = !Status.hasView("a1") && Status.latest("a1") === null;
+    verdict.disabledIsAnEmptySet = sameJson(Status.views("a1"), []) && Status.latest("browser-vision", "a1") === null;
 
     off();
     before = liveCalls;
+    listBefore = listCalls;
     push("browser-vision", "a1");
     push(null, null);
     bus.publish("resync", { downtimeMs: 0 });
     await drain();
     await advance(60000);
-    verdict.noSubscribersMeansNoFetches = liveCalls === before && timers.size === 0;
+    verdict.noSubscribersMeansNoFetches = liveCalls === before && listCalls === listBefore && timers.size === 0;
 
-    // 6. A toggle in the dialog asks the status to re-read at once.
+    // 6. A toggle in the dialog asks the status to re-read everything at once.
     const again = Status.subscribe(() => {});
     await drain();
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
-    before = liveCalls;
     global.BossModExtensionsDialog.open();
     await drain();
+    before = liveCalls;
+    listBefore = listCalls;
     byId("ext-switch-browser-vision").click();  // turn off
     await drain();
-    verdict.toggleRefreshesTheStatus = liveCalls === before + 1;
+    verdict.toggleRefreshesTheStatus = liveCalls === before + 1 && listCalls === listBefore + 1;
     closeLayer(layers[layers.length - 1]);
     again();
 
+    // 6b. Two live-view extensions: both are read, in list order; an event
+    //     re-reads only its own; a burst across both coalesces; a disabled
+    //     or view-less extension is never read; turning one off drops it.
+    const dormant = { ...vd, id: "dormant-view", name: "Dormant", enabled: false, live_view: { label: "Dormant view", icon: "monitor" } };
+    listReply = [bv, vd, mailItem, dormant];
+    otherLive["virtual-desktop"] = { kind: "ok", body: { items: [
+        desktopItem("2026-09-28T10:00:00Z", "Mozilla Firefox"),
+        { ...desktopItem("2026-09-28T10:00:00Z", "Terminal"), agent_id: "a2", agent_name: "Jim" },
+    ] } };
+    const callsOf = (id) => liveCallsBy[id] || 0;
+    let bvBefore = callsOf("browser-vision");
+    let vdBefore = callsOf("virtual-desktop");
+    listBefore = listCalls;
+    const both = Status.subscribe(() => {});
+    await drain();
+    verdict.twoViewsAreBothRead = listCalls === listBefore + 1
+        && callsOf("browser-vision") === bvBefore + 1 && callsOf("virtual-desktop") === vdBefore + 1
+        && !liveCallsBy.mail && !liveCallsBy["dormant-view"]
+        && sameJson(Status.views("a1"), [
+            { extensionId: "browser-vision", label: "Browser view", icon: "globe" },
+            { extensionId: "virtual-desktop", label: "Desktop view", icon: "monitor" },
+        ])
+        && sameJson(Status.views("a2"), [{ extensionId: "virtual-desktop", label: "Desktop view", icon: "monitor" }])
+        && Status.label("virtual-desktop") === "Desktop view"
+        && Status.latest("virtual-desktop", "a1").title === "Mozilla Firefox"
+        && Status.latest("browser-vision", "a2") === null;
+    bvBefore = callsOf("browser-vision");
+    vdBefore = callsOf("virtual-desktop");
+    listBefore = listCalls;
+    push("virtual-desktop", "a1");
+    await drain();
+    verdict.eachEventReadsItsOwnView = callsOf("virtual-desktop") === vdBefore + 1
+        && callsOf("browser-vision") === bvBefore && listCalls === listBefore;
+    bvBefore = callsOf("browser-vision");
+    vdBefore = callsOf("virtual-desktop");
+    for (let i = 0; i < 3; i += 1) {
+        push("browser-vision", "a1");
+        push("virtual-desktop", "a1");
+    }
+    await drain();
+    const bvBurst = callsOf("browser-vision") - bvBefore;
+    const vdBurst = callsOf("virtual-desktop") - vdBefore;
+    verdict.aBurstAcrossTwoViewsCoalesces = bvBurst >= 1 && bvBurst <= 2 && vdBurst >= 1 && vdBurst <= 2
+        && listCalls === listBefore;
+    verdict.anUnlistedLabelThrows = throwsError(() => Status.label("mail"))
+        && throwsError(() => Status.label("dormant-view"));
+    listReply = [bv, { ...vd, enabled: false }, mailItem];
+    push(null, null);
+    await drain();
+    verdict.aViewTurnedOffLeavesTheList = sameJson(Status.views("a1"), [{ extensionId: "browser-vision", label: "Browser view", icon: "globe" }])
+        && sameJson(Status.views("a2"), []) && Status.latest("virtual-desktop", "a1") === null;
+
+    // 6c. An icon outside the UI's fixed vocabulary is a server/UI contract
+    //     break: logged naming the extension, and that view is left out (its
+    //     /live is never read) rather than handed to the icon painter, which
+    //     would throw while painting the chat header.
+    listReply = [bv, { ...vd, live_view: { label: "Desktop view", icon: "rocket" } }];
+    const errorsBefore = errors.length;
+    vdBefore = callsOf("virtual-desktop");
+    push(null, null);
+    await drain();
+    verdict.anUnknownIconIsLeftOutAndLogged = sameJson(Status.views("a1"), [{ extensionId: "browser-vision", label: "Browser view", icon: "globe" }])
+        && sameJson(Status.views("a2"), [])
+        && callsOf("virtual-desktop") === vdBefore
+        && throwsError(() => Status.label("virtual-desktop"))
+        && errors.slice(errorsBefore).some((line) => line.includes("[live-status]")
+            && line.includes("virtual-desktop") && line.includes('"rocket"'));
+    both();
+
     // 7. The single-agent viewer: real alt, the stat band, and it follows the status.
+    listReply = [bv];
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
     const blobsBefore = blobFetches.length;
-    global.BossModExtensionsLive.openForAgent("a1", "Iris");
+    global.BossModExtensionsLive.openForAgent("browser-vision", "a1", "Iris");
     await drain();
     const viewer = layers[layers.length - 1];
     const img = () => viewer.body.querySelector("#ext-live-image");
-    verdict.viewerTitleAndHeadFocus = viewer.options.title === "Iris — browser"
+    verdict.viewerTitleAndHeadFocus = viewer.options.title === "Iris — Browser view"
         && viewer.options.focusBody === false && viewer.options.size === "panel";
     verdict.viewerImageHasRealAlt = Boolean(img())
         && img().getAttribute("alt") === "Latest screenshot from Iris: Example Domain"
@@ -357,7 +514,7 @@ const verdict = {};
     liveReply = { kind: "ok", body: { items: [] } };
     push("browser-vision", "a1");
     await drain();
-    verdict.viewerSaysSessionEnded = text().includes("Iris’s browser session ended.") && !img();
+    verdict.viewerSaysSessionEnded = text().includes("Iris’s session ended.") && !img();
 
     closeLayer(viewer);
     before = liveCalls;
@@ -368,7 +525,7 @@ const verdict = {};
     // A blank title: no title element, no placeholder, an alt without a colon.
     const blankItem = { ...liveItem("2026-09-28T10:10:00Z"), title: "" };
     liveReply = { kind: "ok", body: { items: [blankItem] } };
-    global.BossModExtensionsLive.openForAgent("a1", "Iris");
+    global.BossModExtensionsLive.openForAgent("browser-vision", "a1", "Iris");
     await drain();
     const blankViewer = layers[layers.length - 1];
     const blankBand = blankViewer.body.querySelector(".ext-live-band");
@@ -384,7 +541,7 @@ const verdict = {};
     // A local file page: the URL is a link whose click opens its folder, once, and never navigates.
     const fileItem = { ...liveItem("2026-09-28T10:15:00Z"), url: "file:///tmp/x/y.png" };
     liveReply = { kind: "ok", body: { items: [fileItem] } };
-    global.BossModExtensionsLive.openForAgent("a1", "Iris");
+    global.BossModExtensionsLive.openForAgent("browser-vision", "a1", "Iris");
     await drain();
     const fileViewer = layers[layers.length - 1];
     const fileUrl = fileViewer.body.querySelector(".ext-live-url");
@@ -406,7 +563,7 @@ const verdict = {};
     // Any other scheme is plain text: nothing to click.
     const blankPage = { ...liveItem("2026-09-28T10:20:00Z"), url: "about:blank" };
     liveReply = { kind: "ok", body: { items: [blankPage] } };
-    global.BossModExtensionsLive.openForAgent("a1", "Iris");
+    global.BossModExtensionsLive.openForAgent("browser-vision", "a1", "Iris");
     await drain();
     const inertViewer = layers[layers.length - 1];
     const inertBand = inertViewer.body.querySelector(".ext-live-band");
@@ -416,6 +573,51 @@ const verdict = {};
         && inertBand.querySelector(".ext-live-url").textContent === "about:blank"
         && !inertBand.querySelector("a") && !inertBand.querySelector("button");
     closeLayer(inertViewer);
+
+    // 7b. A desktop's view: titled with that extension's own label; with no
+    //     URL the page line is the window title alone, and with neither a
+    //     title nor a URL there is no page line at all — nothing is invented.
+    //     An extension the status never listed opens nothing.
+    listReply = [bv, vd];
+    const deskShot = desktopItem("2026-09-28T11:00:00Z", "Mozilla Firefox");
+    otherLive["virtual-desktop"] = { kind: "ok", body: { items: [deskShot] } };
+    const headerListener = Status.subscribe(() => {});
+    await drain();
+    global.BossModExtensionsLive.openForAgent("virtual-desktop", "a1", "Iris");
+    await drain();
+    const deskViewer = layers[layers.length - 1];
+    const deskBand = deskViewer.body.querySelector(".ext-live-band");
+    const deskImage = deskViewer.body.querySelector("#ext-live-image");
+    verdict.viewerTitleFromTheLabel = deskViewer.options.title === "Iris — Desktop view";
+    verdict.viewerDesktopBandShowsTheTitleAlone = Boolean(deskBand) && Boolean(deskImage)
+        && deskBand.querySelector(".ext-live-page").textContent === "Mozilla Firefox"
+        && !deskBand.querySelector(".ext-live-url")
+        && deskBand.querySelector("time").getAttribute("datetime") === deskShot.taken_at
+        && deskBand.querySelectorAll(".ext-live-line")[0].textContent === "command: vm view"
+        && deskImage.getAttribute("alt") === "Latest screenshot from Iris: Mozilla Firefox"
+        && deskImage.getAttribute("src") === `blob:${deskShot.image_url}`;
+    closeLayer(deskViewer);
+    const bareShot = desktopItem("2026-09-28T11:05:00Z", "");
+    otherLive["virtual-desktop"] = { kind: "ok", body: { items: [bareShot] } };
+    push("virtual-desktop", "a1");
+    await drain();
+    global.BossModExtensionsLive.openForAgent("virtual-desktop", "a1", "Iris");
+    await drain();
+    const bareViewer = layers[layers.length - 1];
+    const bareBand = bareViewer.body.querySelector(".ext-live-band");
+    verdict.viewerNoPageLineWithNeitherTitleNorUrl = Boolean(bareBand)
+        && !bareBand.querySelector(".ext-live-page") && !bareBand.querySelector(".ext-live-url")
+        && Boolean(bareBand.querySelector("time"))
+        && bareViewer.body.querySelector("#ext-live-image").getAttribute("alt") === "Latest screenshot from Iris"
+        && spoken(bareBand) === [
+            global.BossModFormat.formatRelativeTime(bareShot.taken_at),
+            "command: ", bareShot.command, "screen: 1280x800", "pointer: (412, 488) px",
+        ].join("");
+    closeLayer(bareViewer);
+    const layersBeforeUnlisted = layers.length;
+    verdict.viewerRefusesAnUnlistedExtension = throwsError(() => global.BossModExtensionsLive.openForAgent("mail", "a1", "Iris"))
+        && layers.length === layersBeforeUnlisted;
+    headerListener();
 
     // 8. The data table wrapper: argument checks, the Tabulator options it
     //    passes, loadPage paging, text-only cells, the activator and states.
@@ -624,6 +826,192 @@ const verdict = {};
     verdict.viewOneListHasNoTabRow = !single.body.querySelector('[role="tablist"]') && !single.body.querySelector('[role="tabpanel"]')
         && tabulators.length === 3;
     closeLayer(single);
+
+    // 13. Configure agents: a button only on an enabled card with per-agent
+    //     settings, right under its switch; the "set up per agent" note it
+    //     replaced is gone.
+    listReply = [bv, vd, mailItem, { ...mailItem, id: "mail-off", name: "Mail off", enabled: false }];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    const extDialog = layers[layers.length - 1];
+    const agentsButton = byId("ext-agents-virtual-desktop");
+    verdict.configureAgentsOnlyWhenOnWithAgentConfig = Boolean(agentsButton) && Boolean(byId("ext-agents-mail"))
+        && !byId("ext-agents-browser-vision") && !byId("ext-agents-mail-off")
+        && agentsButton.textContent === "Configure agents"
+        && agentsButton.getAttribute("class") === "btn btn-sm ext-card-agents"
+        && agentsButton.parentNode.children.indexOf(agentsButton)
+            === agentsButton.parentNode.children.indexOf(byId("ext-switch-virtual-desktop")) + 1
+        && !extDialog.body.textContent.includes("Set up per agent");
+
+    // 14. The agents layer: loading, a failed read with Try again, then the table.
+    agentsReply = "broken";
+    agentsButton.click();
+    const agentsLayer = layers[layers.length - 1];
+    const statusLine = () => agentsLayer.body.querySelector('[role="status"]');
+    verdict.agentsLayerShowsLoading = agentsLayer.options.title === "Virtual Desktop — agents"
+        && agentsLayer.options.size === "panel" && Boolean(statusLine()) && statusLine().textContent === "Loading agents…";
+    await drain();
+    const failedLine = agentsLayer.body.querySelector('[role="alert"]');
+    verdict.agentsLayerFailedOffersRetry = Boolean(failedLine) && failedLine.textContent === "The agents could not be read."
+        && Boolean(agentsLayer.body.querySelector("#ext-agents-retry")) && !agentsLayer.body.querySelector("table");
+    agentsReply = "ok";
+    const readsBeforeRetry = agentsReads;
+    agentsLayer.body.querySelector("#ext-agents-retry").click();
+    const reloading = Boolean(statusLine()) && statusLine().textContent === "Loading agents…";
+    await drain();
+    verdict.agentsLayerRetryLoadsTheTable = reloading && agentsReads === readsBeforeRetry + 1
+        && Boolean(agentsLayer.body.querySelector("table")) && !agentsLayer.body.querySelector("#ext-agents-retry");
+
+    // 15. The table: a caption, column heads, one row per agent headed by its
+    //     face and name; the switch is named for the extension and the agent.
+    const rowOf = (layer, agentId) => layer.body.querySelector(`#ext-agents-name-${agentId}`).closest("tr");
+    const switchOf = (layer, agentId) => rowOf(layer, agentId).querySelector('[role="switch"]');
+    const settingsOf = (layer, agentId) => rowOf(layer, agentId).querySelector(".btn");
+    const statusOf = (layer, agentId) => rowOf(layer, agentId).children[1].textContent;
+    const tableEl = agentsLayer.body.querySelector("table");
+    const caption = tableEl.querySelector("caption");
+    const heads = tableEl.querySelectorAll("th").filter((th) => th.getAttribute("scope") === "col");
+    const ids = ["a1", "a2", "a3", "a4"];
+    verdict.agentsTableIsSemantic = Boolean(caption) && caption.getAttribute("class") === "visually-hidden"
+        && caption.textContent === "Agents and whether Virtual Desktop is on for each"
+        && sameJson(heads.map((th) => th.textContent), ["Agent", "Status", "On", "Settings"])
+        && heads[3].children[0].getAttribute("class") === "visually-hidden"
+        && ids.every((id) => rowOf(agentsLayer, id).children[0].tagName === "TH"
+            && rowOf(agentsLayer, id).children[0].getAttribute("scope") === "row")
+        && sameJson(agentsLayer.body.querySelectorAll(".field-hint").map((para) => para.textContent),
+            ["Gives this agent its own Linux desktop.", "Memory and CPUs are upper limits."]);
+    const jimLabel = switchOf(agentsLayer, "a2").querySelector(".switch-label");
+    verdict.agentsRowsShowEachAgent = statusOf(agentsLayer, "a1") === "On" && statusOf(agentsLayer, "a2") === "Off"
+        && statusOf(agentsLayer, "a4") === "On"
+        && Boolean(rowOf(agentsLayer, "a1").querySelector(".avatar"))
+        && agentsLayer.body.querySelector("#ext-agents-name-a1").textContent === "Iris"
+        && settingsOf(agentsLayer, "a1").textContent === "Settings"
+        && settingsOf(agentsLayer, "a1").getAttribute("aria-describedby") === "ext-agents-name-a1"
+        && Boolean(settingsOf(agentsLayer, "a4")) && !settingsOf(agentsLayer, "a2") && !settingsOf(agentsLayer, "a3")
+        && switchOf(agentsLayer, "a1").getAttribute("aria-checked") === "true"
+        && switchOf(agentsLayer, "a2").getAttribute("aria-checked") === "false"
+        && jimLabel.textContent === "Virtual Desktop for Jim" && jimLabel.classList.contains("visually-hidden")
+        && !switchOf(agentsLayer, "a2").disabled;
+    verdict.agentsImageIncapableOffRowIsDisabled = switchOf(agentsLayer, "a3").disabled
+        && switchOf(agentsLayer, "a3").getAttribute("aria-describedby") === "ext-agents-note-a3"
+        && agentsLayer.body.querySelector("#ext-agents-note-a3").textContent === "Its model can’t see images"
+        && statusOf(agentsLayer, "a3") === "Off · Its model can’t see images"
+        // Already on: still switchable, so it can be turned off.
+        && !switchOf(agentsLayer, "a4").disabled && !agentsLayer.body.querySelector("#ext-agents-note-a4");
+
+    // 16. Quick enable: the switch saves `{}` (the defaults) at once, holding
+    //     "on" and disabled while it runs; the table is re-read and focus is
+    //     back on that row's switch.
+    const callsBeforeOn = layerCalls.length;
+    const readsBeforeOn = agentsReads;
+    switchOf(agentsLayer, "a2").click();
+    const pendingSwitch = switchOf(agentsLayer, "a2");
+    const heldWhilePending = pendingSwitch.getAttribute("aria-checked") === "true" && pendingSwitch.disabled
+        && document.activeElement === rowOf(agentsLayer, "a2").children[0];
+    await drain();
+    verdict.agentsQuickEnableSavesDefaults = heldWhilePending
+        && sameJson(layerCalls.slice(callsBeforeOn), [{ method: "PUT", agent: "a2", body: { values: {} } }])
+        && agentsReads === readsBeforeOn + 1
+        && statusOf(agentsLayer, "a2") === "On" && switchOf(agentsLayer, "a2").getAttribute("aria-checked") === "true"
+        && Boolean(settingsOf(agentsLayer, "a2"))
+        && document.activeElement === switchOf(agentsLayer, "a2");
+
+    // 17. Turning off asks first; Cancel keeps it; Turn off removes the settings.
+    const callsBeforeOff = layerCalls.length;
+    switchOf(agentsLayer, "a1").click();
+    const confirmOff = layers[layers.length - 1];
+    verdict.agentsTurnOffAsksFirst = confirmOff !== agentsLayer
+        && confirmOff.options.title === "Turn off Virtual Desktop for Iris?"
+        && confirmOff.options.body === "Their settings for it are removed."
+        && sameJson(confirmOff.options.actions.map((action) => [action.label, action.tone]),
+            [["Turn off", "danger"], ["Cancel", "quiet"]])
+        && switchOf(agentsLayer, "a1").getAttribute("aria-checked") === "true"
+        && layerCalls.length === callsBeforeOff;
+    confirmOff.body.querySelectorAll("button")[1].click();
+    await drain();
+    verdict.agentsTurnOffCancelKeepsIt = !layers.includes(confirmOff) && layerCalls.length === callsBeforeOff
+        && switchOf(agentsLayer, "a1").getAttribute("aria-checked") === "true";
+    switchOf(agentsLayer, "a1").click();
+    const confirmAgain = layers[layers.length - 1];
+    confirmAgain.body.querySelector("#ext-agents-off-confirm").click();
+    await drain();
+    verdict.agentsTurnOffRemovesTheSettings = !layers.includes(confirmAgain)
+        && sameJson(layerCalls.slice(callsBeforeOff), [{ method: "DELETE", agent: "a1", body: null }])
+        && statusOf(agentsLayer, "a1") === "Off" && switchOf(agentsLayer, "a1").getAttribute("aria-checked") === "false"
+        && !settingsOf(agentsLayer, "a1")
+        && document.activeElement === switchOf(agentsLayer, "a1");
+
+    // 18. A refusal is shown under its row and the switch goes back; nothing
+    //     changed, so nothing is re-read. The next try clears it.
+    configReply = { error: "CONFIG_VERIFY_FAILED", message: "Docker isn’t running or BossMod can’t reach it." };
+    const readsBeforeRefusal = agentsReads;
+    switchOf(agentsLayer, "a1").click();
+    await drain();
+    const errorRows = agentsLayer.body.querySelectorAll(".ext-agents-error-row");
+    const irisRow = rowOf(agentsLayer, "a1");
+    const refusal = errorRows.length ? errorRows[0].querySelector('[role="alert"]') : null;
+    verdict.agentsRowErrorRevertsTheSwitch = errorRows.length === 1
+        && irisRow.parentNode.children.indexOf(errorRows[0]) === irisRow.parentNode.children.indexOf(irisRow) + 1
+        && errorRows[0].children[0].getAttribute("colspan") === "4"
+        && Boolean(refusal) && refusal.textContent === "Docker isn’t running or BossMod can’t reach it."
+        && switchOf(agentsLayer, "a1").getAttribute("aria-checked") === "false" && !switchOf(agentsLayer, "a1").disabled
+        && statusOf(agentsLayer, "a1") === "Off" && agentsReads === readsBeforeRefusal
+        && document.activeElement === switchOf(agentsLayer, "a1");
+    configReply = null;
+    switchOf(agentsLayer, "a1").click();
+    await drain();
+    verdict.agentsRowErrorClearsOnTheNextTry = agentsLayer.body.querySelectorAll(".ext-agents-error-row").length === 0
+        && statusOf(agentsLayer, "a1") === "On";
+
+    // 19. Settings opens the settings dialog as a layer; closing it re-reads
+    //     the table and puts focus back on that row's Settings.
+    const readsBeforeSettings = agentsReads;
+    settingsOf(agentsLayer, "a4").click();
+    await drain();
+    const settingsDialog = layers[layers.length - 1];
+    verdict.agentsSettingsOpensTheDialog = settingsDialog.options.title === "Settings for Laura"
+        && layerCalls.some((call) => call.method === "GET" && call.agent === "a4");
+    closeLayer(settingsDialog);
+    await drain();
+    verdict.agentsSettingsCloseRereadsAndRefocuses = agentsReads === readsBeforeSettings + 1
+        && document.activeElement === settingsOf(agentsLayer, "a4");
+    closeLayer(agentsLayer);
+
+    // 20. No agents: the help, then a plain line saying so.
+    const everyone = layerAgents["virtual-desktop"].agents;
+    layerAgents["virtual-desktop"].agents = [];
+    byId("ext-agents-virtual-desktop").click();
+    await drain();
+    const emptyLayer = layers[layers.length - 1];
+    verdict.agentsEmptySaysSo = !emptyLayer.body.querySelector("table")
+        && emptyLayer.body.querySelector('[role="status"]').textContent === "No agents yet."
+        && emptyLayer.body.textContent.includes("Gives this agent its own Linux desktop.");
+    closeLayer(emptyLayer);
+    layerAgents["virtual-desktop"].agents = everyone;
+
+    // 21. An extension with a required field: the switch opens the settings
+    //     dialog instead of saving, and stays off under it; closing re-reads
+    //     and focus returns to the switch. A stored summary shows in Status.
+    byId("ext-agents-mail").click();
+    await drain();
+    const mailLayer = layers[layers.length - 1];
+    verdict.agentsSummaryShowsWhenOn = statusOf(mailLayer, "a2") === "On · jim@contoso.com"
+        && !switchOf(mailLayer, "a1").disabled;
+    const configCallsBefore = configCalls.length;
+    const mailReadsBefore = agentsReads;
+    switchOf(mailLayer, "a1").click();
+    await drain();
+    const mailDialog = layers[layers.length - 1];
+    verdict.agentsSwitchOpensSettingsWhenAFieldIsRequired = mailDialog !== mailLayer
+        && mailDialog.options.title === "Settings for Iris"
+        && sameJson(configCalls.slice(configCallsBefore).map((call) => call.method), ["GET"])
+        && switchOf(mailLayer, "a1").getAttribute("aria-checked") === "false";
+    closeLayer(mailDialog);
+    await drain();
+    verdict.agentsDialogCloseRereadsAndRefocusesTheSwitch = agentsReads === mailReadsBefore + 1
+        && document.activeElement === switchOf(mailLayer, "a1");
+    closeLayer(mailLayer);
+    closeLayer(extDialog);
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

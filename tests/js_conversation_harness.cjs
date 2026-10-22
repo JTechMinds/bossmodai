@@ -198,15 +198,16 @@ const needsStub = {
 };
 
 const openedDesks = [];
-// The Browser Vision capability, as chat-place.js injects it: which agents
-// have a view, change notifications, and the viewer.
-const browserViews = new Set();
+// The live-view capability, as chat-place.js injects it: the views each
+// agent has (one per live-view extension, in the extension list's order),
+// change notifications, and the viewer.
+const agentViews = new Map();
 const viewListeners = new Set();
 const openedViews = [];
-const browserView = {
-    hasView: (id) => browserViews.has(id),
+const liveViews = {
+    views: (id) => agentViews.get(id) || [],
     subscribe: (fn) => { viewListeners.add(fn); return () => viewListeners.delete(fn); },
-    open: (id, name) => openedViews.push([id, name]),
+    open: (extensionId, id, name) => openedViews.push([extensionId, id, name]),
 };
 const announceViews = () => viewListeners.forEach((fn) => fn());
 // Owned by the caller so they outlive one controller, as chat-place.js does.
@@ -216,7 +217,7 @@ const conversation = BossModConversation.createConversation({
     store, bus, api, navigate() {}, needs: needsStub, drafts, cache: transcriptCache,
     // Injected so the chrome has an action to carry a glyph on.
     openDesk: (id) => openedDesks.push(id),
-    browserView,
+    liveViews,
 });
 const listing = conversation.element.querySelector("[data-transcript]");
 const composerInput = conversation.element.querySelector(".composer-input");
@@ -552,32 +553,55 @@ async function main() {
         throw new Error(`Open desk must close the panel and open "a", got ${openedDesks.join("|")}`);
     }
 
-    // The Browser Vision screen: absent until the status lists this agent,
-    // then a soft-green, icon-only "Browser view" — the row's first action,
-    // now that Desk is behind the `⋯`; gone again when the view goes (the
-    // extension was turned off).
-    const viewBtn = () => conversation.element.querySelector("#conversation-browser-view");
-    const browserViewAbsentWithoutAView = !viewBtn() && viewListeners.size === 1;
-    browserViews.add("a");
+    // The live-view screens: absent until the status lists a view for this
+    // agent, then one soft-green, icon-only button per view, named with the
+    // extension's own label and wearing the view's own icon — the row's first
+    // actions, now that Desk is behind the `⋯`. Each opens its own
+    // extension's viewer, and they go again when the views go (the
+    // extensions were turned off).
+    const viewBtn = (extensionId) => conversation.element.querySelector(`#conversation-live-view-${extensionId}`);
+    const liveButtons = () => conversation.element.querySelectorAll('[data-tone="live"]');
+    const liveViewAbsentWithoutAView = liveButtons().length === 0 && viewListeners.size === 1;
+    agentViews.set("a", [{ extensionId: "browser-vision", label: "Browser view", icon: "globe" }]);
     announceViews();
-    const shown = viewBtn();
+    const shown = viewBtn("browser-vision");
     const shownGlyph = shown && shown.querySelector("i");
-    const browserViewShowsWhenListed = Boolean(shown)
+    const liveViewShowsWhenListed = Boolean(shown)
         && shown.getAttribute("data-tone") === "live"
         && shown.getAttribute("aria-label") === "Browser view"
-        && Boolean(shownGlyph) && shownGlyph.getAttribute("data-lucide") === "monitor"
+        && Boolean(shownGlyph) && shownGlyph.getAttribute("data-lucide") === "globe"
         // The first action button in the row.
         && rowButtons()[0] === shown;
     await shown.click();
-    const browserViewOpensTheViewer = openedViews.length === 1 && openedViews[0][0] === "a";
-    browserViews.delete("a");
+    const liveViewOpensTheViewer = openedViews.length === 1
+        && JSON.stringify(openedViews[0].slice(0, 2)) === JSON.stringify(["browser-vision", "a"]);
+    agentViews.set("a", [
+        { extensionId: "browser-vision", label: "Browser view", icon: "globe" },
+        { extensionId: "virtual-desktop", label: "Desktop view", icon: "monitor" },
+    ]);
     announceViews();
-    const browserViewGoesWhenTurnedOff = !viewBtn();
+    const desktop = viewBtn("virtual-desktop");
+    const desktopGlyph = desktop && desktop.querySelector("i");
+    const liveViewOneButtonPerView = liveButtons().length === 2 && Boolean(desktop)
+        && desktop.getAttribute("data-tone") === "live"
+        && desktop.getAttribute("aria-label") === "Desktop view"
+        && Boolean(desktopGlyph) && desktopGlyph.getAttribute("data-lucide") === "monitor"
+        // Each wears its own view's icon, side by side.
+        && viewBtn("browser-vision").querySelector("i").getAttribute("data-lucide") === "globe"
+        // In the extension list's order, ahead of every other action.
+        && rowButtons()[0] === viewBtn("browser-vision") && rowButtons()[1] === desktop;
+    await desktop.click();
+    const liveViewOpensItsOwnViewer = openedViews.length === 2
+        && JSON.stringify(openedViews[1].slice(0, 2)) === JSON.stringify(["virtual-desktop", "a"])
+        && openedViews[1][2] === openedViews[0][2] && Boolean(openedViews[1][2]);
+    agentViews.delete("a");
+    announceViews();
+    const liveViewGoesWhenTurnedOff = liveButtons().length === 0;
 
     // A thread has no one face, so it gets the group glyph rather than nothing.
     await conversation.open("t1", "thread");
     // Leaving the agent's conversation drops its status subscription.
-    const browserViewUnsubscribesOnLeave = viewListeners.size === 0;
+    const liveViewUnsubscribesOnLeave = viewListeners.size === 0;
     const group = avatarSlot().querySelector(".avatar-group");
     const chromeGroupGlyphForThreads = Boolean(group)
         && avatarSlot().querySelectorAll(".avatar").length === 1;
@@ -1406,11 +1430,13 @@ async function main() {
         chromeShowsIdentityAvatar,
         chromeAvatarNodeIsStable,
         chromeActionCarriesItsIcon,
-        browserViewAbsentWithoutAView,
-        browserViewShowsWhenListed,
-        browserViewOpensTheViewer,
-        browserViewGoesWhenTurnedOff,
-        browserViewUnsubscribesOnLeave,
+        liveViewAbsentWithoutAView,
+        liveViewShowsWhenListed,
+        liveViewOpensTheViewer,
+        liveViewOneButtonPerView,
+        liveViewOpensItsOwnViewer,
+        liveViewGoesWhenTurnedOff,
+        liveViewUnsubscribesOnLeave,
         chromeGroupGlyphForThreads,
         archiveLivesInTheMenu,
         subtitleIsWithTheActions: subtitleIsWithTheActions(),

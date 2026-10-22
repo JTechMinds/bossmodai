@@ -25,8 +25,8 @@ const BossModAgentSource = (() => {
      * @param {object} ctx.presence  Shared presence controller.
      * @param {(agentId: string, path?: string) => void} [ctx.openDesk]
      *   Optional: the desk modal, which the header's lamp opens on this agent.
-     * @param {object} [ctx.browserView]  Optional `{hasView, subscribe, open}`:
-     *   the Browser Vision screen button, shown while this agent has a view.
+     * @param {object} [ctx.liveViews]  Optional `{views, subscribe, open}`:
+     *   one screen button per live-view extension this agent has a view in.
      * @returns {object} ConversationSource (spec 4.1).
      * @throws {Error} When any capability is missing.
      */
@@ -290,9 +290,9 @@ const BossModAgentSource = (() => {
                     }), { showAuthor: true }));
                 }
             }
-            // The screen button comes and goes with the agent's browser view;
-            // a change repaints through the same on.chrome path a rename uses.
-            const offView = ctx.browserView ? ctx.browserView.subscribe(() => on.chrome()) : null;
+            // The screen buttons come and go with the agent's live views; a
+            // change repaints through the same on.chrome path a rename uses.
+            const offView = ctx.liveViews ? ctx.liveViews.subscribe(() => on.chrome()) : null;
             return {
                 dispose() {
                     signals = null;
@@ -334,17 +334,18 @@ const BossModAgentSource = (() => {
                     onSelect: () => ctx.openDesk(agentId),
                 });
             }
-            // Same optional-capability rule as Desk, and only while this agent
-            // has a latest screenshot: a screen with nothing on it is absent.
-            if (ctx.browserView && ctx.browserView.hasView(agentId)) {
-                actions.push({
-                    id: 'conversation-browser-view',
-                    label: 'Browser view',
-                    icon: 'monitor',
+            // Same optional-capability rule as Desk, one per extension with a
+            // latest screenshot of this agent's: a screen with nothing on it is
+            // absent. The label and icon are the extension's own for its view.
+            if (ctx.liveViews) {
+                ctx.liveViews.views(agentId).forEach((view) => actions.push({
+                    id: `conversation-live-view-${view.extensionId}`,
+                    label: view.label,
+                    icon: view.icon,
                     iconOnly: true,
                     tone: 'live',
-                    onSelect: () => ctx.browserView.open(agentId, who.name),
-                });
+                    onSelect: () => ctx.liveViews.open(view.extensionId, agentId, who.name),
+                }));
             }
             if (record) {
                 actions.push(BossModAutoApproveSwitch.describe({

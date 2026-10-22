@@ -22,7 +22,9 @@ refuses an instance that lacks the Protocol its manifest declares:
 - ``wake`` → :class:`SupportsWake` (new events per configured agent, polled
   by the runtime worker's wake service, which wakes the agent with an
   ``extension_event`` trigger);
-- :class:`SupportsPromptState` needs no manifest flag.
+- :class:`SupportsPromptState`, :class:`SupportsAgentConfigChanged` and
+  :class:`SupportsAgentReconcile` need no manifest flag (the last two are
+  called in the runtime worker by ``core.extensions.agent_hooks``).
 """
 
 from __future__ import annotations
@@ -143,7 +145,7 @@ class LiveViewItem(BaseModel):
         image_path: The exact image the model was sent (inside the data dir).
         taken_at: When it was captured (UTC).
         command: The command that produced it.
-        url: Page URL.
+        url: Page URL; ``None`` for an output with no address (a desktop).
         title: Page title.
         facts: Facts that describe the image, in display order; each
             value is the exact text the agent's result carried (see
@@ -154,7 +156,7 @@ class LiveViewItem(BaseModel):
     image_path: Path
     taken_at: datetime
     command: str
-    url: str
+    url: str | None
     title: str
     facts: list[LiveViewFact]
 
@@ -177,6 +179,61 @@ class SupportsPromptState(Protocol):
 
         Called while the working prompt is built, in the runtime worker.
         It must not start anything (a browser, a thread) just to answer.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsAgentConfigChanged(Protocol):
+    """Optional: an extension that acts when one agent's settings for it change.
+
+    Needs no manifest flag. Only an extension that holds something per agent
+    in the runtime worker (e.g. a running desktop started with the old
+    settings) implements it.
+    """
+
+    def agent_config_changed(self, agent_id: str) -> None:
+        """React to one agent's settings for this extension being saved or removed.
+
+        Called in the runtime worker, off its loop, after the app saved or
+        removed this agent's settings for this extension. Read the new value
+        with ``read_agent_config`` (``None`` means removed: the agent was
+        turned off).
+
+        Args:
+            agent_id: The agent whose settings changed.
+
+        Raises:
+            Exception: The extension's own errors. The host logs them with
+                the traceback and carries on; the save itself already
+                succeeded.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsAgentReconcile(Protocol):
+    """Optional: an extension that holds resources per agent outside the database.
+
+    Needs no manifest flag. Deleting an agent deletes its database rows; an
+    extension holding anything else for it (a container, a volume, files)
+    learns here that the agent is gone.
+    """
+
+    def reconcile_agents(self, existing_agent_ids: frozenset[str]) -> None:
+        """Drop everything held for agents not in ``existing_agent_ids``.
+
+        Called in the runtime worker, off its loop, at boot and after agents
+        are deleted (also after any extension is turned on or off, which
+        files the same reconcile). Must be idempotent: it may run with the
+        same set again.
+
+        Args:
+            existing_agent_ids: The ids of every agent that exists now.
+
+        Raises:
+            Exception: The extension's own errors. The host logs them with
+                the traceback and moves on to the next extension.
         """
         ...
 

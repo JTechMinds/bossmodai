@@ -3,7 +3,10 @@
 Each valid extension adds one virtual command (its ``command.name``). The
 handler is registered at import from the static discovery, so the command is
 always known to the parser and policy (virtual commands are auto-allowed);
-whether it RUNS is decided per call from the live enabled set.
+whether it RUNS is decided per call from the live enabled set. A disabled
+extension only answers ``EXTENSION_DISABLED`` here; releasing what it held
+is the runtime worker's job (``core.extensions.agent_hooks.apply_extension_states``,
+run when the operator turns an extension off).
 
 An extension declares the subcommands whose replay is harmful in its manifest
 (``command.no_retry``); the handler marks ``blocks_retry`` on a result whose
@@ -16,7 +19,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Callable
 
-from core.extensions.loader import ExtensionLoadError, load_extension, loaded_extension
+from core.extensions.loader import ExtensionLoadError, load_extension
 from core.extensions.registry import Discovery, ExtensionEntry, enabled_ids, get_discovery, is_enabled
 
 if TYPE_CHECKING:
@@ -94,9 +97,10 @@ def _stamped(result: BossModCliResult, ext_id: str) -> BossModCliResult:
 def _handler_for(entry: ExtensionEntry) -> CliHandler:
     """Build the CLI handler for one extension's command.
 
-    The handler answers ``EXTENSION_DISABLED`` when the extension is off and
-    ``EXTENSION_LOAD_FAILED`` when it cannot load; otherwise it runs the
-    extension's ``handle``. Only on that path, a result whose subcommand is in
+    The handler answers ``EXTENSION_DISABLED`` when the extension is off
+    (without loading or touching it: releasing it is the runtime worker's
+    job) and ``EXTENSION_LOAD_FAILED`` when it cannot load; otherwise it runs
+    the extension's ``handle``. Only on that path, a result whose subcommand is in
     the manifest's ``command.no_retry`` gets ``blocks_retry=True``: the
     handler ran, so an outside effect may have happened. Every result is
     stamped with the extension id.
@@ -117,11 +121,6 @@ def _handler_for(entry: ExtensionEntry) -> CliHandler:
         from core.bm_cli.retry_policy import blocks_retry
 
         if not is_enabled(entry.id):
-            # A disabled extension releases what it held (e.g. browsers) the
-            # first time it is called after the operator turned it off.
-            instance = loaded_extension(entry.id)
-            if instance is not None:
-                instance.shutdown()
             return error_result(
                 parsed.raw,
                 f"EXTENSION_DISABLED: {name} is off (Add → Extensions)",

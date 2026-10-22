@@ -13,6 +13,9 @@ import json
 import re
 import subprocess
 from pathlib import Path
+from typing import get_args
+
+from core.extensions.manifest import LiveViewIcon
 
 ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
@@ -21,6 +24,9 @@ SUBSET = JS / "vendor" / "lucide.subset.js"
 FULL = JS / "vendor" / "lucide.min.js"
 GENERATOR = ROOT / "scripts" / "build_lucide_subset.cjs"
 HTML = TEMPLATES / "index.html"
+LIVE_STATUS = JS / "extensions" / "live-status.js"
+# live-status.js `ICONS`, as written: a frozen array of quoted literals.
+LIVE_VIEW_ICONS = re.compile(r"const ICONS = Object\.freeze\(\[([^\]]*)\]\);")
 
 # Written independently of the generator's patterns on purpose: a blind spot
 # shared by the two would let a name through both.
@@ -129,24 +135,59 @@ def test_no_icon_name_is_built_at_runtime() -> None:
     assert offenders == [], "\n".join(offenders)
 
 
-def test_extension_manifests_name_no_icons() -> None:
-    """The generator does not read manifests, because none names an icon.
+def _icon_entries(node: object, path: tuple[str, ...] = ()) -> list[tuple[str, object]]:
+    """Every `(dotted key path, value)` in a manifest whose key mentions an icon."""
+    found: list[tuple[str, object]] = []
+    if isinstance(node, dict):
+        for key, value in node.items():
+            here = (*path, key)
+            if "icon" in key.lower():
+                found.append((".".join(here), value))
+            found.extend(_icon_entries(value, here))
+    elif isinstance(node, list):
+        for index, value in enumerate(node):
+            found.extend(_icon_entries(value, (*path, str(index))))
+    return found
 
-    If one starts to, the generator has to learn to read it before the UI
-    renders the name — this fails first so that decision is made on purpose.
+
+def test_extension_manifests_name_icons_only_from_the_host_vocabulary() -> None:
+    """The generator does not read manifests, and does not have to.
+
+    The one icon a manifest names is its live view's header glyph, and the
+    schema holds it to the host's fixed vocabulary (core/extensions/manifest.py
+    `LiveViewIcon`), whose names live-status.js writes out as literals — so
+    they are in the subset whatever a manifest picks. An icon anywhere else, or
+    a name outside the vocabulary, would reach the UI unscanned: this fails
+    first so that decision is made on purpose.
     """
-    def keys_of(node: object) -> list[str]:
-        if isinstance(node, dict):
-            return [*node.keys(), *(key for value in node.values() for key in keys_of(value))]
-        if isinstance(node, list):
-            return [key for value in node for key in keys_of(value)]
-        return []
-
+    vocabulary = set(get_args(LiveViewIcon))
     manifests = sorted((ROOT / "extensions").glob("*/manifest.json"))
     assert manifests, "no extension manifests found — the glob broke"
+    named = 0
     for manifest in manifests:
-        keys = keys_of(json.loads(manifest.read_text(encoding="utf-8")))
-        assert not [key for key in keys if "icon" in key.lower()], manifest
+        for where, value in _icon_entries(json.loads(manifest.read_text(encoding="utf-8"))):
+            assert where == "live_view.icon", (manifest, where)
+            assert value in vocabulary, (manifest, value)
+            named += 1
+    # A walk that stops finding the icons proves nothing by being green.
+    assert named >= 2, f"only {named} live-view icons found in the manifests — the walk broke"
+
+
+def test_the_live_view_icon_vocabulary_is_one_list_in_python_and_the_ui() -> None:
+    """What the server lets a manifest name is exactly what the UI accepts.
+
+    `LiveViewIcon` validates manifests; live-status.js `ICONS` is what the
+    header will paint (anything else is logged and left out), written as
+    literals so the generator keeps each in the subset. Adding an icon to one
+    list and not the other either refuses a valid manifest's view in the UI
+    or lets a manifest name a glyph the subset lacks.
+    """
+    match = LIVE_VIEW_ICONS.search(LIVE_STATUS.read_text(encoding="utf-8"))
+    assert match, "ICONS is no longer a frozen literal list in live-status.js"
+    ui_icons = tuple(single or double for single, double in QUOTED.findall(match.group(1)))
+    assert ui_icons == get_args(LiveViewIcon)
+    keys = _subset_keys()
+    assert [name for name in ui_icons if _icon_key(name) not in keys] == []
 
 
 def test_index_ships_the_subset_and_not_the_full_bundle() -> None:

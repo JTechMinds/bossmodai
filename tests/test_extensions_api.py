@@ -111,6 +111,36 @@ def test_enable_disable_round_trip_once_set_up(client) -> None:
     assert json.loads(config.get_live("extensions_enabled")) == []
 
 
+class _RecordingServices:
+    """Stands in for ``runtime_services``: records the commands the routes file."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def extensions_reconcile(self) -> None:
+        self.calls.append(("extensions_reconcile",))
+
+    def extension_config_changed(self, extension_id: str, agent_id: str) -> None:
+        self.calls.append(("extension_config_changed", extension_id, agent_id))
+
+
+@pytest.fixture()
+def services(monkeypatch) -> _RecordingServices:
+    recording = _RecordingServices()
+    monkeypatch.setattr("api.routes.extensions.runtime_services", recording)
+    return recording
+
+
+def test_enable_and_disable_ask_the_worker_to_reconcile(client, services) -> None:
+    refused = client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True})
+    assert refused.status_code == 409 and services.calls == []
+    _mark_ready()
+    assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True}).status_code == 200
+    assert services.calls == [("extensions_reconcile",)]
+    assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": False}).status_code == 200
+    assert services.calls == [("extensions_reconcile",), ("extensions_reconcile",)]
+
+
 def test_enable_and_disable_announce_the_live_view_change(client, monkeypatch) -> None:
     from api.websocket import manager
 
@@ -228,6 +258,7 @@ def test_an_invalid_extension_cannot_be_enabled_or_set_up(client, monkeypatch, t
 
     item = _item(client, "broken")
     assert item["valid"] is False and "not valid JSON" in item["invalid_reason"]
+    assert item["live_view"] is None
     for response in (
         client.put("/api/extensions/broken/enabled", json={"enabled": True}),
         client.post("/api/extensions/broken/setup", json={"enable_on_success": True}),
@@ -294,8 +325,9 @@ def _enable_bv(client) -> None:
     assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True}).status_code == 200
 
 
-def test_the_list_item_says_whether_it_has_a_live_view(client) -> None:
-    assert _item(client)["live_view"] is True
+def test_the_list_item_names_its_live_view_or_has_none(client) -> None:
+    assert _item(client)["live_view"] == {"label": "Browser view", "icon": "globe"}
+    assert _item(client, "ms365-mail")["live_view"] is None
 
 
 def test_live_lists_each_agents_latest_shot_newest_first(client, live_shots) -> None:
@@ -465,7 +497,7 @@ def test_an_extension_that_broke_its_live_view_contract_is_listed_invalid(client
     (folder / "manifest.json").write_text(json.dumps({
         "id": "liar", "name": "Liar", "version": "1.0.0", "description": "d",
         "command": {"name": "liar", "summary": "s", "usage": "u", "help": "h"},
-        "setup": {"required": False}, "live_view": True,
+        "setup": {"required": False}, "live_view": {"label": "Liar view", "icon": "monitor"},
     }), encoding="utf-8")
     (folder / "__init__.py").write_text(
         "class _Ext:\n    def shutdown(self):\n        pass\ndef create(ctx):\n    return _Ext()\n",
@@ -480,6 +512,64 @@ def test_an_extension_that_broke_its_live_view_contract_is_listed_invalid(client
     item = _item(client, "liar")
     assert item["valid"] is False and item["enabled"] is False
     assert "no live_view() method" in item["invalid_reason"]
+
+
+# A live-view extension whose output has no address (like a desktop): its
+# item carries url=None. The agent id is read from a file the test writes.
+_ADDRESSLESS_INIT = '''
+from datetime import datetime, timezone
+from core.extensions.contract import LiveViewFact, LiveViewItem
+
+class _Ext:
+    def __init__(self, ctx):
+        self.ctx = ctx
+    def handle(self, ctx, parsed, body):
+        raise AssertionError("not used")
+    def shutdown(self):
+        pass
+    def live_view(self):
+        agent_id = (self.ctx.data_dir / "agent.txt").read_text(encoding="utf-8")
+        shot = self.ctx.data_dir / "shots" / (agent_id + ".png")
+        shot.parent.mkdir(parents=True, exist_ok=True)
+        shot.write_bytes(b"\\x89PNG-desk")
+        return [LiveViewItem(
+            agent_id=agent_id, image_path=shot,
+            taken_at=datetime(2026, 10, 22, 9, 0, tzinfo=timezone.utc),
+            command="desk view", url=None, title="Mozilla Firefox",
+            facts=[LiveViewFact(label="screen", value="1280x800")],
+        )]
+
+def create(ctx):
+    return _Ext(ctx)
+'''
+
+
+def test_a_live_item_without_an_address_has_a_null_url_and_no_folder(client, monkeypatch, tmp_path, launched) -> None:
+    ext_id = f"desk-view-{next(_fake_counter)}"
+    folder = tmp_path / ext_id
+    folder.mkdir()
+    (folder / "manifest.json").write_text(json.dumps({
+        "id": ext_id, "name": "Desk View", "version": "1.0.0", "description": "d",
+        "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
+        "setup": {"required": False}, "live_view": {"label": "Desktop view", "icon": "monitor"},
+    }), encoding="utf-8")
+    (folder / "__init__.py").write_text(_ADDRESSLESS_INIT, encoding="utf-8")
+    found = discover(tmp_path, CORE_COMMAND_NAMES)
+    monkeypatch.setattr("api.routes.extensions.get_discovery", lambda: found)
+    assert client.put(f"/api/extensions/{ext_id}/enabled", json={"enabled": True}).status_code == 200
+    agent = db.create_agent("Seer", role="Researcher")
+    extension_data_dir(ext_id).mkdir(parents=True, exist_ok=True)
+    (extension_data_dir(ext_id) / "agent.txt").write_text(agent.id, encoding="utf-8")
+
+    assert _item(client, ext_id)["live_view"] == {"label": "Desktop view", "icon": "monitor"}
+    [row] = client.get(f"/api/extensions/{ext_id}/live").json()["items"]
+    assert row["url"] is None and row["title"] == "Mozilla Firefox" and row["agent_name"] == "Seer"
+    assert row["facts"] == [{"label": "screen", "value": "1280x800"}]
+
+    response = client.post(f"/api/extensions/{ext_id}/live/{agent.id}/open-folder")
+    assert response.status_code == 409
+    assert response.json()["detail"] == {"error": "LIVE_URL_NOT_FILE", "message": "That page is not a local file."}
+    assert launched == []
 
 
 # ─── per-agent config and view (agent_config / agent_view) ───
@@ -503,9 +593,9 @@ class _Ext:
     def verify_agent_config(self, values):
         self.ctx.data_dir.mkdir(parents=True, exist_ok=True)
         (self.ctx.data_dir / "verified.json").write_text(json.dumps(dict(values)), encoding="utf-8")
-        if values["token"] == "bad":
+        if values.get("token") == "bad":
             raise AgentConfigError("The client secret is wrong or has expired. Create a new secret and try again.")
-        return "Connected to " + values["address"]
+        return "Connected to " + values.get("address", "nobody")
     def agent_view(self, agent_id, *, view, skip, top):
         assert view == "inbox"
         config = self.ctx.read_agent_config(agent_id)
@@ -541,26 +631,31 @@ _INTERVAL_FIELD = {
 }
 
 
-def _install_fake(client, monkeypatch, tmp_path, *, wake: bool):
-    """A per-agent extension with a unique id (the loader caches instances per id)."""
+def _install_fake(client, monkeypatch, tmp_path, *, wake: bool, fields=None, wake_block=None, extra=None):
+    """A per-agent extension with a unique id (the loader caches instances per id).
+
+    ``fields`` replaces the mailbox fields, ``wake_block`` the interval-field
+    wake, and ``extra`` adds manifest keys (e.g. ``requires``).
+    """
     ext_id = f"fake-mail-{next(_fake_counter)}"
     folder = tmp_path / ext_id
     folder.mkdir()
-    fields = [
-        {"key": "token", "label": "Token", "kind": "secret"},
-        {"key": "address", "label": "Address", "kind": "email", "summary": True},
-        {"key": "note", "label": "Note", "kind": "text", "required": False},
-    ]
+    if fields is None:
+        fields = [
+            {"key": "token", "label": "Token", "kind": "secret"},
+            {"key": "address", "label": "Address", "kind": "email", "summary": True},
+            {"key": "note", "label": "Note", "kind": "text", "required": False},
+        ] + ([_INTERVAL_FIELD] if wake and wake_block is None else [])
     manifest = {
         "id": ext_id, "name": "Fake Mail", "version": "1.0.0", "description": "d",
         "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False},
-        "agent_config": {"label": "Fake mailbox", "help": "Para one.\n\nPara two.",
-                         "fields": fields + ([_INTERVAL_FIELD] if wake else [])},
+        "agent_config": {"label": "Fake mailbox", "help": "Para one.\n\nPara two.", "fields": fields},
         "agent_view": {"label": "Open inbox", "views": [{"key": "inbox", "label": "Inbox"}]},
+        **(extra or {}),
     }
     if wake:
-        manifest["wake"] = {"interval_field": "every"}
+        manifest["wake"] = wake_block if wake_block is not None else {"interval_field": "every"}
     (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (folder / "__init__.py").write_text(_FAKE_INIT, encoding="utf-8")
     found = discover(tmp_path, CORE_COMMAND_NAMES)
@@ -711,6 +806,105 @@ def test_delete_config(client, fake_mail) -> None:
     assert db.get_extension_agent_config(fake_mail.id, fake_mail.agent.id) is None
 
 
+def test_saving_or_removing_a_config_tells_the_worker_which_pair_changed(client, services, fake_mail) -> None:
+    assert services.calls == [("extensions_reconcile",)]  # the fixture turned the extension on
+    services.calls.clear()
+    changed = ("extension_config_changed", fake_mail.id, fake_mail.agent.id)
+    assert _save(client, fake_mail, token="bad").status_code == 422
+    assert client.delete(f"{fake_mail.base}/config").status_code == 404
+    assert services.calls == [], "nothing stored or removed, nothing to apply"
+    assert _save(client, fake_mail).status_code == 200
+    assert services.calls == [changed]
+    assert client.delete(f"{fake_mail.base}/config").status_code == 204
+    assert services.calls == [changed, changed]
+
+
+# ─── the Configure agents table (GET /extensions/{id}/agents) ───
+
+
+def test_the_agents_table_lists_every_agent_with_its_state(client, fake_mail) -> None:
+    db.set_supports_images("vision-model", True)
+    seer = db.create_agent("Seer", role="Researcher", connection_id=model_connection("vision-model"))
+    blind = db.create_agent("Scribe", role=None, connection_id=model_connection("text-model"))
+    assert _save(client, fake_mail).status_code == 200
+
+    response = client.get(f"/api/extensions/{fake_mail.id}/agents")
+
+    assert response.status_code == 200, response.text
+    assert response.json() == {
+        "label": "Fake mailbox",
+        "help": "Para one.\n\nPara two.",
+        "quick_enable": False,  # the token is a required secret
+        "requires_image_model": False,
+        "agents": [
+            {"id": fake_mail.agent.id, "name": "Iris", "role": "Researcher", "color": fake_mail.agent.color,
+             "configured": True, "summary": "reports@contoso.com", "image_capable": False},
+            {"id": seer.id, "name": "Seer", "role": "Researcher", "color": seer.color,
+             "configured": False, "summary": None, "image_capable": True},
+            {"id": blind.id, "name": "Scribe", "role": None, "color": blind.color,
+             "configured": False, "summary": None, "image_capable": False},
+        ],
+    }
+
+
+def test_an_extension_whose_fields_are_all_optional_is_quick_enable(client, monkeypatch, tmp_path) -> None:
+    fake = _install_fake(
+        client, monkeypatch, tmp_path, wake=False,
+        fields=[_INTERVAL_FIELD, {"key": "note", "label": "Note", "kind": "text", "required": False}],
+        extra={"requires": {"image_model": True}},
+    )
+    db.set_supports_images("vision-model", True)
+    seer = db.create_agent("Seer", role="Researcher", connection_id=model_connection("vision-model"))
+
+    payload = client.get(f"/api/extensions/{fake.id}/agents").json()
+
+    assert payload["quick_enable"] is True
+    # What the table's switch then saves: {} stores every number default.
+    assert client.put(f"{fake.base}/config", json={"values": {}}).status_code == 200
+    assert db.get_extension_agent_config(fake.id, fake.agent.id) == {"every": "90", "note": ""}
+    assert payload["requires_image_model"] is True
+    assert [(agent["id"], agent["image_capable"]) for agent in payload["agents"]] == [
+        (fake.agent.id, False), (seer.id, True),
+    ]
+    # image_capable is the same check that fills the card's excluded_agents.
+    assert [agent["id"] for agent in _item(client, fake.id)["excluded_agents"]] == [fake.agent.id]
+
+
+def test_a_required_number_field_is_not_quick_enable(client, monkeypatch, tmp_path) -> None:
+    # _resolve_values refuses a blank required field before a number default
+    # could fill it, so saving {} would fail: the switch must open the dialog.
+    required_number = {**_INTERVAL_FIELD, "required": True}
+    fake = _install_fake(client, monkeypatch, tmp_path, wake=False, fields=[required_number])
+    assert client.get(f"/api/extensions/{fake.id}/agents").json()["quick_enable"] is False
+    refused = client.put(f"{fake.base}/config", json={"values": {}})
+    assert refused.status_code == 422
+    assert refused.json()["detail"] == {"error": "CONFIG_INVALID", "message": "Check every (seconds) is required."}
+
+
+def test_the_agents_table_refuses_unknown_disabled_and_config_less_extensions(client, fake_mail) -> None:
+    assert client.get("/api/extensions/nope/agents").status_code == 404
+    client.put(f"/api/extensions/{fake_mail.id}/enabled", json={"enabled": False})
+    disabled = client.get(f"/api/extensions/{fake_mail.id}/agents")
+    assert disabled.status_code == 409 and disabled.json()["detail"]["error"] == "EXTENSION_DISABLED"
+
+
+def test_the_agents_table_refuses_an_extension_without_agent_config(client) -> None:
+    _mark_ready()
+    assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True}).status_code == 200
+    response = client.get(f"/api/extensions/{_BV}/agents")
+    assert response.status_code == 409 and response.json()["detail"]["error"] == "NO_AGENT_CONFIG"
+
+
+def test_the_agents_table_refuses_an_invalid_extension(client, monkeypatch, tmp_path) -> None:
+    folder = tmp_path / "broken"
+    folder.mkdir()
+    (folder / "manifest.json").write_text("{", encoding="utf-8")
+    found = discover(tmp_path, CORE_COMMAND_NAMES)
+    monkeypatch.setattr("api.routes.extensions.get_discovery", lambda: found)
+    response = client.get("/api/extensions/broken/agents")
+    assert response.status_code == 409 and response.json()["detail"]["error"] == "INVALID_EXTENSION"
+
+
 def test_view_and_item_need_a_config_then_answer(client, fake_mail) -> None:
     refused = client.get(f"{fake_mail.base}/view", params={"view": "inbox"})
     assert refused.status_code == 409 and refused.json()["detail"]["error"] == "NOT_CONFIGURED"
@@ -802,3 +996,14 @@ def test_the_desk_item_carries_the_wake_status(client, fake_wake_mail) -> None:
     assert failed["ok"] is False and failed["error"] == "Couldn't reach Microsoft 365."
     # A failed check keeps when mail last arrived.
     assert failed["last_new_count"] == 2 and failed["last_new_at"] == ok["last_new_at"]
+
+
+def test_a_wake_without_desk_status_shows_no_wake_line(client, monkeypatch, tmp_path) -> None:
+    fake = _install_fake(
+        client, monkeypatch, tmp_path, wake=True, wake_block={"interval_seconds": 60, "desk_status": False},
+    )
+    assert _save(client, fake).status_code == 200
+    # Even a stray status row is not read: the desk shows no health line.
+    db.record_wake_check(fake.id, fake.agent.id, ok=True, error=None, new_count=1)
+    [item] = client.get(f"/api/agents/{fake.agent.id}/extensions").json()
+    assert item["wakes"] is False and item["wake"] is None

@@ -185,12 +185,59 @@ class AgentViewSpec(_Strict):
 class WakeSpec(_Strict):
     """How often the host asks an extension for new events (``contract.SupportsWake``).
 
+    Exactly one of ``interval_field`` / ``interval_seconds`` is set.
+
     Attributes:
         interval_field: The ``agent_config`` ``number`` field holding each
-            agent's poll interval in seconds.
+            agent's poll interval in seconds, for a wake whose cadence the
+            operator chooses per agent.
+        interval_seconds: One fixed poll interval for every agent, for a
+            wake whose cadence is the extension's own (e.g. an in-memory
+            check), so the operator sees no interval field.
+        desk_status: The desk shows the last check's time and health. Set
+            false for a wake whose check never reaches an outside service.
+
+    Raises:
+        pydantic.ValidationError: Both or neither interval is set, or
+            ``interval_seconds`` is not greater than 0.
     """
 
-    interval_field: str = Field(min_length=1)
+    interval_field: str | None = Field(default=None, min_length=1)
+    interval_seconds: int | None = Field(default=None, gt=0)
+    desk_status: bool = True
+
+    @model_validator(mode="after")
+    def _exactly_one_interval(self) -> "WakeSpec":
+        if (self.interval_field is None) == (self.interval_seconds is None):
+            raise ValueError("wake needs exactly one of interval_field or interval_seconds")
+        return self
+
+
+# The icons a live view's chat-header button may wear. A fixed vocabulary, not
+# any Lucide name: see LiveViewSpec.icon.
+LiveViewIcon = Literal["globe", "monitor"]
+
+
+class LiveViewSpec(_Strict):
+    """The operator's read-only view of each agent's latest output (``contract.SupportsLiveView``).
+
+    Attributes:
+        label: What the chat-header button and the viewer title say, e.g.
+            "Browser view"; the extension names its own view, so core never
+            names an extension.
+        icon: The chat-header button's glyph, from the host's fixed
+            vocabulary of icons guaranteed to be in the UI's icon subset
+            (:data:`LiveViewIcon`). The UI ships only a generated subset of
+            Lucide, and ``core/icons.js`` throws on a name outside it, so an
+            extension may not name an arbitrary icon: a dropped-in extension
+            could otherwise break the chat header. Adding an icon means
+            adding it here and to ``ICONS`` in
+            ``ui/static/js/extensions/live-status.js``, whose literals keep it
+            in the subset; a test holds the two lists equal.
+    """
+
+    label: str = Field(min_length=1)
+    icon: LiveViewIcon
 
 
 class ExtensionManifest(_Strict):
@@ -208,8 +255,9 @@ class ExtensionManifest(_Strict):
     prompt: str | None = None
     requires: RequiresSpec = RequiresSpec()
     setup: SetupSpec
-    # True when the instance implements contract.SupportsLiveView.
-    live_view: bool = False
+    # Set when the instance implements contract.SupportsLiveView; its label
+    # names the view in the UI. None: the extension has no live view.
+    live_view: LiveViewSpec | None = None
     # Set when the instance implements contract.SupportsAgentConfig.
     agent_config: AgentConfigSpec | None = None
     # Set when the instance implements contract.SupportsAgentView.
@@ -227,11 +275,14 @@ class ExtensionManifest(_Strict):
     @model_validator(mode="after")
     def _wake_interval_is_a_number_field(self) -> "ExtensionManifest":
         # Events are per agent and only configured agents are polled, so a
-        # wake extension needs per-agent settings holding its interval.
+        # wake extension needs per-agent settings, whichever interval it uses.
         if self.wake is None:
             return self
         if self.agent_config is None:
             raise ValueError("wake needs an agent_config block")
+        if self.wake.interval_field is None:
+            # A fixed interval_seconds names no field.
+            return self
         field = next((item for item in self.agent_config.fields if item.key == self.wake.interval_field), None)
         if field is None or field.kind != "number":
             raise ValueError(f"wake.interval_field {self.wake.interval_field!r} must name a number field of agent_config")

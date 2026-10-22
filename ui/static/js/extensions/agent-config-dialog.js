@@ -1,9 +1,10 @@
 /**
  * BossMod AI — one agent's settings for one extension (manifest `agent_config`).
  *
- * A default-size modal from core/overlays.js, opened from the agent's desk.
- * The form is built from the fields the server describes, so this module
- * knows nothing about any one extension:
+ * A default-size modal from core/overlays.js, opened from the agent's desk or
+ * as a layer over the Extensions dialog's Configure agents table. The form is
+ * built from the fields the server describes, so this module knows nothing
+ * about any one extension:
  *   - the extension's help text first, as text, one paragraph per blank line;
  *   - one labelled input per field: `secret` through BossModSecretField
  *     (never pre-filled; when one is stored the placeholder says a blank keeps
@@ -11,9 +12,10 @@
  *     min/max and its default as placeholder (and value until one is saved),
  *     `text` as text;
  *   - Save verifies on the server before anything is stored. While it runs
- *     the status line says "Verifying connection…"; a refusal shows the
- *     server's message verbatim (e.g. an AADSTS error) and keeps the typing;
- *     success shows the server's `verified` line and leaves a Done button.
+ *     the status line says "Checking…"; a refusal shows the server's message
+ *     verbatim (e.g. an AADSTS error) and keeps the typing; success shows the
+ *     extension's own `verified` text (what it checked, in its words) and
+ *     leaves a Done button.
  *   - Remove (only when configured) asks first, in a layer over the form.
  *
  * States: loading, load failed (with retry), form, verifying, refused, saved.
@@ -30,11 +32,11 @@ const BossModAgentConfigDialog = (() => {
         keepSecret: 'Leave blank to keep the current secret',
         show: 'Show',
         save: 'Save',
-        verifying: 'Verifying connection…',
+        verifying: 'Checking…',
         cancel: 'Cancel',
         done: 'Done',
         remove: 'Remove',
-        removeBody: 'The stored settings, including the secret, are deleted. The agent loses access until someone sets them up again.',
+        removeBody: 'The agent stops using this until someone sets it up again. Its settings are removed.',
         removeFailed: 'Couldn’t remove these settings.',
     });
 

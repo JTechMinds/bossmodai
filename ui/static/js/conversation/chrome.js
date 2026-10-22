@@ -222,8 +222,8 @@ const BossModConversationChrome = (() => {
          *   it beside the name, or absent for the action row; a `'menu'`
          *   action's `section` is `'subject'` or `'chat'`. `tone` is `'live'`
          *   (the only tone so far) for an action that marks something running
-         *   now — the browser view — and sets `data-tone="live"`, which the
-         *   stylesheet colours soft green. A `kind: 'switch'` menu action also
+         *   now — an extension's live view — and sets `data-tone="live"`, which
+         *   the stylesheet colours soft green. A `kind: 'switch'` menu action also
          *   takes `pressed`, and optional `disabled` and `hint` (a visible line
          *   under the switch that is also its accessible description).
          *   `onSelect` may return a promise and may reject. `onRename` is

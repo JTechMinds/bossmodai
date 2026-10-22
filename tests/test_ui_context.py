@@ -154,7 +154,7 @@ CONTEXT_MODULES = [
     JS / "shell" / "agent-routes.js",
     CONTEXT / "desk-dialog.js",
     JS / "extensions" / "extensions-api.js",
-    JS / "extensions" / "browser-vision-status.js",
+    JS / "extensions" / "live-status.js",
     JS / "extensions" / "extensions-live.js",
     # The desk's Extensions section reads through BossModExtensionsApi at load.
     CONTEXT / "desk-extensions.js",

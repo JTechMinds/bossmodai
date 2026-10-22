@@ -538,13 +538,21 @@ async def test_telegram_list_and_join_stay_on_the_named_floor() -> None:
 
 
 class _Services:
-    """Records runtime resets. The floor delete must cancel a live turn per agent."""
+    """Records runtime resets. The floor delete must cancel a live turn per agent.
+
+    Also records each extensions reconcile with the agent ids that existed
+    when it was filed.
+    """
 
     def __init__(self) -> None:
         self.resets: list[str] = []
+        self.reconciled: list[list[str]] = []
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         self.resets.append(agent_id)
+
+    def extensions_reconcile(self) -> None:
+        self.reconciled.append(sorted(agent.id for agent in db.list_agents()))
 
     async def enqueue_trigger(self, **_kwargs: object) -> None:
         raise AssertionError("a floor delete must not wake anyone")
@@ -691,6 +699,28 @@ def test_floor_delete_api_reports_what_it_did(monkeypatch: pytest.MonkeyPatch) -
         "folder_archived": True,
         "process_stopped_agent_ids": [],
     }
+
+
+def test_only_a_floor_delete_that_deletes_its_agents_reconciles_extensions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    services = _Services()
+    monkeypatch.setattr("api.routes.floors.runtime_services", services)
+    finance = create_floor("Finance")
+    legal = create_floor("Legal")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    bob = _agent("Bob", 2, floor_id=legal.id)
+    stays = _agent("Stays", 3)
+    client, headers = _client()
+
+    assert client.delete(f"/api/floors/{finance.id}", headers=headers).status_code == 409
+    assert client.delete(f"/api/floors/{legal.id}?occupants=send_home", headers=headers).status_code == 200
+    assert services.reconciled == [], "a refused delete or a send-home deletes no agent"
+
+    deleted = client.delete(f"/api/floors/{finance.id}?occupants=delete", headers=headers)
+    assert deleted.status_code == 200 and deleted.json()["agents_deleted"] == [ada.id]
+    # Filed once, after Ada's rows are gone.
+    assert services.reconciled == [sorted([bob.id, stays.id])]
 
 
 def test_floor_create_rename_delete_each_broadcast_the_whole_list(

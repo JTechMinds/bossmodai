@@ -67,9 +67,9 @@ const BossModShell = (() => {
         const floorChat = BossModFloorChat.attach({ store });
         const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
         const offOperatorInvalidate = BossModOperatorInvalidate.attach({ bus });
-        // Browser Vision's live-view status re-reads on server pushes, not a
+        // Every live-view extension's status re-reads on server pushes, not a
         // timer; it must hear them from the first broadcast on.
-        BossModBrowserVisionStatus.attach({ bus });
+        BossModLiveStatus.attach({ bus });
 
         const layoutElement = requireElement('main-layout');
         const placeElement = requireElement('app-place');

@@ -309,18 +309,47 @@ class RuntimeServices:
                 exc,
             )
 
-    def extension_config_changed(self) -> None:
-        """Tell the worker an agent's settings for an extension were saved or removed.
+    def extension_config_changed(self, extension_id: str, agent_id: str) -> None:
+        """Tell the worker one agent's settings for one extension were saved or removed.
 
-        Files an ``extension_config_changed`` runtime command and rings the
-        doorbell, so the wake service drops its cached configs before its
-        next tick. Never de-duplicated: an open command may already have been
-        applied, and settings saves are rare. Does nothing when this process
-        runs no worker; a starting worker reads every config fresh.
+        Files an ``extension_config_changed`` runtime command with payload
+        ``{"extension_id", "agent_id"}`` and rings the doorbell. The worker
+        then drops the wake service's cached configs and lets the extension
+        apply the change (``agent_hooks.notify_agent_config_changed``), e.g.
+        restart a running desktop with new specs. Never de-duplicated: an
+        open command may already have been applied, and settings saves are
+        rare. Does nothing when this process runs no worker; a starting
+        worker reads every config fresh, and an extension applies stored
+        settings when it next starts something.
+
+        Args:
+            extension_id: The extension whose settings changed.
+            agent_id: The agent whose settings changed.
         """
         if not self._process_is_running():
             return
-        db.create_runtime_command("extension_config_changed")
+        db.create_runtime_command(
+            "extension_config_changed",
+            {"extension_id": extension_id, "agent_id": agent_id},
+        )
+        self._ring_worker()
+
+    def extensions_reconcile(self) -> None:
+        """Ask the worker to release turned-off extensions and what deleted agents held.
+
+        Files an ``extensions_reconcile`` runtime command and rings the
+        doorbell. The worker shuts down and unloads every extension the
+        operator turned off (``agent_hooks.apply_extension_states``), then
+        tells each enabled extension which agents exist
+        (``agent_hooks.reconcile_agents``). Filed after an extension is
+        turned on or off and after agents are deleted (one, all, or a
+        floor's residents). Never de-duplicated,
+        like :meth:`extension_config_changed`. Does nothing when this
+        process runs no worker: a booting worker reconciles anyway.
+        """
+        if not self._process_is_running():
+            return
+        db.create_runtime_command("extensions_reconcile")
         self._ring_worker()
 
     def _guard(self) -> asyncio.Lock:

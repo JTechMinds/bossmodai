@@ -142,8 +142,8 @@ const NAMES = [
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksComplete",
     "BossModTaskActions", "BossModTaskLayers",
     "BossModDeskTaskOpener", "BossModAgentRoutes", "BossModDeskDialog",
-    // The chat place hands agent conversations the Browser Vision screen.
-    "BossModExtensionsApi", "BossModBrowserVisionStatus", "BossModExtensionsLive",
+    // The chat place hands agent conversations their live-view screens.
+    "BossModExtensionsApi", "BossModLiveStatus", "BossModExtensionsLive",
     // The desk panel's Extensions section (read at call time, so after it).
     "BossModDeskExtensions",
     "BossModChatPlace",

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -272,6 +273,53 @@ def test_modal_frame_is_the_chat_chrome() -> None:
     assert "padding:" not in base, "the head, body and footer own their spacing"
     market = (css_dir / "marketplace.css").read_text(encoding="utf-8")
     assert ".modal-actions:empty" not in market, "one definition, in overlays.css"
+
+
+def test_the_trail_title_wins_and_a_compact_frame_shows_only_back_and_title() -> None:
+    """The current title wins the trail's space (the operator, 2026-10-22).
+
+    It used to shrink 100× faster than its ancestors, so a confirm two layers
+    deep read "Tu…". Shrink ratios cannot fix that: flexbox shares shrink by
+    flex-shrink × base size, so even 1000:1 cut the title by a sub-pixel, and
+    ancestors with no floor collapsed under their own crumbs. So in a panel an
+    ancestor never shrinks — it grows from a floor the grid computes
+    (separator, gap, --crumb-min) up to its natural width — and the title is
+    the one thing that does. A compact frame shows no ancestors at all: the ‹,
+    named "Back to …" by core/modal-trail.js, stands in for them.
+    """
+    css_dir = ROOT / "ui" / "static" / "css"
+    # Rules only: the comment above the trail explains the 1000:1 it rejects.
+    css = re.sub(r"/\*.*?\*/", "", (css_dir / "overlays.css").read_text(encoding="utf-8"), flags=re.S)
+
+    def block(selector: str) -> str:
+        assert css.count(f"{selector} {{") == 1, selector
+        return css.split(f"{selector} {{", 1)[1].split("}", 1)[0]
+
+    # No shrink ratio on the current item, 100× or otherwise.
+    assert re.search(r"flex-shrink:\s*100\b", css) is None
+    assert '.modal-trail li[aria-current="page"]' not in css
+    # The current item is the one that shrinks, all the way down if it must.
+    current = block(".modal-trail li")
+    assert "flex: 0 1 auto" in current and "min-width: 0" in current
+
+    # Panel and takeover frames: ancestors grow from their floor, never shrink.
+    ancestor = block(".modal-trail li:not([aria-current])")
+    for declaration in ("flex: 1 0 0", "min-width: auto", "max-width: max-content"):
+        assert declaration in ancestor, declaration
+    crumb = block(".modal-trail li:not([aria-current]):not([aria-hidden])")
+    assert "display: grid" in crumb
+    assert "grid-template-columns: auto minmax(var(--crumb-min), max-content)" in crumb
+    first = block(".modal-trail li:first-child:not([aria-current])")
+    assert "grid-template-columns: minmax(var(--crumb-min), max-content)" in first
+    assert "--crumb-min: 32px;" in (css_dir / "tokens.css").read_text(encoding="utf-8")
+
+    # Compact frames: the ‹ and the whole title, no ancestors and no separator.
+    compact = re.sub(r"\s+", " ", css)
+    assert (
+        '.modal-panel[data-size="default"] .modal-trail li:not([aria-current]), '
+        '.modal-panel[data-size="default"] .modal-trail li[aria-current] > .modal-crumb-sep '
+        "{ display: none; }"
+    ) in compact
 
 
 # Questions with nothing to type: an outside click is a "no", exactly like Esc.

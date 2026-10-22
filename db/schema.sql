@@ -650,7 +650,8 @@ CREATE TABLE IF NOT EXISTS runtime_commands (
                           'reset_agent_runtime',
                           'shutdown_runtime',
                           'reload_schedules',
-                          'extension_config_changed'
+                          'extension_config_changed',
+                          'extensions_reconcile'
                       )),
     payload        TEXT NOT NULL,
     status         VARCHAR NOT NULL DEFAULT 'queued'

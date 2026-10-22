@@ -253,7 +253,10 @@ async def test_a_live_view_extension_result_is_announced_once(sink) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_extension_without_a_live_view_is_not_announced(sink, monkeypatch, tmp_path) -> None:
+@pytest.mark.parametrize(("live_view", "announced"), [(None, False), ({"label": "Desktop view", "icon": "monitor"}, True)])
+async def test_only_an_extension_declaring_a_live_view_is_announced(
+    sink, monkeypatch, tmp_path, live_view, announced,
+) -> None:
     import json
 
     from core.bm_cli.command_registry import CORE_COMMAND_NAMES
@@ -261,11 +264,14 @@ async def test_an_extension_without_a_live_view_is_not_announced(sink, monkeypat
 
     folder = tmp_path / "plain-ext"
     folder.mkdir()
-    (folder / "manifest.json").write_text(json.dumps({
-        "id": "plain-ext", "name": "Plain", "version": "0.1.0", "description": "No live view.",
+    manifest = {
+        "id": "plain-ext", "name": "Plain", "version": "0.1.0", "description": "Maybe a live view.",
         "command": {"name": "plain", "summary": "s", "usage": "plain go", "help": "h"},
         "setup": {"required": False},
-    }), encoding="utf-8")
+    }
+    if live_view is not None:
+        manifest["live_view"] = live_view
+    (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (folder / "__init__.py").write_text("def create(ctx):\n    raise AssertionError('not loaded')\n", encoding="utf-8")
     found = discover(tmp_path, CORE_COMMAND_NAMES)
     assert found.get("plain-ext").valid
@@ -273,7 +279,7 @@ async def test_an_extension_without_a_live_view_is_not_announced(sink, monkeypat
 
     agent = db.create_agent("Iris", role="Researcher")
     await announce_extension_result(agent, {"extension_id": "plain-ext"})
-    assert sink.live == []
+    assert sink.live == ([("plain-ext", agent.id)] if announced else [])
 
 
 @pytest.mark.asyncio

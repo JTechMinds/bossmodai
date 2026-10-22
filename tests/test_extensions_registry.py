@@ -36,6 +36,10 @@ def teardown_function() -> None:
     db.close_connection()
 
 
+# A manifest live_view block: the extension names its own view and its icon.
+_LIVE_VIEW = {"label": "Demo view", "icon": "monitor"}
+
+
 def _manifest(ext_id: str = "demo-ext", command: str = "demo", **overrides: Any) -> dict[str, Any]:
     data: dict[str, Any] = {
         "id": ext_id,
@@ -180,7 +184,7 @@ def test_every_result_of_an_extension_command_is_stamped_with_its_id(tmp_path: P
 
 
 def test_a_load_failure_is_stamped_too(tmp_path: Path) -> None:
-    _write_ext(tmp_path, "no-live2", _manifest(ext_id="no-live2", command="nolive2", live_view=True))
+    _write_ext(tmp_path, "no-live2", _manifest(ext_id="no-live2", command="nolive2", live_view=_LIVE_VIEW))
     set_enabled("no-live2", True)
     result = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["nolive2"](_ctx(), _parsed("nolive2 go"), None)
     assert "EXTENSION_LOAD_FAILED" in result.prompt_content
@@ -248,7 +252,7 @@ def test_a_disabled_extension_does_not_block_retry(tmp_path: Path) -> None:
 def test_a_load_failure_does_not_block_retry(tmp_path: Path) -> None:
     _write_ext(
         tmp_path, "no-live3",
-        _manifest_with_no_retry(["send"], ext_id="no-live3", command="nolive3", live_view=True),
+        _manifest_with_no_retry(["send"], ext_id="no-live3", command="nolive3", live_view=_LIVE_VIEW),
     )
     set_enabled("no-live3", True)
     result = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["nolive3"](_ctx(), _parsed("nolive3 send"), None)
@@ -295,9 +299,9 @@ def test_help_hides_a_disabled_extensions_command_and_shows_it_once_enabled() ->
 def test_a_manifest_declaring_live_view_without_the_method_is_invalid_at_load(tmp_path: Path) -> None:
     from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
 
-    _write_ext(tmp_path, "no-live", _manifest(ext_id="no-live", command="nolive", live_view=True))
+    _write_ext(tmp_path, "no-live", _manifest(ext_id="no-live", command="nolive", live_view=_LIVE_VIEW))
     entry = discover(tmp_path, CORE_COMMAND_NAMES).get("no-live")
-    assert entry.valid and entry.manifest.live_view is True  # discovery does not import (D10)
+    assert entry.valid and entry.manifest.live_view.label == "Demo view"  # discovery does not import (D10)
 
     with pytest.raises(ExtensionLoadError, match="declares live_view but the extension has no live_view"):
         load_extension(entry)
@@ -308,6 +312,47 @@ def test_a_manifest_declaring_live_view_without_the_method_is_invalid_at_load(tm
     set_enabled("no-live", True)
     result = extension_handlers(discover(tmp_path, CORE_COMMAND_NAMES))["nolive"](_ctx(), _parsed("nolive go"), None)
     assert "EXTENSION_LOAD_FAILED: manifest declares live_view" in result.prompt_content
+
+
+def test_a_live_view_block_names_the_view_and_is_absent_by_default(tmp_path: Path) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_manifest(live_view={"label": "Browser view", "icon": "globe"})), encoding="utf-8")
+    live_view = load_manifest(path).live_view
+    assert live_view.label == "Browser view" and live_view.icon == "globe"
+    path.write_text(json.dumps(_manifest()), encoding="utf-8")
+    assert load_manifest(path).live_view is None
+
+
+@pytest.mark.parametrize("live_view", [
+    True, {}, {"label": "", "icon": "globe"}, {"label": "View", "icon": "globe", "surprise": 1}, "Browser view",
+])
+def test_a_bad_live_view_block_is_rejected(tmp_path: Path, live_view: Any) -> None:
+    # A bare true (the old flag) no longer names a view, so it is refused.
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_manifest(live_view=live_view)), encoding="utf-8")
+    with pytest.raises(ManifestError, match="live_view"):
+        load_manifest(path)
+
+
+# The icon is required and comes from the host's fixed vocabulary: "rocket"
+# is a real Lucide icon, but not one the UI is guaranteed to ship.
+@pytest.mark.parametrize("live_view", [
+    {"label": "View"},
+    {"label": "View", "icon": "rocket"},
+    {"label": "View", "icon": "Globe"},
+    {"label": "View", "icon": ""},
+    {"label": "View", "icon": None},
+])
+def test_a_live_view_icon_is_required_and_from_the_fixed_vocabulary(tmp_path: Path, live_view: Any) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_manifest(live_view=live_view)), encoding="utf-8")
+    with pytest.raises(ManifestError, match=r"live_view\.icon"):
+        load_manifest(path)
+
+
+def test_the_browser_vision_manifest_names_its_view() -> None:
+    live_view = get_discovery().get("browser-vision").manifest.live_view
+    assert live_view.label == "Browser view" and live_view.icon == "globe"
 
 
 @pytest.mark.parametrize(("label", "value"), [("", "x"), ("x", "")])
@@ -464,6 +509,55 @@ def test_wake_interval_field_must_name_a_number_field(tmp_path: Path, interval_f
     ))
     entry = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-bad")
     assert not entry.valid and "must name a number field of agent_config" in entry.invalid_reason
+
+
+@pytest.mark.parametrize("wake", [
+    {"interval_field": "every", "interval_seconds": 60},
+    {},
+    {"desk_status": False},
+])
+def test_wake_needs_exactly_one_interval(tmp_path: Path, wake: dict[str, Any]) -> None:
+    _write_ext(tmp_path, "wake-two", _manifest(
+        ext_id="wake-two", command="waketwo",
+        agent_config=_agent_config(fields=[*_agent_config()["fields"], _NUMBER]),
+        wake=wake,
+    ))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-two")
+    assert not entry.valid and "exactly one of interval_field or interval_seconds" in entry.invalid_reason
+
+
+@pytest.mark.parametrize("seconds", [0, -5])
+def test_a_fixed_wake_interval_must_be_positive(tmp_path: Path, seconds: int) -> None:
+    _write_ext(tmp_path, "wake-zero", _manifest(
+        ext_id="wake-zero", command="wakezero", agent_config=_agent_config(), wake={"interval_seconds": seconds},
+    ))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-zero")
+    assert not entry.valid and "interval_seconds" in entry.invalid_reason
+
+
+def test_a_fixed_wake_interval_needs_no_number_field_and_desk_status_defaults_on(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "wake-fixed", _manifest(
+        ext_id="wake-fixed", command="wakefixed", agent_config=_agent_config(),
+        wake={"interval_seconds": 60, "desk_status": False},
+    ))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-fixed")
+    assert entry.valid, entry.invalid_reason
+    wake = entry.manifest.wake
+    assert (wake.interval_field, wake.interval_seconds, wake.desk_status) == (None, 60, False)
+
+    _write_ext(tmp_path, "wake-field", _manifest(
+        ext_id="wake-field", command="wakefield",
+        agent_config=_agent_config(fields=[*_agent_config()["fields"], _NUMBER]),
+        wake={"interval_field": "every"},
+    ))
+    field_wake = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-field").manifest.wake
+    assert (field_wake.interval_field, field_wake.interval_seconds, field_wake.desk_status) == ("every", None, True)
+
+
+def test_a_fixed_wake_interval_still_needs_agent_config(tmp_path: Path) -> None:
+    _write_ext(tmp_path, "wake-bare2", _manifest(ext_id="wake-bare2", command="wakebare2", wake={"interval_seconds": 60}))
+    entry = discover(tmp_path, CORE_COMMAND_NAMES).get("wake-bare2")
+    assert not entry.valid and "wake needs an agent_config block" in entry.invalid_reason
 
 
 def test_wake_without_its_protocol_is_a_contract_failure(tmp_path: Path) -> None:

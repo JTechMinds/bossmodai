@@ -147,10 +147,21 @@
 .modal-head [hidden] { display: none !important; }
 
 /* The TRAIL: every layer beneath this one and every step inside them, then
-   the title (core/overlays.js renderTrail). One flex row nested in the head's,
-   so the title stays the thing that ellipsizes: the nav, the list and each
-   item all give up their minimum width, and the current item shrinks far
-   ahead of its ancestors — each of which is capped at --crumb-max anyway. */
+   the title (core/modal-trail.js render). One flex row nested in the head's.
+   The CURRENT TITLE wins the space — the operator's decision of 2026-10-22,
+   after a confirm two layers deep read "Tu…":
+   - In a panel or a takeover, ancestors never shrink. Each starts at its
+     floor (--crumb-min, plus its separator), takes an equal share of what the
+     title leaves up to its natural width (capped at --crumb-max), and the
+     title is the only item that shrinks — so it ellipsizes only once every
+     ancestor is at its floor. Shrink ratios cannot say this: flexbox shares
+     shrink by flex-shrink × base size, so even 1000:1 cut the title by a
+     sub-pixel and ellipsized it.
+   - In a compact frame (one question, or a short form) there is no room for
+     both, so the ‹ stands in for the trail: it is already named and
+     tooltipped "Back to <previous crumb>", and Esc walks back the same way.
+   The nav and the list give up their minimum width so the head's ✕ and
+   tools keep theirs. */
 .modal-trail { flex: 0 1 auto; min-width: 0; }
 .modal-trail ol {
   display: flex;
@@ -162,7 +173,20 @@
   min-width: 0;
 }
 .modal-trail li { flex: 0 1 auto; display: flex; align-items: center; gap: 6px; min-width: 0; }
-.modal-trail li[aria-current="page"] { flex-shrink: 100; }
+/* An ancestor (and the collapsed `…`): grows from its floor, never shrinks.
+   `min-width: auto` makes its floor its own minimum content — for the `…`,
+   all of it. */
+.modal-trail li:not([aria-current]) { flex: 1 0 0; min-width: auto; max-width: max-content; }
+/* A crumb's floor, computed by layout rather than restated: the grid's
+   minimum is the separator, the gap and --crumb-min for the crumb's column.
+   A flex row cannot floor it, because a flex item's minimum content is its
+   whole nowrap label. The first ancestor has no separator, so one column. */
+.modal-trail li:not([aria-current]):not([aria-hidden]) { display: grid; grid-template-columns: auto minmax(var(--crumb-min), max-content); }
+.modal-trail li:first-child:not([aria-current]) { grid-template-columns: minmax(var(--crumb-min), max-content); }
+/* A compact frame shows the ‹ and the whole title: no ancestors, and no
+   separator leading into a title with nothing before it. */
+.modal-panel[data-size="default"] .modal-trail li:not([aria-current]),
+.modal-panel[data-size="default"] .modal-trail li[aria-current] > .modal-crumb-sep { display: none; }
 
 /* An ancestor: the title's size so the row reads as one heading, a step
    lighter and muted so the current crumb is still the one that stands out.

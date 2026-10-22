@@ -1,0 +1,9 @@
+#!/bin/sh
+# Exit 0 once the desktop is ready to use: the XFCE panel and the desktop
+# itself (xfdesktop, which draws the background and the icons) are on
+# screen, so the first screenshot shows the finished desktop; else 1.
+# BossMod polls it after every start; its stderr is kept for the error when
+# the desktop never gets ready.
+export DISPLAY=:0
+xdotool search --onlyvisible --class xfce4-panel >/dev/null \
+    && exec xdotool search --onlyvisible --class xfdesktop >/dev/null

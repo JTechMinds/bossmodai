@@ -166,6 +166,45 @@ async def test_worker_shutdown_shuts_loaded_extensions_down(monkeypatch: pytest.
     assert calls == ["services", "extensions"]
 
 
+def test_a_disabled_extensions_command_does_not_shut_it_down(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """Releasing a turned-off extension is the worker's job (agent_hooks), not the CLI bridge's."""
+    from core.bm_cli.command_registry import CORE_COMMAND_NAMES
+    from core.bm_cli.types import CliExecutionContext, ParsedCliCommand
+    from core.extensions import loader
+    from core.extensions.cli_bridge import extension_handlers
+    from core.extensions.registry import discover
+
+    monkeypatch.setattr(loader, "_loaded", {})
+    folder = tmp_path / "held-ext"
+    folder.mkdir()
+    (folder / "manifest.json").write_text(json.dumps({
+        "id": "held-ext", "name": "Held", "version": "0.1.0", "description": "Holds something.",
+        "command": {"name": "held", "summary": "s", "usage": "held go", "help": "h"},
+        "setup": {"required": False},
+    }), encoding="utf-8")
+    (folder / "__init__.py").write_text(
+        "class _Ext:\n"
+        "    shutdowns = 0\n"
+        "    def shutdown(self):\n"
+        "        self.shutdowns += 1\n"
+        "def create(ctx):\n"
+        "    return _Ext()\n",
+        encoding="utf-8",
+    )
+    found = discover(tmp_path, CORE_COMMAND_NAMES)
+    set_enabled("held-ext", True)
+    instance = loader.load_extension(found.get("held-ext"))
+    set_enabled("held-ext", False)
+
+    agent = db.create_agent("Vera", role="Researcher")
+    ctx = CliExecutionContext(agent=agent, state=db.get_agent_state(agent.id), cwd="/me")
+    result = extension_handlers(found)["held"](ctx, ParsedCliCommand(raw="held go", name="held", args=("go",)), None)
+
+    assert "EXTENSION_DISABLED: Held is off" in result.prompt_content
+    assert instance.shutdowns == 0
+    assert loader.loaded_extensions() == {"held-ext": instance}, "still loaded until the worker releases it"
+
+
 def test_shutdown_loaded_extensions_calls_each_one(monkeypatch: pytest.MonkeyPatch) -> None:
     from core.extensions import loader
 

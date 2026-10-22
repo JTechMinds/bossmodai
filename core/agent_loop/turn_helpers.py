@@ -474,7 +474,7 @@ async def announce_extension_result(agent: Agent, data: dict[str, Any] | None) -
     if entry is None or entry.manifest is None:
         logger.error("CLI result stamped with unknown extension %r; no live-view event sent", ext_id)
         return
-    if entry.manifest.live_view:
+    if entry.manifest.live_view is not None:
         await manager.broadcast_extension_live(ext_id, agent.id)
 
 

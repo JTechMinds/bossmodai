@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=BossMod session environment
+Comment=Shares this session's SESSION_MANAGER with programs started by vm run and vm launch
+Exec=/usr/local/bin/bm-desktop-start --session-env
+NoDisplay=true
+OnlyShowIn=XFCE;

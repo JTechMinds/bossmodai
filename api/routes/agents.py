@@ -1120,6 +1120,8 @@ async def delete_all_agents():
     for agent in db.list_agents():
         await runtime_services.reset_agent_runtime(agent.id)
     deleted = agent_repository.delete_all()
+    # After the rows are gone, so extensions drop what they held for every deleted agent.
+    runtime_services.extensions_reconcile()
 
     await manager.broadcast_world_state()
     await manager.broadcast_activity(
@@ -1143,6 +1145,10 @@ async def delete_agent(agent_id: str):
         posted_lines = agent_repository.delete(agent_id)
     except LookupError as exc:
         raise HTTPException(404, "Agent not found") from exc
+    # After the rows are gone, so the worker's reconcile sees the agent
+    # missing and extensions drop what they hold for it outside the
+    # database (e.g. a desktop container). A failed delete never gets here.
+    runtime_services.extensions_reconcile()
 
     # Same painting as a thread archive's task cancels: the origin lines of
     # the open tasks this delete cancelled, plus the "Meeting ended" line of

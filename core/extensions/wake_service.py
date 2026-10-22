@@ -2,9 +2,11 @@
 
 A runtime-worker singleton shaped like ``ChannelIdleWatch``: started and
 stopped with the other services, so Pause stops it. Every tick it asks each
-enabled ``wake`` extension, per configured agent whose own interval (the
-manifest's ``wake.interval_field``) has come due, for new events, and wakes
-the agent with one ``extension_event`` trigger:
+enabled ``wake`` extension, per configured agent whose interval has come
+due, for new events, and wakes the agent with one ``extension_event``
+trigger. The interval is the agent's own (the manifest's
+``wake.interval_field``) or one fixed cadence for every agent
+(``wake.interval_seconds``, e.g. an in-memory check):
 
 - two-phase: ``poll_wake`` → the trigger is persisted → ``commit_wake``, so a
   failed or skipped enqueue never loses events;
@@ -13,9 +15,13 @@ the agent with one ``extension_event`` trigger:
   touched;
 - vacation: a vacationer's due tick calls ``skip_wake`` instead, so what
   arrives meanwhile never wakes it;
-- health: every real check is recorded (``db.record_wake_check``) for the
-  desk; a failure is logged at warning only when its sentence changes, and
-  at info when it clears;
+- health: for a wake with ``desk_status`` (the default), every real check is
+  recorded (``db.record_wake_check``) for the desk; a failure is logged at
+  warning only when its sentence changes, and at info when it clears. A wake
+  without ``desk_status`` records nothing (nothing reads the rows); its last
+  failure sentence per agent is kept in memory instead, so it is logged the
+  same way (warning on change, info on clear) and a failing poll is never
+  silent;
 - cheap at idle: the configured pairs (decrypted config and interval) are
   cached per settings revision and rebuilt after ``invalidate()`` (the
   ``extension_config_changed`` runtime command), so a tick with nothing due
@@ -150,6 +156,9 @@ class ExtensionWakeWatch:
         # when the detail changes. Poll failures compare against the stored
         # status row instead.
         self._host_errors: dict[tuple[str, str], str] = {}
+        # A wake without desk_status keeps no status row, so its last poll
+        # failure sentence per (extension id, agent id) lives here instead.
+        self._statusless_failures: dict[tuple[str, str], str] = {}
         # The last usable tick, and the setting problem logged (once per message).
         self._tick: float | None = None
         self._tick_error: str | None = None
@@ -295,7 +304,11 @@ class ExtensionWakeWatch:
                     stored = db.get_extension_agent_config(entry.id, agent_id)
                     if stored is None:
                         continue
-                    interval = int(agent_config_value(spec, stored, wake.interval_field))
+                    interval = (
+                        int(agent_config_value(spec, stored, wake.interval_field))
+                        if wake.interval_field is not None
+                        else wake.interval_seconds
+                    )
                 except (ValueError, KeyError) as exc:
                     pairs.append(_WakePair(entry, agent_id, None, f"{type(exc).__name__}: {exc}"))
                     continue
@@ -308,7 +321,9 @@ class ExtensionWakeWatch:
         """Poll (or skip) one due pair, deliver, then commit.
 
         The caller has already found the pair due at ``now``; that poll time
-        is recorded first, so a missing agent is not re-read every tick.
+        is recorded first, so a missing agent is not re-read every tick. The
+        check's health is recorded for the desk only when the manifest's
+        ``wake.desk_status`` is set.
 
         Raises:
             ValueError: The batch names another agent.
@@ -317,6 +332,7 @@ class ExtensionWakeWatch:
         agent = db.get_agent(agent_id)
         if agent is None:
             return
+        desk_status = entry.manifest.wake.desk_status
 
         if is_on_vacation(agent):
             # Nothing is recorded: the desk keeps showing the last real check.
@@ -328,10 +344,10 @@ class ExtensionWakeWatch:
         except Exception as exc:
             # The contract lets poll_wake raise the extension's own types; the
             # host records the plain sentence and moves on (plan W11).
-            self._record_failure(entry.id, agent_id, instance.describe_wake_error(exc), exc)
+            self._record_failure(entry.id, agent_id, instance.describe_wake_error(exc), exc, desk_status=desk_status)
             return
         if batch is None:
-            self._record_ok(entry.id, agent_id, 0)
+            self._record_ok(entry.id, agent_id, 0, desk_status=desk_status)
             return
         if batch.agent_id != agent_id:
             raise ValueError(f"poll_wake for {agent_id} returned a batch for {batch.agent_id}")
@@ -340,7 +356,7 @@ class ExtensionWakeWatch:
             # the check and the enqueue: not told, so not committed.
             return
         await asyncio.to_thread(instance.commit_wake, batch)
-        self._record_ok(entry.id, agent_id, len(batch.lines))
+        self._record_ok(entry.id, agent_id, len(batch.lines), desk_status=desk_status)
 
     def _deliver(self, entry: ExtensionEntry, batch: WakeBatch) -> bool:
         """Merge into the agent's queued event from this extension, else enqueue a new one.
@@ -365,20 +381,36 @@ class ExtensionWakeWatch:
             payload=event_payload(entry, batch.title, _unique(batch.lines)),
         )
 
-    def _record_ok(self, ext_id: str, agent_id: str, new_count: int) -> None:
-        previous = db.get_wake_status(ext_id, agent_id)
-        if previous is not None and not previous["ok"]:
+    def _record_ok(self, ext_id: str, agent_id: str, new_count: int, *, desk_status: bool) -> None:
+        if desk_status:
+            previous = db.get_wake_status(ext_id, agent_id)
+            recovered = previous is not None and not previous["ok"]
+        else:
+            # Nothing reads the rows of a wake without desk status; its last
+            # failure is in memory.
+            recovered = self._statusless_failures.pop((ext_id, agent_id), None) is not None
+        if recovered:
             logger.info("Extension %s: checking for agent %s works again", ext_id, agent_id)
-        db.record_wake_check(ext_id, agent_id, ok=True, error=None, new_count=new_count)
+        if desk_status:
+            db.record_wake_check(ext_id, agent_id, ok=True, error=None, new_count=new_count)
 
-    def _record_failure(self, ext_id: str, agent_id: str, sentence: str, exc: Exception) -> None:
-        previous = db.get_wake_status(ext_id, agent_id)
-        if previous is None or previous["ok"] or previous["error"] != sentence:
+    def _record_failure(
+        self, ext_id: str, agent_id: str, sentence: str, exc: Exception, *, desk_status: bool,
+    ) -> None:
+        if desk_status:
+            previous = db.get_wake_status(ext_id, agent_id)
+            changed = previous is None or previous["ok"] or previous["error"] != sentence
+        else:
+            key = (ext_id, agent_id)
+            changed = self._statusless_failures.get(key) != sentence
+            self._statusless_failures[key] = sentence
+        if changed:
             logger.warning(
                 "Extension %s: checking for agent %s failed: %s (%s: %s)",
                 ext_id, agent_id, sentence, type(exc).__name__, exc,
             )
-        db.record_wake_check(ext_id, agent_id, ok=False, error=sentence, new_count=0)
+        if desk_status:
+            db.record_wake_check(ext_id, agent_id, ok=False, error=sentence, new_count=0)
 
     def _note_host_error(self, key: tuple[str, str], detail: str) -> None:
         if self._host_errors.get(key) != detail:

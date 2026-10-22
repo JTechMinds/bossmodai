@@ -326,13 +326,16 @@ def test_conversation_harness() -> None:
         "chromeShowsIdentityAvatar": True,
         "chromeAvatarNodeIsStable": True,
         "chromeActionCarriesItsIcon": True,
-        # Browser Vision's screen button: the header row's only action, beside
-        # the `⋯` (R11).
-        "browserViewAbsentWithoutAView": True,
-        "browserViewShowsWhenListed": True,
-        "browserViewOpensTheViewer": True,
-        "browserViewGoesWhenTurnedOff": True,
-        "browserViewUnsubscribesOnLeave": True,
+        # The live-view screen buttons: one per live-view extension the agent
+        # has a view in, named with that extension's label and wearing its
+        # view's icon, the header row's only actions beside the `⋯` (R11).
+        "liveViewAbsentWithoutAView": True,
+        "liveViewShowsWhenListed": True,
+        "liveViewOpensTheViewer": True,
+        "liveViewOneButtonPerView": True,
+        "liveViewOpensItsOwnViewer": True,
+        "liveViewGoesWhenTurnedOff": True,
+        "liveViewUnsubscribesOnLeave": True,
         "chromeGroupGlyphForThreads": True,
         # Archive is rare and reads as irreversible, so it moved off the header
         # row and behind the `⋯` — where the source puts it with `slot: 'menu'`

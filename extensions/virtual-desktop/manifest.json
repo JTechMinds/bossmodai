@@ -1,0 +1,105 @@
+{
+  "id": "virtual-desktop",
+  "name": "Virtual Desktop",
+  "version": "1.0.0",
+  "description": "Gives agents their own Linux desktop (a Docker container) that they use by screenshot, mouse and keyboard.",
+  "command": {
+    "name": "vm",
+    "summary": "Use your own Linux desktop by screenshot, mouse and keyboard.",
+    "usage": "vm view | vm point <x> <y> — move the mouse to pixel coordinates in the screenshot (x across, y down, from the top-left corner) | vm point1k <x> <y> — move the mouse using a 0–1000 scale (0,0 is the top-left corner, 1000,1000 the bottom-right) | vm click [left|right|middle|double] — click where the mouse is | vm click <x> <y> [left|right|middle|double] | vm drag <x> <y> | vm type [--enter] <text> | vm type [--enter] (text in body) | vm key <combo> | vm scroll up|down|left|right [n] | vm wait [seconds] | vm launch <command> | vm run <command> | vm run (command in body) | vm upload <file or folder> [<desktop folder>] | vm download <desktop path> [<folder>] | vm status | vm stop | vm restart | vm reset",
+    "help": "Use your own Linux desktop (XFCE) by looking at screenshots and moving the\nmouse and keyboard. It is your own computer: it keeps your files and the\nprograms you install, and you have passwordless sudo on it (run sudo apt-get update\nbefore installing system packages).\n\nEvery result that shows a screenshot states:\n  screen: 1280x800                 the desktop's size\n  image 1280x800                   the screenshot's size (with its scale when\n                                   it was shrunk to fit)\n  window: <title>                  the focused window (omitted when none)\n  pointer: (412, 488) px = (322, 610)‰ — over \"Mozilla Firefox\"\n                                   where the mouse is on the screenshot, and\n                                   the window under it\nCoordinates are pixels of the LATEST screenshot.\n\nSubcommands:\n  vm view                     take a screenshot (starts the desktop if it is off)\n  vm point <x> <y>            move the mouse to pixel coordinates in the screenshot (x across, y down, from the top-left corner)\n  vm point1k <x> <y>          move the mouse using a 0–1000 scale (0,0 is the top-left corner, 1000,1000 the bottom-right), whatever the screenshot size\n  vm click [button]           click where the mouse is; button is left (default), right, middle or double\n  vm click <x> <y> [button]   move the mouse there, then click\n  vm drag <x> <y>             press the left button where the mouse is, move to x y, release\n  vm type [--enter] <text>    type the text into whatever is focused (--enter presses Return after)\n  vm type [--enter]           type the body text\n  vm key <combo>              press a key or combo: Return, Tab, Escape, ctrl+l, ctrl+shift+t, alt+F4, super\n  vm scroll up|down|left|right [n]   turn the mouse wheel n clicks where the mouse is (default 5)\n  vm wait [seconds]           wait for the screen to change and hold still (default 30s), then take a screenshot\n  vm launch <command>         start a program on the desktop, e.g. vm launch firefox-esr https://example.com,\n                              then take a screenshot\n  vm run <command>            run a shell command (bash, as you, in your home folder) and return its exit\n                              code and output; no screenshot. Quote the whole command when it has\n                              spaces or shell operators, or put it in the body. It has a time limit.\n                              End a command with & to leave something running (e.g. a dev server);\n                              redirect its output to a file to read it later:\n                              vm run \"npm run dev > ~/dev.log 2>&1 &\". Use vm launch for windowed programs\n  vm upload <file or folder> [<desktop folder>]\n                              copy from /me or /projects to the desktop (default ~/Desktop); a file\n                              with the same name there is replaced\n  vm download <desktop path> [<folder>]\n                              copy a desktop file or folder to /me or /projects (default /me/downloads);\n                              an existing name gets a number added\n  vm status                   whether the desktop is running, its screen, memory and CPU limits; no screenshot\n  vm stop                     power the desktop down; files and programs are kept, the next vm command\n                              (except status and stop) starts it again\n  vm restart                  reboot the desktop; files and programs are kept\n  vm reset                    wipe the desktop back to a fresh install; everything on it is lost\n\nEvery action returns a fresh screenshot unless noted. Only the latest\nscreenshot stays visible; run vm view if unsure.\n\nAlready installed: Python 3 (python, pip, venv, pipx; pip install needs no\nsudo), Node.js 24 with npm (npm install -g needs no sudo), git, gcc/make,\ncurl, jq, ripgrep (rg), fd, sqlite3, Firefox (firefox-esr), a terminal\n(xfce4-terminal) and a text editor (mousepad).\n\nExamples:\n  vm view\n  vm launch firefox-esr https://example.com\n  vm point 412 488\n  vm click\n  vm click 640 360 double\n  vm type --enter hello world\n  vm key ctrl+l\n  vm scroll down 3\n  vm run \"sudo apt-get update && sudo apt-get install -y cowsay\"\n  vm run \"pip install requests && python -c 'import requests'\"\n  vm upload /me/report.md\n  vm download ~/Downloads/data.csv\n  vm stop",
+    "no_retry": ["reset", "run", "launch"]
+  },
+  "prompt": "prompt.md",
+  "live_view": {
+    "label": "Desktop view",
+    "icon": "monitor"
+  },
+  "requires": {
+    "image_model": true,
+    "python_modules": [
+      "docker",
+      "PIL"
+    ]
+  },
+  "setup": {
+    "required": true,
+    "label": "Build the desktop (about 1.8 GB, needs Docker)",
+    "ready_requires": {
+      "image_version": "1"
+    }
+  },
+  "agent_config": {
+    "label": "Virtual desktop",
+    "help": "Gives an agent its own Linux desktop that it uses with the mouse and keyboard.\n\nMemory and CPUs are upper limits, not reserved: an idle desktop uses very little. Changing the screen, memory or CPUs restarts the desktop if it's running; its files and programs are kept.\n\nIf the desktop sits unused for the reminder time, the agent is asked whether to power it down.",
+    "fields": [
+      {
+        "key": "screen_width",
+        "label": "Screen width (pixels)",
+        "kind": "number",
+        "required": false,
+        "default": "1280",
+        "min": 800,
+        "max": 3840
+      },
+      {
+        "key": "screen_height",
+        "label": "Screen height (pixels)",
+        "kind": "number",
+        "required": false,
+        "default": "800",
+        "min": 600,
+        "max": 2160
+      },
+      {
+        "key": "memory_mb",
+        "label": "Memory limit (MB)",
+        "kind": "number",
+        "required": false,
+        "default": "2048",
+        "min": 1024,
+        "max": 65536
+      },
+      {
+        "key": "cpus",
+        "label": "CPU limit (cores)",
+        "kind": "number",
+        "required": false,
+        "default": "2",
+        "min": 1,
+        "max": 64
+      },
+      {
+        "key": "power_down_reminder_minutes",
+        "label": "Power-down reminder (minutes, 0 = never)",
+        "kind": "number",
+        "required": false,
+        "default": "120",
+        "min": 0,
+        "max": 10080
+      }
+    ]
+  },
+  "wake": {
+    "interval_seconds": 60,
+    "desk_status": false
+  },
+  "defaults": {
+    "image_version": "1",
+    "image_repo": "bossmod/virtual-desktop",
+    "shm_size_mb": 512,
+    "image_max_px": 1568,
+    "boot_timeout_s": 60,
+    "stop_timeout_s": 10,
+    "settle_ms": 600,
+    "launch_settle_ms": 2500,
+    "type_delay_ms": 12,
+    "scroll_clicks": 5,
+    "wait_default_s": 30,
+    "wait_poll_ms": 500,
+    "wait_settle_ms": 1000,
+    "run_timeout_s": 120,
+    "run_max_output_bytes": 20000,
+    "screenshots_keep": 20
+  }
+}

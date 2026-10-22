@@ -100,8 +100,8 @@ const BossModChatPlace = (() => {
                 drafts, cache: transcriptCache,
                 // The lamp and a deliverable's desk; a memory line's Memory layer.
                 openDesk: ctx.openDesk, openMemory: ctx.openMemory,
-                // The Browser Vision screen button in an agent's header.
-                browserView: BossModExtensionsLive.headerCapability(),
+                // One screen button per live-view extension in an agent's header.
+                liveViews: BossModExtensionsLive.headerCapability(),
             });
 
             // The column's two views; the desk is a modal. Their destroyers drain

@@ -2,10 +2,13 @@
 
 The enabled set is the ``extensions_enabled`` setting; this is the only route
 that writes it, because enabling needs the extension to be valid and set up.
-The runtime worker reads it live, so nothing here touches runtime internals.
+The runtime worker reads it live; after a toggle this files an
+``extensions_reconcile`` runtime command so the worker releases a
+turned-off extension promptly. Nothing here touches runtime internals.
 
 Per-agent config (manifest ``agent_config``) is stored by the host, wrapped
-at rest, and verified through the extension before it is stored. Secret
+at rest, and verified through the extension before it is stored; the worker
+is then told (``extension_config_changed``) so the extension applies it. Secret
 fields never leave the backend: reads say only whether one is set. Calls
 into an extension that may block on the network run in a worker thread.
 """
@@ -43,6 +46,7 @@ from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery, set_enabled
 from core.extensions.setup_runner import SetupAlreadyRunning, entry_setup_status, start_setup
 from core.llm.routing import agent_model
+from core.models import Agent
 from core.runtime.services import runtime_services
 from db.model_capabilities import supports_images
 
@@ -92,18 +96,24 @@ def _entry(ext_id: str) -> ExtensionEntry:
     return entry
 
 
-def _excluded_agents() -> list[dict[str, Any]]:
-    """Agents whose connection's model is not flagged image-capable.
+def _image_capable(agent: Agent) -> bool:
+    """Whether the model of the agent's connection is flagged image-capable.
 
     An agent has one connection for every activation, so its model is the
-    one ``bv`` checks.
+    one an image-model extension's command checks. An unlinked agent, or one
+    whose connection has no model, is not image-capable.
     """
-    excluded = []
-    for agent in db.list_agents():
-        model = agent_model(agent)
-        if model is None or not supports_images(model):
-            excluded.append({"id": agent.id, "name": agent.name, "model": model})
-    return excluded
+    model = agent_model(agent)
+    return model is not None and supports_images(model)
+
+
+def _excluded_agents() -> list[dict[str, Any]]:
+    """Agents whose connection's model is not flagged image-capable."""
+    return [
+        {"id": agent.id, "name": agent.name, "model": agent_model(agent)}
+        for agent in db.list_agents()
+        if not _image_capable(agent)
+    ]
 
 
 def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
@@ -120,7 +130,7 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
             "valid": False,
             "invalid_reason": entry.invalid_reason,
             "requires_image_model": False,
-            "live_view": False,
+            "live_view": None,
             "agent_config": None,
             "agent_view": None,
             "setup": None,
@@ -141,7 +151,10 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
         "valid": valid,
         "invalid_reason": entry.invalid_reason or broken,
         "requires_image_model": requires_image,
-        "live_view": manifest.live_view,
+        "live_view": {
+            "label": manifest.live_view.label,
+            "icon": manifest.live_view.icon,
+        } if manifest.live_view else None,
         "agent_config": {"label": manifest.agent_config.label} if manifest.agent_config else None,
         "agent_view": {
             "label": manifest.agent_view.label,
@@ -164,6 +177,10 @@ async def list_extensions() -> list[dict[str, Any]]:
 async def set_extension_enabled(ext_id: str, body: EnabledBody) -> dict[str, Any]:
     """Turn one extension on or off.
 
+    After the write, the runtime worker is asked to reconcile in both
+    directions: off releases what the extension held (browsers, desktops)
+    promptly; on is harmless (a reconcile is idempotent).
+
     Raises:
         HTTPException: 404 unknown id; 409 ``INVALID_EXTENSION``; 409
             ``SETUP_REQUIRED`` when enabling before setup is ready.
@@ -176,6 +193,7 @@ async def set_extension_enabled(ext_id: str, body: EnabledBody) -> dict[str, Any
         if state not in {"ready", "not_required"}:
             raise _conflict("SETUP_REQUIRED", f"Set up {entry.manifest.name} before turning it on (setup is {state}).")
     set_enabled(ext_id, body.enabled)
+    runtime_services.extensions_reconcile()
     # Turning a live-view extension off empties its live view and on again
     # may bring one back; open chat headers re-read /live on this nudge.
     await manager.broadcast_extension_live(ext_id, None)
@@ -219,7 +237,7 @@ def _live_items(ext_id: str) -> list[LiveViewItem]:
     entry = _entry(ext_id)
     if not entry.valid:
         raise _conflict("INVALID_EXTENSION", entry.invalid_reason or "This extension is invalid.")
-    if not entry.manifest.live_view:
+    if entry.manifest.live_view is None:
         raise _conflict("LIVE_VIEW_UNSUPPORTED", f"{entry.manifest.name} has no live view.")
     if ext_id not in enabled_ids():
         raise _conflict("EXTENSION_DISABLED", f"{entry.manifest.name} is off.")
@@ -237,7 +255,8 @@ async def extension_live_view(ext_id: str) -> dict[str, Any]:
     """Each agent's latest output for the operator's read-only live view, newest first.
 
     An agent that no longer exists is listed under its id with
-    ``agent_missing: true`` rather than dropped.
+    ``agent_missing: true`` rather than dropped. ``url`` is ``null`` for an
+    output with no address (e.g. a desktop); nothing stands in for it.
     """
     items = []
     for item in _live_items(ext_id):
@@ -294,13 +313,15 @@ async def extension_live_open_folder(ext_id: str, agent_id: str) -> dict[str, st
     Raises:
         HTTPException: 404 when the agent has no live item or the folder no
             longer exists; 409 ``LIVE_URL_NOT_FILE`` when the page is not a
-            local ``file:`` URL; 409 ``desk_open_folder_handler_invalid``
-            when the file manager cannot be launched; the ``_live_items``
-            conflicts otherwise.
+            local ``file:`` URL or the item has no URL at all; 409
+            ``desk_open_folder_handler_invalid`` when the file manager
+            cannot be launched; the ``_live_items`` conflicts otherwise.
     """
     match = next((item for item in _live_items(ext_id) if item.agent_id == agent_id), None)
     if match is None:
         raise HTTPException(404, "No live view for that agent")
+    if match.url is None:
+        raise _conflict("LIVE_URL_NOT_FILE", "That page is not a local file.")
     parsed = urllib.parse.urlparse(match.url)
     if parsed.scheme.lower() != "file" or parsed.netloc not in ("", "localhost"):
         raise _conflict("LIVE_URL_NOT_FILE", "That page is not a local file.")
@@ -455,11 +476,12 @@ async def agent_extensions(agent_id: str) -> list[dict[str, Any]]:
     Returns:
         ``[{id, name, config_label, view_label, configured, summary, wakes,
         wake}]`` where ``summary`` is the ``summary: true`` field's stored
-        value, else null; ``wakes`` says whether the extension wakes agents
-        (so the desk can tell "no check yet" from "never checks"); and
-        ``wake`` is the last wake check ``{checked_at, ok, error, last_new_at,
-        last_new_count}`` (UTC ISO times), null for a non-wake extension or
-        before the first check.
+        value, else null; ``wakes`` says whether the desk shows a wake
+        health line (the extension wakes agents and declares
+        ``wake.desk_status``), so the desk can tell "no check yet" from
+        "never checks"; and ``wake`` is the last wake check ``{checked_at,
+        ok, error, last_new_at, last_new_count}`` (UTC ISO times), null when
+        ``wakes`` is false or before the first check.
 
     Raises:
         HTTPException: 404 unknown agent.
@@ -472,6 +494,7 @@ async def agent_extensions(agent_id: str) -> list[dict[str, Any]]:
             continue
         stored = db.get_extension_agent_config(entry.id, agent_id)
         view = entry.manifest.agent_view
+        wakes = entry.manifest.wake is not None and entry.manifest.wake.desk_status
         items.append({
             "id": entry.id,
             "name": entry.manifest.name,
@@ -479,8 +502,8 @@ async def agent_extensions(agent_id: str) -> list[dict[str, Any]]:
             "view_label": view.label if view is not None else None,
             "configured": stored is not None,
             "summary": _summary(spec, stored),
-            "wakes": entry.manifest.wake is not None,
-            "wake": _wake_status(entry, agent_id) if entry.manifest.wake is not None else None,
+            "wakes": wakes,
+            "wake": _wake_status(entry, agent_id) if wakes else None,
         })
     return items
 
@@ -504,6 +527,51 @@ def _iso_utc(moment: datetime) -> str:
     return (moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)).isoformat()
 
 
+@router.get("/extensions/{ext_id}/agents")
+async def extension_agents(ext_id: str) -> dict[str, Any]:
+    """Every agent and whether this extension is on for it, for the "Configure agents" table.
+
+    Returns:
+        ``{label, help, quick_enable, requires_image_model, agents: [{id,
+        name, role, color, configured, summary, image_capable}]}``, agents in
+        ``db.list_agents()`` order (creation time). ``label`` and ``help``
+        are the manifest's ``agent_config`` ones. ``quick_enable`` is true
+        when no field is required, so turning the extension on for an agent
+        can save ``{}`` without asking: ``_resolve_values`` refuses a blank
+        required field before a ``number`` field's default could fill it,
+        and stores a blank optional ``number`` field as its default.
+        ``summary`` is the ``summary: true`` field's stored value,
+        else null. ``image_capable`` says whether the model of the agent's
+        connection is flagged image-capable, exactly as ``excluded_agents``
+        decides it.
+
+    Raises:
+        HTTPException: 404 unknown extension; 409 ``INVALID_EXTENSION`` /
+            ``EXTENSION_DISABLED`` / ``NO_AGENT_CONFIG``.
+    """
+    entry = _enabled_entry(ext_id)
+    spec = _config_spec(entry)
+    agents = []
+    for agent in db.list_agents():
+        stored = db.get_extension_agent_config(entry.id, agent.id)
+        agents.append({
+            "id": agent.id,
+            "name": agent.name,
+            "role": agent.role,
+            "color": agent.color,
+            "configured": stored is not None,
+            "summary": _summary(spec, stored),
+            "image_capable": _image_capable(agent),
+        })
+    return {
+        "label": spec.label,
+        "help": spec.help,
+        "quick_enable": all(not field.required for field in spec.fields),
+        "requires_image_model": entry.manifest.requires.image_model,
+        "agents": agents,
+    }
+
+
 @router.get("/extensions/{ext_id}/agents/{agent_id}/config")
 async def get_agent_config(ext_id: str, agent_id: str) -> dict[str, Any]:
     """One agent's settings for one extension, secrets masked as ``{"set": bool}``.
@@ -525,7 +593,9 @@ async def put_agent_config(ext_id: str, agent_id: str, body: AgentConfigBody) ->
     Every declared field is taken from ``body.values`` (trimmed). A blank
     secret while a config is stored keeps the stored secret; this is resolved
     BEFORE verification, so the extension verifies the values that will be
-    stored. Nothing is stored unless verification passes.
+    stored. Nothing is stored unless verification passes. The stored values
+    are then applied by the runtime worker (``extension_config_changed``),
+    e.g. a running desktop restarts with new specs.
 
     Returns:
         The GET shape plus ``verified``: the extension's success detail.
@@ -549,7 +619,7 @@ async def put_agent_config(ext_id: str, agent_id: str, body: AgentConfigBody) ->
     except AgentConfigError as exc:
         raise _invalid("CONFIG_VERIFY_FAILED", str(exc)) from exc
     db.set_extension_agent_config(entry.id, agent_id, values)
-    runtime_services.extension_config_changed()
+    runtime_services.extension_config_changed(entry.id, agent_id)
     return {**_config_payload(entry, spec, agent_id), "verified": verified}
 
 
@@ -566,7 +636,7 @@ async def delete_agent_config(ext_id: str, agent_id: str) -> Response:
     _agent_or_404(agent_id)
     if not db.delete_extension_agent_config(entry.id, agent_id):
         raise HTTPException(404, "No settings are stored for that agent")
-    runtime_services.extension_config_changed()
+    runtime_services.extension_config_changed(entry.id, agent_id)
     return Response(status_code=204)
 
 

@@ -105,6 +105,9 @@
   /* An ancestor crumb in a modal's trail: capped, so an ancestor never pushes
    * ✕ or the tools off the head. */
   --crumb-max: 180px;
+  /* ...and floored, so an ancestor squeezed by a long title still shows its
+   * first letter and the "…" at the crumb's 15px. */
+  --crumb-min: 32px;
   /* How tall an auto-growing hire textarea (description, done bar) may get
    * before it scrolls. Window-relative, like the modals it sits in: those
    * fields are the agent's prompt, so a long one gets most of the dialog. */
@@ -127,6 +130,10 @@
   /* One day in the date field's month grid (core/date-field.js): a square
    * target comfortably over the 24px floor (SC 2.5.8). */
   --date-cell: 32px;
+  /* A row of a plain table holding controls (the Configure agents table): a
+   * floor above its tallest content, a small button in the cells' padding,
+   * so a row with a button and a row without one are one height. */
+  --table-row: 48px;
   /* Chat's context column holds two views — the office summary and the
    * office chatter under it — and this is the space between them. The two
    * below it are the chatter's own rhythm: between its rows, and inside one

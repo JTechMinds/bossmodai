@@ -1,17 +1,19 @@
 /**
- * BossMod AI — one agent's browser view: the exact image its model was sent.
+ * BossMod AI — one agent's live view: the exact image its model was sent.
  *
- * Opened from the screen button in that agent's chat header. A read-only
- * debug surface for the operator: the latest screenshot at full size under a
- * pinned band of its facts (the scroller pans, the image is never downscaled,
- * and the band stays put). The band is three quiet lines — the page (title
- * and URL), the command, and the extension's facts — and shows only what the
- * agent saw, verbatim, plus the capture time. The URL is a link when it can
- * go somewhere: http(s) opens in the system browser, a local file opens its
- * folder in the file manager.
+ * Opened from a live-view button in that agent's chat header — one per
+ * live-view extension, titled with the label the extension gives its view
+ * (e.g. "Browser view"). A read-only debug surface for the operator: the
+ * latest screenshot at full size under a pinned band of its facts (the
+ * scroller pans, the image is never downscaled, and the band stays put). The
+ * band is three quiet lines — the page (its title and its URL, each only when
+ * the item has one: a desktop has no URL), the command, and the extension's
+ * facts — and shows only what the agent saw, verbatim, plus the capture time.
+ * The URL is a link when it can go somewhere: http(s) opens in the system
+ * browser, a local file opens its folder in the file manager.
  *
- * It does not poll. It listens to BossModBrowserVisionStatus, the one reader,
- * and refetches the image only when the item's `taken_at` changes. Images come
+ * It does not poll. It listens to BossModLiveStatus, the one reader, and
+ * refetches the image only when the item's `taken_at` changes. Images come
  * from an authenticated route, so they are fetched as blob URLs (a bare
  * <img src> would not carry the API token) and revoked when replaced or when
  * the viewer closes.
@@ -23,28 +25,33 @@ const BossModExtensionsLive = (() => {
         loading: 'Loading the latest screenshot…',
         failed: 'Couldn’t load the screenshot.',
         retry: 'Try again',
-        ended: (agentName) => `${agentName}’s browser session ended.`,
+        ended: (agentName) => `${agentName}’s session ended.`,
         folderFailed: 'Couldn’t open the folder.',
     });
 
     /**
-     * Open the viewer for one agent.
+     * Open one extension's viewer for one agent.
      *
+     * @param {string} extensionId  A live-view extension BossModLiveStatus lists.
      * @param {string} agentId
      * @param {string} agentName  For the title and the image's alt text.
      * @returns {void}
+     * @throws {Error} When the extension is not a listed live view (from
+     *   BossModLiveStatus.label), before anything is opened.
      */
-    function openForAgent(agentId, agentName) {
+    function openForAgent(extensionId, agentId, agentName) {
+        // Read first: an unknown extension throws before a subscription leaks.
+        const title = `${agentName} — ${BossModLiveStatus.label(extensionId)}`;
         const host = h('div', { class: 'ext-live' });
         // status: loading | ready | failed | ended
         const state = { status: 'loading', item: null, src: null, error: '', shownAt: null };
         let everSeen = false;
         let closed = false;
 
-        const unsubscribe = BossModBrowserVisionStatus.subscribe(() => { void sync(); });
+        const unsubscribe = BossModLiveStatus.subscribe(() => { void sync(); });
 
         BossModOverlays.createModal({
-            title: `${agentName} — browser`,
+            title,
             body: host,
             actions: [],
             size: 'panel',
@@ -60,11 +67,11 @@ const BossModExtensionsLive = (() => {
 
         async function sync() {
             if (closed) return;
-            const item = BossModBrowserVisionStatus.latest(agentId);
+            const item = BossModLiveStatus.latest(extensionId, agentId);
             if (!item) {
-                // Once seen, a vanished view means the session ended (bv close,
-                // the extension turned off, the app restarted); before that it
-                // is simply the first poll still on its way.
+                // Once seen, a vanished view means the session ended (the agent
+                // closed it, the extension turned off, the app restarted);
+                // before that it is simply the first read still on its way.
                 if (everSeen) {
                     replaceSrc(null);
                     state.status = 'ended';
@@ -136,7 +143,7 @@ const BossModExtensionsLive = (() => {
         function render() {
             clear(host);
             // The band describes an item, so only a shown image gets one.
-            if (state.status === 'ready') host.append(statBand(state.item, agentId));
+            if (state.status === 'ready') host.append(statBand(state.item, extensionId, agentId));
             const scroller = h('div', { class: 'ext-scroll' });
             [].concat(content()).forEach((node) => scroller.append(node));
             host.append(scroller);
@@ -147,23 +154,30 @@ const BossModExtensionsLive = (() => {
     }
 
     /**
-     * The facts above the image, as three quiet lines: the page (title, then
-     * the URL in parentheses; the URL alone when the title is blank) with the
-     * capture time, the command, and the extension's facts inline.
+     * The facts above the image, as three quiet lines: the page with the
+     * capture time, the command, and the extension's facts inline. The page
+     * is the title, then the URL in parentheses; either one alone when the
+     * other is blank or absent (a desktop has no URL); and no page line at
+     * all when the item has neither, rather than a stand-in.
      *
      * Every value goes in as text exactly as received — no trimming, casing
      * or rewording — so the band says what the agent saw and nothing else.
      * A failed folder open is shown at the end of the band; the next render
      * rebuilds the band and clears it.
      *
-     * @param {{command: string, url: string, title: string, taken_at: string,
+     * @param {{command: string, url: string|null, title: string, taken_at: string,
      *   facts: Array<{label: string|null, value: string}>}} item  One /live item.
+     * @param {string} extensionId  Whose view this is, for the folder button.
      * @param {string} agentId  Whose view this is, for the folder button.
      * @returns {HTMLElement} A `header.ext-live-band`.
-     * @throws {Error} When `item.facts` is not an array, or a fact's label is
-     *   neither null nor a non-empty string (a server contract break).
+     * @throws {Error} When `item.url` is neither a string nor null, when
+     *   `item.facts` is not an array, or when a fact's label is neither null
+     *   nor a non-empty string (a server contract break).
      */
-    function statBand(item, agentId) {
+    function statBand(item, extensionId, agentId) {
+        if (item.url !== null && typeof item.url !== 'string') {
+            throw new Error('[extensions-live] item.url must be a string or null');
+        }
         if (!Array.isArray(item.facts)) {
             throw new Error('[extensions-live] item.facts must be an array');
         }
@@ -180,10 +194,13 @@ const BossModExtensionsLive = (() => {
             band.append(h('p', { class: 'market-failed', role: 'alert' }, message));
         }
 
-        const url = urlNode(item, agentId, showBandError);
+        const url = item.url ? urlNode(item, extensionId, agentId, showBandError) : null;
+        let page = null;
+        if (item.title && url) page = [item.title, ' (', url, ')'];
+        else if (item.title || url) page = item.title || url;
         band.append(
             h('div', { class: 'ext-live-identity' },
-                h('p', { class: 'ext-live-page' }, item.title ? [item.title, ' (', url, ')'] : url),
+                page ? h('p', { class: 'ext-live-page' }, page) : null,
                 h('time', {
                     class: 'ext-live-taken', datetime: item.taken_at,
                     title: BossModFormat.formatDateTime(item.taken_at),
@@ -211,12 +228,13 @@ const BossModExtensionsLive = (() => {
      * it in the system browser), a link that opens the containing folder
      * for `file:`, and plain text for anything else (`about:blank`, `data:`).
      *
-     * @param {{url: string}} item
+     * @param {{url: string}} item  An item that has a URL.
+     * @param {string} extensionId
      * @param {string} agentId
      * @param {(message: string) => void} onError  Shows a failed folder open.
      * @returns {HTMLElement} `a` or `span`, each `.ext-live-url`.
      */
-    function urlNode(item, agentId, onError) {
+    function urlNode(item, extensionId, agentId, onError) {
         if (BossModExternalOpen.httpUrlFrom(item.url)) {
             return h('a', { class: 'ext-live-url', href: item.url, title: 'Open in your browser' }, item.url);
         }
@@ -231,8 +249,7 @@ const BossModExtensionsLive = (() => {
                     event.preventDefault();
                     BossModDeskOpener.reveal({
                         api: apiFetch,
-                        request: () => BossModExtensionsApi.openLiveFolder(
-                            BossModBrowserVisionStatus.EXTENSION_ID, agentId),
+                        request: () => BossModExtensionsApi.openLiveFolder(extensionId, agentId),
                         describeFailure: async (res) => (await BossModFileOps.readApiError(res)) || COPY.folderFailed,
                         onError,
                     }).catch((err) => {
@@ -249,16 +266,18 @@ const BossModExtensionsLive = (() => {
     }
 
     /**
-     * The `browserView` capability an agent conversation's header takes:
-     * which agents have a view and change notifications (from the one
-     * status reader), and this viewer to open.
+     * The `liveViews` capability an agent conversation's header takes: the
+     * views each agent has and change notifications (from the one status
+     * reader), and this viewer to open.
      *
-     * @returns {{hasView: Function, subscribe: Function, open: Function}}
+     * @returns {{views: (agentId: string) => Array<{extensionId: string, label: string, icon: string}>,
+     *   subscribe: Function,
+     *   open: (extensionId: string, agentId: string, agentName: string) => void}}
      */
     function headerCapability() {
         return {
-            hasView: BossModBrowserVisionStatus.hasView,
-            subscribe: BossModBrowserVisionStatus.subscribe,
+            views: BossModLiveStatus.views,
+            subscribe: BossModLiveStatus.subscribe,
             open: openForAgent,
         };
     }
