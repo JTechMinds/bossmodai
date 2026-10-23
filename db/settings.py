@@ -46,6 +46,8 @@ _OBSOLETE_SETTING_KEYS = {
     "default_prompt_history_max_tokens",
     # Approvals wait for a human; no timer.
     "cli_approval_timeout_minutes",
+    # A line cap on rr, replaced by the cli_max_read_chars size budget.
+    "cli_max_read_lines",
 }
 
 
@@ -258,7 +260,12 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── CLI safety ──
     ("cli_max_write_bytes", "262144", "advanced"),
-    ("cli_max_read_lines", "200", "advanced"),
+    # The most characters one `cat` or `rr` returns, counted as rendered to
+    # the model (core/bm_cli/read_window.py). A longer read returns the whole
+    # lines that fit plus a read-on note naming the `rr` command for the rest.
+    # A quarter of work_snapshot_max_chars, so two full reads fit what a trim
+    # keeps (work_snapshot_trim_percent).
+    ("cli_max_read_chars", "30000", "advanced"),
     # Most rows `backlog list` shows (core/bm_cli/backlog_commands.py).
     ("cli_backlog_list_limit", "50", "advanced"),
 

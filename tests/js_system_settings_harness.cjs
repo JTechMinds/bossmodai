@@ -368,7 +368,7 @@ async function main() {
         // activity_log_retention_days left out: its field must say so.
         setting("agent_process_retention_days", "14", "advanced"),
         setting("history_prune_interval_minutes", "60", "advanced"),
-        setting("cli_max_read_lines", "200", "advanced"),
+        setting("cli_max_read_chars", "30000", "advanced"),
         setting("desktop_open_folder_handler", "", "advanced"),
         setting("cli_auto_approve_global", "false", "advanced"),
     ];

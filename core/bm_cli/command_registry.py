@@ -136,6 +136,8 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
         help_text=(
             "Print the contents of a file. Paths are resolved relative to\n"
             "the current working directory.\n"
+            "A file longer than one read returns shows its first part and\n"
+            "the command that reads on.\n"
             "\n"
             "Examples:\n"
             "  cat README.md          — read a file in cwd\n"
@@ -189,7 +191,9 @@ VIRTUAL_COMMAND_REGISTRY: dict[str, VirtualCommandMeta] = {
         usage_syntax="rr <path> <start:end>",
         help_text=(
             "Read an exact line range from a file using 1-based inclusive\n"
-            "line numbers. The runtime enforces a bounded maximum range.\n"
+            "line numbers. A range longer than one read returns comes back\n"
+            "in parts; the result names the last line shown and the command\n"
+            "that reads on.\n"
             "\n"
             "Use this for focused inspection before precise edits, especially\n"
             "for code, configs, or long documents.\n"

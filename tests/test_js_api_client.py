@@ -378,7 +378,7 @@ _SAVE_OK_SITES = {
     ],
     "settings/settings-advanced.js": [
         "apiFetchOk(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`",
-        "apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`",
+        "apiFetchOk(`/api/settings/cli_max_read_chars?value=${encodeURIComponent(value)}&category=advanced`",
         "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`",
     ],
     # Re-pointed in Phase 3B. apiFetchOk is not injectable, so the guard it

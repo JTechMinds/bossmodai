@@ -79,7 +79,7 @@ const AdvancedSystemSection = (() => {
         }
 
         const diagEnabled = settings.find(s => s.key === 'diagnostics_enabled');
-        const cliReadLimit = settings.find(s => s.key === 'cli_max_read_lines');
+        const cliReadLimit = settings.find(s => s.key === 'cli_max_read_chars');
         const globalAutoApprove = settings.find(s => s.key === GLOBAL_AUTO_APPROVE_KEY);
         const folderOpenerSetting = settings.find(s => s.key === 'desktop_open_folder_handler');
         const isEnabled = diagEnabled?.value === 'true';
@@ -155,13 +155,14 @@ const AdvancedSystemSection = (() => {
                 </div>
                 ${BossModRetentionSettings.html(settings)}
                 <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
-                    <label class="block text-sm font-medium mb-1">CLI Read Range Limit (lines)</label>
-                    <p class="text-xs text-bm-muted mb-1.5">Maximum number of lines one <code>read-range</code> command may return before the runtime requires smaller targeted reads.</p>
-                    <input type="number" id="cli-read-range-limit"
-                           value="${BossModFormat.escapeAttribute(cliReadLimit?.value || '200')}"
-                           min="10" max="5000" step="10"
-                           class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg
-                                  bg-bm-bg">
+                    <label for="cli-read-limit" class="block text-sm font-medium mb-1">CLI Read Limit (characters)</label>
+                    <p id="cli-read-limit-hint" class="text-xs text-bm-muted mb-1.5">The most text an agent gets back from one file read. Longer files come back in parts, and the agent reads on from where the last part stopped.</p>
+                    <input type="number" id="cli-read-limit"
+                           aria-describedby="cli-read-limit-hint cli-read-limit-error"
+                           value="${BossModFormat.escapeAttribute(cliReadLimit ? cliReadLimit.value : '')}" ${cliReadLimit ? '' : 'disabled'}
+                           min="1"
+                           class="w-32 px-3 py-2 text-sm border border-bm-border rounded-lg bg-bm-bg">
+                    <p id="cli-read-limit-error" role="alert" class="text-xs text-red-600 mt-1">${cliReadLimit ? '' : 'Not configured. Reset Seed Settings restores it.'}</p>
                 </div>
                 <div class="border border-bm-border rounded-lg p-4 bg-white xl:col-span-2">
                     <div class="flex items-start justify-between gap-4">
@@ -261,18 +262,25 @@ const AdvancedSystemSection = (() => {
 
         BossModRetentionSettings.mount(settings);
 
-        document.getElementById('cli-read-range-limit').addEventListener('change', async (e) => {
-            const value = e.target.value;
-            try {
-                await apiFetchOk(`/api/settings/cli_max_read_lines?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
-                BossModOperatorInvalidate.notifyLocal(['advanced-system']);
-                e.target.classList.add('border-emerald-400');
-                setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
-            } catch {
-                e.target.classList.add('border-red-400');
-                setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
-            }
-        });
+        // A missing row is shown disabled with its "not configured" line, so
+        // there is nothing to save.
+        if (cliReadLimit) {
+            const readLimitError = document.getElementById('cli-read-limit-error');
+            document.getElementById('cli-read-limit').addEventListener('change', async (e) => {
+                const value = e.target.value;
+                try {
+                    await apiFetchOk(`/api/settings/cli_max_read_chars?value=${encodeURIComponent(value)}&category=advanced`, { method: 'PUT' });
+                    readLimitError.textContent = '';
+                    BossModOperatorInvalidate.notifyLocal(['advanced-system']);
+                    e.target.classList.add('border-emerald-400');
+                    setTimeout(() => e.target.classList.remove('border-emerald-400'), 1000);
+                } catch (err) {
+                    readLimitError.textContent = String((err && err.message) || err);
+                    e.target.classList.add('border-red-400');
+                    setTimeout(() => e.target.classList.remove('border-red-400'), 1000);
+                }
+            });
+        }
 
         const openerCustom = document.getElementById('desktop-folder-opener-custom');
         const openerStatus = document.getElementById('folder-opener-status');

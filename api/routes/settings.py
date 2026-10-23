@@ -178,6 +178,8 @@ POSITIVE_INT_SETTINGS = frozenset({
     "background_process_checkin_minutes",
     # Read with require_positive_int at every history prune.
     "agent_process_retention_days",
+    # Read with require_positive_int at every cat and rr.
+    "cli_max_read_chars",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
@@ -195,6 +197,7 @@ _POSITIVE_INT_SETTING_LABELS = {
     "conversation_history_budget_tokens": "History budget",
     "background_process_checkin_minutes": "Background process check-in (minutes)",
     "agent_process_retention_days": "Background process history (days)",
+    "cli_max_read_chars": "CLI Read Limit",
 }
 _NON_NEGATIVE_INT_SETTING_LABELS = {
     "channel_router_transcript_messages": "Router transcript lines",

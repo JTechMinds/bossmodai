@@ -15,6 +15,7 @@ from core.bm_cli.document_tools import (
     render_markdown_outline_entries,
 )
 from core.bm_cli.host_path_consent import looks_like_command_flag
+from core.bm_cli.read_window import ReadWindow, read_on_note, take_read_window
 from core.bm_cli.results import error_result, success_result, trim
 from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
@@ -38,8 +39,8 @@ def _max_write_bytes() -> int:
     return config.get_int("cli_max_write_bytes")
 
 
-def _max_read_lines() -> int:
-    return config.require_int("cli_max_read_lines")
+def _max_read_chars() -> int:
+    return config.require_positive_int("cli_max_read_chars")
 
 
 def handle_pwd(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
@@ -118,7 +119,15 @@ def handle_ls(context: CliExecutionContext, parsed: ParsedCliCommand, content: s
 
 
 def handle_cat(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
-    """Read a file from the bounded virtual filesystem."""
+    """Read a file from the bounded virtual filesystem.
+
+    A file within ``cli_max_read_chars`` is shown verbatim. A longer one shows
+    its leading whole lines that fit, plus a runtime note naming the ``rr``
+    command that reads on. ``data["content"]`` is exactly the text shown.
+
+    Raises:
+        ConfigError: ``cli_max_read_chars`` is missing or not a positive integer.
+    """
     if len(parsed.args) != 1:
         return error_result(parsed.raw, '"cat" requires exactly one path argument.', cwd=context.cwd)
     target = resolve_cli_path(context.agent.storage_key, context.cwd, parsed.args[0])
@@ -127,13 +136,27 @@ def handle_cat(context: CliExecutionContext, parsed: ParsedCliCommand, content: 
     if target.real_path.is_dir():
         return error_result(parsed.raw, f"Cannot read directory: {parsed.args[0]}", cwd=context.cwd)
     body = target.real_path.read_text(encoding="utf-8", errors="replace")
+    max_chars = _max_read_chars()
+    if len(body) <= max_chars:
+        # Verbatim, not re-joined from lines, so a trailing newline or trailing
+        # text reaches the agent exactly as read.
+        shown = body
+        detail = f"{context.agent.name} read {target.virtual_path}"
+        note = None
+    else:
+        lines = body.splitlines()
+        window = take_read_window(lines, start=1, end=len(lines), max_chars=max_chars, numbered=False)
+        shown = "\n".join(window.rendered)
+        detail = f"{context.agent.name} read lines 1:{window.last} of {target.virtual_path}"
+        note = read_on_note(window, path=target.virtual_path, max_chars=max_chars)
     return success_result(
         command=parsed.raw,
-        detail=f"{context.agent.name} read {target.virtual_path}",
+        detail=detail,
         kind="file",
-        data={"cwd": context.cwd, "path": target.virtual_path, "content": body},
-        sections=[(f"FILE: {target.virtual_path}", [trim(body, limit=4000)])],
+        data={"cwd": context.cwd, "path": target.virtual_path, "content": shown},
+        sections=[(f"FILE: {target.virtual_path}", [shown])],
         cwd=context.cwd,
+        authoritative_note=note,
     )
 
 
@@ -178,7 +201,16 @@ def handle_outline(context: CliExecutionContext, parsed: ParsedCliCommand, conte
 
 
 def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
-    """Read a bounded line range from one file with 1-based numbering."""
+    """Read a line range from one file with 1-based numbering.
+
+    An end past the file's last line is clamped. A range longer than
+    ``cli_max_read_chars`` returns its leading whole lines that fit, plus a
+    runtime note naming the ``rr`` command that reads on; it never fails for
+    being long. ``data["lines"]`` holds only the lines shown.
+
+    Raises:
+        ConfigError: ``cli_max_read_chars`` is missing or not a positive integer.
+    """
     del content
     if len(parsed.args) != 2:
         return error_result(parsed.raw, '"rr" requires a path plus a start:end line range.', cwd=context.cwd)
@@ -186,14 +218,6 @@ def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, co
         start_line, end_line = _parse_line_range(parsed.args[1])
     except ValueError as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)
-    max_lines = _max_read_lines()
-    requested_count = end_line - start_line + 1
-    if requested_count > max_lines:
-        return error_result(
-            parsed.raw,
-            f"Requested range is too large ({requested_count} lines > {max_lines}-line limit). Split it into smaller reads.",
-            cwd=context.cwd,
-        )
 
     target, body, result = _read_virtual_file(context, parsed, raw_path=parsed.args[0], command_name="rr")
     if result is not None:
@@ -201,6 +225,7 @@ def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, co
     assert target is not None
 
     lines = body.splitlines()
+    note: str | None = None
     if not lines:
         if start_line != 1:
             return error_result(parsed.raw, f"Line {start_line} is outside the file (file is empty).", cwd=context.cwd)
@@ -214,12 +239,18 @@ def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, co
                 f"Line {start_line} is outside the file (last line is {len(lines)}).",
                 cwd=context.cwd,
             )
-        actual_end = min(end_line, len(lines))
-        payload_lines = [
-            {"line": index, "text": lines[index - 1]}
-            for index in range(start_line, actual_end + 1)
-        ]
-        rendered_lines = [f"{item['line']:>4} | {item['text']}" for item in payload_lines]
+        max_chars = _max_read_chars()
+        window = take_read_window(
+            lines,
+            start=start_line,
+            end=min(end_line, len(lines)),
+            max_chars=max_chars,
+            numbered=True,
+        )
+        actual_end = window.last
+        payload_lines = _shown_lines(lines, window)
+        rendered_lines = list(window.rendered)
+        note = read_on_note(window, path=target.virtual_path, max_chars=max_chars)
 
     return success_result(
         command=parsed.raw,
@@ -243,6 +274,7 @@ def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, co
             )
         ],
         cwd=context.cwd,
+        authoritative_note=note,
     )
 
 
@@ -567,3 +599,19 @@ def _parse_line_range(raw_range: str) -> tuple[int, int]:
     if end_line < start_line:
         raise ValueError("Line range end must be greater than or equal to the start.")
     return start_line, end_line
+
+
+def _shown_lines(lines: list[str], window: ReadWindow) -> list[dict[str, str | int]]:
+    """The window's lines as ``{"line", "text"}`` payloads, a cut line as its shown part.
+
+    Mirrors what the agent saw, so the result's data never holds text the
+    rendered section left out.
+    """
+    cut = window.cut
+    return [
+        {
+            "line": number,
+            "text": lines[number - 1][: cut.shown_chars] if cut is not None and cut.line == number else lines[number - 1],
+        }
+        for number in range(window.first, window.last + 1)
+    ]
