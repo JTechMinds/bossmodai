@@ -369,6 +369,7 @@ from db.work_snapshots import (
     delete_agent_work_snapshots,
     delete_work_snapshot,
     get_work_snapshot,
+    save_step_summary,
     save_work_snapshot,
     set_work_snapshot_checkpoints,
 )
@@ -697,6 +698,7 @@ __all__ = [
     "delete_agent_work_snapshots",
     "delete_work_snapshot",
     "get_work_snapshot",
+    "save_step_summary",
     "save_work_snapshot",
     "set_work_snapshot_checkpoints",
     "get_recent_activity_log_entries",

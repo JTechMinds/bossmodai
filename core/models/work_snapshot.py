@@ -27,6 +27,10 @@ class WorkSnapshot(BaseModel):
     command fingerprint this activity has already run, used to tell a first
     read from a repeat. ``interludes`` are chat turns that happened while the
     work was paused; they are rendered once on the next resume and cleared.
+    ``step_summary`` is the agent's own model's summary of the oldest steps,
+    folded out of ``transcript`` once the saved work passed its budget
+    (core/agent_loop/work_summary.py), and ``summarized_steps`` is how many
+    steps it covers; ``""`` and ``0`` until the first fold.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -41,6 +45,8 @@ class WorkSnapshot(BaseModel):
     fingerprints: list[str] = Field(default_factory=list)
     interludes: list[WorkInterlude] = Field(default_factory=list)
     no_progress_checkpoints: int = 0
+    step_summary: str = ""
+    summarized_steps: int = 0
     created_at: datetime
     updated_at: datetime
 

@@ -22,12 +22,6 @@ ask the turn to show the operator live:
   only: the turn result keeps the step's own outcome in ``event`` /
   ``detail`` (``bm_cli_result`` / ``bm_cli_error``, which liveness reads)
   and carries the declaration apart, as ``cli_activity``.
-- ``work_turn_boundary``: ``{"handoff": str}``, declared by a command whose
-  success finishes a part of the work (``checklist done`` / ``skip``). A
-  successful result carries the hand-off text as ``work_turn_boundary``;
-  the execution loop then ends the turn and replaces the work's saved steps
-  with it (core/agent_loop/execution_turn.py). The decision turn ignores it.
-  A failed command never carries one.
 
 A malformed declaration is a bug in the command and raises
 ``CliSideEffectError``; it is never dropped.
@@ -71,8 +65,6 @@ def map_cli_result(
       and ``activity`` becomes ``cli_activity`` (``{"event", "detail",
       "extra"}``, ``extra`` ``None`` when left out). Neither touches
       ``event``, ``detail`` or ``suppress_activity_broadcast``;
-    - ``work_turn_boundary``: the declared hand-off text, only when the
-      command succeeded;
     - ``audit`` / ``approved_by="system"`` for a System AI auto-approval;
     - a named gate deny's ``Blocked —`` origin line (``surface_cli_gate_block``,
       which persists it and may wake the next owner), unless
@@ -101,8 +93,8 @@ def map_cli_result(
         The turn-local result dict.
 
     Raises:
-        CliSideEffectError: ``data["origin_chrome"]``, ``data["activity"]``
-            or ``data["work_turn_boundary"]`` is malformed.
+        CliSideEffectError: ``data["origin_chrome"]`` or ``data["activity"]``
+            is malformed.
     """
     # Imported here: these reach back into the agent loop at import time.
     from core.agent_loop.blocked_origin import surface_cli_gate_block
@@ -112,7 +104,6 @@ def map_cli_result(
     data = cli_result.data or {}
     chrome = _declared_origin_chrome(cli_result.command, data)
     activity = _declared_activity(cli_result.command, data)
-    boundary = _declared_work_turn_boundary(cli_result.command, data)
 
     result: dict[str, Any] = {
         "event": "bm_cli_result" if cli_result.ok else "bm_cli_error",
@@ -139,8 +130,6 @@ def map_cli_result(
             "detail": activity["detail"],
             "extra": activity.get("extra"),
         }
-    if boundary is not None and cli_result.ok:
-        result["work_turn_boundary"] = boundary
     audit = data.get("audit")
     if isinstance(audit, str) and audit.strip():
         result["audit"] = audit
@@ -269,35 +258,6 @@ def _declared_activity(command: str, data: dict[str, Any]) -> dict[str, Any] | N
     if extra is not None and not isinstance(extra, dict):
         raise CliSideEffectError(f"CLI command {command!r} declared an activity whose extra is not an object: {activity!r}")
     return activity
-
-
-def _declared_work_turn_boundary(command: str, data: dict[str, Any]) -> str | None:
-    """The declared hand-off text, or ``None`` when no boundary was declared.
-
-    Args:
-        command: The command as run, for the error message.
-        data: The result's ``data``.
-
-    Returns:
-        The ``handoff`` text of ``data["work_turn_boundary"]``.
-
-    Raises:
-        CliSideEffectError: The declaration is not exactly
-            ``{"handoff": <non-empty str>}``.
-    """
-    if "work_turn_boundary" not in data:
-        return None
-    boundary = data["work_turn_boundary"]
-    if not isinstance(boundary, dict) or set(boundary) != {"handoff"}:
-        raise CliSideEffectError(
-            f"CLI command {command!r} declared a work_turn_boundary that is not {{\"handoff\": str}}: {boundary!r}"
-        )
-    handoff = boundary["handoff"]
-    if not isinstance(handoff, str) or not handoff.strip():
-        raise CliSideEffectError(
-            f"CLI command {command!r} declared a work_turn_boundary without a handoff: {boundary!r}"
-        )
-    return handoff
 
 
 def _attach_writer_reports(result: dict[str, Any], cli_detail: str, data: dict[str, Any]) -> None:

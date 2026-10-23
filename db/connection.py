@@ -451,6 +451,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     )
     _backfill_task_closed_at(con)
     _create_work_snapshots_table_if_missing(con)
+    # Existing rows read as having no step summary, which is what they have.
+    _add_column_if_missing(con, "work_snapshots", "step_summary", "TEXT NOT NULL DEFAULT ''")
+    _add_column_if_missing(con, "work_snapshots", "summarized_steps", "INTEGER NOT NULL DEFAULT 0")
     _ensure_attachment_context_columns(con)
     _create_model_capabilities_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
@@ -543,6 +546,11 @@ def _create_work_snapshots_table_if_missing(con: SQLiteCompatConnection) -> None
             fingerprints             TEXT NOT NULL DEFAULT '[]',
             interludes               TEXT NOT NULL DEFAULT '[]',
             no_progress_checkpoints  INTEGER NOT NULL DEFAULT 0,
+            -- The agent's model's summary of the oldest steps, folded out of
+            -- transcript (core/agent_loop/work_summary.py).
+            step_summary             TEXT NOT NULL DEFAULT '',
+            -- How many steps step_summary covers.
+            summarized_steps         INTEGER NOT NULL DEFAULT 0,
             created_at               TIMESTAMP DEFAULT current_timestamp,
             updated_at               TIMESTAMP DEFAULT current_timestamp
         )

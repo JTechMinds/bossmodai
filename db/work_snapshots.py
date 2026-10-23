@@ -16,7 +16,7 @@ from db.crud import execute, fetch_one, insert_returning
 
 _ALL_COLUMNS = (
     "activity_id, agent_id, task_id, transcript, fingerprints, interludes, "
-    "no_progress_checkpoints, created_at, updated_at"
+    "no_progress_checkpoints, step_summary, summarized_steps, created_at, updated_at"
 )
 
 
@@ -32,7 +32,8 @@ def save_work_snapshot(
     """Insert or replace the transcript, fingerprints and checkpoint count.
 
     Interludes already recorded on the row are kept; only
-    ``clear_work_interludes`` removes them.
+    ``clear_work_interludes`` removes them. The step summary and its step
+    count are kept too; only :func:`save_step_summary` writes them.
 
     Args:
         activity_id: The work activity this transcript belongs to.
@@ -74,6 +75,50 @@ def save_work_snapshot(
         ],
         WorkSnapshot,
     )
+
+
+def save_step_summary(
+    activity_id: str,
+    *,
+    transcript: list[dict[str, str | list[str]]],
+    step_summary: str,
+    summarized_steps: int,
+) -> WorkSnapshot:
+    """Store a new step summary and the steps it leaves in the transcript, in one write.
+
+    The fold's single write: the transcript shrinks to the steps kept word
+    for word and the summary replaces the previous one, so no reader ever
+    sees the folded steps both summarized and still in the transcript.
+    Fingerprints, interludes and the checkpoint count are left as stored.
+
+    Args:
+        activity_id: The work activity whose snapshot is folded.
+        transcript: The steps kept word for word, oldest first, as
+            ``{role, content}`` messages (a CLI result may also name its
+            image paths).
+        step_summary: The new summary; it already carries the previous one
+            forward.
+        summarized_steps: How many steps the new summary covers in total.
+
+    Returns:
+        The stored snapshot.
+
+    Raises:
+        LookupError: No snapshot exists for ``activity_id``.
+    """
+    snapshot = fetch_one(
+        f"""
+        UPDATE work_snapshots
+        SET transcript = $1, step_summary = $2, summarized_steps = $3, updated_at = $4
+        WHERE activity_id = $5
+        RETURNING {_ALL_COLUMNS}
+        """,
+        [json.dumps(transcript), step_summary, int(summarized_steps), datetime.now(timezone.utc), activity_id],
+        WorkSnapshot,
+    )
+    if snapshot is None:
+        raise LookupError(f"No work snapshot for activity {activity_id}")
+    return snapshot
 
 
 def get_work_snapshot(activity_id: str) -> WorkSnapshot | None:

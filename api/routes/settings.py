@@ -117,6 +117,7 @@ async def reset_setting_to_default(key: str):
     if seeded is not None:
         _validate_positive_int_setting(key, seeded[0])
         _validate_percent_setting(key, seeded[0])
+        _validate_work_context_setting(key, seeded[0])
     try:
         result = db.reset_setting_to_seed(key)
     except ValueError as exc:
@@ -180,6 +181,10 @@ POSITIVE_INT_SETTINGS = frozenset({
     "agent_process_retention_days",
     # Read with require_positive_int at every cat and rr.
     "cli_max_read_chars",
+    # Read with require_int on every execution turn (work_snapshot_max_chars)
+    # and every decision turn's paused-work view (the chat-view limit).
+    "work_snapshot_max_chars",
+    "work_snapshot_chat_view_max_chars",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
@@ -198,6 +203,8 @@ _POSITIVE_INT_SETTING_LABELS = {
     "background_process_checkin_minutes": "Background process check-in (minutes)",
     "agent_process_retention_days": "Background process history (days)",
     "cli_max_read_chars": "CLI Read Limit",
+    "work_snapshot_max_chars": "Work budget",
+    "work_snapshot_chat_view_max_chars": "Work shown when you ask",
 }
 _NON_NEGATIVE_INT_SETTING_LABELS = {
     "channel_router_transcript_messages": "Router transcript lines",
@@ -223,6 +230,13 @@ CONVERSATION_COMPACTION_SETTINGS = frozenset({
     "conversation_history_budget_tokens",
     *_PERCENT_SETTINGS,
 })
+
+# Work-context percents (core/agent_loop/work_summary.py): key → (label the
+# 400 names, lowest, highest).
+_WORK_CONTEXT_PERCENT_SETTINGS = {
+    "work_snapshot_trim_percent": ("Work kept after summarizing", 1, 99),
+    "work_snapshot_summary_percent": ("Work summary size", 1, 99),
+}
 
 
 def _validate_positive_int_setting(key: str, value: str) -> None:
@@ -365,6 +379,59 @@ def _validate_percent_setting(key: str, value: str) -> None:
         )
 
 
+def _validate_work_context_setting(key: str, value: str) -> None:
+    """Reject a work-context value that is out of range or breaks the cross-key rules.
+
+    The two percents are whole numbers from 1 to 99. Across the three keys,
+    with the value being written and the other two read from ``config``,
+    ``summary < trim`` must hold and the summary limit
+    (``budget * summary // 100``) must be at least one character: the same
+    rules ``core.agent_loop.work_summary.read_summary_limits`` enforces, so
+    no saved combination can stop an execution turn with ``ConfigError``.
+
+    For ``work_snapshot_max_chars`` this runs after
+    :func:`_validate_positive_int_setting`, which has already refused
+    anything but a whole number of at least 1.
+
+    Args:
+        key: Setting key being written. Keys other than
+            ``work_snapshot_max_chars``, ``work_snapshot_trim_percent`` and
+            ``work_snapshot_summary_percent`` are not checked.
+        value: Raw value from the request.
+
+    Raises:
+        HTTPException: 400 naming the setting's label and the range; 400
+            when Work summary size would not be lower than Work kept after
+            summarizing; or 400 when Work budget leaves the summary no room.
+    """
+    spec = _WORK_CONTEXT_PERCENT_SETTINGS.get(key)
+    if spec is None and key != "work_snapshot_max_chars":
+        return
+    stripped = value.strip()
+    if spec is not None:
+        label, low, high = spec
+        # isascii + isdigit: base-10 digits only, so "-1", "+5" and "1_0" are refused.
+        if not (stripped.isascii() and stripped.isdigit()) or not low <= int(stripped, 10) <= high:
+            raise HTTPException(400, f"{label} must be a whole number from {low} to {high}.")
+    written = int(stripped, 10)
+    budget = written if key == "work_snapshot_max_chars" else config.require_int("work_snapshot_max_chars")
+    trim = written if key == "work_snapshot_trim_percent" else config.require_int("work_snapshot_trim_percent")
+    summary = written if key == "work_snapshot_summary_percent" else config.require_int(
+        "work_snapshot_summary_percent"
+    )
+    if summary >= trim:
+        raise HTTPException(
+            400,
+            f"Work summary size ({summary}%) must be lower than Work kept after summarizing ({trim}%).",
+        )
+    if budget * summary // 100 < 1:
+        raise HTTPException(
+            400,
+            f"Work budget ({budget}) is too small for Work summary size ({summary}%): "
+            "the summary would have no room.",
+        )
+
+
 def _validate_boss_name_setting(key: str, value: str) -> str:
     """Validate ``boss_name`` and return the value to store.
 
@@ -487,6 +554,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
     _validate_non_negative_int_setting(key, value)
     _validate_boolean_setting(key, value)
     _validate_percent_setting(key, value)
+    _validate_work_context_setting(key, value)
     value = _validate_boss_name_setting(key, value)
     _validate_system_ai_thinking(key, value)
     _refuse_orphaning_system_ai_thinking(key, value)

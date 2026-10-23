@@ -9,26 +9,22 @@ rebuilds the preamble and replays the frozen steps after it, so the agent
 keeps what it read. A decision turn gets a read-only, code-rendered view of
 the latest steps instead, so its status reply is grounded in what actually ran.
 
-Two boundaries keep the saved work small, and both end the execution turn
-after the step that crossed them; the dispatcher's live-work continuation
-queues the next turn, whose preamble is built fresh:
-
-- the item boundary: a checklist item was checked off. The saved transcript
-  is replaced by one short hand-off note (:func:`reset_work_turn`), so the
-  next part starts from the checklist under Current Task, not from the raw
-  output of the parts before it;
-- the budget boundary: the transcript passed ``work_snapshot_max_chars``
-  (:func:`transcript_over_budget`). The freeze drops the oldest steps behind
-  a marker, as at any pause, until the saved work fits
-  ``work_snapshot_trim_percent`` of ``work_snapshot_max_chars``, so the next
-  turn has room for a run of steps before it reaches the budget again.
+One boundary keeps the saved work bounded: the budget boundary ends the
+execution turn after the step whose saved work (the step summary included)
+passed ``work_snapshot_max_chars`` (:func:`transcript_over_budget`), and the
+dispatcher's live-work continuation queues the next turn, whose preamble is
+built fresh. Freezes only append; nothing is dropped at a pause. At the
+start of the next execution turn, before restore, the oldest steps are
+folded into the step summary (``core/agent_loop/work_summary.py``) until the
+saved work fits ``work_snapshot_trim_percent`` of
+``work_snapshot_max_chars``, and restore shows that summary above the steps
+that remain.
 
 Snapshot policy lives here. The table itself is ``db/work_snapshots.py``.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 import db
@@ -40,10 +36,7 @@ from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY, SUMMARY_KEY
 from core.default_prompts import render_default_prompt
 from core.models import Activity, Agent, WorkSnapshot
 
-logger = logging.getLogger(__name__)
-
 MAX_CHARS_SETTING = "work_snapshot_max_chars"
-TRIM_PERCENT_SETTING = "work_snapshot_trim_percent"
 CHAT_VIEW_MAX_CHARS_SETTING = "work_snapshot_chat_view_max_chars"
 
 # Execution triggers that continue a frozen work activity.
@@ -54,9 +47,8 @@ RESUME_TRIGGER_TYPES = frozenset(
 # Live-trigger key naming the activity whose frozen work a turn replayed.
 RESTORED_ACTIVITY_KEY = "restored_work_activity_id"
 
-_COMPACTION_LEAD = "earlier steps were dropped for space."
-_COMPACTION_COMMANDS = "Commands they ran:"
 _RESUME_PROMPT_PATHS = {"interludes", "reason"}
+_SUMMARY_PROMPT_PATHS = {"summarized_steps", "summary"}
 _VIEW_PROMPT_PATHS = {"task_title", "dropped_steps", "steps"}
 _UNPARSED_STEP = "(unparsed step)"
 
@@ -73,14 +65,11 @@ def freeze_work_turn(
     """Persist this turn's working steps onto the work activity's snapshot.
 
     Only ``context[initial_len:]`` is saved; the preamble is rebuilt on every
-    resume. The new steps are appended to any transcript already stored, so
-    repeated pauses accumulate. Over ``work_snapshot_max_chars`` the oldest
-    whole steps are dropped until it fits ``work_snapshot_trim_percent`` of
-    ``work_snapshot_max_chars``, behind one marker message naming what they
-    ran. Trimming below the trigger leaves room for a run of steps before the
-    next trim, so the budget boundary does not end every later turn after one
-    step. A share of the budget, not a second character count, so lowering
-    the budget never conflicts with the trim.
+    resume. The new steps are appended to the stored transcript; nothing is
+    dropped here. Saved work over ``work_snapshot_max_chars`` is folded into
+    the step summary at the start of the next execution turn
+    (``core/agent_loop/work_summary.py``), so repeated pauses accumulate
+    until then. The step summary stored on the row is left as it is.
 
     Args:
         agent: The agent whose turn is pausing.
@@ -92,22 +81,10 @@ def freeze_work_turn(
 
     Returns:
         The stored snapshot.
-
-    Raises:
-        core.config.ConfigError: Either setting is missing or not an integer,
-            or ``work_snapshot_trim_percent`` is not from 1 to 99.
     """
-    budget = config.require_int(MAX_CHARS_SETTING)
-    percent = config.require_int(TRIM_PERCENT_SETTING)
-    if not 1 <= percent <= 99:
-        raise config.ConfigError(
-            f"Required setting '{TRIM_PERCENT_SETTING}' must be a whole number from 1 to 99: {percent!r}"
-        )
-    target = budget * percent // 100
     working = [_plain_message(message) for message in context[initial_len:]]
     existing = db.get_work_snapshot(activity.id)
     transcript = [*(existing.transcript if existing else []), *working]
-    transcript = _compact(transcript, budget=budget, target=target, agent=agent)
     return db.save_work_snapshot(
         activity.id,
         agent_id=agent.id,
@@ -118,43 +95,15 @@ def freeze_work_turn(
     )
 
 
-def reset_work_turn(*, agent: Agent, activity: Activity, handoff: str) -> WorkSnapshot:
-    """Replace the work's saved steps with one hand-off note: the item boundary.
-
-    Called when a checklist item is checked off in an execution turn. The
-    transcript becomes ``[{"role": "user", "content": handoff}]``, the step
-    fingerprints are cleared and the no-progress checkpoint count is reset,
-    so loop detection starts over for the next part. Interludes already
-    recorded on the row are kept (``db.save_work_snapshot`` leaves them),
-    so a message that arrived during the part is still shown on resume.
-
-    Args:
-        agent: The agent whose turn reached the boundary.
-        activity: The live work activity whose saved steps are replaced.
-        handoff: The note the next turn resumes from, as the checklist
-            command rendered it.
-
-    Returns:
-        The stored snapshot.
-    """
-    return db.save_work_snapshot(
-        activity.id,
-        agent_id=agent.id,
-        task_id=activity.task_id,
-        transcript=[{"role": "user", "content": handoff}],
-        fingerprints=[],
-        no_progress_checkpoints=0,
-    )
-
-
 def transcript_over_budget(prior: WorkSnapshot | None, new_messages: list[dict[str, Any]]) -> bool:
-    """Return whether the saved transcript plus this turn's steps passes the budget.
+    """Return whether the saved work plus this turn's steps passes the budget.
 
     The budget boundary: the execution loop ends the turn once this is true,
-    so no turn grows past ``work_snapshot_max_chars``, the point where a
-    freeze trims (down to ``work_snapshot_trim_percent`` of
-    ``work_snapshot_max_chars``). Counted the way
-    :func:`_compact` counts, in content characters.
+    so no turn grows past ``work_snapshot_max_chars``, the point where the
+    next execution turn folds the oldest steps into the step summary (down
+    to ``work_snapshot_trim_percent`` of ``work_snapshot_max_chars``). The
+    step summary counts toward the budget: the prior work is counted with
+    :func:`saved_chars`, in content characters, the way the fold counts it.
 
     Args:
         prior: The snapshot the turn started from, or ``None`` when the work
@@ -170,17 +119,38 @@ def transcript_over_budget(prior: WorkSnapshot | None, new_messages: list[dict[s
         core.config.ConfigError: ``work_snapshot_max_chars`` is missing or
             not an integer.
     """
-    prior_chars = _chars(prior.transcript) if prior is not None else 0
-    return prior_chars + _chars(new_messages) > config.require_int(MAX_CHARS_SETTING)
+    prior_chars = saved_chars(prior) if prior is not None else 0
+    return prior_chars + transcript_chars(new_messages) > config.require_int(MAX_CHARS_SETTING)
+
+
+def saved_chars(snapshot: WorkSnapshot) -> int:
+    """Return the size of a snapshot's saved work: its step summary plus its transcript.
+
+    The one measure both the budget boundary (:func:`transcript_over_budget`)
+    and the fold (``work_summary.summarize_saved_work``) compare against
+    ``work_snapshot_max_chars``, so the two can never disagree about whether
+    the saved work is over the budget.
+
+    Args:
+        snapshot: The stored snapshot.
+
+    Returns:
+        ``len(snapshot.step_summary)`` plus the transcript's content
+        characters (:func:`transcript_chars`).
+    """
+    return len(snapshot.step_summary) + transcript_chars(snapshot.transcript)
 
 
 def restore_work_turn(*, activity: Activity, context: list[dict[str, str]]) -> list[dict[str, str]]:
     """Replay a frozen transcript under a freshly built preamble.
 
-    With no snapshot this is a first run and ``context`` is returned as is.
-    Otherwise the fresh trigger message (the last element) is replaced by the
-    stored transcript plus one resume message that lists the interludes and
-    carries the trigger text as the resume reason. Interludes are not
+    With no snapshot, or one with neither steps nor a step summary, this is
+    a first run and ``context`` is returned as is. Otherwise the fresh
+    trigger message (the last element) is replaced by the step summary
+    message, when the snapshot has a summary (``internal_loop_execution_step_summary``,
+    one user message right after the preamble), then the stored transcript,
+    then one resume message that lists the interludes and carries the
+    trigger text as the resume reason. Interludes are not
     cleared here: a failed turn is retried and must render them again. The
     caller marks the trigger with :func:`mark_restored`, and the dispatcher
     clears them via :func:`finish_restored_turn` once the turn completed.
@@ -196,11 +166,21 @@ def restore_work_turn(*, activity: Activity, context: list[dict[str, str]]) -> l
         ValueError: ``context`` does not end with the trigger message.
     """
     snapshot = db.get_work_snapshot(activity.id)
-    if snapshot is None or not snapshot.transcript:
+    if snapshot is None or (not snapshot.transcript and not snapshot.step_summary):
         return context
     if not context or context[-1].get("role") != "user":
         raise ValueError("Execution context must end with the trigger message to restore frozen work")
     preamble, trigger_message = context[:-1], context[-1]
+    summary: list[dict[str, str]] = []
+    if snapshot.step_summary:
+        summary.append({
+            "role": "user",
+            "content": render_default_prompt(
+                "internal_loop_execution_step_summary",
+                {"summarized_steps": snapshot.summarized_steps, "summary": snapshot.step_summary},
+                allowed_paths=_SUMMARY_PROMPT_PATHS,
+            ),
+        })
     resume = render_default_prompt(
         "internal_loop_execution_resume_frozen",
         {
@@ -209,7 +189,7 @@ def restore_work_turn(*, activity: Activity, context: list[dict[str, str]]) -> l
         },
         allowed_paths=_RESUME_PROMPT_PATHS,
     )
-    return [*preamble, *snapshot.transcript, {"role": "user", "content": resume}]
+    return [*preamble, *summary, *snapshot.transcript, {"role": "user", "content": resume}]
 
 
 def mark_restored(trigger: dict[str, Any], activity: Activity) -> None:
@@ -244,7 +224,7 @@ def render_paused_work_view(snapshot: WorkSnapshot, *, task_title: str) -> str |
     Returns:
         The view text, or ``None`` when the snapshot holds no steps.
     """
-    steps = [step for step in _split_steps(snapshot.transcript) if step and step[0]["role"] == "assistant"]
+    steps = [step for step in split_steps(snapshot.transcript) if step and step[0]["role"] == "assistant"]
     if not steps:
         return None
     budget = config.require_int(CHAT_VIEW_MAX_CHARS_SETTING)
@@ -316,7 +296,7 @@ def render_paused_work_for_agent(agent_id: str) -> str | None:
 
 
 def step_label(assistant_content: str) -> str:
-    """Return the command an assistant step ran, for markers and views."""
+    """Return the command an assistant step ran, for the paused-work view."""
     action = parse_action(assistant_content)
     name = str(action.get("action") or "")
     if name == "_parse_failed":
@@ -326,60 +306,21 @@ def step_label(assistant_content: str) -> str:
     return name
 
 
-def _compact(
-    transcript: list[dict[str, str]], *, budget: int, target: int, agent: Agent,
-) -> list[dict[str, str]]:
-    """Once the transcript passes ``budget`` chars, drop the oldest whole steps until it fits ``target``.
-
-    At or under ``budget`` the transcript is returned unchanged. Over it, the
-    oldest steps go until the marker plus what is kept is at most ``target``
-    (``work_snapshot_trim_percent`` of ``budget``, so the next trim is a run
-    of steps away). A step is never split. The newest step is always kept,
-    since it is what the agent was doing, even when it alone is over
-    ``target``. Dropped steps are replaced by one marker message naming what
-    they ran; an earlier marker is folded into the new one.
-    """
-    if _chars(transcript) <= budget:
-        return transcript
-    groups = _split_steps(transcript)
-    prior_count, prior_commands = 0, []
-    if groups and groups[0] and _is_marker(groups[0][0]):
-        prior_count, prior_commands = _read_marker(groups[0][0])
-        groups = groups[1:]
-
-    count, commands = prior_count, list(prior_commands)
-    dropped_now = 0
-    dropped_any = False
-    marker = _render_marker(count, commands) if count else ""
-    while len(groups) > 1 and len(marker) + _chars([m for g in groups for m in g]) > target:
-        group = groups.pop(0)
-        dropped_any = True
-        if group[0]["role"] == "assistant":
-            count += 1
-            dropped_now += 1
-            commands.append(step_label(group[0]["content"]))
-        marker = _render_marker(count, commands) if count else ""
-    if not dropped_any:
-        return transcript
-    logger.info(
-        "Compacted frozen work for %s: dropped %d oldest steps (%d dropped in total)",
-        agent.name,
-        dropped_now,
-        count,
-    )
-    kept = [message for group in groups for message in group]
-    if not count:
-        return kept
-    return [{"role": "user", "content": marker}, *kept]
-
-
-def _split_steps(transcript: list[dict[str, str]]) -> list[list[dict[str, str]]]:
+def split_steps(transcript: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     """Group messages into steps: each assistant message plus what follows it.
 
-    Messages before the first assistant message (a compaction marker) form
-    their own leading group.
+    Messages before the first assistant message form their own leading
+    group (for example the old trim marker or checklist hand-off note that
+    a snapshot saved before the step summary still holds).
+
+    Args:
+        transcript: Working-transcript messages, oldest first.
+
+    Returns:
+        The groups in order; every message is in exactly one group, and
+        ``[]`` for an empty transcript.
     """
-    groups: list[list[dict[str, str]]] = []
+    groups: list[list[dict[str, Any]]] = []
     for message in transcript:
         if message.get("role") == "assistant" or not groups:
             groups.append([message])
@@ -430,26 +371,16 @@ def _render_interludes(snapshot: WorkSnapshot) -> str:
     return "\n".join(lines)
 
 
-def _render_marker(count: int, commands: list[str]) -> str:
-    listed = "\n".join(f"- {command}" for command in commands)
-    return f"{count} {_COMPACTION_LEAD} {_COMPACTION_COMMANDS}\n{listed}"
+def transcript_chars(messages: list[dict[str, Any]]) -> int:
+    """Return the content characters of ``messages``: the unit every work budget is counted in.
 
+    Args:
+        messages: ``{role, content}`` messages; only ``content`` is counted
+            (image paths and summaries a CLI result carries are not).
 
-def _is_marker(message: dict[str, str]) -> bool:
-    content = str(message.get("content") or "")
-    head = content.split("\n", 1)[0]
-    return message.get("role") == "user" and _COMPACTION_LEAD in head and head.split(" ", 1)[0].isdigit()
-
-
-def _read_marker(message: dict[str, str]) -> tuple[int, list[str]]:
-    """Read back a marker this module wrote: its count and command list."""
-    head, _, body = str(message.get("content") or "").partition("\n")
-    count = int(head.split(" ", 1)[0])
-    commands = [line[2:] for line in body.split("\n") if line.startswith("- ")]
-    return count, commands
-
-
-def _chars(messages: list[dict[str, Any]]) -> int:
+    Returns:
+        The summed length of every message's content.
+    """
     return sum(len(str(message.get("content") or "")) for message in messages)
 
 

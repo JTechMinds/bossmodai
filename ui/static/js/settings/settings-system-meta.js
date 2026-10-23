@@ -22,7 +22,7 @@ const BossModSystemSettingsMeta = (() => {
         profile: 'How your agents address you.',
         simulation: 'Movement speed, simulation cadence, and recovery behavior for the office runtime.',
         social: 'Controls when idle agents may start optional social behavior based on time and proximity.',
-        context: 'Controls how much conversation and work history each agent turn includes, and when older messages are summarized into conversation notes.',
+        context: 'Controls how much conversation and work history each agent turn includes, and when older messages and work steps are summarized.',
         threads: 'Controls who the System AI wakes in shared threads and how quiet threads are checked for unstarted work.',
         llm: 'Controls global completion behavior and task sticky-slot compaction pressure.',
         desk: 'Controls Desk preview behavior and filesystem browsing limits.',
@@ -206,6 +206,31 @@ const BossModSystemSettingsMeta = (() => {
             order: 100,
             label: 'Hard limit (% of budget)',
             description: 'A safety net if summarizing keeps failing: older messages past this are left out of agents\' context. From 100 to 300. Default 150.',
+        },
+        // Stored under 'simulation' (db/settings.py); shown with the context settings.
+        work_snapshot_max_chars: {
+            order: 110,
+            tab: 'context',
+            label: 'Work budget (characters)',
+            description: 'How much of its own recent work an agent keeps in view during a task; past this, its older steps are summarized. About 4 characters make a token, so keep this and History budget well inside your model\'s context window. Default 120000.',
+        },
+        work_snapshot_trim_percent: {
+            order: 120,
+            tab: 'context',
+            label: 'Work kept after summarizing (% of work budget)',
+            description: 'How much recent work stays in view after summarizing, the summary included. Must be higher than Work summary size. Default 50.',
+        },
+        work_snapshot_summary_percent: {
+            order: 130,
+            tab: 'context',
+            label: 'Work summary size (% of work budget)',
+            description: 'Longest the summary of older work may be. Must be lower than Work kept after summarizing. Default 10.',
+        },
+        work_snapshot_chat_view_max_chars: {
+            order: 140,
+            tab: 'context',
+            label: 'Work shown when you ask (characters)',
+            description: 'When you message an agent in the middle of a task, how much of its latest work it sees while it answers. Default 24000.',
         },
         default_max_tokens: {
             order: 10,

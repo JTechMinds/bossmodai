@@ -21,14 +21,17 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.activity_scheduler import ensure_live_work_continuation
 from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.agent_loop.dispatcher import TurnDispatcher
+from core.agent_loop.loop import run_turn
 from core.agent_loop.soft_blocks import apply_no_progress_block
-from core.agent_loop.work_snapshot import freeze_work_turn
+from core.agent_loop.task_origin_mirrors import BOSS_CANCEL_REASON
+from core.agent_loop.work_snapshot import freeze_work_turn, saved_chars, split_steps, transcript_chars
+from core.agent_loop.work_summary import read_summary_limits
 from core.bm_cli.runtime import execute_bm_cli
-from core.default_prompts import render_default_prompt
-from core.llm.client import LLMResponse
+from core.llm.client import LLMError, LLMResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.tasking import add_checklist_items, create_or_bind_task
+from core.tasking.service import cancel_task_as_operator
 
 
 def setup_function() -> None:
@@ -367,15 +370,21 @@ def test_next_work_picks_the_oldest_queued_task_and_never_a_waiting_one() -> Non
     assert next_work_after_end(agent.id, ended_task_id=None) == []
 
 
-# ─── Context per checklist item: the item and budget boundaries ───
+# ─── Context across check-offs, and the budget boundary with the step summary ───
 
 _STATUS_STEP = '{"act":"cli","data":{"cmd":"status"},"th":"check status"}'
 _BOARD_STEP = '{"act":"cli","data":{"cmd":"my-board"},"th":"check board"}'
 _CHECK_OFF_STEP = '{"act":"cli","data":{"cmd":"checklist done 1","body":"2 issues, in /projects/app/audit.md"},"th":"part 1 done"}'
 
 
-def _script_prompts(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> list[list[dict[str, Any]]]:
-    """Like ``_script``, keeping the messages each call was sent."""
+def _script_prompts(
+    monkeypatch: pytest.MonkeyPatch, contents: list[str | Exception], *, on_call=None,
+) -> list[list[dict[str, Any]]]:
+    """Like ``_script``, keeping the messages each call was sent.
+
+    An ``Exception`` in ``contents`` is raised by that call; ``on_call`` gets
+    the 1-based call number before the reply is returned.
+    """
     queue = list(contents)
     prompts: list[list[dict[str, Any]]] = []
 
@@ -383,7 +392,12 @@ def _script_prompts(monkeypatch: pytest.MonkeyPatch, contents: list[str]) -> lis
         if not queue:
             raise AssertionError("unexpected extra LLM completion")
         prompts.append([dict(item) for item in kwargs.get("messages") or []])
-        return LLMResponse(content=queue.pop(0), model="test/mock", prompt_tokens=8, completion_tokens=4, total_tokens=12)
+        if on_call is not None:
+            on_call(len(prompts))
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return LLMResponse(content=item, model="test/mock", prompt_tokens=8, completion_tokens=4, total_tokens=12)
 
     monkeypatch.setattr("core.llm.client.completion", _fake_completion)
     return prompts
@@ -418,65 +432,51 @@ def _frozen_steps(agent, *steps: str) -> None:
     )
 
 
-def _handoff(number: int, text: str, *, open_items: bool) -> str:
-    return render_default_prompt(
-        "internal_loop_execution_checklist_handoff",
-        {"number": number, "text": text, "open_items": open_items},
-        allowed_paths={"number", "text", "open_items"},
+def _queue_status_question(agent_id: str) -> None:
+    """A waiting message: the running execution turn pauses after its current step."""
+    db.create_agent_trigger(
+        agent_id=agent_id, trigger_type="human_chat", source_channel="chat",
+        payload={"content": "Status?", "from_name": "Human Operator"},
     )
 
 
+_SUMMARY_SYSTEM_HEAD = "Condense an AI agent's earlier working steps"
+
+
 @pytest.mark.asyncio
-async def test_a_check_off_ends_the_turn_and_leaves_only_the_handoff(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_a_check_off_keeps_the_turn_and_its_steps(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task = _working_agent()
-    add_checklist_items(task.id, ["Audit core/tasking", "Audit db/tasks.py"])
-    _frozen_steps(agent, _STATUS_STEP)
+    add_checklist_items(task.id, ["Read the spec", "Write the tests"])
+    state = db.get_agent_state(agent.id)
+    assert execute_bm_cli(agent, state, "write /me/notes/spec.md", "SPEC: fn alpha(x: u32) -> Beta").ok
+    assert execute_bm_cli(agent, state, "write /me/notes/types.md", "TYPES: struct Beta { id: u64 }").ok
     activity = activity_runtime.get_active_work_activity(agent.id)
-    # One reply only: had the turn gone on, the fake would refuse a second call.
-    _script_prompts(monkeypatch, [_CHECK_OFF_STEP])
+    read_spec = '{"act":"cli","data":{"cmd":"rr /me/notes/spec.md 1:1"},"th":"read the spec"}'
+    check_off = '{"act":"cli","data":{"cmd":"checklist done 1","body":"spec read"},"th":"part 1 done"}'
+    read_types = '{"act":"cli","data":{"cmd":"rr /me/notes/types.md 1:1"},"th":"read the types"}'
+    # A message arriving during the third call pauses the work after that step;
+    # the fake refuses a fourth call.
+    prompts = _script_prompts(
+        monkeypatch, [read_spec, check_off, read_types],
+        on_call=lambda call: _queue_status_question(agent.id) if call == 3 else None,
+    )
 
     payload = _start_resume(agent.id, task.id)
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), payload)
 
     assert db.get_agent_trigger(payload["trigger_id"]).status == "completed"
+    assert len(prompts) == 3, "the check-off did not end the turn"
+    third = "\n".join(str(item["content"]) for item in prompts[2])
+    assert "SPEC: fn alpha(x: u32) -> Beta" in third, "the first read is still in view after the check-off"
     snapshot = db.get_work_snapshot(activity.id)
-    assert snapshot.transcript == [
-        {"role": "user", "content": _handoff(1, "Audit core/tasking", open_items=True)}
+    assert [item["content"] for item in snapshot.transcript if item["role"] == "assistant"] == [
+        read_spec, check_off, read_types,
     ]
-    assert snapshot.fingerprints == [] and snapshot.no_progress_checkpoints == 0
+    saved = "\n".join(str(item["content"]) for item in snapshot.transcript)
+    assert "SPEC: fn alpha(x: u32) -> Beta" in saved and "TYPES: struct Beta { id: u64 }" in saved
     stored = db.get_task(task.id)
     assert [item.status for item in stored.checklist] == ["done", "open"]
-    assert stored.last_progress_at is not None, "a check-off is progress"
-    assert len(_resumes(agent.id, task.id)) == 1
-
-
-@pytest.mark.asyncio
-async def test_the_next_part_starts_from_the_checklist_not_the_earlier_steps(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    agent, task = _working_agent()
-    add_checklist_items(task.id, ["Audit core/tasking", "Audit db/tasks.py"])
-    _frozen_steps(agent, _STATUS_STEP)
-    _script_prompts(monkeypatch, [_CHECK_OFF_STEP])
-    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
-
-    # A waiting message pauses the next turn after its first step; only that
-    # step's prompt matters here.
-    prompts = _script_prompts(monkeypatch, [_BOARD_STEP])
-    db.create_agent_trigger(
-        agent_id=agent.id, trigger_type="human_chat", source_channel="chat",
-        payload={"content": "Status?", "from_name": "Human Operator"},
-    )
-    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _queued_resume(agent.id, task.id))
-
-    first = prompts[0]
-    text = "\n".join(str(item["content"]) for item in first)
-    current_task = next(item["content"] for item in first if "checklist (1 of 2 checked off):" in item["content"])
-    assert "1. [done] Audit core/tasking — 2 issues, in /projects/app/audit.md" in current_task
-    assert "2. [open] Audit db/tasks.py" in current_task
-    assert _handoff(1, "Audit core/tasking", open_items=True) in text
-    assert _STATUS_STEP not in text and _CHECK_OFF_STEP not in text, "no earlier step survives the hand-off"
-    assert "result of" not in text
+    assert stored.last_progress_at is not None, "a check-off is still progress"
 
 
 @pytest.mark.asyncio
@@ -505,9 +505,8 @@ async def test_a_check_off_in_a_decision_turn_clears_nothing(monkeypatch: pytest
     assert after.no_progress_checkpoints == before.no_progress_checkpoints
 
 
-@pytest.mark.asyncio
-async def test_a_turn_past_the_budget_ends_is_trimmed_and_continues(monkeypatch: pytest.MonkeyPatch) -> None:
-    agent, task = _working_agent()
+def _over_budget_work(agent) -> list[str]:
+    """Budget 1500 with a 66% trim; freeze four 357-character steps (1428, under it)."""
     activity = activity_runtime.get_active_work_activity(agent.id)
     db.set_setting("work_snapshot_max_chars", "1500", "simulation")
     db.set_setting("work_snapshot_trim_percent", "66", "simulation")
@@ -520,7 +519,21 @@ async def test_a_turn_past_the_budget_ends_is_trimmed_and_continues(monkeypatch:
         context.extend([{"role": "assistant", "content": step}, {"role": "user", "content": "y" * 300}])
     freeze_work_turn(agent=agent, activity=activity, initial_len=0, context=context, fingerprints=[],
                      no_progress_checkpoints=0)
-    # One reply only: the status step crosses the budget, so the turn ends there.
+    return earlier
+
+
+_SUMMARY_REPLY = "- read /me/f0.md to /me/f3.md: 300 y each\n- ran status"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_past_the_budget_ends_saved_untrimmed_and_the_next_turn_summarizes_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, task = _working_agent()
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    earlier = _over_budget_work(agent)
+    # One reply only: the saved work starts under the budget, so there is no
+    # summary call, and the status step crosses the budget, so the turn ends.
     prompts = _script_prompts(monkeypatch, [_STATUS_STEP])
 
     payload = _start_resume(agent.id, task.id)
@@ -528,13 +541,135 @@ async def test_a_turn_past_the_budget_ends_is_trimmed_and_continues(monkeypatch:
 
     assert len(prompts) == 1
     assert db.get_agent_trigger(payload["trigger_id"]).status == "completed"
-    snapshot = db.get_work_snapshot(activity.id)
-    assert "earlier steps were dropped for space." in snapshot.transcript[0]["content"]
-    assert "- cat /me/f0.md" in snapshot.transcript[0]["content"]
-    assistant = [item["content"] for item in snapshot.transcript if item["role"] == "assistant"]
-    assert assistant[-1] == _STATUS_STEP, "the step that crossed the budget is kept"
-    assert sum(len(item["content"]) for item in snapshot.transcript) <= 990, "trimmed to 66% of the budget"
+    untrimmed = db.get_work_snapshot(activity.id)
+    assert [item["content"] for item in untrimmed.transcript if item["role"] == "assistant"] == [
+        *earlier, _STATUS_STEP,
+    ], "the freeze appends; nothing is dropped"
+    assert (untrimmed.step_summary, untrimmed.summarized_steps) == ("", 0)
+    assert saved_chars(untrimmed) > 1500
     assert len(_resumes(agent.id, task.id)) == 1
+
+    # The next resumed turn: its first model call writes the step summary.
+    # A waiting message pauses it after its first step.
+    _queue_status_question(agent.id)
+    prompts = _script_prompts(monkeypatch, [_SUMMARY_REPLY, _BOARD_STEP])
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _queued_resume(agent.id, task.id))
+
+    assert len(prompts) == 2
+    summary_call, first_step = prompts
+    assert summary_call[0]["role"] == "system" and summary_call[0]["content"].startswith(_SUMMARY_SYSTEM_HEAD)
+    assert earlier[0] in summary_call[1]["content"], "the oldest step is folded verbatim"
+    summarized = db.get_work_snapshot(activity.id)
+    assert summarized.step_summary == _SUMMARY_REPLY
+    folded = summarized.summarized_steps
+    # The status step alone fits the target with the summary limit; one more
+    # 357-character step would not, so every earlier step is folded.
+    assert folded == len(earlier)
+    kept = [message for group in split_steps(untrimmed.transcript)[folded:] for message in group]
+    limits = read_summary_limits()
+    assert limits.cap + transcript_chars(kept) <= limits.target
+
+    # Its first execution call: preamble, then the summary, then the kept steps, then the resume.
+    heads = [
+        index for index, item in enumerate(first_step)
+        if str(item["content"]).startswith(f"Summary of your {folded} earlier steps on this work.")
+    ]
+    assert len(heads) == 1
+    head = heads[0]
+    assert first_step[head]["role"] == "user"
+    assert first_step[head]["content"].endswith(_SUMMARY_REPLY)
+    assert all(item["role"] != "assistant" for item in first_step[:head]), "only the preamble precedes it"
+    assert [item["content"] for item in first_step[head + 1:-1]] == [item["content"] for item in kept]
+    assert "Continue from where you left off" in first_step[-1]["content"]
+    assert [item["content"] for item in summarized.transcript[:len(kept)]] == [item["content"] for item in kept]
+
+    # The diagnostics row counts the summary call, as its first step.
+    detail = db.get_diagnostic(db.get_diagnostics(agent.id, limit=1)[0]["id"])
+    steps = detail["steps"]
+    assert [step["action_name"] for step in steps] == ["summarize_steps", "bm_cli"]
+    assert steps[0]["step_index"] == 0 and steps[0]["raw_response"] == _SUMMARY_REPLY
+    assert detail["total_tokens"] == sum(step["total_tokens"] for step in steps) == 24
+    assert detail["prompt_tokens"] == 16 and detail["completion_tokens"] == 8
+
+
+@pytest.mark.asyncio
+async def test_a_failed_summary_call_fails_the_turn_before_any_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    _over_budget_work(agent)
+    _frozen_steps(agent, _STATUS_STEP)
+    before = db.get_work_snapshot(activity.id)
+    assert saved_chars(before) > 1500
+    # One call only: the fake refuses a second, so no execution step can run.
+    prompts = _script_prompts(monkeypatch, [LLMError("provider unreachable")])
+
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+
+    assert outcome.trigger_status == "failed"
+    assert outcome.retryable is True
+    assert outcome.diagnostic_error == "Step summary failed: The step summary call failed: provider unreachable"
+    assert outcome.steps == []
+    assert (outcome.prompt_tokens, outcome.completion_tokens, outcome.total_tokens) == (0, 0, 0)
+    assert len(prompts) == 1 and prompts[0][0]["content"].startswith(_SUMMARY_SYSTEM_HEAD)
+    assert db.get_work_snapshot(activity.id).model_dump() == before.model_dump(), "the snapshot is untouched"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_shorter_request_records_the_first_call_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    _over_budget_work(agent)  # the summary limit is 150 characters
+    _frozen_steps(agent, _STATUS_STEP)
+    before = db.get_work_snapshot(activity.id)
+    # An over-limit reply, then the shorter request fails: two calls, no execution step.
+    prompts = _script_prompts(monkeypatch, ["x" * 200, LLMError("stalled")])
+
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+
+    assert outcome.trigger_status == "failed" and outcome.retryable is True
+    assert outcome.diagnostic_error == "Step summary failed: The step summary call failed: stalled"
+    assert (outcome.prompt_tokens, outcome.completion_tokens, outcome.total_tokens) == (8, 4, 12)
+    assert len(prompts) == 2
+    assert db.get_work_snapshot(activity.id).model_dump() == before.model_dump()
+
+
+class _ActivityRecorder(NullRuntimeEventSink):
+    """Keeps every broadcast activity event."""
+
+    def __init__(self) -> None:
+        self.events: list[str] = []
+
+    async def broadcast_activity(
+        self, event: str, detail: str, agent_name: str | None = None, extra: dict[str, Any] | None = None,
+    ) -> None:
+        self.events.append(event)
+
+
+@pytest.mark.asyncio
+async def test_work_cancelled_during_the_summary_skips_the_turn(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    activity = activity_runtime.get_active_work_activity(agent.id)
+    _over_budget_work(agent)
+    _frozen_steps(agent, _STATUS_STEP)
+    recorder = _ActivityRecorder()
+    runtime_events.set_sink(recorder)
+    # The operator cancels the task while the summary call is out; the fake
+    # refuses a second call, so no execution step can run.
+    prompts = _script_prompts(
+        monkeypatch, ["- read /me/f0.md to /me/f3.md"],
+        on_call=lambda _call: cancel_task_as_operator(task.id, reason=BOSS_CANCEL_REASON),
+    )
+
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+
+    assert outcome.trigger_status == "skipped"
+    assert outcome.diagnostic_error == "the work ended while its earlier steps were being summarized"
+    assert outcome.steps == []
+    assert len(prompts) == 1 and prompts[0][0]["content"].startswith(_SUMMARY_SYSTEM_HEAD)
+    assert "agent_error" not in recorder.events
+    assert "agent_updated" in recorder.events
+    assert db.get_task(task.id).status == "cancelled"
+    assert db.get_work_snapshot(activity.id) is None
 
 
 @pytest.mark.asyncio
@@ -555,8 +690,12 @@ async def test_a_single_step_over_the_budget_still_moves_on(monkeypatch: pytest.
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _queued_resume(agent.id, task.id))
     assert len(prompts) == 1
     second = db.get_work_snapshot(activity.id)
-    assert [item["content"] for item in second.transcript if item["role"] == "assistant"] == [_BOARD_STEP]
-    assert "- status" in second.transcript[0]["content"], "the earlier step is named in the marker"
+    # One step alone over the budget cannot be folded (no summary call): the
+    # freeze appends, and the next turn's summary folds the older step.
+    assert [item["content"] for item in second.transcript if item["role"] == "assistant"] == [
+        _STATUS_STEP, _BOARD_STEP,
+    ]
+    assert second.step_summary == ""
     assert len(_resumes(agent.id, task.id)) == 1
 
 
@@ -566,13 +705,16 @@ def _cat_step(index: int) -> str:
 
 
 @pytest.mark.asyncio
-async def test_after_a_budget_boundary_the_next_turn_runs_a_run_of_steps(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The regression for trimming only to the budget: every later turn then ran one step.
+async def test_after_a_budget_boundary_the_next_turn_summarizes_then_runs_a_run_of_steps(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression for folding only to the budget: every later turn then ran one step.
 
     Each step reads a same-size file, so every step is the same size. The
-    budget is 4.5 steps and the trim keeps 33% of it (about 1.5 steps), so
-    after one budget boundary the next turn has room for several steps before
-    it reaches the budget again.
+    budget is 4.5 steps, the fold keeps 33% of it (about 1.5 steps) for the
+    summary limit (10%) plus the kept steps, so after one budget boundary the
+    next turn summarizes first and then has room for several steps before it
+    reaches the budget again.
     """
     agent, task = _working_agent()
     activity = activity_runtime.get_active_work_activity(agent.id)
@@ -582,34 +724,41 @@ async def test_after_a_budget_boundary_the_next_turn_runs_a_run_of_steps(monkeyp
 
     # Measure one step: a turn paused by a waiting message after its first step.
     _script_prompts(monkeypatch, [_cat_step(1)])
-    db.create_agent_trigger(
-        agent_id=agent.id, trigger_type="human_chat", source_channel="chat",
-        payload={"content": "Status?", "from_name": "Human Operator"},
-    )
+    _queue_status_question(agent.id)
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
     db.delete_queued_triggers(agent.id)
     step = sum(len(item["content"]) for item in db.get_work_snapshot(activity.id).transcript)
     budget = step * 9 // 2
-    target = budget * 33 // 100
     db.set_setting("work_snapshot_max_chars", str(budget), "simulation")
     db.set_setting("work_snapshot_trim_percent", "33", "simulation")
     config.reload()
 
-    # The first boundary: the saved step plus four more passes 4.5 steps.
+    # The first boundary: the saved step plus four more passes 4.5 steps. The
+    # saved work started under the budget, so there was no summary call.
     first = _script_prompts(monkeypatch, [_cat_step(index) for index in range(2, 10)])
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
     assert len(first) == 4
-    trimmed = db.get_work_snapshot(activity.id)
-    assert "earlier steps were dropped for space." in trimmed.transcript[0]["content"]
-    assert sum(len(item["content"]) for item in trimmed.transcript) <= target
+    untrimmed = db.get_work_snapshot(activity.id)
+    assert [item["content"] for item in untrimmed.transcript if item["role"] == "assistant"] == [
+        _cat_step(index) for index in range(1, 6)
+    ]
+    assert untrimmed.step_summary == ""
 
-    # The next turn has room again: more than one step before the next boundary.
-    second = _script_prompts(monkeypatch, [_cat_step(index) for index in range(6, 14)])
+    # The next turn folds first, then has room again: more than one step before the next boundary.
+    second = _script_prompts(
+        monkeypatch, ["- read /me/notes/f1.md to f4.md: 400 x each", *[_cat_step(index) for index in range(6, 14)]],
+    )
     payload = _queued_resume(agent.id, task.id)
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), payload)
-    assert len(second) >= 2, "a trim to just under the budget would end this turn after one step"
-    assert len(second) < 8, "the turn still ended at the budget"
+    assert second[0][0]["content"].startswith(_SUMMARY_SYSTEM_HEAD), "the summary is the turn's first call"
+    steps_run = len(second) - 1
+    assert steps_run >= 2, "a fold to just under the budget would end this turn after one step"
+    assert steps_run < 8, "the turn still ended at the budget"
     assert db.get_agent_trigger(payload["trigger_id"]).status == "completed"
     again = db.get_work_snapshot(activity.id)
-    assert sum(len(item["content"]) for item in again.transcript) <= target
+    assert again.summarized_steps == 4 and again.step_summary.startswith("- read /me/notes/f1.md")
+    groups = split_steps(again.transcript)
+    kept = [message for group in groups[: len(groups) - steps_run] for message in group]
+    limits = read_summary_limits()
+    assert limits.cap + transcript_chars(kept) <= limits.target
     assert len(_resumes(agent.id, task.id)) == 1

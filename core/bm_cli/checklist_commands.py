@@ -8,11 +8,6 @@ body as its note. The command acts only on the turn's bound task
 (``work_binding.bound_task_id``), so a detached turn has none and a
 checklist can never land on the wrong task. This module is transport only:
 it parses, calls the domain, and formats.
-
-A ``done`` or ``skip`` also declares ``work_turn_boundary`` with a short
-hand-off note (core/agent_loop/cli_turn_result.py documents the contract).
-The command declares it in every turn type; only the execution loop acts on
-it, by ending the turn and replacing the work's saved steps with the note.
 """
 
 from __future__ import annotations
@@ -25,14 +20,12 @@ from core.agent_loop.work_binding import bound_task_id
 from core.bm_cli.command_registry import CHECKLIST_FORMS
 from core.bm_cli.results import error_result, success_result
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
-from core.default_prompts import render_default_prompt
 from core.models import Task
 from core.models.task import TaskChecklistItem
 from core.tasking.checklist import (
     ChecklistError,
     add_checklist_items,
     format_checklist_for_context,
-    open_checklist_items,
     resolve_checklist_item,
 )
 
@@ -41,8 +34,6 @@ _BAD_NUMBER = "Name the item by its number, e.g. checklist done 2."
 _EMPTY_ADD = "checklist add needs a body: one item per line."
 _EMPTY_SKIP = "checklist skip <n> needs a body: why the item is not needed."
 _EMPTY_VIEW = ["empty — add items with checklist add"]
-_HANDOFF_PROMPT = "internal_loop_execution_checklist_handoff"
-_HANDOFF_PATHS = {"number", "text", "open_items"}
 # One leading list marker: "- ", "* ", "• ", "3. " or "3) ".
 _LIST_MARKER_RE = re.compile(r"^(?:[-*•]|\d+[.)])\s+")
 
@@ -73,9 +64,8 @@ def handle_checklist(
         ``checklist`` for the view and ``add``, and
         ``checklist_item_resolved`` for ``done`` and ``skip`` (liveness
         counts that kind as progress). ``add``, ``done`` and ``skip`` declare
-        a ``task_updated`` activity so the Tasks place refreshes; ``done``
-        and ``skip`` also declare ``work_turn_boundary`` with the hand-off
-        note. Every user error is an ``error_result``: no current task, an
+        a ``task_updated`` activity so the Tasks place refreshes. Every user
+        error is an ``error_result``: no current task, an
         unknown form (with the forms listed), a missing or malformed item
         number, an empty ``add`` or ``skip`` body, or the domain's
         ``ChecklistError`` sentence (an item number past the end, a task
@@ -157,7 +147,7 @@ def _resolve(
     if status == "skipped" and note is None:
         return error_result(parsed.raw, _EMPTY_SKIP, cwd=context.cwd)
     try:
-        item, items = resolve_checklist_item(task.id, number, status=status, note=note)
+        _item, items = resolve_checklist_item(task.id, number, status=status, note=note)
     except ChecklistError as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)
     return _answer(
@@ -168,7 +158,6 @@ def _resolve(
         kind="checklist_item_resolved",
         detail=f"marked checklist item {number} {status}",
         changed=True,
-        handoff=_handoff(number, item, task.model_copy(update={"checklist": items})),
     )
 
 
@@ -181,7 +170,6 @@ def _answer(
     kind: str,
     detail: str,
     changed: bool = False,
-    handoff: str | None = None,
 ) -> BossModCliResult:
     """The success result: the checklist section and the declared side effects."""
     data: dict[str, object] = {
@@ -194,8 +182,6 @@ def _answer(
             "detail": f'{context.agent.name} updated the checklist on "{task.title}"',
             "extra": {"agent_id": context.agent.id, "task_id": task.id},
         }
-    if handoff is not None:
-        data["work_turn_boundary"] = {"handoff": handoff}
     return success_result(
         command=parsed.raw,
         detail=f"{context.agent.name} {detail} via BossMod CLI",
@@ -203,15 +189,6 @@ def _answer(
         data=data,
         sections=[(f"CHECKLIST — {task.title}", format_checklist_for_context(items) or _EMPTY_VIEW)],
         cwd=context.cwd,
-    )
-
-
-def _handoff(number: int, item: TaskChecklistItem, task: Task) -> str:
-    """The note that replaces the work's saved steps once item ``number`` is checked off."""
-    return render_default_prompt(
-        _HANDOFF_PROMPT,
-        {"number": number, "text": item.text, "open_items": bool(open_checklist_items(task))},
-        allowed_paths=_HANDOFF_PATHS,
     )
 
 

@@ -1,7 +1,9 @@
 /**
  * Node harness: Settings → System → AI Output renders the compaction knobs,
  * and a change saves through the existing settings PUT. Context Window
- * renders the standing-prefs limits. Threads renders the routing and
+ * renders the standing-prefs limits and the work-context settings (stored
+ * under simulation), and a refused work save shows the server's message on
+ * its row. Threads renders the routing and
  * idle-check settings, with a BossModSwitch for the idle-check flag, and a
  * refused save shows the server's message on its row. System AI lives
  * under AI Connections. Advanced renders the Global auto-approve switch,
@@ -283,6 +285,11 @@ async function main() {
         setting("conversation_compaction_keep_percent", "50", "context"),
         setting("conversation_notes_max_percent", "10", "context"),
         setting("conversation_history_ceiling_percent", "150", "context"),
+        // Stored under simulation (db/settings.py); shown on Context Window.
+        setting("work_snapshot_max_chars", "120000", "simulation"),
+        setting("work_snapshot_trim_percent", "50", "simulation"),
+        setting("work_snapshot_summary_percent", "10", "simulation"),
+        setting("work_snapshot_chat_view_max_chars", "24000", "simulation"),
         setting("channel_response_round_cap", "64", "llm"),
         setting("channel_router_transcript_messages", "10", "llm"),
         setting("channel_idle_check_enabled", "true", "llm"),
@@ -294,6 +301,7 @@ async function main() {
     ];
     const root = new FakeEl("div");
     await SystemSection.render(root);
+    const simulationOrder = orderedKeys(root);
     const openedOnSimulation = (await snapshot(root)).some((row) => row.key === "tick_interval")
         && (await snapshot(root)).every((row) => row.key !== "system_ai_connection");
     const savesBeforeOpen = saves.length;
@@ -354,6 +362,22 @@ async function main() {
     delay.value = "60";
     await dispatchChange(delay);
     const delayErrorAfterFix = errorText(root, "channel_idle_check_delay_seconds");
+
+    // A refused work-context save shows the server's message on that row only.
+    await openCategory(root, "context");
+    const orderDetail = "Work summary size (50%) must be lower than Work kept after summarizing (50%).";
+    world.reject.work_snapshot_summary_percent = orderDetail;
+    const summaryInput = root.querySelectorAll(".setting-input")
+        .find((control) => control.dataset.settingKey === "work_snapshot_summary_percent");
+    const savesBeforeWork = saves.length;
+    summaryInput.value = "50";
+    await dispatchChange(summaryInput);
+    const workRefusal = {
+        saves: saves.slice(savesBeforeWork),
+        error: errorText(root, "work_snapshot_summary_percent"),
+        otherError: errorText(root, "work_snapshot_trim_percent"),
+    };
+    delete world.reject.work_snapshot_summary_percent;
     const systemFetches = fetches.slice();
     const systemInvalidations = invalidations.slice();
 
@@ -452,6 +476,8 @@ async function main() {
         degraded,
         context,
         contextOrder,
+        simulationOrder,
+        workRefusal,
         threadsHeading,
         threadsOrder,
         threadsInputs,

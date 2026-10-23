@@ -427,6 +427,10 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
         "conversation_compaction_keep_percent",
         "conversation_notes_max_percent",
         "conversation_history_ceiling_percent",
+        "work_snapshot_max_chars",
+        "work_snapshot_trim_percent",
+        "work_snapshot_summary_percent",
+        "work_snapshot_chat_view_max_chars",
     ]
     # The switch is a switch mount, not a text input, in its own place.
     assert payload["contextOrder"] == [
@@ -440,6 +444,10 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
         "conversation_compaction_keep_percent",
         "conversation_notes_max_percent",
         "conversation_history_ceiling_percent",
+        "work_snapshot_max_chars",
+        "work_snapshot_trim_percent",
+        "work_snapshot_summary_percent",
+        "work_snapshot_chat_view_max_chars",
     ]
     rows = _by_key(payload["context"])
     line = rows["standing_prefs_line_max_chars"]

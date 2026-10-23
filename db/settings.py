@@ -220,10 +220,17 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # see only the most recent steps that fit the smaller chat-view budget.
     ("work_snapshot_max_chars", "120000", "simulation"),
     # Once saved work passes work_snapshot_max_chars, the oldest steps are
-    # dropped until it fits this percentage of it. The gap leaves room for a
-    # run of steps before the next trim. A whole number from 1 to 99
-    # (freeze_work_turn refuses anything else).
+    # folded into the step summary until it fits this percentage of it. The
+    # gap leaves room for a run of steps before the next trim. A whole number
+    # from 1 to 99 (work_summary refuses anything else).
     ("work_snapshot_trim_percent", "50", "simulation"),
+    # The step summary's size limit, as a percentage of
+    # work_snapshot_max_chars (core/agent_loop/work_summary.py). Once saved
+    # work passes the budget, the oldest steps are folded into a summary of
+    # at most this size, and the newest steps that fit the rest of
+    # work_snapshot_trim_percent stay word for word. A whole number from 1 to
+    # work_snapshot_trim_percent - 1 (work_summary refuses anything else).
+    ("work_snapshot_summary_percent", "10", "simulation"),
     ("work_snapshot_chat_view_max_chars", "24000", "simulation"),
     # Checkpoints (a "you are repeating steps" resume) before a no-progress
     # trip blocks the task.
@@ -263,8 +270,7 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # The most characters one `cat` or `rr` returns, counted as rendered to
     # the model (core/bm_cli/read_window.py). A longer read returns the whole
     # lines that fit plus a read-on note naming the `rr` command for the rest.
-    # A quarter of work_snapshot_max_chars, so two full reads fit what a trim
-    # keeps (work_snapshot_trim_percent).
+    # A quarter of work_snapshot_max_chars.
     ("cli_max_read_chars", "30000", "advanced"),
     # Most rows `backlog list` shows (core/bm_cli/backlog_commands.py).
     ("cli_backlog_list_limit", "50", "advanced"),
@@ -410,6 +416,8 @@ def seed_defaults() -> None:
     reconcile_program_paths_prompt_line()
     reconcile_work_commit_target_prompt_line()
     reconcile_checklist_prompt_lines()
+    # After the pass above: its new line is this pass's old line.
+    reconcile_checklist_context_prompt_line()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -1147,6 +1155,52 @@ def reconcile_checklist_prompt_lines() -> None:
         _CHECKLIST_PROMPT_LINES_RECONCILED,
         missing_row_label="checklist",
         missing_line_label="checklist",
+    )
+
+
+# Checklist, second pass: a check-off no longer clears the agent's saved
+# steps, so the checklist rule line drops its last sentence. (old, new),
+# each without its newline, copied verbatim from the shipped file before and
+# after the edit; the old line is the first rule line that
+# _CHECKLIST_PROMPT_LINE_EDITS inserts.
+_CHECKLIST_CONTEXT_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_execution": (
+        (
+            "  - work with several distinct parts: list the parts first with cli `checklist add` (body: one item "
+            "per line), then work one part at a time. When a part is finished, mark it with `checklist done <n>` "
+            "(body: what you found or where the result is), or `checklist skip <n>` (body: why it is not needed). "
+            "Checking an item off clears your steps on that part, and the next part starts fresh with your "
+            "checklist under Current Task; put anything later parts need in the note, or in a file the note names",
+            "  - work with several distinct parts: list the parts first with cli `checklist add` (body: one item "
+            "per line), then work one part at a time. When a part is finished, mark it with `checklist done <n>` "
+            "(body: what you found or where the result is), or `checklist skip <n>` (body: why it is not needed)",
+        ),
+    ),
+}
+_CHECKLIST_CONTEXT_PROMPT_LINE_RECONCILED = "checklist_context_prompt_line_reconciled"
+
+
+def reconcile_checklist_context_prompt_line() -> None:
+    """Stop telling the stored execution contract that a check-off clears steps, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_checklist_prompt_lines`, driven by
+    ``_CHECKLIST_CONTEXT_PROMPT_LINE_EDITS``: the checklist rule line drops
+    its last sentence ("Checking an item off clears your steps on that part,
+    …"), because a check-off no longer touches the agent's saved work. A row
+    equal to the shipped default is skipped. A row without the exact old
+    line keeps its bytes, and a warning names the key and the line, so the
+    operator can review it by hand. Later calls, once the marker is
+    recorded, are no-ops.
+
+    Must run after :func:`reconcile_checklist_prompt_lines`: that pass's new
+    line is this pass's old line.
+    """
+    _reconcile_prompt_lines(
+        _CHECKLIST_CONTEXT_PROMPT_LINE_EDITS,
+        _CHECKLIST_CONTEXT_PROMPT_LINE_RECONCILED,
+        missing_row_label="checklist context",
+        missing_line_label="checklist context",
     )
 
 

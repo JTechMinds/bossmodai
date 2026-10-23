@@ -729,6 +729,11 @@ CREATE TABLE IF NOT EXISTS work_snapshots (
     fingerprints             TEXT NOT NULL DEFAULT '[]',
     interludes               TEXT NOT NULL DEFAULT '[]',
     no_progress_checkpoints  INTEGER NOT NULL DEFAULT 0,
+    -- The agent's model's summary of the oldest steps, folded out of
+    -- transcript (core/agent_loop/work_summary.py).
+    step_summary             TEXT NOT NULL DEFAULT '',
+    -- How many steps step_summary covers.
+    summarized_steps         INTEGER NOT NULL DEFAULT 0,
     created_at               TIMESTAMP DEFAULT current_timestamp,
     updated_at               TIMESTAMP DEFAULT current_timestamp
 );

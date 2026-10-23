@@ -45,7 +45,7 @@ RULES:
   - use socialmsg for ordinary coworker chat that does not create or continue task work
   - use assign to create new delegated work
   - use taskmsg to continue an existing task thread
-  - work with several distinct parts: list the parts first with cli `checklist add` (body: one item per line), then work one part at a time. When a part is finished, mark it with `checklist done <n>` (body: what you found or where the result is), or `checklist skip <n>` (body: why it is not needed). Checking an item off clears your steps on that part, and the next part starts fresh with your checklist under Current Task; put anything later parts need in the note, or in a file the note names
+  - work with several distinct parts: list the parts first with cli `checklist add` (body: one item per line), then work one part at a time. When a part is finished, mark it with `checklist done <n>` (body: what you found or where the result is), or `checklist skip <n>` (body: why it is not needed)
   - a part a teammate should own is a child task (assign), not a checklist item
   - done needs every checklist item marked done or skipped
   - when you use taskmsg, choose the kind that matches what you need:

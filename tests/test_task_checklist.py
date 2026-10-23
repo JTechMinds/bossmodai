@@ -4,9 +4,8 @@ Covers the checklist plan (strategy-docs/agentTaskChecklist_feature_10202026_179
 the item model, the ``task_checklists`` side table read through every task
 query, the domain rules (append only, resolve by number), the ``checklist``
 CLI command and its declared side effects, liveness, the agent's ``done``
-check (the operator's completion is not gated), what the agent sees under
-Current Task and in the task CLI views, the ``work_turn_boundary`` contract in
-``map_cli_result``, and the hand-off text. Everything runs against the
+check (the operator's completion is not gated), and what the agent sees
+under Current Task and in the task CLI views. Everything runs against the
 isolated test database and roots (conftest.py). No LLM.
 """
 
@@ -23,7 +22,6 @@ import db
 from core import config
 from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
-from core.agent_loop.cli_turn_result import CliSideEffectError, map_cli_result
 from core.agent_loop.liveness import command_mutates_project
 from core.agent_loop.turn_context import _get_current_task
 from core.agent_loop.work_binding import bind_turn
@@ -31,7 +29,6 @@ from core.bm_cli.checklist_commands import parse_checklist_body
 from core.bm_cli.command_registry import CHECKLIST_FORMS
 from core.bm_cli.runtime import execute_bm_cli
 from core.bm_cli.types import BossModCliResult
-from core.default_prompts import render_default_prompt
 from core.llm.context_builder import _format_task
 from core.models import Agent, Task
 from core.models.message import HUMAN_SENDER_ID
@@ -356,10 +353,10 @@ def test_list_markers_are_stripped_once() -> None:
     assert [item.text for item in db.get_task(task.id).checklist] == ["Audit core", "Audit db"]
 
 
-def test_changes_declare_task_updated_and_check_offs_declare_the_boundary() -> None:
+def test_changes_and_check_offs_declare_task_updated() -> None:
     agent, task = _working()
     view = _cli(agent, "checklist")
-    assert "activity" not in view.data and "work_turn_boundary" not in view.data
+    assert "activity" not in view.data
 
     added = _cli(agent, "checklist add", "Audit core\nAudit db")
     assert added.data["activity"] == {
@@ -367,20 +364,11 @@ def test_changes_declare_task_updated_and_check_offs_declare_the_boundary() -> N
         "detail": 'Charles updated the checklist on "Audit the codebase"',
         "extra": {"agent_id": agent.id, "task_id": task.id},
     }
-    assert "work_turn_boundary" not in added.data
 
     done = _cli(agent, "checklist done 1", "clean")
     assert done.data["activity"]["event"] == "task_updated"
-    assert done.data["work_turn_boundary"] == {
-        "handoff": render_default_prompt(
-            "internal_loop_execution_checklist_handoff",
-            {"number": 1, "text": "Audit core", "open_items": True},
-            allowed_paths={"number", "text", "open_items"},
-        ),
-    }
     skipped = _cli(agent, "checklist skip 2", "not needed")
     assert skipped.data["activity"]["event"] == "task_updated"
-    assert "Every item is checked off. Finish the task with done." in skipped.data["work_turn_boundary"]["handoff"]
 
 
 # ─── liveness ───
@@ -485,70 +473,3 @@ def test_an_owner_sees_a_delegated_childs_checklist_with_task() -> None:
     assert seen.data["task"]["checklist"][1] == {"text": "Audit settings.py", "status": "open", "note": None}
     # The owner's own turn has no bound task, so it cannot write the child's checklist.
     assert not _cli(owner, "checklist done 2", "done").ok
-
-
-# ─── the work_turn_boundary contract (map_cli_result) ───
-
-
-def _boundary_result(*, ok: bool = True, boundary: Any) -> BossModCliResult:
-    return BossModCliResult(
-        command="checklist done 1", ok=ok, detail="Charles marked checklist item 1 done",
-        prompt_content="BOSSMOD CLI RESULT", kind="checklist_item_resolved",
-        data={"task_id": "t1", "checklist": [], "work_turn_boundary": boundary},
-    )
-
-
-def test_a_declared_boundary_reaches_the_turn_result() -> None:
-    agent = _agent()
-    mapped = map_cli_result(agent, _boundary_result(boundary={"handoff": "Next part."}), command="checklist done 1")
-    assert mapped["work_turn_boundary"] == "Next part."
-    assert mapped["counts_as_progress"] is True
-
-
-@pytest.mark.parametrize(
-    "boundary",
-    ["Next part.", {"handoff": ""}, {"handoff": "  "}, {"handoff": 3}, {}, {"handoff": "x", "extra": 1}, None],
-)
-def test_a_malformed_boundary_raises(boundary: Any) -> None:
-    agent = _agent()
-    with pytest.raises(CliSideEffectError):
-        map_cli_result(agent, _boundary_result(boundary=boundary), command="checklist done 1")
-
-
-def test_a_failed_command_never_carries_a_boundary() -> None:
-    agent = _agent()
-    mapped = map_cli_result(
-        agent, _boundary_result(ok=False, boundary={"handoff": "Next part."}), command="checklist done 1",
-    )
-    assert "work_turn_boundary" not in mapped
-    plain = BossModCliResult(
-        command="checklist", ok=True, detail="d", prompt_content="p", kind="checklist", data={"checklist": []},
-    )
-    assert "work_turn_boundary" not in map_cli_result(agent, plain, command="checklist")
-
-
-# ─── the hand-off text ───
-
-
-def _handoff(open_items: bool) -> str:
-    return render_default_prompt(
-        "internal_loop_execution_checklist_handoff",
-        {"number": 2, "text": "Audit db/tasks.py", "open_items": open_items},
-        allowed_paths={"number", "text", "open_items"},
-    )
-
-
-def test_the_handoff_renders_both_branches() -> None:
-    lead = (
-        'You checked off item 2 of your checklist ("Audit db/tasks.py"). Your steps on it were cleared so the '
-        "next part starts with a small context. What you recorded is in your checklist under Current Task, and "
-        "the files you wrote are unchanged; read again anything you still need.\n"
-    )
-    still_open = _handoff(True)
-    assert still_open.startswith(lead)
-    assert "Continue with the next open item." in still_open
-    assert "Every item is checked off." not in still_open
-    finished = _handoff(False)
-    assert finished.startswith(lead)
-    assert "Every item is checked off. Finish the task with done." in finished
-    assert "Continue with the next open item." not in finished

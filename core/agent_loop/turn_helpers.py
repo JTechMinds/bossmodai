@@ -19,10 +19,11 @@ from core.agent_loop.task_origin_mirrors import (
 )
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.agent_loop.work_binding import bound_work_activity, is_detached
+from core.agent_loop.work_summary import StepSummaryRun, WorkEndedError, WorkSummaryError, summarize_saved_work
 from core.bm_cli.managed_writer import ManagedWriteProgress
 from core.default_prompts import load_default_prompt, render_default_prompt
 from core.extensions.registry import get_discovery
-from core.models import Agent
+from core.models import Activity, Agent
 from core.runtime.events import runtime_events as manager
 from core.tasking.service import append_task_event
 import db
@@ -554,6 +555,116 @@ async def _skip_turn(
         ),
         start=start,
     )
+
+
+_WORK_ENDED_DURING_SUMMARY = "the work ended while its earlier steps were being summarized"
+
+
+async def summarize_before_restore(
+    *,
+    agent: Agent,
+    trigger: dict[str, Any],
+    trigger_type: str,
+    mode: str,
+    model: str,
+    model_source: str,
+    api_config: dict[str, Any],
+    work_activity: Activity,
+    context: list[dict[str, Any]],
+    start: float,
+) -> tuple[StepSummaryRun | None, TurnOutcome | None]:
+    """Fold over-budget saved work into its step summary before a resumed turn restores it.
+
+    Called by ``loop.run_turn`` on the execution resume branch, before
+    ``work_snapshot.restore_work_turn``, so the turn's first model call sees
+    the smaller context (``work_summary.summarize_saved_work``). When the
+    fold cannot go on it ends the turn itself, the way :func:`_skip_turn`
+    does:
+
+    - the work ended during the summary call (``WorkEndedError``): the turn
+      is skipped. Nothing is left to do, and the dispatcher completes a
+      skipped trigger without a retry or a new resume;
+    - the summary failed (``WorkSummaryError``, a failed model call
+      included): the turn fails as retryable and records the tokens the
+      fold spent. No step has run and the snapshot is untouched, so a retry
+      replays nothing.
+
+    Args:
+        agent: The agent whose work is resumed.
+        trigger: The live trigger, for the diagnostics row.
+        trigger_type: The trigger's type.
+        mode: The activation mode.
+        model: The model this turn runs on; it writes the summary.
+        model_source: Where the model came from, for diagnostics.
+        api_config: The turn's connection: ``api_base``, ``api_key`` and
+            ``extra_body``.
+        work_activity: The live work activity being resumed.
+        context: The freshly built context, recorded as the turn's initial
+            context when the turn ends here.
+        start: The turn's ``time.monotonic()`` start.
+
+    Returns:
+        ``(run, None)`` when the turn goes on: the fold, or ``None`` when
+        nothing needed folding. ``(None, outcome)`` when the turn ended
+        here; the caller returns that outcome.
+
+    Raises:
+        core.config.ConfigError: A work-context setting is missing or
+            invalid.
+    """
+    try:
+        run = await summarize_saved_work(agent=agent, activity=work_activity, model=model, api_config=api_config)
+    except WorkEndedError as exc:
+        logger.info("Skipping %s's turn on task %s: %s", agent.name, work_activity.task_id, exc)
+        result = {
+            "event": "agent_updated",
+            "detail": f"{agent.name}: {_WORK_ENDED_DURING_SUMMARY} — turn skipped",
+            "agent_name": agent.name,
+        }
+        await manager.broadcast_activity(**result)
+        return None, await _finalize_turn(
+            agent=agent,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            initial_context_json=json.dumps(context),
+            outcome=TurnOutcome.skipped(result=result, error=_WORK_ENDED_DURING_SUMMARY, steps=[]),
+            start=start,
+        )
+    except WorkSummaryError as exc:
+        logger.warning("Step summary failed for %s on task %s: %s", agent.name, work_activity.task_id, exc)
+        result = {
+            "event": "agent_error",
+            "detail": f"{agent.name} could not summarize its earlier steps: {exc}",
+            "agent_name": agent.name,
+        }
+        await manager.broadcast_activity(**result)
+        return None, await _finalize_turn(
+            agent=agent,
+            trigger=trigger,
+            trigger_type=trigger_type,
+            mode=mode,
+            model=model,
+            model_source=model_source,
+            initial_context_json=json.dumps(context),
+            outcome=TurnOutcome.failure(
+                # No step has run and the snapshot is untouched: a retry replays nothing.
+                retryable=True,
+                result=result,
+                error=f"Step summary failed: {exc}",
+                action=None,
+                action_summary="",
+                raw_response="",
+                prompt_tokens=exc.prompt_tokens,
+                completion_tokens=exc.completion_tokens,
+                total_tokens=exc.total_tokens,
+            ),
+            start=start,
+        )
+    return run, None
+
 
 async def _finalize_turn(
     *,
