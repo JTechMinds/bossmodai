@@ -205,3 +205,21 @@ def test_vendor_code_is_confined_to_its_extension():
                 assert not (node.module or "").startswith(
                     ("db", "core.llm", "core.config")
                 ), path
+
+
+def test_unrelated_legacy_provider_keeps_global_images(providers):
+    from db.managed_connections import image_capability, routed_images, agent_images
+    from db.model_capabilities import set_supports_images
+    first = resolve_provider('alpha-model')
+    first.provider_action('connect', {})
+    connection = next(c for c in db.list_connections() if c.api_base_url == 'extension://alpha-model')
+    set_supports_images(connection.model, True)
+    assert image_capability(connection)
+    assert routed_images(connection.model, connection.api_base_url)
+    from types import SimpleNamespace
+    assert agent_images(SimpleNamespace(connection_id=connection.id))
+    set_supports_images(connection.model, False)
+    assert not image_capability(connection)
+    set_supports_images(connection.model, True)
+    registry.set_enabled('alpha-model', False)
+    assert not image_capability(connection)

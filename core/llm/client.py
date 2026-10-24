@@ -493,7 +493,8 @@ async def completion(
     # The raw model name is the image-capability key, so expand before the
     # provider prefix is added; both the call and the stream rebuild below
     # see the expanded list.
-    messages = expand_attachment_messages(messages, model=model)
+    from db.managed_connections import routed_images
+    messages = expand_attachment_messages(messages, model=model, image_capable=routed_images(model, api_base))
 
     if temperature is None:
         temperature = config.get_float("default_temperature") or 0.7

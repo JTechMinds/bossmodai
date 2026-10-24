@@ -458,6 +458,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _create_model_capabilities_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
     _link_agents_to_connections(con)
+    _ensure_minimal_thinking_choice(con)
     _add_column_if_missing(
         con, "tasks", "origin_attachment_ids", "TEXT",
     )
@@ -675,7 +676,7 @@ def _raise_default_no_progress_threshold(con: SQLiteCompatConnection) -> None:
 
 _THINKING_COLUMN = (
     "VARCHAR NOT NULL DEFAULT 'default' CHECK ({col} IN "
-    "('default','off','low','medium','high','xhigh'))"
+    "('default','off','minimal','low','medium','high','xhigh'))"
 )
 # Columns retired when an agent moved to one live AI connection.
 _RETIRED_AGENT_MODEL_COLUMNS = (
@@ -2123,3 +2124,44 @@ def reset_database() -> None:
     shutil.rmtree(standing_prefs_root())
 
     init_db()
+
+
+def _ensure_minimal_thinking_choice(con: SQLiteCompatConnection) -> None:
+    """Widen existing agent/snapshot CHECKs without changing stored choices.
+
+    Preserve the actual table definition, every column, index and trigger.
+    Rebuild both tables atomically with foreign keys temporarily disabled,
+    following the other SQLite table migrations in this module.
+    """
+    tables = [(table, _table_sql(con, table)) for table in ("agents", "agent_snapshots")]
+    tables = [(table, sql) for table, sql in tables if sql and "'minimal'" not in sql]
+    if not tables:
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute("BEGIN TRANSACTION")
+        for table, sql in tables:
+            widened = re.sub(r"('off'\s*,\s*)'low'", r"\1'minimal','low'", sql)
+            if widened == sql:
+                raise RuntimeError(f"Cannot widen thinking constraints on {table}")
+            objects = con.execute(
+                "SELECT sql FROM sqlite_master WHERE tbl_name = ? "
+                "AND type IN ('index', 'trigger') AND sql IS NOT NULL", [table]
+            ).fetchall()
+            temporary = table + "__thinking_new"
+            create = re.sub(r'^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?[\w\"`\[\]]+',
+                            'CREATE TABLE ' + temporary, widened, count=1, flags=re.I)
+            con.execute(create)
+            columns = ', '.join('"' + row[1] + '"' for row in con.execute(
+                f'PRAGMA table_info({table})').fetchall())
+            con.execute(f'INSERT INTO {temporary} ({columns}) SELECT {columns} FROM {table}')
+            con.execute(f'DROP TABLE {table}')
+            con.execute(f'ALTER TABLE {temporary} RENAME TO {table}')
+            for (statement,) in objects:
+                con.execute(statement)
+        con.execute("COMMIT")
+    except Exception:
+        con.execute("ROLLBACK")
+        raise
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")

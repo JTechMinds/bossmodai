@@ -14,8 +14,8 @@ from __future__ import annotations
 import json
 from typing import Any, Literal, get_args
 
-ThinkingLevel = Literal["off", "low", "medium", "high", "xhigh"]
-ThinkingChoice = Literal["default", "off", "low", "medium", "high", "xhigh"]
+ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+ThinkingChoice = Literal["default", "off", "minimal", "low", "medium", "high", "xhigh"]
 ThinkingLevels = dict[ThinkingLevel, dict[str, Any]]
 
 THINKING_LEVELS: tuple[str, ...] = get_args(ThinkingLevel)

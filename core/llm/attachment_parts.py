@@ -98,6 +98,7 @@ def expand_attachment_messages(
     messages: list[dict[str, Any]],
     *,
     model: str,
+    image_capable: bool | None = None,
 ) -> list[dict[str, Any]]:
     """Return a copy of ``messages`` ready for the model.
 
@@ -127,7 +128,7 @@ def expand_attachment_messages(
     """
     expanded: list[dict[str, Any]] = []
     inline_cap: int | None = None
-    vision: bool | None = None
+    vision: bool | None = image_capable
     carriers = [index for index, message in enumerate(messages) if message.get(CLI_IMAGE_PATHS_KEY)]
     newest_images = carriers[-1] if carriers else None
     for index, message in enumerate(messages):

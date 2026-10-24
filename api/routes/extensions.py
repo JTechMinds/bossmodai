@@ -48,7 +48,7 @@ from core.extensions.setup_runner import SetupAlreadyRunning, entry_setup_status
 from core.llm.routing import agent_model
 from core.models import Agent
 from core.runtime.services import runtime_services
-from db.model_capabilities import supports_images
+from db.managed_connections import agent_images
 
 router = APIRouter()
 
@@ -104,7 +104,7 @@ def _image_capable(agent: Agent) -> bool:
     whose connection has no model, is not image-capable.
     """
     model = agent_model(agent)
-    return model is not None and supports_images(model)
+    return agent_images(agent)
 
 
 def _excluded_agents() -> list[dict[str, Any]]:

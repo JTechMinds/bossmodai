@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any
 
 from core.models import AIConnection, Setting
-from db.model_capabilities import supports_images
+from db.managed_connections import image_capability, metadata
 from core.extensions.model_provider import provider_id
 from db.secret_store import is_secret_setting_key
 
@@ -60,6 +60,7 @@ def serialize_connection(connection: AIConnection) -> dict[str, Any]:
     ``supports_images`` is read from ``model_capabilities`` for this
     connection's model, so every connection naming the same model agrees.
     """
+    managed = metadata(connection.id)
     created_at = connection.created_at
     if isinstance(created_at, datetime):
         created_at_out: datetime | str = created_at
@@ -71,12 +72,15 @@ def serialize_connection(connection: AIConnection) -> dict[str, Any]:
         "api_base_url": connection.api_base_url,
         "managed_by": provider_id(connection.api_base_url),
         "model": connection.model,
+        "available": bool(managed["available"]) if managed else True,
+        "unavailable_reason": managed["reason"] if managed else None,
+        "image_policy": managed["image_policy"] if managed else None,
+        "image_support": managed["images"] if managed else None,
         "extra_body": connection.extra_body,
         "thinking_levels": connection.thinking_levels,
         "created_at": created_at_out,
         "has_api_key": bool(connection.api_key),
         "api_key_last4": secret_last4(connection.api_key) if connection.api_key else None,
-        # Keyed by model name, not by connection: a connection with no model
-        # has nothing to flag.
-        "supports_images": supports_images(connection.model) if connection.model else False,
+        # Managed policy is scoped; ordinary connections retain model flags.
+        "supports_images": image_capability(connection),
     }

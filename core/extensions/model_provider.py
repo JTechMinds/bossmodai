@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, Protocol, runtime_checkable
+from typing import Any, Callable, Mapping, Literal, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -77,6 +77,17 @@ class ProviderCompletion:
     finish_reason: str = "stop"
 
 
+class ManagedModel(_Strict):
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    model: str = Field(min_length=1)
+    thinking_levels: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    images: Literal["unknown", "supported", "unsupported"] = "unknown"
+    image_policy: Literal["auto", "enabled", "disabled"] = "auto"
+    available: bool = True
+    reason: str | None = None
+
+
 @dataclass(frozen=True)
 class ProviderServices:
     """Host operations scoped to one extension; injected by the loader."""
@@ -85,6 +96,7 @@ class ProviderServices:
     is_enabled: Callable[[], bool]
     seal: Callable[[str], str]
     unseal: Callable[[str], str]
+    reconcile_connections: Callable[[list[ManagedModel]], dict[str, str]] | None = None
 
 
 @runtime_checkable
@@ -141,8 +153,19 @@ def services_for(entry) -> ProviderServices:
             db.update_connection(connection.id, model=model)
         return connection.id
 
+    def reconcile(entries):
+        if not is_enabled(entry.id):
+            raise ProviderError("Enable this extension before refreshing models.")
+        entries = [ManagedModel.model_validate(item) for item in entries]
+        if len({item.key for item in entries}) != len(entries):
+            raise ProviderError("Duplicate managed model keys.")
+        if any(item.images == "unsupported" and item.image_policy == "enabled" for item in entries):
+            raise ProviderError("Image input cannot be enabled for an unsupported model.")
+        from db.managed_connections import reconcile as reconcile_rows
+        return reconcile_rows(entry.id, spec.connection_name, entries)
+
     return ProviderServices(
-        publish, lambda: is_enabled(entry.id), encrypt_secret, decrypt_secret
+        publish, lambda: is_enabled(entry.id), encrypt_secret, decrypt_secret, reconcile
     )
 
 

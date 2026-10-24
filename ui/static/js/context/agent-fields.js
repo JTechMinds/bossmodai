@@ -55,6 +55,7 @@ const BossModAgentFields = (() => {
     const THINKING_CHOICES = [
         { value: 'default', label: 'Server default' },
         { value: 'off', label: 'Off' },
+        { value: 'minimal', label: 'Minimal' },
         { value: 'low', label: 'Low' },
         { value: 'medium', label: 'Medium' },
         { value: 'high', label: 'High' },

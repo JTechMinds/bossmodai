@@ -11,7 +11,7 @@ from core.extensions.setup_runner import entry_setup_status
 from core.llm.routing import agent_model
 from core.models import Agent
 from db.extension_agent_configs import get_extension_agent_config
-from db.model_capabilities import supports_images
+from db.managed_connections import agent_images
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ def render_extension_blocks(
 def _applies(entry: ExtensionEntry, model: str | None, agent: Agent) -> bool:
     if entry_setup_status(entry).state not in {"ready", "not_required"}:
         return False
-    if entry.manifest.requires.image_model and not (model is not None and supports_images(model)):
+    if entry.manifest.requires.image_model and not (agent_images(agent)):
         return False
     if entry.manifest.agent_config is not None:
         return get_extension_agent_config(entry.id, agent.id) is not None
