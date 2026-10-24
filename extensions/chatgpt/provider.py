@@ -105,27 +105,45 @@ def request_body(request):
 class ResponseAccumulator:
     def __init__(self):
         self.completed = None
+        self.text_parts = {}
 
     def accept(self, event):
-        if event.type == "response.completed":
+        if event.type in {"response.output_text.delta", "response.output_text.done"}:
+            key = (
+                getattr(event, "output_index", 0),
+                getattr(event, "content_index", 0),
+            )
+            if event.type == "response.output_text.delta":
+                self.text_parts.setdefault(key, []).append(event.delta)
+            else:
+                # The done event replaces its deltas; it must not duplicate them.
+                self.text_parts[key] = [event.text]
+        elif event.type == "response.completed":
             self.completed = event.response
         elif event.type in {"response.failed", "response.incomplete", "error"}:
             error = getattr(getattr(event, "response", None), "error", None)
             raise _failure(getattr(error, "code", None) or getattr(event, "code", None))
 
-    def finish(self):
+    def require_completed(self):
+        """A completed request proves model access, even without reply text."""
         if self.completed is None:
             raise ChatGPTError(
                 "ChatGPT’s response was interrupted before completion. Try the task again."
             )
-        response = self.completed
-        text = "".join(
-            part.text
-            for item in response.output
-            if item.type == "message"
-            for part in item.content
-            if part.type == "output_text"
-        )
+        return self.completed
+
+    def finish(self):
+        response = self.require_completed()
+        parts = {key: "".join(chunks) for key, chunks in self.text_parts.items()}
+        for output_index, item in enumerate(response.output or []):
+            if item.type != "message":
+                continue
+            for content_index, part in enumerate(item.content):
+                if part.type == "output_text":
+                    key = (output_index, content_index)
+                    if part.text.strip() or key not in parts:
+                        parts[key] = part.text
+        text = "".join(parts[key] for key in sorted(parts))
         if not text.strip():
             raise ChatGPTError(
                 "ChatGPT completed without a text response. Try the task again."
@@ -155,16 +173,19 @@ class ResponsesAdapter:
         self.clock = clock
 
     def probe(self, token, model):
-        self.complete_sync(
+        self._consume_sync(
             token,
             ProviderRequest(
                 model,
                 [{"role": "user", "content": "Reply with OK."}],
                 timeout_seconds=self.config.probe_timeout_seconds,
             ),
-        )
+        ).require_completed()
 
     def complete_sync(self, token, request):
+        return self._consume_sync(token, request).finish()
+
+    def _consume_sync(self, token, request):
         result = ResponseAccumulator()
         deadline = self.clock() + request.timeout_seconds
         try:
@@ -181,7 +202,7 @@ class ResponsesAdapter:
                         result.accept(event)
         except OpenAIError as exc:
             raise _failure(getattr(exc, "code", None)) from None
-        return result.finish()
+        return result
 
     async def complete(self, token, request):
         result = ResponseAccumulator()

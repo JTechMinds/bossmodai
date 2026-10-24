@@ -608,7 +608,8 @@ def test_token_exchange_uses_public_client_pkce_and_resource(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_real_sdk_stream_transport(monkeypatch):
+@pytest.mark.parametrize("include_final_output", [True, False])
+async def test_real_sdk_stream_transport(monkeypatch, include_final_output):
     from openai import AsyncOpenAI
 
     saved_account()
@@ -631,18 +632,44 @@ async def test_real_sdk_stream_transport(monkeypatch):
         "usage": {"input_tokens": 2, "output_tokens": 1, "total_tokens": 3},
     }
 
+    if not include_final_output:
+        completed["output"] = []
+
     def respond(request):
         captured.append(request)
+        events = [
+            {
+                "type": "response.output_text.delta",
+                "item_id": "msg_test",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "Do",
+                "sequence_number": 1,
+                "logprobs": [],
+            },
+            {
+                "type": "response.output_text.delta",
+                "item_id": "msg_test",
+                "output_index": 0,
+                "content_index": 0,
+                "delta": "ne",
+                "sequence_number": 2,
+                "logprobs": [],
+            },
+            {
+                "type": "response.output_text.done",
+                "item_id": "msg_test",
+                "output_index": 0,
+                "content_index": 0,
+                "text": "Done",
+                "sequence_number": 3,
+                "logprobs": [],
+            },
+            {"type": "response.completed", "response": completed, "sequence_number": 4},
+        ]
         payload = (
-            "data: "
-            + json.dumps(
-                {
-                    "type": "response.completed",
-                    "response": completed,
-                    "sequence_number": 1,
-                }
-            )
-            + "\n\ndata: [DONE]\n\n"
+            "".join("data: " + json.dumps(event) + "\n\n" for event in events)
+            + "data: [DONE]\n\n"
         )
         return httpx.Response(
             200, headers={"content-type": "text/event-stream"}, text=payload
@@ -720,3 +747,118 @@ def test_session_io_is_injected_and_login_state_is_instance_scoped(tmp_path):
         assert urls[0].startswith("https://identity.example/api/accounts/authorize?")
     finally:
         second.cancel_login()
+
+
+def sync_responses(monkeypatch, events):
+    class Stream:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def __iter__(self):
+            return iter(events)
+
+    class Client:
+        def __init__(self, **kwargs):
+            self.responses = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def create(self, **kwargs):
+            return Stream()
+
+    monkeypatch.setattr(provider, "sync_client_factory", Client)
+
+
+def empty_completion():
+    return NS(
+        type="response.completed",
+        response=NS(output=[], model="test-model", usage=None),
+    )
+
+
+def test_completed_probe_without_text_finishes_login(monkeypatch):
+    # Reproduce the screenshot: OAuth is valid, inference completes, output is empty.
+    mock_login(monkeypatch)
+    monkeypatch.setattr(auth, "probe", provider.probe)
+    sync_responses(monkeypatch, [empty_completion()])
+    auth.accept_callback(callback_query(), attempt())
+    assert auth.account_status()["connected"]
+    connection = db.list_connections()[0]
+    assert connection.name == "Chat GPT" and connection.api_key is None
+
+
+def test_empty_agent_reply_is_still_rejected(monkeypatch):
+    from core.extensions.model_provider import ProviderRequest
+
+    sync_responses(monkeypatch, [empty_completion()])
+    with pytest.raises(ChatGPTError, match="without a text response"):
+        provider.complete_sync(
+            "token",
+            ProviderRequest("test-model", [{"role": "user", "content": "Task"}]),
+        )
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        [NS(type="response.output_text.delta", delta="OK")],
+        [
+            NS(
+                type="response.failed",
+                response=NS(error=NS(code="subscription_sharing_usage_limit_exceeded")),
+            )
+        ],
+        [NS(type="response.incomplete", response=NS(error=None))],
+    ],
+)
+def test_probe_failure_or_partial_stream_does_not_finish_login(monkeypatch, events):
+    mock_login(monkeypatch)
+    monkeypatch.setattr(auth, "probe", provider.probe)
+    sync_responses(monkeypatch, events)
+    with pytest.raises(ChatGPTError):
+        auth.accept_callback(callback_query(), attempt())
+    assert not auth.account_status()["connected"] and not db.list_connections()
+
+
+def test_sync_stream_recovers_ordered_text_without_duplication(monkeypatch):
+    from core.extensions.model_provider import ProviderRequest
+
+    events = [
+        NS(
+            type="response.output_text.delta",
+            output_index=1,
+            content_index=0,
+            delta="second",
+        ),
+        NS(
+            type="response.output_text.delta",
+            output_index=0,
+            content_index=0,
+            delta="fir",
+        ),
+        NS(
+            type="response.output_text.delta",
+            output_index=0,
+            content_index=0,
+            delta="st ",
+        ),
+        NS(
+            type="response.output_text.done",
+            output_index=0,
+            content_index=0,
+            text="first ",
+        ),
+        empty_completion(),
+    ]
+    sync_responses(monkeypatch, events)
+    assert (
+        provider.complete_sync("token", ProviderRequest("test-model", [])).content
+        == "first second"
+    )
