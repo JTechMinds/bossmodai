@@ -140,6 +140,11 @@ def complete_text(
         return None
     try:
         try:
+            from core.extensions.model_provider import ProviderRequest, provider_id, resolve_provider
+            ext_id = provider_id(api_base)
+            if ext_id is not None:
+                request = ProviderRequest(model, messages, body, kwargs["timeout"], temperature=0, max_tokens=cap)
+                return resolve_provider(ext_id).provider_complete_sync(request).content
             response = litellm.completion(**kwargs)
         except Exception as exc:
             logger.warning("system completion failed: %s", type(exc).__name__)

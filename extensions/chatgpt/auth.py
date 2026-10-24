@@ -1,0 +1,512 @@
+"""Extension-owned local OAuth session, with injected I/O and host services."""
+
+from __future__ import annotations
+import base64
+import hashlib
+import hmac
+import secrets
+import threading
+import time
+import webbrowser
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlencode, urlsplit
+import httpx
+import jwt
+from .config import ChatGPTConfig, ChatGPTError
+from .store import CredentialStore
+from core.extensions.model_provider import ProviderServices
+from typing import Callable
+
+PLAN_SCOPE = "chatgpt.tokens.use.direct"
+
+
+class ChatGPTSession:
+
+    def __init__(
+        self,
+        config: ChatGPTConfig,
+        store: CredentialStore,
+        services: ProviderServices,
+        probe: Callable[[str, str], None],
+        *,
+        http_client_factory=httpx.Client,
+        jwks_client_factory=jwt.PyJWKClient,
+        decode_id_token=jwt.decode,
+        open_browser=webbrowser.open,
+        clock=time.time,
+    ):
+        self.config, self.store, self.services, self.probe = (
+            config,
+            store,
+            services,
+            probe,
+        )
+        self.http_client_factory = http_client_factory
+        self.jwks_client_factory, self.decode_id_token = (
+            jwks_client_factory,
+            decode_id_token,
+        )
+        self.open_browser, self.clock = (open_browser, clock)
+        self._pending = None
+        self._login_error = None
+        self._lock = threading.RLock()
+
+    def require_enabled(self):
+        if not self.services.is_enabled():
+            raise ChatGPTError("Enable ChatGPT in Extensions first.")
+
+    def account_status(self) -> dict:
+        with self.store.locked() as data:
+            active = data["accounts"].get(data["active"], {})
+            accounts = [
+                {
+                    "id": key,
+                    "label": item.get("email") or item["subject"],
+                    "signed_in": bool(item.get("access_token")),
+                }
+                for key, item in data["accounts"].items()
+            ]
+            signed_in = bool(active.get("access_token"))
+            connected = signed_in and PLAN_SCOPE in active.get("scopes", [])
+            connection_id = data.get("connection_id")
+            models = active.get("models", [])
+            model = data.get("model")
+            email = active.get("email")
+            active_id = data["active"]
+        with self._lock:
+            pending = self._pending is not None
+            error = self._login_error
+        return {
+            "connected": connected,
+            "pending": pending,
+            "error": error,
+            "email": email,
+            "accounts": accounts,
+            "active_account": active_id,
+            "models": models,
+            "connection_id": connection_id,
+            "model": model,
+        }
+
+    def _validate_identity(
+        self, token: str, client_id: str, nonce: str | None = None
+    ) -> dict:
+        try:
+            jwks = self.jwks_client_factory(
+                self.config.issuer + "/.well-known/jwks.json",
+                timeout=self.config.request_timeout_seconds,
+            )
+            key = jwks.get_signing_key_from_jwt(token)
+            claims = self.decode_id_token(
+                token,
+                key.key,
+                algorithms=["RS256"],
+                audience=client_id,
+                issuer=self.config.issuer,
+                options={"require": ["exp", "iss", "aud", "sub"]},
+            )
+            if nonce is not None and (
+                not hmac.compare_digest(str(claims.get("nonce", "")), nonce)
+            ):
+                raise ChatGPTError(
+                    "ChatGPT sign-in could not be verified. Please try again."
+                )
+            return claims
+        except (jwt.PyJWTError, ValueError, OSError) as exc:
+            raise ChatGPTError(
+                "ChatGPT sign-in could not be verified. Please try again."
+            ) from exc
+
+    def _token_request(self, fields: dict) -> dict:
+        try:
+            with self.http_client_factory(
+                timeout=self.config.request_timeout_seconds
+            ) as client:
+                response = client.post(
+                    self.config.token_url,
+                    data={**fields, "resource": self.config.resource},
+                )
+            if response.status_code != 200:
+                raise ChatGPTError(
+                    "ChatGPT authorization expired or was declined. Sign in again."
+                )
+            result = response.json()
+            if (
+                not result.get("access_token")
+                or str(result.get("token_type", "")).lower() != "bearer"
+            ):
+                raise ChatGPTError(
+                    "ChatGPT returned an incomplete sign-in. Please try again."
+                )
+            return result
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ChatGPTError(
+                "Couldn’t connect to ChatGPT. Check your connection and try again."
+            ) from exc
+
+    def _tokens(self, account: dict, tokens: dict) -> dict:
+        scopes = tokens.get("scope")
+        return {
+            **account,
+            **{
+                key: tokens[key]
+                for key in ("access_token", "refresh_token", "id_token")
+                if key in tokens
+            },
+            "scopes": (
+                scopes.split() if isinstance(scopes, str) else account.get("scopes", [])
+            ),
+            "expires_at": self.clock() + float(tokens.get("expires_in", 3600)),
+        }
+
+    def access_token(self) -> str:
+        self.require_enabled()
+        with self.store.locked() as data:
+            account = data["accounts"].get(data["active"])
+            if not account or not account.get("access_token"):
+                raise ChatGPTError(
+                    "Sign in to ChatGPT in Extensions to use this connection."
+                )
+            if PLAN_SCOPE not in account.get("scopes", []):
+                raise ChatGPTError(
+                    "Allow BossMod to use your ChatGPT plan, then sign in again."
+                )
+            if account["expires_at"] <= self.clock() + 60:
+                if not account.get("refresh_token"):
+                    raise ChatGPTError(
+                        "Your ChatGPT session expired. Sign in again in Extensions."
+                    )
+                tokens = self._token_request(
+                    {
+                        "grant_type": "refresh_token",
+                        "client_id": account["client_id"],
+                        "refresh_token": account["refresh_token"],
+                    }
+                )
+                updated = self._tokens(account, tokens)
+                if PLAN_SCOPE not in updated["scopes"]:
+                    raise ChatGPTError(
+                        "ChatGPT plan access is no longer enabled. Sign in again."
+                    )
+                if tokens.get("id_token"):
+                    claims = self._validate_identity(
+                        tokens["id_token"], account["client_id"]
+                    )
+                    if claims["sub"] != account["subject"]:
+                        raise ChatGPTError(
+                            "ChatGPT returned a different account. Sign in again."
+                        )
+                data["accounts"][data["active"]] = updated
+                self.store.save(data)
+                account = updated
+            return account["access_token"]
+
+    def model_catalog(self, token: str) -> list[dict]:
+        try:
+            with self.http_client_factory(
+                timeout=self.config.request_timeout_seconds
+            ) as client:
+                response = client.get(
+                    self.config.resource + "/models",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            response.raise_for_status()
+            models = [
+                {
+                    "slug": item["slug"],
+                    "display_name": item.get("display_name") or item["slug"],
+                }
+                for item in response.json().get("models", [])
+                if item.get("visibility") == "list"
+                and isinstance(item.get("slug"), str)
+            ]
+            if not models:
+                raise ChatGPTError(
+                    "No ChatGPT models are available for this account or workspace."
+                )
+            return models
+        except (httpx.HTTPError, ValueError, KeyError) as exc:
+            raise ChatGPTError(
+                "Couldn’t load models for your ChatGPT account. Try signing in again."
+            ) from exc
+
+    def _ensure_connection(self, data, model):
+        data["model"] = model
+        data["connection_id"] = self.services.publish_connection(model)
+
+    def accept_callback(self, query: dict[str, list[str]], attempt: dict) -> None:
+        if any((len(values) != 1 for values in query.values())):
+            raise ChatGPTError(
+                "ChatGPT returned an invalid callback. Please try again."
+            )
+        if not hmac.compare_digest(query.get("state", [""])[0], attempt["state"]):
+            raise ChatGPTError("ChatGPT sign-in state did not match. Please try again.")
+        if self.clock() > attempt["expires_at"]:
+            raise ChatGPTError("ChatGPT sign-in timed out. Please try again.")
+        if query.get("error"):
+            raise ChatGPTError(
+                "ChatGPT sign-in was cancelled or declined. You can try again."
+            )
+        client_id = query.get("client_id", [attempt.get("client_id")])[0]
+        if not client_id or client_id == "dynamic_agent_client":
+            raise ChatGPTError("ChatGPT registration did not finish. Please try again.")
+        if attempt.get("client_id") and client_id != attempt["client_id"]:
+            raise ChatGPTError(
+                "ChatGPT returned a different registration. Please try again."
+            )
+        code = query.get("code", [""])[0]
+        if not code:
+            raise ChatGPTError(
+                "ChatGPT did not return a sign-in code. Please try again."
+            )
+        tokens = self._token_request(
+            {
+                "grant_type": "authorization_code",
+                "client_id": client_id,
+                "code": code,
+                "code_verifier": attempt["verifier"],
+                "redirect_uri": attempt["redirect_uri"],
+            }
+        )
+        claims = self._validate_identity(
+            tokens.get("id_token", ""), client_id, attempt["nonce"]
+        )
+        if attempt.get("subject") and claims["sub"] != attempt["subject"]:
+            raise ChatGPTError(
+                "Sign in with the selected ChatGPT account, or add another account."
+            )
+        account = self._tokens(
+            {
+                "client_id": client_id,
+                "subject": claims["sub"],
+                "email": claims.get("email"),
+            },
+            tokens,
+        )
+        with self.store.locked() as data:
+            if client_id not in data["accounts"]:
+                data["accounts"][client_id] = {
+                    "client_id": client_id,
+                    "subject": claims["sub"],
+                    "email": claims.get("email"),
+                }
+                self.store.save(data)
+        if PLAN_SCOPE not in account["scopes"]:
+            raise ChatGPTError(
+                "Allow BossMod to use your ChatGPT plan during sign-in, then try again."
+            )
+        models = self.model_catalog(account["access_token"])
+        with self.store.locked() as saved:
+            preferred = saved.get("model")
+        model = (
+            preferred
+            if preferred in {item["slug"] for item in models}
+            else models[0]["slug"]
+        )
+        self.probe(account["access_token"], model)
+        account["models"] = models
+        self.require_enabled()
+        with self.store.locked() as data:
+            data["accounts"][client_id] = account
+            data["active"] = client_id
+            self._ensure_connection(data, model)
+            self.store.save(data)
+
+    def begin_login(self, account_id: str | None = None) -> dict:
+        _session = self
+        self.require_enabled()
+        with self._lock:
+            if self._pending is not None:
+                raise ChatGPTError(
+                    "A ChatGPT sign-in is already open. Finish it or cancel it first."
+                )
+            with self.store.locked() as data:
+                account = data["accounts"].get(account_id) if account_id else None
+                if account_id and account is None:
+                    raise ChatGPTError("That saved ChatGPT account no longer exists.")
+                host_id = data["host_id"]
+            attempt = {
+                "state": secrets.token_urlsafe(32),
+                "nonce": secrets.token_urlsafe(32),
+                "verifier": secrets.token_urlsafe(64),
+                "expires_at": self.clock() + self.config.login_timeout_seconds,
+                "client_id": account["client_id"] if account else None,
+                "subject": account["subject"] if account else None,
+            }
+
+            class Callback(BaseHTTPRequestHandler):
+
+                def log_message(self, *args):
+                    pass
+
+                def do_GET(self):
+                    url = urlsplit(self.path)
+                    if url.path != "/auth/callback":
+                        self.send_error(404)
+                        return
+                    query = parse_qs(url.query)
+                    with _session._lock:
+                        if _session._pending is not attempt or not hmac.compare_digest(
+                            query.get("state", [""])[0], attempt["state"]
+                        ):
+                            self.send_error(400, "Invalid sign-in state")
+                            return
+                        _session._pending = None
+                        attempt["timer"].cancel()
+                        try:
+                            _session.accept_callback(query, attempt)
+                            _session._login_error = None
+                            message = "Connected to ChatGPT. You can close this tab and return to BossMod."
+                        except ChatGPTError as exc:
+                            _session._login_error = str(exc)
+                            message = _session._login_error
+                        except Exception:
+                            _session._login_error = (
+                                "ChatGPT sign-in could not finish. Please try again."
+                            )
+                            message = _session._login_error
+                    payload = message.encode("utf-8")
+                    self.send_response(200)
+                    self.send_header("Content-Type", "text/plain; charset=utf-8")
+                    self.send_header("Cache-Control", "no-store")
+                    self.send_header("Referrer-Policy", "no-referrer")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    try:
+                        self.wfile.write(payload)
+                    finally:
+                        threading.Thread(target=server.shutdown, daemon=True).start()
+
+            server = ThreadingHTTPServer(("127.0.0.1", 0), Callback)
+            server.daemon_threads = True
+            attempt["server"] = server
+            attempt["redirect_uri"] = (
+                f"http://127.0.0.1:{server.server_port}/auth/callback"
+            )
+            params = {
+                "client_id": attempt["client_id"] or "dynamic_agent_client",
+                "ext_agent_host_id": host_id,
+                "response_type": "code",
+                "redirect_uri": attempt["redirect_uri"],
+                "scope": self.config.scopes,
+                "resource": self.config.resource,
+                "state": attempt["state"],
+                "nonce": attempt["nonce"],
+                "code_challenge_method": "S256",
+                "code_challenge": base64.urlsafe_b64encode(
+                    hashlib.sha256(attempt["verifier"].encode()).digest()
+                )
+                .decode()
+                .rstrip("="),
+            }
+            if account:
+                if account.get("id_token"):
+                    params["id_token_hint"] = account["id_token"]
+                if account.get("email"):
+                    params["login_hint"] = account["email"]
+            else:
+                params["agent_name_hint"] = self.config.agent_name
+            self._pending = attempt
+            self._login_error = None
+
+            def serve():
+                try:
+                    server.serve_forever(poll_interval=0.2)
+                finally:
+                    server.server_close()
+
+            threading.Thread(target=serve, daemon=True).start()
+            timer = threading.Timer(
+                self.config.login_timeout_seconds, lambda: self.cancel_login(attempt)
+            )
+            timer.daemon = True
+            timer.start()
+            attempt["timer"] = timer
+            try:
+                opened = self.open_browser(
+                    self.config.authorize_url + "?" + urlencode(params)
+                )
+            except (webbrowser.Error, OSError):
+                opened = False
+            if not opened:
+                self.cancel_login(attempt)
+                raise ChatGPTError(
+                    "Couldn’t open your system browser. Set a default browser and try again."
+                )
+        return self.account_status()
+
+    def cancel_login(self, expected=None) -> None:
+        with self._lock:
+            if self._pending is None or (
+                expected is not None and self._pending is not expected
+            ):
+                return
+            attempt, self._pending = (self._pending, None)
+            attempt["timer"].cancel()
+            attempt["server"].shutdown()
+
+    def select_model(self, model: str) -> None:
+        self.require_enabled()
+        token = self.access_token()
+        probe_model = model
+        with self.store.locked() as data:
+            account = data["accounts"].get(data["active"], {})
+            if model not in {item["slug"] for item in account.get("models", [])}:
+                raise ChatGPTError(
+                    "Choose a model offered by your connected ChatGPT account."
+                )
+        self.probe(token, probe_model)
+        with self.store.locked() as data:
+            account = data["accounts"].get(data["active"], {})
+            if not account.get("access_token") or model not in {
+                item["slug"] for item in account.get("models", [])
+            }:
+                raise ChatGPTError(
+                    "Choose a model offered by your connected ChatGPT account."
+                )
+            self._ensure_connection(data, model)
+            self.store.save(data)
+
+    def sign_out(self) -> dict:
+        self.cancel_login()
+        revoked = True
+        with self.store.locked() as data:
+            account = data["accounts"].get(data["active"], {})
+            if account.get("refresh_token"):
+                try:
+                    with self.http_client_factory(
+                        timeout=self.config.request_timeout_seconds
+                    ) as client:
+                        discovery = client.get(
+                            self.config.issuer + "/.well-known/openid-configuration"
+                        )
+                        discovery.raise_for_status()
+                        endpoint = discovery.json()["revocation_endpoint"]
+                        if (
+                            urlsplit(endpoint).scheme != "https"
+                            or urlsplit(endpoint).netloc
+                            != urlsplit(self.config.issuer).netloc
+                        ):
+                            raise ValueError("Untrusted revocation endpoint")
+                        result = client.post(
+                            endpoint,
+                            data={
+                                "token": account["refresh_token"],
+                                "token_type_hint": "refresh_token",
+                                "client_id": account["client_id"],
+                            },
+                        )
+                        revoked = result.status_code == 200
+                except (httpx.HTTPError, ValueError, KeyError):
+                    revoked = False
+            for key in ("access_token", "refresh_token", "id_token", "expires_at"):
+                account.pop(key, None)
+            self.store.save(data)
+        return {
+            "revoked": revoked,
+            "message": (
+                "Signed out."
+                if revoked
+                else "Signed out locally. Remote revocation wasn’t confirmed; disconnect BossMod in ChatGPT Settings."
+            ),
+        }

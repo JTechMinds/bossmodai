@@ -500,6 +500,25 @@ async def completion(
     if max_tokens is None:
         max_tokens = config.get_int("default_max_tokens") or 16384
 
+    from dataclasses import asdict
+    from core.extensions.model_provider import (
+        ProviderError, ProviderRequest, ProviderTimeout, complete as complete_provider,
+        provider_id, resolve_provider,
+    )
+    try:
+        ext_id = provider_id(api_base)
+        if ext_id is not None:
+            request = ProviderRequest(model, messages, extra_body,
+                                      config.require_float("llm_request_timeout_seconds"),
+                                      config.require_float("llm_stall_timeout_seconds"),
+                                      temperature, max_tokens)
+            result = await complete_provider(resolve_provider(ext_id), request)
+            return LLMResponse(**asdict(result))
+    except ProviderTimeout as exc:
+        raise LLMTimeoutError(exc.seconds, kind=exc.kind) from None
+    except ProviderError as exc:
+        raise LLMError(str(exc)) from None
+
     kwargs: dict[str, Any] = {
         "model": canonicalize_openai_compatible_model(model, api_base=api_base),
         "messages": messages,

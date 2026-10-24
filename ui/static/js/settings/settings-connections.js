@@ -77,7 +77,7 @@ const ConnectionsSection = (() => {
         } else {
             html += '<div class="space-y-3">';
             for (const conn of connections) {
-                const maskedKey = conn.has_api_key
+                const maskedKey = conn.managed_by ? 'Extension-managed authentication' : conn.has_api_key
                     ? `••••${BossModFormat.escapeHtml(conn.api_key_last4 || '')}`
                     : 'No API key';
                 html += `
@@ -88,13 +88,14 @@ const ConnectionsSection = (() => {
                                 <h3 class="font-medium">${BossModFormat.escapeHtml(conn.name)}</h3>
                                 ${conn.model ? `<span class="text-xs px-2 py-0.5 bg-slate-100 rounded-full text-bm-muted">${BossModFormat.escapeHtml(conn.model)}</span>` : ''}
                             </div>
-                            <p class="text-sm text-bm-muted mt-1">${BossModFormat.escapeHtml(conn.api_base_url)}</p>
+                            <p class="text-sm text-bm-muted mt-1">${conn.managed_by ? 'Managed in Extensions' : BossModFormat.escapeHtml(conn.api_base_url)}</p>
                             <div class="mt-1.5">
                                 <p class="text-xs font-mono text-bm-muted">${maskedKey}</p>
-                                <p class="text-[11px] text-bm-muted mt-1">Full API keys are never returned after save. Re-enter a key only when rotating it.</p>
+                                <p class="text-[11px] text-bm-muted mt-1">${conn.managed_by ? 'Manage authentication and model settings in the extension.' : 'Full API keys are never returned after save. Re-enter a key only when rotating it.'}</p>
                             </div>
                         </div>
                         <div class="flex items-center gap-1 shrink-0 ml-4">
+                            ${conn.managed_by ? '<button data-manage-extension class="btn btn-sm" type="button">Manage extension</button>' : `
                             <button data-edit-conn="${BossModFormat.escapeAttribute(conn.id)}"
                                     class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
                                     title="Edit">
@@ -110,6 +111,7 @@ const ConnectionsSection = (() => {
                                     title="Delete">
                                 <i data-lucide="trash-2" class="w-4 h-4 text-red-400"></i>
                             </button>
+                            `}
                         </div>
                     </div>
                 </div>`;
@@ -124,6 +126,9 @@ const ConnectionsSection = (() => {
         if (addBtn) addBtn.addEventListener('click', () => openForm(null));
 
         BossModSystemAi.bind(container, state);
+        container.querySelectorAll('[data-manage-extension]').forEach(btn => {
+            btn.addEventListener('click', () => BossModExtensionsDialog.open());
+        });
 
         container.querySelectorAll('[data-edit-conn]').forEach(btn => {
             btn.addEventListener('click', async () => {

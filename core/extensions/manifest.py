@@ -240,6 +240,12 @@ class LiveViewSpec(_Strict):
     icon: LiveViewIcon
 
 
+class ModelProviderSpec(_Strict):
+    """The display name of the connection registered by a model extension."""
+
+    connection_name: str = Field(min_length=1)
+
+
 class ExtensionManifest(_Strict):
     """Validated ``manifest.json``. Unknown keys are rejected.
 
@@ -264,6 +270,7 @@ class ExtensionManifest(_Strict):
     agent_view: AgentViewSpec | None = None
     # Set when the instance implements contract.SupportsWake.
     wake: WakeSpec | None = None
+    model_provider: ModelProviderSpec | None = None
     defaults: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")

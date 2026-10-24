@@ -87,8 +87,8 @@ const BossModExtensionsDialog = (() => {
 
         function schedulePoll() {
             clearTimeout(timer);
-            const installing = state.items.some((item) => item.setup && item.setup.state === 'installing');
-            if (!closed && installing) timer = setTimeout(() => load(false), POLL_MS);
+            const installing = state.items.some((item) => (item.setup && item.setup.state === 'installing') || (item.provider && item.provider.pending));
+            if (!closed && !state.busy && installing) timer = setTimeout(() => load(false), POLL_MS);
         }
 
         async function load(showLoading) {
@@ -98,6 +98,12 @@ const BossModExtensionsDialog = (() => {
             }
             try {
                 state.items = await API.listExtensions();
+                for (const item of state.items) {
+                    if (item.model_provider && item.enabled) {
+                        try { item.provider = await API.providerRequest(item.id); }
+                        catch (err) { state.errors[item.id] = String(err.message || err); }
+                    }
+                }
                 state.status = state.items.length ? 'ready' : 'empty';
                 state.error = '';
             } catch (err) {
@@ -115,7 +121,12 @@ const BossModExtensionsDialog = (() => {
             state.focus = switchId(item.id);
             render();
             try {
-                replaceItem(await API.setEnabled(item.id, pressed));
+                const updated = await API.setEnabled(item.id, pressed);
+                replaceItem(updated);
+                if (updated.model_provider && pressed) {
+                    try { updated.provider = await API.providerRequest(updated.id); }
+                    catch (err) { state.errors[item.id] = String(err.message || err); }
+                }
                 void BossModLiveStatus.refresh();
             } catch (err) {
                 // Never show a state the server refused: the item is unchanged,
@@ -127,6 +138,44 @@ const BossModExtensionsDialog = (() => {
             // while the request ran.
             state.focus = switchId(item.id);
             if (!closed) render();
+        }
+
+        async function providerAction(item, action, values) {
+            clearTimeout(timer);
+            state.busy = item.id;
+            state.errors[item.id] = '';
+            render();
+            try {
+                const provider = await API.providerRequest(item.id, action, values);
+                replaceItem({ ...item, provider });
+            } catch (err) {
+                state.errors[item.id] = String(err.message || err);
+            }
+            state.busy = null;
+            if (closed) return;
+            render();
+            schedulePoll();
+        }
+
+        function providerControls(item, busy) {
+            const provider = item.provider;
+            if (!provider) return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, 'Retry provider status')];
+            const rows = [h('p', { class: 'market-card-note', 'aria-live': 'polite' }, provider.message)];
+            if (provider.error) rows.push(h('p', { class: 'market-failed', role: 'alert' }, provider.error));
+            for (const action of provider.actions) {
+                rows.push(h('button', { class: 'btn btn-sm', type: 'button', disabled: busy,
+                    onclick: () => providerAction(item, action.key, action.values),
+                }, action.label));
+            }
+            for (const choice of provider.choices) {
+                const control = BossModMenuSelect.create({ label: choice.label, options: choice.options, value: choice.value,
+                    onChange: (value) => providerAction(item, choice.action, { [choice.parameter]: value }),
+                });
+                const trigger = control.element.querySelector('button') || control.element;
+                if (busy) trigger.setAttribute('disabled', '');
+                rows.push(control.element);
+            }
+            return rows;
         }
 
         async function beginSetup(item) {
@@ -195,6 +244,7 @@ const BossModExtensionsDialog = (() => {
                 }, COPY.configureAgents));
             }
 
+            if (item.enabled && item.model_provider) rows.push(...providerControls(item, busy));
             const excluded = item.excluded_agents || [];
             if (item.enabled && excluded.length) {
                 const names = excluded

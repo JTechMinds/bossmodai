@@ -577,6 +577,18 @@ async def set_setting(key: str, value: str, category: str = "general"):
 
 # ─── AI Connections CRUD ───
 
+def _require_unmanaged(connection_id=None, endpoint=None):
+    """One write policy for every connection owned by an extension."""
+    from core.extensions.model_provider import ProviderError, provider_id
+    stored = db.get_connection_by_id(connection_id) if connection_id else None
+    try:
+        managed = provider_id(endpoint) or (provider_id(stored.api_base_url) if stored else None)
+    except ProviderError as exc:
+        raise HTTPException(400, str(exc)) from None
+    if managed:
+        raise HTTPException(409, "Manage this connection in Extensions. Its extension owns authentication and model settings.")
+
+
 @router.get("/connections")
 async def list_connections():
     return [serialize_connection(conn) for conn in db.list_connections()]
@@ -601,6 +613,7 @@ async def create_connection(body: AIConnectionCreate):
         HTTPException: 400 when ``supports_images`` is set without a model,
             since the flag is keyed by model name.
     """
+    _require_unmanaged(endpoint=body.api_base_url)
     has_model = bool(body.model and body.model.strip())
     if body.supports_images and not has_model:
         raise HTTPException(400, _IMAGE_FLAG_NEEDS_MODEL)
@@ -633,6 +646,7 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
             this connection, or System AI on it, still pick (the detail
             names them).
     """
+    _require_unmanaged(connection_id, body.api_base_url)
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
@@ -699,6 +713,7 @@ async def duplicate_connection(connection_id: str):
     last four. A client-side duplicate would have to re-ask for the key or
     write a keyless row, so the copy is made where the key already is.
     """
+    _require_unmanaged(connection_id)
     conn = db.duplicate_connection(connection_id)
     if not conn:
         raise HTTPException(404, "Connection not found")
@@ -713,6 +728,7 @@ async def delete_connection(connection_id: str):
     Raises:
         HTTPException: 409 naming the agents linked to it; 404 when unknown.
     """
+    _require_unmanaged(connection_id)
     users = db.list_agents_by_connection(connection_id)
     if users:
         names = ", ".join(agent.name for agent in users)
@@ -736,6 +752,14 @@ async def test_connection(body: TestConnectionBody):
     Verifies the host is reachable, auth works, and the response
     is OpenAI-compatible. Optionally checks the model exists.
     """
+    from core.extensions.model_provider import ProviderError, provider_id, resolve_provider
+    try:
+        ext_id = provider_id(body.api_base_url)
+        if ext_id is not None:
+            status = await asyncio.to_thread(resolve_provider(ext_id).provider_status)
+            return {"ok": status.connected, "error": None if status.connected else status.message}
+    except ProviderError as exc:
+        return {"ok": False, "error": str(exc)}
     try:
         base = validate_connection_test_url(body.api_base_url).rstrip("/")
     except ConnectionUrlError as exc:

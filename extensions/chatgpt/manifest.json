@@ -1,0 +1,34 @@
+{
+  "id": "chatgpt",
+  "name": "ChatGPT",
+  "version": "0.1.0",
+  "description": "Sign in with ChatGPT to add a Chat GPT AI connection for new or existing agents. Uses eligible ChatGPT plan usage; availability and usage limits depend on your account. BossMod is free for personal, educational, and nonprofit use under its license. Commercial use requires permission from JtechMinds LLC: jordan@jtechminds.com. This notice does not change OpenAI\u2019s terms or grant access to your ChatGPT conversations or memories.",
+  "command": {
+    "name": "chatgpt",
+    "summary": "Check whether the ChatGPT connection is ready.",
+    "usage": "chatgpt status",
+    "help": "chatgpt status \u2014 checks the ChatGPT connection. The operator signs in through Extensions \u2192 ChatGPT. Credentials are never accessible to agents."
+  },
+  "setup": {
+    "required": false
+  },
+  "model_provider": {
+    "connection_name": "Chat GPT"
+  },
+  "requires": {
+    "python_modules": [
+      "jwt",
+      "filelock",
+      "openai"
+    ]
+  },
+  "defaults": {
+    "issuer": "https://auth.openai.com",
+    "resource": "https://api.openai.com/v1",
+    "scopes": "openid profile email offline_access resource.invoke chatgpt.tokens.use.direct",
+    "agent_name": "BossMod AI",
+    "login_timeout_seconds": 600,
+    "request_timeout_seconds": 30,
+    "probe_timeout_seconds": 30
+  }
+}

@@ -11,6 +11,7 @@ from typing import Any
 
 from core.models import AIConnection, Setting
 from db.model_capabilities import supports_images
+from core.extensions.model_provider import provider_id
 from db.secret_store import is_secret_setting_key
 
 # Never listed on GET /api/settings — injected into the desktop page instead.
@@ -68,6 +69,7 @@ def serialize_connection(connection: AIConnection) -> dict[str, Any]:
         "id": connection.id,
         "name": connection.name,
         "api_base_url": connection.api_base_url,
+        "managed_by": provider_id(connection.api_base_url),
         "model": connection.model,
         "extra_body": connection.extra_body,
         "thinking_levels": connection.thinking_levels,

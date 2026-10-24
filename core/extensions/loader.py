@@ -23,6 +23,7 @@ from core.extensions.contract import (
     SupportsWake,
 )
 from core.extensions.manifest import ExtensionManifest
+from core.extensions.model_provider import SupportsModelProvider, services_for
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry
 
@@ -125,6 +126,7 @@ def load_extension(entry: ExtensionEntry) -> Extension:
             data_dir=extension_data_dir(entry.id),
             read_agent_config=_agent_config_reader(entry.id),
             runtime_worker=is_runtime_worker(),
+            model_provider=services_for(entry) if manifest.model_provider else None,
         )
         try:
             instance = create(ctx)
@@ -153,6 +155,8 @@ def _agent_config_reader(ext_id: str) -> Callable[[str], dict[str, str] | None]:
 
 def _broken_contract(manifest: ExtensionManifest, instance: object) -> str | None:
     """Name the first capability the manifest declares that the instance lacks."""
+    if manifest.model_provider is not None and not isinstance(instance, SupportsModelProvider):
+        return "manifest declares model_provider but the extension lacks the model-provider contract"
     if manifest.live_view is not None and not isinstance(instance, SupportsLiveView):
         return "manifest declares live_view but the extension has no live_view() method"
     if manifest.agent_config is not None and not isinstance(instance, SupportsAgentConfig):

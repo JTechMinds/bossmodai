@@ -237,8 +237,20 @@ const BossModExtensionsApi = (() => {
         return res.json();
     }
 
+    async function providerRequest(id, action = null, values = {}) {
+        const base = `/api/extensions/${enc(id)}/provider`;
+        const options = { method: action === null ? 'GET' : 'POST', cache: 'no-store' };
+        if (action !== null) {
+            options.headers = { 'Content-Type': 'application/json' };
+            options.body = JSON.stringify({ action, values });
+        }
+        const res = await apiFetch(action === null ? base : `${base}/actions`, options);
+        if (!res.ok) throw await failure(res, 'Couldn’t update the model provider.');
+        return res.json();
+    }
+
     return {
-        listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
+        providerRequest, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
         extensionAgents, agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
     };
 })();
