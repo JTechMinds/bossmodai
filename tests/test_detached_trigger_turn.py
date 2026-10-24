@@ -1141,9 +1141,12 @@ def test_r4_other_consent_cards_never_share_a_row_across_origins(kind: str, tmp_
     from core.bm_cli.parser import parse_cli_command
     from core.bm_cli.shell_executor_consent import request_shell_executor_consent
     from core.bm_cli.workspace_preference import request_workspace_preference
-    from tests.test_consent_origin import _host_file
+    from tests.test_consent_origin import _allow_host, _host_file
 
     fixture = _host_file(tmp_path)
+    if kind == "workspace_preference":
+        # A workspace-preference card exists only for a boss-allowed folder.
+        _allow_host(fixture.parent)
     agent = db.create_agent("Charles", role="Build Engineer", connection_id=model_connection("test/mock"))
 
     def _open(trigger: dict[str, Any]):

@@ -1008,9 +1008,7 @@ def _consent_sibling_card_open(
     """Return True when a coalesced sibling already owns the live card."""
     kind = (request.card_kind or "host_path").strip() or "host_path"
     if kind == WORKSPACE_PREFERENCE_KIND:
-        return _workspace_preference_card_already_open(
-            request.grant_root, request.path, channel_id, request.id
-        )
+        return _workspace_preference_card_already_open(request.path, channel_id, request.id)
     if kind == SHELL_EXECUTOR_KIND:
         return _shell_executor_card_already_open(channel_id, request.id)
     if kind == NEST_GIT_KIND:
@@ -1034,7 +1032,6 @@ def _grant_root_already_has_card(
 
 
 def _workspace_preference_card_already_open(
-    grant_root: str,
     path: str,
     channel_id: str | None,
     consent_id: str,
@@ -1056,9 +1053,7 @@ def _workspace_preference_card_already_open(
             continue
         if channel_id and sibling.channel_id and sibling.channel_id != channel_id:
             continue
-        if not workspace_preference_scopes_match(
-            sibling, path=path, grant_root=grant_root
-        ):
+        if not workspace_preference_scopes_match(sibling, path=path):
             continue
         if db.has_consent_notification(sibling.id):
             return True

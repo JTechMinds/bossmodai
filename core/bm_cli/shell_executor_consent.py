@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import db
 from core import config
-from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
+from core.agent_loop.runtime_core import locked_workspace_copies
 from core.agent_loop.work_binding import current_turn_detached
 from core.bm_cli.host_path_consent import _clean_channel_id, _enqueue_resume
 from core.bm_cli.policy_engine import CommandPolicyDecision, policy_engine
@@ -104,7 +104,7 @@ def decide_shell_executor(
         agent: The agent running the command.
         parsed: The command.
         cwd: The agent's virtual working directory.
-        task_id: The turn's bound task, which scopes locked copies and denials.
+        task_id: The turn's bound task, which scopes denials.
         trigger_type: The turn trigger; a consent resume re-runs ungated.
         native: The command runs on the native shell whatever its name
             (a script segment), so a virtual name does not skip the gate.
@@ -134,7 +134,7 @@ def decide_shell_executor(
         )
         if gh is not None:
             return ShellExecutorGate(action="gh", gh=gh)
-    if not locked_workspace_copies_for_turn(agent.id, task_id):
+    if not locked_workspace_copies(agent):
         return None
 
     peek = policy_engine.evaluate(
@@ -285,7 +285,7 @@ def request_shell_executor_consent(
             reused=True,
         )
 
-    dest = _clone_dest_for_turn(agent.id, task_id)
+    dest = _clone_dest(agent)
     request = db.create_consent_request(
         agent_id=agent.id,
         path=dest or SHELL_EXECUTOR_GRANT_ROOT,
@@ -432,8 +432,8 @@ def _denied_for_scope(agent_id: str, *, task_id: str | None) -> HostPathConsentR
     return None
 
 
-def _clone_dest_for_turn(agent_id: str, task_id: str | None) -> str:
-    rows = locked_workspace_copies_for_turn(agent_id, task_id)
+def _clone_dest(agent: Agent) -> str:
+    rows = locked_workspace_copies(agent)
     if not rows:
         return ""
     return (rows[0].clone_dest or "").strip()
@@ -484,7 +484,7 @@ def named_shell_executor_block_reason(
         return None
     if pending is not None:
         return SHELL_EXECUTOR_WHY
-    if not locked_workspace_copies_for_turn(agent.id, task_id):
+    if not locked_workspace_copies(agent):
         return None
     if shell_executor_is_enabled():
         return None

@@ -10,7 +10,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 import db
-from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
+from core.agent_loop.runtime_core import locked_workspace_copies
 from core.agent_loop.work_binding import current_turn_detached
 from core.bm_cli.host_path_consent import _clean_channel_id, _enqueue_resume
 from core.bm_cli.nest_git import (
@@ -317,7 +317,7 @@ def request_nest_git_consent(
             reused=True,
         )
 
-    dest = _clone_dest_for_turn(agent.id, task_id)
+    dest = _clone_dest(agent)
     request = db.create_consent_request(
         agent_id=agent.id,
         path=dest or NEST_GIT_GRANT_ROOT,
@@ -555,8 +555,8 @@ def _pending_all() -> list[HostPathConsentRequest]:
     ]
 
 
-def _clone_dest_for_turn(agent_id: str, task_id: str | None) -> str:
-    rows = locked_workspace_copies_for_turn(agent_id, task_id)
+def _clone_dest(agent: Agent) -> str:
+    rows = locked_workspace_copies(agent)
     if not rows:
         return ""
     return (rows[0].clone_dest or "").strip()

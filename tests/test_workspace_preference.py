@@ -345,6 +345,14 @@ def _lock_workspace_copy(
     status: str = "branched",
     task_id: str | None = None,
 ):
+    # A lock holds only while its copy exists, so the helper makes the copy.
+    if not dest.startswith("/me/"):
+        raise ValueError(f"A workspace copy lives under /me/: {dest!r}")
+    owner = db.get_agent(agent_id)
+    if owner is None:
+        raise LookupError(f"No agent {agent_id}")
+    copy = agent_artifact_dir(owner.storage_key) / dest.removeprefix("/me/")
+    copy.mkdir(parents=True, exist_ok=True)
     pending = db.create_consent_request(
         agent_id=agent_id,
         path=path,
@@ -379,7 +387,7 @@ def test_runtime_core_steers_off_host_direct_when_workspace_copy_locked() -> Non
     assert "Host writes stay blocked." in block
     assert "work directly in the host tree" not in block.lower()
 
-    preference = workspace_preference_context(agent_id=agent.id, task_id=task_id)
+    preference = workspace_preference_context(agent)
     assert preference["preference"] == "branched"
     assert preference["clone_dest"] == dest
 
@@ -430,6 +438,11 @@ def test_runtime_core_steers_teammate_off_host_direct_when_task_branch_locked() 
     assert "Do not recommend editing the live host tree" in block
     assert "Do not park @Boss to reopen" in block
     assert "Do not park @Boss as the test runner or git pusher" in block
+    # A teammate's copy is in the owner's workspace: a note naming the owner, not a path to work at.
+    assert f"{writer.name} is working on a locked copy of {host_path}" in block
+    assert "Do not edit that host folder" in block
+    assert f"work at {dest}" not in block
+    assert workspace_preference_context(lead) == {"preference": "", "clone_dest": ""}
 
 
 def test_runtime_core_does_not_inject_clone_dest_for_edit_host() -> None:
@@ -445,7 +458,7 @@ def test_runtime_core_does_not_inject_clone_dest_for_edit_host() -> None:
     assert LOCKED_WORKSPACE_COPY_STEER in block
     assert "/me/host-work/unused" not in block
     assert f"Locked workspace copy for {host_path}" not in block
-    preference = workspace_preference_context(agent_id=agent.id)
+    preference = workspace_preference_context(agent)
     assert preference["preference"] == ""
     assert preference["clone_dest"] == ""
 
@@ -459,9 +472,118 @@ def test_runtime_core_steers_off_host_direct_when_clone_locked() -> None:
     assert LOCKED_WORKSPACE_COPY_STEER in block
     assert dest in block
     assert "Do not recommend editing the live host tree" in block
-    preference = workspace_preference_context(agent_id=agent.id)
+    preference = workspace_preference_context(agent)
     assert preference["preference"] == "cloned"
     assert preference["clone_dest"] == dest
+
+
+def test_lock_holds_in_another_task_while_the_copy_exists(tmp_path: Path) -> None:
+    from core.bm_cli.parser import parse_cli_command
+    from core.bm_cli.workspace_preference import maybe_pause_for_workspace_preference
+
+    host = tmp_path / "locked-root"
+    host.mkdir()
+    _allow_host(host)
+    agent, _state = _agent_and_state()
+    task_a = db.create_task("Branch it", assigned_to=agent.id)
+    task_b = db.create_task("Later work", assigned_to=agent.id)
+    dest = "/me/host-work/locked-root"
+    _lock_workspace_copy(agent.id, path=str(host.resolve()), dest=dest, task_id=task_a.id)
+
+    target = host / "note.txt"
+    result = maybe_pause_for_workspace_preference(
+        agent=agent,
+        parsed=parse_cli_command(f"write {target}"),
+        content="host write\n",
+        cwd="/me",
+        task_id=task_b.id,
+        channel_id=None,
+    )
+    assert result is not None
+    assert result.ok is False
+    assert result.consent_required is False
+    assert result.kind == "host_deny"
+    assert dest in (result.detail or "")
+    assert db.list_consent_requests(agent_id=agent.id, status="pending") == []
+    assert not target.exists()
+
+
+def test_removing_the_copy_releases_the_write_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import shutil
+
+    host = tmp_path / "clone-root"
+    host.mkdir()
+    (host / "note.txt").write_text("keep host\n", encoding="utf-8")
+    _allow_host(host)
+    agent, state = _agent_and_state()
+    client = _api_client(monkeypatch)
+    # A new file names no existing path, so the card (and the Clone) covers the folder.
+    target = host / "fresh.txt"
+
+    paused = execute_bm_cli(agent, state, f"write {target}", content="changed\n")
+    first_id = paused.consent_request_id
+    assert first_id
+    cloned = client.post(f"/api/workspace-preference/{first_id}/clone", headers=_headers())
+    assert cloned.status_code == 200, cloned.text
+    dest = cloned.json().get("clone_dest") or ""
+    assert dest.startswith("/me/host-work/")
+    copy = agent_artifact_dir(agent.storage_key) / "host-work" / Path(dest).name
+    assert copy.is_dir()
+
+    locked = execute_bm_cli(agent, state, f"write {target}", content="host write\n")
+    assert locked.ok is False
+    assert locked.kind == "host_deny"
+    assert f"Locked workspace copy for {host.resolve()}" in format_runtime_core_block(agent)
+
+    shutil.rmtree(copy)
+
+    reopened = execute_bm_cli(agent, state, f"write {target}", content="host write\n")
+    assert reopened.consent_required is True
+    assert reopened.consent_request_id and reopened.consent_request_id != first_id
+    card = (reopened.data or {}).get("host_path_consent") or {}
+    assert card["kind"] == WORKSPACE_PREFERENCE_KIND
+    assert not target.exists()
+    assert "Locked workspace copy" not in format_runtime_core_block(agent)
+
+
+def test_preference_scope_is_the_allowed_folder_not_a_parent(tmp_path: Path) -> None:
+    pkg = tmp_path / "Projects" / "SurgeAI" / "Etalon" / "pkg"
+    pkg.mkdir(parents=True)
+    _allow_host(pkg)
+    agent, state = _agent_and_state()
+
+    paused = execute_bm_cli(agent, state, f"write {pkg / 'golden' / 'new.sh'}", content="#!/bin/sh\n")
+    assert paused.consent_required is True
+    card = (paused.data or {}).get("host_path_consent") or {}
+    assert card["kind"] == WORKSPACE_PREFERENCE_KIND
+    assert card["path"] == str(pkg.resolve())
+    assert card["grant_root"] == str(pkg.resolve())
+
+
+def test_choice_for_a_child_folder_does_not_cover_its_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    parent = tmp_path / "parent"
+    child = parent / "child"
+    child.mkdir(parents=True)
+    roots = [str(parent.resolve()), str(child.resolve())]
+    db.set_setting("workspace_host_roots", "\n".join(roots), "cli_policy")
+    config.reload()
+    agent, state = _agent_and_state()
+    client = _api_client(monkeypatch)
+
+    in_child = execute_bm_cli(agent, state, f"write {child / 'a.txt'}", content="child\n")
+    assert in_child.consent_required is True
+    child_id = in_child.consent_request_id
+    assert child_id
+    choose_edit_host(client, child_id)
+
+    in_parent = execute_bm_cli(agent, state, f"write {parent / 'other.txt'}", content="parent\n")
+    assert in_parent.consent_required is True
+    assert in_parent.consent_request_id and in_parent.consent_request_id != child_id
+    card = (in_parent.data or {}).get("host_path_consent") or {}
+    assert card["grant_root"] == str(parent.resolve())
+    assert not (parent / "other.txt").exists()
 
 
 def _enable_shell() -> None:

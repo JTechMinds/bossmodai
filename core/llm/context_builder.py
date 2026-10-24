@@ -278,7 +278,7 @@ def _build_prompt_render_context(turn: TurnContext) -> dict[str, Any]:
     task = _task_context(turn.current_task)
     cli_cwd = _current_cli_cwd(turn.agent.id)
     task_id = _task_id(turn.current_task)
-    workspace = _workspace_context(cli_cwd, turn.current_task, agent_id=turn.agent.id)
+    workspace = _workspace_context(cli_cwd, turn.current_task, agent=turn.agent)
     return {
         "agent_name": turn.agent.name,
         "role": turn.agent.role or "AI Assistant",
@@ -360,15 +360,12 @@ def _workspace_context(
     cli_cwd: str,
     task: dict[str, Any] | None,
     *,
-    agent_id: str | None = None,
+    agent: Agent,
 ) -> dict[str, str]:
     """Return compact workspace defaults for prompt rendering."""
     project_root = _workspace_project_root(cli_cwd, task)
     default_save_root = cli_cwd if project_root and cli_cwd.startswith(project_root) else (project_root or "/me")
-    preference = workspace_preference_context(
-        agent_id=agent_id or "",
-        task_id=_task_id(task),
-    )
+    preference = workspace_preference_context(agent)
     return {
         "personal_root": "/me",
         "projects_root": "/projects",

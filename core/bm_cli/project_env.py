@@ -144,8 +144,6 @@ def gate_locked_clone_command(
     agent: Agent,
     parsed: ParsedCliCommand,
     cwd: str,
-    *,
-    task_id: str | None = None,
 ) -> ParsedCliCommand | BossModCliResult:
     """Rewrite or deny host pip on a locked clone; prefer uv/venv pytest.
 
@@ -153,7 +151,7 @@ def gate_locked_clone_command(
     copy) so desk ``pip install`` still uses the existing approval card.
     """
     nested = cwd_is_nested_clone_repo(agent, cwd)
-    locked = nested or _has_locked_workspace_copy(agent.id, task_id)
+    locked = nested or _has_locked_workspace_copy(agent)
     pip_args = pip_mutation_args(parsed)
     local_pip = is_project_local_pip(parsed)
 
@@ -202,10 +200,10 @@ def gate_locked_clone_command(
     return parsed
 
 
-def _has_locked_workspace_copy(agent_id: str, task_id: str | None) -> bool:
-    from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
+def _has_locked_workspace_copy(agent: Agent) -> bool:
+    from core.agent_loop.runtime_core import locked_workspace_copies
 
-    return bool(locked_workspace_copies_for_turn(agent_id, task_id))
+    return bool(locked_workspace_copies(agent))
 
 
 def _env_for_cwd(agent: Agent, cwd: str) -> ProjectEnv | None:

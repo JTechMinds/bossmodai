@@ -404,11 +404,25 @@ def list_locked_workspace_copies(
     *,
     agent_id: str | None = None,
     task_id: str | None = None,
-    limit: int = 20,
 ) -> list[HostPathConsentRequest]:
-    """Return cloned/branched workspace preferences still in force."""
+    """Return every cloned/branched workspace preference for an agent and/or task.
+
+    Rows are never truncated: a dropped row would be a lock silently
+    lifted. Whether a row's copy still exists (and so whether it still
+    locks) is decided by ``runtime_core.locked_workspace_copies``.
+
+    Args:
+        agent_id: Only rows owned by this agent.
+        task_id: Only rows opened for this task.
+
+    Returns:
+        The matching rows, newest decision first.
+
+    Raises:
+        ValueError: Neither ``agent_id`` nor ``task_id`` is given.
+    """
     if not agent_id and not task_id:
-        return []
+        raise ValueError("agent_id or task_id is required")
     conditions = [
         f"card_kind = '{_WORKSPACE_KIND}'",
         "status IN ('cloned', 'branched')",
@@ -420,14 +434,12 @@ def list_locked_workspace_copies(
     if task_id:
         params.append(task_id)
         conditions.append(f"task_id = ${len(params)}")
-    params.append(limit)
     return fetch_all(
         f"""
         SELECT {_ALL_COLUMNS}
         FROM host_path_consent_requests
         WHERE {' AND '.join(conditions)}
         ORDER BY decided_at DESC
-        LIMIT ${len(params)}
         """,
         params,
         HostPathConsentRequest,
@@ -440,7 +452,12 @@ def find_workspace_preference_for_scope(
     *,
     task_id: str | None,
 ) -> HostPathConsentRequest | None:
-    """Return the latest resolved workspace preference for this write scope."""
+    """Return the latest Edit-host or Cancel choice for this write scope.
+
+    Branch/workspace-copy locks are not read here: they last only while
+    their copy exists, which ``runtime_core.locked_workspace_copies``
+    checks, so a deleted copy cannot keep blocking through this lookup.
+    """
     if task_id:
         return fetch_one(
             f"""
@@ -448,7 +465,7 @@ def find_workspace_preference_for_scope(
             FROM host_path_consent_requests
             WHERE agent_id = $1 AND path = $2
               AND card_kind = '{_WORKSPACE_KIND}'
-              AND status IN ('edit_host', 'cloned', 'branched', 'denied')
+              AND status IN ('edit_host', 'denied')
               AND task_id = $3
             ORDER BY decided_at DESC
             LIMIT 1
@@ -462,7 +479,7 @@ def find_workspace_preference_for_scope(
         FROM host_path_consent_requests
         WHERE agent_id = $1 AND path = $2
           AND card_kind = '{_WORKSPACE_KIND}'
-          AND status IN ('edit_host', 'cloned', 'branched', 'denied')
+          AND status IN ('edit_host', 'denied')
           AND task_id IS NULL
         ORDER BY decided_at DESC
         LIMIT 1

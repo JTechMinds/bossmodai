@@ -9,12 +9,14 @@ Every locked-clone shell command maps to exactly one of:
 
 Silent deny is a bug. An unmatched command on a locked clone becomes
 approval_required so the operator gets a card, not a quiet drop.
-Host writes outside the nest stay ``never_allowed``.
+A host path must sit inside the agent's shell jail; the host tree of the
+agent's own locked copy stays never_allowed.
 """
 
 from __future__ import annotations
 
 import shlex
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
@@ -24,30 +26,25 @@ from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.floor_roots import agent_floor_id, floor_root
 from core.bm_cli.host_roots import (
     PathOutsideRootsError,
+    denial_message,
     is_within_roots,
-    looks_like_named_absolute_path,
 )
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policy_engine import CommandPolicyDecision, policy_engine
 from core.bm_cli.project_env import gate_locked_clone_command
-from core.bm_cli.shell_executor import path_candidates_from_token
+from core.bm_cli.shell_executor import allowed_shell_roots, path_candidates_from_token
 from core.bm_cli.shell_executor_consent import command_needs_shell_executor
 from core.bm_cli.types import BossModCliResult, ParsedCliCommand
 from core.bm_cli.virtual_fs import resolve_cli_path
-from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo
+from core.bm_cli.workspace_preference import cwd_is_nested_clone_repo, locked_copy_covering
 from core.models import Agent
+from core.models.host_path_consent import HostPathConsentRequest
 
 OutcomeKind = Literal["allow", "rewrite", "approval_required", "never_allowed"]
 
 LOCKED_CLONE_DEFAULT_STEER = (
     "Stay on the locked clone under /me/host-work. "
     "Use uv run pytest, .venv/bin/pytest, local git, or wait for an in-thread Approve card. "
-    "Do not invent a desk deny. Do not park @Boss as an enablement switch."
-)
-
-HOST_OUTSIDE_NEST_WHY = (
-    "Blocked — host path is outside the locked clone. "
-    "Stay on /me/host-work. Host writes stay denied. "
     "Do not invent a desk deny. Do not park @Boss as an enablement switch."
 )
 
@@ -69,27 +66,27 @@ DEFAULT_APPROVAL_MESSAGE = (
 
 @dataclass(frozen=True, slots=True)
 class LockedCloneShellOutcome:
-    """One of the four locked-clone shell outcomes."""
+    """One of the four locked-clone shell outcomes.
+
+    Attributes:
+        result_kind: The CLI result kind a ``never_allowed`` outcome
+            materializes as; host-path refusals are ``host_deny`` so the
+            origin thread gets its Blocked line.
+    """
 
     kind: OutcomeKind
     parsed: ParsedCliCommand
     policy: CommandPolicyDecision | None = None
     message: str | None = None
     blocked_why: str | None = None
+    result_kind: Literal["host_deny", "error"] = "error"
 
 
-def is_locked_clone_context(
-    agent: Agent,
-    cwd: str,
-    *,
-    task_id: str | None = None,
-) -> bool:
-    """Return True when cwd is a nest clone or the turn has a locked copy."""
-    if cwd_is_nested_clone_repo(agent, cwd):
-        return True
-    from core.agent_loop.runtime_core import locked_workspace_copies_for_turn
+def _locked_copies(agent: Agent) -> list[HostPathConsentRequest]:
+    """The agent's own locked workspace copies whose copy still exists."""
+    from core.agent_loop.runtime_core import locked_workspace_copies
 
-    return bool(locked_workspace_copies_for_turn(agent.id, task_id))
+    return locked_workspace_copies(agent)
 
 
 def is_virtual_cli_path(token: str) -> bool:
@@ -131,30 +128,50 @@ def decide_locked_clone_shell_outcome(
     parsed: ParsedCliCommand,
     cwd: str,
     *,
-    task_id: str | None,
     virtual_commands: frozenset[str],
     native: bool = False,
 ) -> LockedCloneShellOutcome | None:
     """Return the shared outcome for one locked-clone shell command.
 
-    ``None`` means this is not a locked-clone shell command — callers keep
-    the existing desk / virtual path. ``native`` marks a command that runs
-    on the native shell whatever its name (a script segment).
+    A turn is in the locked-clone context when the agent owns a locked copy
+    that still exists, or when *cwd* is a git repo nested in ``/me``. Locks
+    are per owner, in every task.
+
+    Args:
+        agent: The agent running the command.
+        parsed: The command.
+        cwd: The agent's virtual working directory.
+        virtual_commands: The virtual command names (unused here).
+        native: The command runs on the native shell whatever its name
+            (a script segment).
+
+    Returns:
+        ``None`` when this is not a locked-clone shell command — callers keep
+        the existing desk / virtual path. Otherwise the outcome; an absolute
+        argv path outside the shell jail or inside the agent's own locked
+        host tree is ``never_allowed`` with ``result_kind="host_deny"``.
+
+    Raises:
+        ValueError: A locked row is missing its ``grant_root`` or ``/me``
+            ``clone_dest``, or a project-env refusal has no reason.
+        LookupError: No agent owns ``agent.storage_key``.
     """
-    if not is_locked_clone_context(agent, cwd, task_id=task_id):
+    locked_copies = _locked_copies(agent)
+    if not locked_copies and not cwd_is_nested_clone_repo(agent, cwd):
         return None
     if not command_needs_shell_executor(agent, parsed, cwd, native=native):
         return None
 
     rewritten = False
-    gated = gate_locked_clone_command(agent, parsed, cwd, task_id=task_id)
+    gated = gate_locked_clone_command(agent, parsed, cwd)
     if isinstance(gated, BossModCliResult):
-        why = _blocked_line(_result_why(gated) or HOST_OUTSIDE_NEST_WHY)
+        why = _blocked_line(_result_why(gated))
         return LockedCloneShellOutcome(
             kind="never_allowed",
             parsed=parsed,
             message=why,
             blocked_why=why,
+            result_kind="error",
         )
     if gated.raw != parsed.raw:
         rewritten = True
@@ -165,13 +182,14 @@ def decide_locked_clone_shell_outcome(
         rewritten = True
     parsed = path_mapped
 
-    host = first_host_path_outside_nest(agent, parsed, cwd)
-    if host is not None:
+    refusal = host_path_refusal(agent, parsed, locked_copies)
+    if refusal is not None:
         return LockedCloneShellOutcome(
             kind="never_allowed",
             parsed=parsed,
-            message=HOST_OUTSIDE_NEST_WHY,
-            blocked_why=HOST_OUTSIDE_NEST_WHY,
+            message=refusal,
+            blocked_why=refusal,
+            result_kind="host_deny",
         )
 
     policy = policy_engine.evaluate(parsed.raw, frozenset(), agent_id=agent.id, cwd=cwd)
@@ -181,7 +199,7 @@ def decide_locked_clone_shell_outcome(
     if policy.tier == "never_allowed" or (
         not policy.allowed and not policy.approval_required and policy.tier != "default"
     ):
-        why = blocked_never_allowed_message(policy, parsed)
+        why = blocked_never_allowed_message(policy, parsed, locked=bool(locked_copies))
         return LockedCloneShellOutcome(
             kind="never_allowed",
             parsed=parsed,
@@ -229,22 +247,36 @@ def prepare_locked_clone_approved(
     agent: Agent,
     parsed: ParsedCliCommand,
     cwd: str,
-    *,
-    task_id: str | None,
 ) -> ParsedCliCommand | BossModCliResult:
-    """Rewrite clone-local form after approval. Approval is not a jailbreak."""
-    if not is_locked_clone_context(agent, cwd, task_id=task_id):
+    """Rewrite clone-local form after approval. Approval is not a jailbreak.
+
+    The same context test and host check as
+    :func:`decide_locked_clone_shell_outcome` apply to an approved command.
+
+    Returns:
+        The command to run (rewritten when in the locked-clone context), the
+        project-env refusal, or a ``host_deny`` result from
+        :func:`host_path_refusal`.
+
+    Raises:
+        ValueError: A locked row is missing its ``grant_root`` or ``/me``
+            ``clone_dest``.
+        LookupError: No agent owns ``agent.storage_key``.
+    """
+    locked_copies = _locked_copies(agent)
+    if not locked_copies and not cwd_is_nested_clone_repo(agent, cwd):
         return parsed
-    gated = gate_locked_clone_command(agent, parsed, cwd, task_id=task_id)
+    gated = gate_locked_clone_command(agent, parsed, cwd)
     if isinstance(gated, BossModCliResult):
         return gated
     parsed = rewrite_virtual_shell_paths(agent, gated, cwd)
-    if first_host_path_outside_nest(agent, parsed, cwd) is not None:
+    refusal = host_path_refusal(agent, parsed, locked_copies)
+    if refusal is not None:
         from core.bm_cli.results import error_result
 
         return error_result(
             parsed.raw,
-            HOST_OUTSIDE_NEST_WHY,
+            refusal,
             cwd=cwd,
             executor="shell",
             kind="host_deny",
@@ -288,42 +320,89 @@ def path_jail_blocked_result(
     )
 
 
-def first_host_path_outside_nest(
+def host_path_refusal(
     agent: Agent,
     parsed: ParsedCliCommand,
-    cwd: str,
+    locked_copies: Sequence[HostPathConsentRequest],
 ) -> str | None:
-    """Return the first named host path that is not inside the nest/workspace."""
-    roots = _workspace_roots(agent)
+    """Return the refusal for the first absolute argv path the agent may not touch.
+
+    Uses the same jail as the executor, script preparation and the approval
+    gate (:func:`allowed_shell_roots`), so boss-allowed host folders and
+    allow-once grants pass here too. Each absolute path (after the virtual
+    ``/me`` / ``/projects`` rewrite) is checked in order:
+
+    1. inside ``/me`` or the agent's floor folder: allowed by this gate;
+    2. inside the host tree of one of the agent's own locked copies:
+       refused with the lock message;
+    3. inside the shell jail: allowed by this gate;
+    4. otherwise: refused with the standard request-access message.
+
+    Rule 1 comes first so a lock whose host tree contains the app install
+    cannot swallow the agent's own ``/me``. Relative and unrewritten virtual
+    paths are left to the executor's jail.
+
+    Args:
+        agent: The agent running the command.
+        parsed: The command, after :func:`rewrite_virtual_shell_paths`.
+        locked_copies: The agent's own locked copies (:func:`_locked_copies`).
+
+    Returns:
+        ``None`` when every absolute path passes, else the ``Blocked — …``
+        line for the first one that does not.
+
+    Raises:
+        LookupError: From :func:`allowed_shell_roots`, when no agent owns
+            ``agent.storage_key``.
+        ValueError: From :func:`locked_copy_covering`, when a locked copy
+            has no ``grant_root``.
+    """
+    workspace = _workspace_roots(agent)
+    jail = allowed_shell_roots(agent.storage_key)
     for token in parsed.args:
         for candidate in path_candidates_from_token(token):
             if is_virtual_cli_path(candidate):
                 continue
-            try:
-                path = Path(candidate).expanduser()
-            except OSError:
-                continue
-            if not path.is_absolute() or not roots:
-                if looks_like_named_absolute_path(candidate):
-                    return candidate
+            path = Path(candidate).expanduser()
+            if not path.is_absolute():
                 continue
             try:
                 resolved = path.resolve()
             except OSError:
-                if looks_like_named_absolute_path(candidate):
-                    return candidate
+                # A path that cannot be resolved cannot be shown to be inside the jail.
+                return _blocked_line(denial_message(candidate))
+            if is_within_roots(resolved, workspace):
                 continue
-            if not is_within_roots(resolved, roots):
-                return candidate
-    del cwd
+            copy = locked_copy_covering(locked_copies, resolved)
+            if copy is not None:
+                return _locked_host_path_why(candidate, copy)
+            if is_within_roots(resolved, jail):
+                continue
+            return _blocked_line(denial_message(candidate))
     return None
+
+
+def _locked_host_path_why(path: str, copy: HostPathConsentRequest) -> str:
+    return (
+        f"Blocked — {path} is inside {copy.grant_root}, which the boss locked to your "
+        f"workspace copy at {copy.clone_dest}. Use the copy; the host folder stays "
+        "off-limits while the copy exists. Do not invent a desk deny. "
+        "Do not park @Boss as an enablement switch."
+    )
 
 
 def blocked_never_allowed_message(
     policy: CommandPolicyDecision,
     parsed: ParsedCliCommand,
+    *,
+    locked: bool,
 ) -> str:
-    """Name the gate and steer to the allowed form. No desk myth."""
+    """Name the gate and steer to the allowed form. No desk myth.
+
+    The locked-clone steer is appended only when *locked* (the agent owns a
+    locked copy that still exists): a refusal states only what the runtime
+    enforces.
+    """
     gate = (policy.message or f"Command not permitted: {parsed.name}").strip()
     prefix = "command blocked by policy rule:"
     if gate.lower().startswith(prefix):
@@ -343,7 +422,7 @@ def blocked_never_allowed_message(
         if SECRET_TOKEN_ENV_DUMP_STEER not in joined:
             parts.append(SECRET_TOKEN_ENV_DUMP_STEER)
         return " ".join(parts)
-    if LOCKED_CLONE_DEFAULT_STEER not in joined:
+    if locked and LOCKED_CLONE_DEFAULT_STEER not in joined:
         parts.append(LOCKED_CLONE_DEFAULT_STEER)
     return " ".join(parts)
 
@@ -361,7 +440,7 @@ def never_allowed_cli_result(
     from core.agent_loop.notifications import ensure_never_allowed_chrome
     from core.bm_cli.results import error_result
 
-    why = blocked_never_allowed_message(policy, parsed)
+    why = blocked_never_allowed_message(policy, parsed, locked=bool(_locked_copies(agent)))
     chrome = ensure_never_allowed_chrome(
         agent,
         parsed.raw,
@@ -449,7 +528,9 @@ def _result_why(result: BossModCliResult) -> str:
 
 
 def _blocked_line(why: str) -> str:
-    text = (why or "").strip() or HOST_OUTSIDE_NEST_WHY
+    text = (why or "").strip()
+    if not text:
+        raise ValueError("A locked-clone refusal needs a reason")
     if text.lower().startswith("blocked"):
         return text
     if text.lower().startswith("bossmod cli error:"):

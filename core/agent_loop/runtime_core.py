@@ -111,7 +111,8 @@ CHAT_FORMATTING = (
 )
 
 LOCKED_WORKSPACE_COPY_STEER = (
-    "Once the boss chooses Branch or workspace-copy, that preference stays locked for the task. "
+    "Once the boss chooses Branch or workspace-copy, that host folder stays locked "
+    "while your copy of it exists. "
     "Stay on the clone. Do not recommend editing the live host tree. "
     "Do not park @Boss to reopen it unless the boss explicitly overrides. "
     "The clone under /me is a real workspace: cd there and validate via cli "
@@ -190,13 +191,20 @@ def format_runtime_core_block(agent: Agent, *, task_id: str | None = None) -> st
     )
 
 
-def workspace_preference_context(
-    *,
-    agent_id: str,
-    task_id: str | None = None,
-) -> dict[str, str]:
-    """Return locked Branch/workspace-copy facts for prompt workspace context."""
-    rows = locked_workspace_copies_for_turn(agent_id, task_id)
+def workspace_preference_context(agent: Agent) -> dict[str, str]:
+    """Return the agent's own locked Branch/workspace-copy facts for prompt workspace context.
+
+    Args:
+        agent: The agent whose turn is being rendered.
+
+    Returns:
+        ``preference`` (``cloned``/``branched``) and ``clone_dest`` of the
+        newest lock whose copy still exists; both empty when none does.
+
+    Raises:
+        ValueError: A locked row's ``clone_dest`` is not a ``/me`` path.
+    """
+    rows = locked_workspace_copies(agent)
     if not rows:
         return {"preference": "", "clone_dest": ""}
     row = rows[0]
@@ -206,42 +214,107 @@ def workspace_preference_context(
     }
 
 
-def locked_workspace_copies_for_turn(
-    agent_id: str,
-    task_id: str | None = None,
-) -> list[HostPathConsentRequest]:
-    """Return cloned/branched preferences for this agent and/or current task."""
-    token = (agent_id or "").strip()
-    if not token or token == "preview":
+def locked_workspace_copies(agent: Agent) -> list[HostPathConsentRequest]:
+    """Return the agent's own Branch/workspace-copy locks whose copy still exists.
+
+    A lock binds the agent that owns the copy, in every task, and lasts
+    while the copy exists under that agent's ``/me``. Deleting the copy
+    releases it. Shell and virtual writes both read locks from here.
+
+    Args:
+        agent: The agent whose locks to read.
+
+    Returns:
+        The agent's ``cloned``/``branched`` workspace-preference rows, newest
+        first, whose copy exists. Empty for the hire preview agent.
+
+    Raises:
+        ValueError: A locked row's ``clone_dest`` is not a ``/me`` path.
+    """
+    # The hire preview agent has no rows, and resolving its /me would create one.
+    if agent.id == "preview":
         return []
     import db
 
-    seen: set[str] = set()
-    rows: list[HostPathConsentRequest] = []
-    for row in db.list_locked_workspace_copies(agent_id=token, limit=20):
-        if row.id not in seen:
-            seen.add(row.id)
-            rows.append(row)
-    task_token = (task_id or "").strip()
-    if task_token:
-        for row in db.list_locked_workspace_copies(task_id=task_token, limit=20):
-            if row.id not in seen:
-                seen.add(row.id)
-                rows.append(row)
-    return rows
+    return [
+        row
+        for row in db.list_locked_workspace_copies(agent_id=agent.id)
+        if _copy_exists(agent.storage_key, row)
+    ]
+
+
+def teammate_locked_copies(
+    agent: Agent,
+    task_id: str | None,
+) -> list[tuple[Agent, HostPathConsentRequest]]:
+    """Return other agents' locks opened for this task whose copy still exists.
+
+    For prompt lines only: a teammate's lock steers this agent off that host
+    folder but never blocks it, since the copy is in the owner's workspace.
+
+    Args:
+        agent: The agent whose turn is being rendered.
+        task_id: The turn's task; without one there are no teammates.
+
+    Returns:
+        ``(owner, row)`` pairs, newest decision first.
+
+    Raises:
+        LookupError: A row's owner no longer exists (rows are deleted with
+            their agent, so this is a broken invariant).
+        ValueError: A locked row's ``clone_dest`` is not a ``/me`` path.
+    """
+    token = (task_id or "").strip()
+    if not token:
+        return []
+    import db
+
+    found: list[tuple[Agent, HostPathConsentRequest]] = []
+    for row in db.list_locked_workspace_copies(task_id=token):
+        if row.agent_id == agent.id:
+            continue
+        owner = db.get_agent(row.agent_id)
+        if owner is None:
+            raise LookupError(
+                f"Locked workspace copy {row.id} belongs to missing agent {row.agent_id}"
+            )
+        if _copy_exists(owner.storage_key, row):
+            found.append((owner, row))
+    return found
+
+
+def _copy_exists(agent_storage_key: str, row: HostPathConsentRequest) -> bool:
+    """Return True when a locked row's copy exists in its owner's ``/me``.
+
+    A Clone of one file makes a file copy, so this checks existence, not
+    is-dir.
+
+    Raises:
+        ValueError: ``clone_dest`` is not a ``/me`` path;
+            ``resume_workspace_preference`` always sets ``/me/host-work/<name>``.
+    """
+    dest = (row.clone_dest or "").strip()
+    if not dest.startswith("/me/"):
+        raise ValueError(f"Locked workspace copy {row.id} has no /me clone_dest: {dest!r}")
+    # core.bm_cli imports this module (via shell_executor_consent) at load.
+    from core.bm_cli.virtual_fs import resolve_cli_path
+
+    return resolve_cli_path(agent_storage_key, "/me", dest).exists
 
 
 def _locked_copy_dest_lines(agent: Agent, *, task_id: str | None) -> str:
-    rows = locked_workspace_copies_for_turn(agent.id, task_id)
-    if not rows:
-        return ""
-    return "\n".join(
-        (
-            f"Locked workspace copy for {row.path}: work at "
-            f"{(row.clone_dest or '').strip() or '/me'}. Host writes stay blocked."
-        )
-        for row in rows
-    )
+    own = [
+        f"Locked workspace copy for {row.path}: work at "
+        f"{(row.clone_dest or '').strip()}. Host writes stay blocked."
+        for row in locked_workspace_copies(agent)
+    ]
+    teammates = [
+        f"{owner.name} is working on a locked copy of {row.path} for this task "
+        f"(in their workspace at {(row.clone_dest or '').strip()}). "
+        f"Do not edit that host folder; coordinate with {owner.name}."
+        for owner, row in teammate_locked_copies(agent, task_id)
+    ]
+    return "\n".join([*own, *teammates])
 
 
 def _desk_line(agent: Agent) -> str:

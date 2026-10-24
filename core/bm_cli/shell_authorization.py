@@ -124,13 +124,11 @@ def authorize_shell_command(
             agent, parsed, cwd, task_id=task_id, trigger_type=trigger_type, native=native,
         )
         or nest_git_authorization(agent, parsed, cwd, task_id=task_id, trigger_type=trigger_type)
-        or locked_clone_authorization(
-            agent, parsed, cwd, task_id=task_id, trigger_type=trigger_type, native=native,
-        )
+        or locked_clone_authorization(agent, parsed, cwd, trigger_type=trigger_type, native=native)
     )
     if decided is not None:
         return decided
-    gated = project_env_authorization(agent, parsed, cwd, task_id=task_id, trigger_type=trigger_type)
+    gated = project_env_authorization(agent, parsed, cwd, trigger_type=trigger_type)
     if isinstance(gated, ShellAuthorization):
         return gated
     if native:
@@ -216,18 +214,19 @@ def nest_git_authorization(
 
 def locked_clone_authorization(
     agent: Agent, parsed: ParsedCliCommand, cwd: str, *,
-    task_id: str | None, trigger_type: str | None, native: bool = False,
+    trigger_type: str | None, native: bool = False,
 ) -> ShellAuthorization | None:
     """Decide the shared locked-clone outcome. None keeps the desk path.
 
     An allowed outcome still passes scoped-Always containment, so a scoped
     rule that overreaches goes to approval here too. ``native`` makes a
-    virtual-named command a shell command here (a script segment).
+    virtual-named command a shell command here (a script segment). A
+    refusal's result kind comes from the outcome, never from its wording.
     """
     from core.bm_cli.locked_clone_outcome import decide_locked_clone_shell_outcome
 
     outcome = decide_locked_clone_shell_outcome(
-        agent, parsed, cwd, task_id=task_id, virtual_commands=_effects().VIRTUAL_COMMANDS, native=native,
+        agent, parsed, cwd, virtual_commands=_effects().VIRTUAL_COMMANDS, native=native,
     )
     if outcome is None:
         return None
@@ -235,8 +234,7 @@ def locked_clone_authorization(
         if outcome.policy is not None and outcome.policy.tier == "never_allowed":
             return _never_allowed(agent, outcome.parsed, cwd, outcome.policy, trigger_type)
         message = outcome.message or outcome.blocked_why or "Command not permitted"
-        host = bool(outcome.blocked_why) and "host path" in (outcome.blocked_why or "").lower()
-        result_kind = "host_deny" if host else "error"
+        result_kind = outcome.result_kind
         refused = outcome.parsed
 
         def materialize(*, content: _Text, channel_id: _Text, command: _Text = None) -> BossModCliResult:
@@ -260,7 +258,7 @@ def locked_clone_authorization(
 
 
 def project_env_authorization(
-    agent: Agent, parsed: ParsedCliCommand, cwd: str, *, task_id: str | None, trigger_type: str | None,
+    agent: Agent, parsed: ParsedCliCommand, cwd: str, *, trigger_type: str | None,
 ) -> ParsedCliCommand | ShellAuthorization:
     """Rewrite host pip/pytest to the clone's uv/venv, or block it.
 
@@ -269,7 +267,7 @@ def project_env_authorization(
     """
     from core.bm_cli.project_env import gate_locked_clone_command
 
-    gated = gate_locked_clone_command(agent, parsed, cwd, task_id=task_id)
+    gated = gate_locked_clone_command(agent, parsed, cwd)
     if not isinstance(gated, BossModCliResult):
         return gated
     denied = gated

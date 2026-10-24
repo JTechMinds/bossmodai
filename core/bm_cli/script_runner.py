@@ -206,7 +206,7 @@ def _recheck_approved(
 
     rt = _runtime()
     task_id = bound_task_id(agent.id)
-    parsed = prepare_locked_clone_approved(agent, segment.parsed, cwd, task_id=task_id)
+    parsed = prepare_locked_clone_approved(agent, segment.parsed, cwd)
     if isinstance(parsed, BossModCliResult):
         return parsed
     peek = program_env_block(segment) or policy_engine.evaluate(
@@ -217,7 +217,7 @@ def _recheck_approved(
             agent=agent, parsed=replace(parsed, raw=raw), content=content, cwd_before=cwd,
             policy=peek, trigger_type=trigger_type, channel_id=channel_id,
         )
-    gated = project_env_authorization(agent, parsed, cwd, task_id=task_id, trigger_type=trigger_type)
+    gated = project_env_authorization(agent, parsed, cwd, trigger_type=trigger_type)
     if isinstance(gated, ShellAuthorization):
         # As for a lone approved command, the project-env refusal posts nowhere.
         return _materialized(gated, raw, content=content, channel_id=None)

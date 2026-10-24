@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from pathlib import Path
 
 import pytest
@@ -12,18 +13,26 @@ from core import config
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.locked_clone_outcome import (
     DEFAULT_APPROVAL_MESSAGE,
-    HOST_OUTSIDE_NEST_WHY,
+    LOCKED_CLONE_DEFAULT_STEER,
     PATH_JAIL_BLOCKED_WHY,
     PATH_JAIL_STEER,
     decide_locked_clone_shell_outcome,
     is_virtual_cli_path,
     path_jail_blocked_result,
+    prepare_locked_clone_approved,
     rewrite_virtual_shell_paths,
 )
 from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import VIRTUAL_COMMANDS, execute_bm_cli, preview_bm_cli
+from core.bm_cli.types import BossModCliResult, ParsedCliCommand
 from tests.test_project_env import _lock_and_cd_clone
+from tests.test_workspace_preference import (
+    _agent_and_state,
+    _allow_host,
+    _enable_shell,
+    _init_tiny_pytest_repo,
+)
 
 
 def setup_function() -> None:
@@ -236,24 +245,151 @@ def test_outside_clone_mutate_is_blocked(
     blocked = execute_bm_cli(agent, state, f"sed -i s/keep/gone/ {host_file}")
     assert blocked.ok is False
     assert blocked.approval_required is False
+    assert blocked.kind == "host_deny"
     assert "Blocked" in (blocked.detail or "")
-    assert "outside the locked clone" in (blocked.detail or "")
+    assert "request_host_access" in (blocked.detail or "")
     assert host_file.read_text(encoding="utf-8") == "keep\n"
     assert db.list_cli_approval_requests(status="pending") == []
+
+
+def test_allowlisted_host_path_passes_from_a_self_made_repo_in_me(tmp_path: Path) -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+    repo = agent_artifact_dir(agent.storage_key) / "host-work" / "repo"
+    repo.mkdir(parents=True)
+    _init_tiny_pytest_repo(repo)
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    (ext / "data.txt").write_text("granted data\n", encoding="utf-8")
+    _allow_host(ext)
+    cd = execute_bm_cli(agent, state, "cd /me/host-work/repo")
+    assert cd.ok is True, cd.prompt_content
+
+    # head, not the virtual cat: only a shell command reaches the locked-clone gate.
+    read = execute_bm_cli(agent, state, f"head {ext / 'data.txt'}")
+    assert read.ok is True, read.prompt_content
+    assert read.executor == "shell"
+    assert "granted data" in (read.prompt_content or "")
+
+    outcome = decide_locked_clone_shell_outcome(
+        agent,
+        parse_cli_command(f"cp tests/test_ok.py {ext / 'copy.py'}"),
+        "/me/host-work/repo",
+        virtual_commands=VIRTUAL_COMMANDS,
+    )
+    assert outcome is not None
+    assert outcome.kind != "never_allowed", outcome.message
+
+    from tests.test_consent_origin import _channel_for
+
+    # The reported command shape: cp and chmod are approval_required, so it pauses for approval.
+    target = ext / "copy.py"
+    reported = execute_bm_cli(
+        agent,
+        state,
+        f"cp tests/test_ok.py {target} && chmod 0644 {target} && sha256sum {target}",
+        channel_id=_channel_for(agent.id).id,
+    )
+    assert reported.approval_required is True, reported.detail
+    assert reported.kind != "host_deny"
+    assert "locked clone" not in (reported.detail or "")
+    assert "locked clone" not in (reported.prompt_content or "")
+    assert not target.exists()
+
+
+def test_allowlisted_host_path_passes_beside_a_locked_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, state, _dest, _real = _lock_and_cd_clone(tmp_path, monkeypatch)
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    (ext / "data.txt").write_text("granted data\n", encoding="utf-8")
+    roots = [str((tmp_path / "llm_helper").resolve()), str(ext.resolve())]
+    db.set_setting("workspace_host_roots", "\n".join(roots), "cli_policy")
+    config.reload()
+
+    read = execute_bm_cli(agent, state, f"head {ext / 'data.txt'}")
+    assert read.ok is True, read.prompt_content
+    assert read.executor == "shell"
+    assert "granted data" in (read.prompt_content or "")
+
+
+def test_locked_host_tree_stays_blocked_even_when_allowlisted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, state, dest, _real = _lock_and_cd_clone(tmp_path, monkeypatch)
+    host = tmp_path / "llm_helper"
+
+    blocked = execute_bm_cli(agent, state, f"head {host / 'pytest.ini'}")
+    assert blocked.ok is False
+    assert blocked.approval_required is False
+    assert blocked.kind == "host_deny"
+    assert dest in (blocked.detail or "")
+    assert db.list_cli_approval_requests(status="pending") == []
+    assert db.list_consent_requests(status="pending") == []
+
+
+def test_approved_command_gets_the_same_host_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, _state, dest, _real = _lock_and_cd_clone(tmp_path, monkeypatch)
+    host = tmp_path / "llm_helper"
+    ext = tmp_path / "ext"
+    ext.mkdir()
+    roots = [str(host.resolve()), str(ext.resolve())]
+    db.set_setting("workspace_host_roots", "\n".join(roots), "cli_policy")
+    config.reload()
+
+    allowed = prepare_locked_clone_approved(
+        agent, parse_cli_command(f"cp tests/test_ok.py {ext / 'copy.py'}"), dest
+    )
+    assert isinstance(allowed, ParsedCliCommand)
+
+    refused = prepare_locked_clone_approved(
+        agent, parse_cli_command(f"cp tests/test_ok.py {host / 'copy.py'}"), dest
+    )
+    assert isinstance(refused, BossModCliResult)
+    assert refused.ok is False
+    assert refused.kind == "host_deny"
+    assert dest in (refused.detail or "")
+    assert not (host / "copy.py").exists()
+
+
+def test_never_allowed_without_a_locked_copy_has_no_clone_steer() -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+
+    blocked = execute_bm_cli(agent, state, "bash scripts/run-tests.sh")
+    assert blocked.ok is False
+    assert blocked.approval_required is False
+    blob = f"{blocked.detail} {blocked.prompt_content}"
+    assert "Blocked" in blob
+    assert LOCKED_CLONE_DEFAULT_STEER not in blob
+
+
+def test_removing_the_copy_releases_the_shell_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    agent, state, _dest, real = _lock_and_cd_clone(tmp_path, monkeypatch)
+    host = tmp_path / "llm_helper"
+    shutil.rmtree(real)
+    cd = execute_bm_cli(agent, state, "cd /me")
+    assert cd.ok is True, cd.prompt_content
+
+    read = execute_bm_cli(agent, state, f"head {host / 'pytest.ini'}")
+    assert read.ok is True, read.prompt_content
+    assert read.executor == "shell"
+    assert "testpaths" in (read.prompt_content or "")
 
 
 def test_decide_outcome_is_table_driven_not_sed_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     agent, _state, dest, _real = _lock_and_cd_clone(tmp_path, monkeypatch)
-    from core.agent_loop.activity_runtime import get_active_task_id
-
-    task_id = get_active_task_id(agent.id)
     sed = decide_locked_clone_shell_outcome(
         agent,
         parse_cli_command("sed -i s/a/b/ tests/test_ok.py"),
         dest,
-        task_id=task_id,
         virtual_commands=VIRTUAL_COMMANDS,
     )
     assert sed is not None
@@ -264,7 +400,6 @@ def test_decide_outcome_is_table_driven_not_sed_only(
         agent,
         parse_cli_command("awk '{print}' tests/test_ok.py"),
         dest,
-        task_id=task_id,
         virtual_commands=VIRTUAL_COMMANDS,
     )
     assert awk is not None
@@ -274,7 +409,6 @@ def test_decide_outcome_is_table_driven_not_sed_only(
         agent,
         parse_cli_command("echo nest-ok"),
         dest,
-        task_id=task_id,
         virtual_commands=VIRTUAL_COMMANDS,
     )
     assert echo is not None
@@ -288,11 +422,6 @@ def test_preview_nest_sed_is_approval_not_silent_deny(
     preview = preview_bm_cli(agent, state, "sed -i s/a/b/ tests/test_ok.py")
     assert preview.approval_required is True
     assert preview.ok is False
-
-
-def test_host_outside_nest_why_constant() -> None:
-    assert HOST_OUTSIDE_NEST_WHY.startswith("Blocked")
-    assert "enablement" in HOST_OUTSIDE_NEST_WHY
 
 
 def test_path_jail_blocked_why_steers_projects_rewrite() -> None:

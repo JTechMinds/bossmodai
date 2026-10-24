@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -23,10 +24,11 @@ from core.bm_cli.host_roots import (
 )
 from core.bm_cli.host_path_consent import (
     _clean_channel_id,
+    _consent_ask_path,
     _enqueue_resume,
     canonical_host_path,
     looks_like_command_flag,
-    resolve_consent_host_path,
+    strip_command_junk_from_host_path,
 )
 from core.bm_cli.results import consent_required_result, error_result, success_result
 from core.bm_cli.types import BossModCliResult, ParsedCliCommand
@@ -43,33 +45,65 @@ def workspace_preference_scopes_match(
     existing: HostPathConsentRequest,
     *,
     path: str,
-    grant_root: str,
 ) -> bool:
-    """Return True when a new write is nested under the same preference grant."""
-    if (existing.grant_root or "").strip() and (existing.grant_root or "").strip() == (grant_root or "").strip():
-        return True
-    return _nested_host_paths(existing.path, path) or _nested_host_paths(
-        existing.grant_root, path
-    ) or _nested_host_paths(existing.grant_root, grant_root)
+    """Return True when a write path falls under an earlier preference's folder.
+
+    A preference covers its ``grant_root`` (the boss-allowed folder it was
+    asked for) and everything inside it, never a parent.
+
+    Args:
+        existing: A workspace-preference row.
+        path: The canonical host path of the new write.
+
+    Returns:
+        True when *path* equals or is inside ``existing.grant_root``.
+
+    Raises:
+        ValueError: ``existing`` has a blank ``grant_root``.
+    """
+    root = (existing.grant_root or "").strip()
+    if not root:
+        raise ValueError(f"Workspace preference {existing.id} has no grant_root")
+    return is_within_roots(Path(path), (Path(root),))
 
 
-def _nested_host_paths(left: str | None, right: str | None) -> bool:
-    a = canonical_host_path(left or "")
-    b = canonical_host_path(right or "")
-    if not a or not b:
-        return False
-    if a == b:
-        return True
-    prefix_a = a.rstrip("/") + "/"
-    prefix_b = b.rstrip("/") + "/"
-    return b.startswith(prefix_a) or a.startswith(prefix_b)
+def locked_copy_covering(
+    copies: Sequence[HostPathConsentRequest],
+    path: Path | str,
+) -> HostPathConsentRequest | None:
+    """Return the locked workspace copy whose host tree holds *path*, if any.
+
+    The one answer to "is this host path locked for this agent?" for both
+    the shell gate and virtual writes.
+
+    Args:
+        copies: The agent's own locks (``runtime_core.locked_workspace_copies``).
+        path: A host path; it is resolved before matching.
+
+    Returns:
+        The first copy whose ``grant_root`` equals or contains *path*, or
+        None when no lock covers it.
+
+    Raises:
+        ValueError: A copy has a blank ``grant_root``.
+    """
+    roots: list[tuple[HostPathConsentRequest, Path]] = []
+    for copy in copies:
+        root = (copy.grant_root or "").strip()
+        if not root:
+            raise ValueError(f"Locked workspace copy {copy.id} has no grant_root")
+        roots.append((copy, Path(root)))
+    target = Path(path)
+    for copy, root in roots:
+        if is_within_roots(target, (root,)):
+            return copy
+    return None
 
 
 def _resolved_preference_for_write(
     *,
     agent_id: str,
     path: str,
-    grant_root: str,
     task_id: str | None,
 ) -> HostPathConsentRequest | None:
     exact = db.find_workspace_preference_for_scope(agent_id, path, task_id=task_id)
@@ -78,14 +112,14 @@ def _resolved_preference_for_write(
     for row in db.list_consent_requests(agent_id=agent_id, limit=80):
         if (row.card_kind or "") != WORKSPACE_PREFERENCE_KIND:
             continue
-        if row.status not in {"edit_host", "cloned", "branched", "denied"}:
+        if row.status not in {"edit_host", "denied"}:
             continue
         if task_id:
             if row.task_id != task_id:
                 continue
         elif row.task_id:
             continue
-        if workspace_preference_scopes_match(row, path=path, grant_root=grant_root):
+        if workspace_preference_scopes_match(row, path=path):
             return row
     return None
 
@@ -94,7 +128,6 @@ def _pending_preference_for_write(
     *,
     agent_id: str,
     path: str,
-    grant_root: str,
     detached_origin: bool,
 ) -> HostPathConsentRequest | None:
     # A detached and an attached turn never share a pending row.
@@ -106,7 +139,7 @@ def _pending_preference_for_write(
             continue
         if row.detached_origin != detached_origin:
             continue
-        if workspace_preference_scopes_match(row, path=path, grant_root=grant_root):
+        if workspace_preference_scopes_match(row, path=path):
             return row
     return None
 
@@ -194,27 +227,43 @@ def maybe_pause_for_workspace_preference(
     task_id: str | None,
     channel_id: str | None,
 ) -> BossModCliResult | None:
-    """Pause mutating host writes until the operator picks a workspace preference."""
+    """Pause mutating host writes until the operator picks a workspace preference.
+
+    A host path inside the agent's own locked copy is refused first, before
+    the allowlist and before an earlier Edit-host choice is honored: the
+    lock wins.
+
+    Returns:
+        None when the write may go ahead (not a mutating host write, not a
+        boss-allowed host folder, or Edit host already chosen); else the
+        lock refusal, the prior Cancel refusal, or the preference card.
+
+    Raises:
+        ValueError: A locked or prior preference row is missing its
+            ``grant_root`` or ``/me`` ``clone_dest``.
+    """
     if parsed.name not in MUTATING_CLI_COMMANDS:
         return None
     raw_path = named_host_path_from_command(parsed)
     if not raw_path:
         return None
-    resolved = resolve_consent_host_path(raw_path)
-    check_path = resolved[0] if resolved is not None else raw_path
-    if not _host_path_is_allowlisted(agent, check_path, task_id) and not _host_path_is_allowlisted(
-        agent, raw_path, task_id
-    ):
+    from core.agent_loop.runtime_core import locked_workspace_copies
+
+    copy = locked_copy_covering(
+        locked_workspace_copies(agent),
+        canonical_host_path(strip_command_junk_from_host_path(raw_path)),
+    )
+    if copy is not None:
+        return _locked_copy_result(copy, command=parsed.raw, cwd=cwd)
+    scope = _preference_scope(agent, raw_path, task_id)
+    if scope is None:
         return None
-    if resolved is None:
-        return None
-    path, grant_root = resolved
+    path, _root = scope
     prior = db.find_workspace_preference_for_scope(agent.id, path, task_id=task_id)
     if prior is None:
         prior = _resolved_preference_for_write(
             agent_id=agent.id,
             path=path,
-            grant_root=str(grant_root),
             task_id=task_id,
         )
     if prior is not None and prior.status == "edit_host":
@@ -240,21 +289,24 @@ def request_workspace_preference(
     task_id: str | None,
     channel_id: str | None = None,
 ) -> BossModCliResult:
-    """Open the workspace-preference card, or apply a prior explicit choice."""
-    resolved = resolve_consent_host_path(raw_path)
-    if resolved is None:
+    """Open the workspace-preference card, or apply a prior explicit choice.
+
+    The card covers the most specific boss-allowed folder that holds
+    *raw_path* (:func:`_preference_scope`), never a parent of it.
+    """
+    scope = _preference_scope(agent, raw_path, task_id)
+    if scope is None:
         return error_result(
             command,
             denial_message(raw_path),
             cwd=cwd,
             executor="virtual",
         )
-    path, grant_root = resolved
+    path, grant_root = scope
 
     prior = _resolved_preference_for_write(
         agent_id=agent.id,
         path=path,
-        grant_root=str(grant_root),
         task_id=task_id,
     )
     if prior is not None and prior.status != "edit_host":
@@ -272,7 +324,6 @@ def request_workspace_preference(
     pending = _pending_preference_for_write(
         agent_id=agent.id,
         path=path,
-        grant_root=str(grant_root),
         detached_origin=detached,
     )
     if pending is not None:
@@ -430,7 +481,13 @@ async def resume_workspace_preference(
     return updated
 
 
-def _host_path_is_allowlisted(agent: Agent, raw_path: str, task_id: str | None) -> bool:
+def _allowlisted_host_root(agent: Agent, raw_path: str, task_id: str | None) -> Path | None:
+    """Return the deepest boss-allowed host folder holding *raw_path*, if any.
+
+    Allow-once grants count: the agent's consent scope is set for the lookup.
+    ``/me`` and the floor folder are the default workspace, not host roots,
+    so a path there has none.
+    """
     from core.bm_cli.consent_scope import ConsentScope, host_path_consent_scope
 
     token = host_path_consent_scope.set(ConsentScope(agent_id=agent.id, task_id=task_id))
@@ -439,7 +496,6 @@ def _host_path_is_allowlisted(agent: Agent, raw_path: str, task_id: str | None) 
         extras = named_path_roots(agent.storage_key)
         # Desk / the floor's projects are the default workspace; this card is
         # for extra host roots.
-        from core.bm_cli.filesystem import agent_artifact_dir
         from core.bm_cli.floor_roots import agent_floor_id, floor_root
 
         desk = agent_artifact_dir(agent.storage_key).resolve()
@@ -448,19 +504,65 @@ def _host_path_is_allowlisted(agent: Agent, raw_path: str, task_id: str | None) 
         if floor_id is not None:
             workspace.add(floor_root(floor_id).resolve())
         if is_within_roots(resolved, tuple(workspace)):
-            return False
-        host_roots = tuple(root for root in extras if root not in workspace)
-        return is_within_roots(resolved, host_roots)
+            return None
+        holding = [
+            root
+            for root in extras
+            if root not in workspace and is_within_roots(resolved, (root,))
+        ]
+        # Roots that all hold one path are nested, so the deepest is the
+        # most specific grant; a choice for it must never cover its parent.
+        return max(holding, key=lambda root: len(root.parts)) if holding else None
     except OSError:
-        return False
+        return None
     finally:
         host_path_consent_scope.reset(token)
+
+
+def _preference_scope(
+    agent: Agent,
+    raw_path: str,
+    task_id: str | None,
+) -> tuple[str, Path] | None:
+    """Return ``(ask_path, grant_root)`` for a workspace preference on *raw_path*.
+
+    The grant root is the most specific boss-allowed folder holding the path;
+    the ask path is the existing file or folder named, else that grant root.
+
+    Returns:
+        The scope, or None when *raw_path* is not inside any boss-allowed
+        host folder (or is inside ``/me`` / the floor folder).
+    """
+    token = strip_command_junk_from_host_path(raw_path)
+    root = _allowlisted_host_root(agent, token, task_id)
+    if root is None:
+        return None
+    return _consent_ask_path(canonical_host_path(token), root), root
 
 
 def _preference_message(request: HostPathConsentRequest) -> str:
     return (
         f"{WORKSPACE_PREFERENCE_TITLE} {WORKSPACE_PREFERENCE_BODY} "
         f"Named host path: {request.path}."
+    )
+
+
+def _locked_copy_result(
+    copy: HostPathConsentRequest,
+    *,
+    command: str,
+    cwd: str | None,
+) -> BossModCliResult:
+    """Refuse a virtual write into the host tree of the agent's own locked copy."""
+    return error_result(
+        command,
+        (
+            f"Host writes stay blocked. Work in the agent workspace copy at {copy.clone_dest} "
+            "(desk / /me is the default workspace)."
+        ),
+        cwd=cwd,
+        executor="virtual",
+        kind="host_deny",
     )
 
 
@@ -479,18 +581,6 @@ def _result_for_resolved_preference(
             sections=[("WORKSPACE PREFERENCE", ["Edit host directly was already chosen for this path."])],
             cwd=cwd,
             executor="virtual",
-        )
-    if prior.status in {"cloned", "branched"}:
-        dest = prior.clone_dest or "/me"
-        return error_result(
-            command,
-            (
-                f"Host writes stay blocked. Work in the agent workspace copy at {dest} "
-                "(desk / /me is the default workspace)."
-            ),
-            cwd=cwd,
-            executor="virtual",
-            kind="host_deny",
         )
     return error_result(
         command,

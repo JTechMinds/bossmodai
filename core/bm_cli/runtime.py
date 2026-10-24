@@ -179,15 +179,12 @@ def preview_bm_cli(
         agent,
         parsed,
         cwd_before,
-        task_id=bound_task_id(agent.id),
         virtual_commands=VIRTUAL_COMMANDS,
     )
     if preview_outcome is not None:
         return _preview_locked_clone_outcome(preview_outcome, cwd_before)
 
-    gated = gate_locked_clone_command(
-        agent, parsed, cwd_before, task_id=bound_task_id(agent.id),
-    )
+    gated = gate_locked_clone_command(agent, parsed, cwd_before)
     if isinstance(gated, BossModCliResult):
         return gated
     parsed = gated
@@ -432,15 +429,9 @@ def execute_approved_command(
     # audit row records.
     submitted = parsed.raw
 
-    from core.agent_loop.work_binding import bound_task_id
     from core.bm_cli.locked_clone_outcome import prepare_locked_clone_approved
 
-    prepared_clone = prepare_locked_clone_approved(
-        agent,
-        parsed,
-        cwd_before,
-        task_id=bound_task_id(agent.id),
-    )
+    prepared_clone = prepare_locked_clone_approved(agent, parsed, cwd_before)
     if isinstance(prepared_clone, BossModCliResult):
         return prepared_clone
     parsed = prepared_clone
@@ -928,11 +919,7 @@ def _gate_locked_clone_project_env(
     trigger_type: str | None = None,
 ) -> ParsedCliCommand | BossModCliResult:
     """Rewrite or deny host pip on a locked clone, recording a deny audit event."""
-    from core.agent_loop.work_binding import bound_task_id
-
-    gated = project_env_authorization(
-        agent, parsed, cwd_before, task_id=bound_task_id(agent.id), trigger_type=trigger_type,
-    )
+    gated = project_env_authorization(agent, parsed, cwd_before, trigger_type=trigger_type)
     if isinstance(gated, ParsedCliCommand):
         return gated
     paused = _paused(gated, content=content, channel_id=None)
