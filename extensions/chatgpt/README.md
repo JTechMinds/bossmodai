@@ -53,6 +53,9 @@ The files in this folder have distinct responsibilities:
 - `provider.py` owns the Responses transport. Sync and async calls share message
   conversion, option validation, error mapping, and one response accumulator. Both
   client factories are injectable. Only a completed response becomes an agent reply.
+  The access probe requires successful completion without requiring reply text.
+  Agent calls still require nonblank text, reconstructed from streaming text events
+  when it is absent from the terminal response; repeated snapshots do not duplicate it.
 
 BossMod keeps its personalities, tasks, history, and local command execution. This
 extension supplies model responses instead of introducing another agent runtime.
