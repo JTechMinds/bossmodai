@@ -237,8 +237,19 @@ const BossModExtensionsApi = (() => {
         return res.json();
     }
 
+    async function chatgptAccount(action = 'account', method = 'GET', body) {
+        const options = { method, cache: 'no-store' };
+        if (body !== undefined) {
+            options.headers = { 'Content-Type': 'application/json' };
+            options.body = JSON.stringify(body);
+        }
+        const res = await apiFetch(`/api/extensions/chatgpt/${action}`, options);
+        if (!res.ok) throw await failure(res, 'Couldn’t update the ChatGPT connection.');
+        return res.status === 204 ? null : res.json();
+    }
+
     return {
-        listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
+        chatgptAccount, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
         extensionAgents, agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
     };
 })();

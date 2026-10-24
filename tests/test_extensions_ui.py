@@ -135,3 +135,9 @@ def test_nothing_but_the_data_table_names_tabulator() -> None:
         if "vendor" not in path.parts and "Tabulator" in path.read_text(encoding="utf-8")
     ]
     assert offenders == ["core/data-table.js"], offenders
+
+
+def test_chatgpt_extension_sign_in_and_connection_status() -> None:
+    payload = _payload()
+    for key in ("chatgptSignInInExtension", "chatgptSignInStartsAndPolls", "chatgptCompletionShowsConnection", "chatgptCloseStopsPolling"):
+        assert payload.get(key) is True, (key, payload)

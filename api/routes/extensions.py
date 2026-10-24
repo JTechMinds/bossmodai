@@ -163,6 +163,7 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
         "setup": entry_setup_status(entry).model_dump(),
         "setup_label": manifest.setup.label,
         "excluded_agents": _excluded_agents() if requires_image and valid else [],
+        "account_connection": entry.id == "chatgpt",
     }
 
 
@@ -192,6 +193,9 @@ async def set_extension_enabled(ext_id: str, body: EnabledBody) -> dict[str, Any
         state = entry_setup_status(entry).state
         if state not in {"ready", "not_required"}:
             raise _conflict("SETUP_REQUIRED", f"Set up {entry.manifest.name} before turning it on (setup is {state}).")
+    if ext_id == "chatgpt" and not body.enabled:
+        from core.chatgpt.auth import cancel_login
+        await asyncio.to_thread(cancel_login)
     set_enabled(ext_id, body.enabled)
     runtime_services.extensions_reconcile()
     # Turning a live-view extension off empties its live view and on again

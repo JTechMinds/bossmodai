@@ -601,6 +601,8 @@ async def create_connection(body: AIConnectionCreate):
         HTTPException: 400 when ``supports_images`` is set without a model,
             since the flag is keyed by model name.
     """
+    if body.api_base_url == "chatgpt://local":
+        raise HTTPException(409, "Sign in through Extensions → ChatGPT to create this connection.")
     has_model = bool(body.model and body.model.strip())
     if body.supports_images and not has_model:
         raise HTTPException(400, _IMAGE_FLAG_NEEDS_MODEL)
@@ -633,6 +635,11 @@ async def update_connection(connection_id: str, body: AIConnectionUpdate):
             this connection, or System AI on it, still pick (the detail
             names them).
     """
+    existing = db.get_connection_by_id(connection_id)
+    if existing is not None and existing.api_base_url == "chatgpt://local":
+        raise HTTPException(409, "Manage this connection through Extensions → ChatGPT.")
+    if body.api_base_url == "chatgpt://local":
+        raise HTTPException(409, "Sign in through Extensions → ChatGPT to create this connection.")
     fields = body.model_dump(exclude_none=True)
     if not fields:
         raise HTTPException(400, "No fields to update")
@@ -699,6 +706,9 @@ async def duplicate_connection(connection_id: str):
     last four. A client-side duplicate would have to re-ask for the key or
     write a keyless row, so the copy is made where the key already is.
     """
+    existing = db.get_connection_by_id(connection_id)
+    if existing is not None and existing.api_base_url == "chatgpt://local":
+        raise HTTPException(409, "ChatGPT uses one managed connection. Select it for any agent.")
     conn = db.duplicate_connection(connection_id)
     if not conn:
         raise HTTPException(404, "Connection not found")
@@ -713,6 +723,9 @@ async def delete_connection(connection_id: str):
     Raises:
         HTTPException: 409 naming the agents linked to it; 404 when unknown.
     """
+    existing = db.get_connection_by_id(connection_id)
+    if existing is not None and existing.api_base_url == "chatgpt://local":
+        raise HTTPException(409, "Sign out or disable ChatGPT in Extensions. This connection keeps agent links intact.")
     users = db.list_agents_by_connection(connection_id)
     if users:
         names = ", ".join(agent.name for agent in users)
@@ -736,6 +749,15 @@ async def test_connection(body: TestConnectionBody):
     Verifies the host is reachable, auth works, and the response
     is OpenAI-compatible. Optionally checks the model exists.
     """
+    if body.api_base_url == "chatgpt://local":
+        from core.chatgpt import ChatGPTError
+        from core.chatgpt.auth import access_token, model_catalog
+        try:
+            token = await asyncio.to_thread(access_token)
+            models = await asyncio.to_thread(model_catalog, token)
+            return {"ok": True, "models": [item["slug"] for item in models]}
+        except ChatGPTError as exc:
+            return {"ok": False, "error": str(exc)}
     try:
         base = validate_connection_test_url(body.api_base_url).rstrip("/")
     except ConnectionUrlError as exc:

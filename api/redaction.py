@@ -68,6 +68,7 @@ def serialize_connection(connection: AIConnection) -> dict[str, Any]:
         "id": connection.id,
         "name": connection.name,
         "api_base_url": connection.api_base_url,
+        "managed_by": "chatgpt" if connection.api_base_url == "chatgpt://local" else None,
         "model": connection.model,
         "extra_body": connection.extra_body,
         "thinking_levels": connection.thinking_levels,

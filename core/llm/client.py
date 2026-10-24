@@ -495,6 +495,11 @@ async def completion(
     # see the expanded list.
     messages = expand_attachment_messages(messages, model=model)
 
+    from core.chatgpt import API_BASE as CHATGPT_API_BASE
+    if api_base == CHATGPT_API_BASE:
+        from core.chatgpt.provider import completion as chatgpt_completion
+        return await chatgpt_completion(model, messages, extra_body)
+
     if temperature is None:
         temperature = config.get_float("default_temperature") or 0.7
     if max_tokens is None:

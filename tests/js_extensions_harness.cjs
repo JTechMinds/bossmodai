@@ -176,6 +176,12 @@ const liveCallsBy = {};
 let listCalls = 0;
 const folderOpens = [];
 let listReply = [bv];
+let chatgptReply = { connected: false, pending: false, error: null, accounts: [], models: [], active_account: null };
+const chatgptCalls = [];
+global.BossModMenuSelect = {
+    create: ({label, options, value, onChange}) => ({ element: h('button', { 'aria-label': label,
+        onclick: () => onChange(options[options.length - 1].value) }, label + ': ' + value) }),
+};
 let deskReads = 0;
 const viewCalls = [];
 const mailItem = {
@@ -239,6 +245,15 @@ global.apiFetch = async (url, init) => {
         if (configReply) return { ok: false, status: 422, json: async () => ({ detail: configReply }) };
         agent.configured = method === "PUT";
         return method === "PUT" ? ok({ verified: "Ready." }) : { ok: true, status: 204, json: async () => ({}) };
+    }
+    if (url.startsWith('/api/extensions/chatgpt/')) {
+        const method = (init && init.method) || 'GET';
+        if (url.endsWith('/enabled')) return ok({ ...listReply[0], enabled: JSON.parse(init.body).enabled });
+        chatgptCalls.push({ url, method, body: init && init.body ? JSON.parse(init.body) : null });
+        if (url.endsWith('/login') && method === 'POST') chatgptReply = { ...chatgptReply, pending: true };
+        if (url.endsWith('/login') && method === 'DELETE') chatgptReply = { ...chatgptReply, pending: false };
+        if (url.endsWith('/logout')) chatgptReply = { ...chatgptReply, connected: false };
+        return ok(chatgptReply);
     }
     const viewMatch = url.match(/^\/api\/extensions\/mail\/agents\/a1\/view\?view=(\w+)&skip=(\d+)&top=(\d+)$/);
     if (viewMatch) {
@@ -1012,6 +1027,27 @@ const verdict = {};
         && document.activeElement === switchOf(mailLayer, "a1");
     closeLayer(mailLayer);
     closeLayer(extDialog);
+
+    listReply = [{ ...bv, id: 'chatgpt', name: 'ChatGPT', enabled: true, account_connection: true,
+        requires_image_model: false, setup: { state: 'not_required' }, description: 'Commercial use requires permission from JtechMinds LLC.' }];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    const chatLayer = layers[layers.length - 1];
+    const buttonWith = (label) => [...chatLayer.body.querySelectorAll('button')].find(b => b.textContent === label);
+    verdict.chatgptSignInInExtension = Boolean(buttonWith('Continue with ChatGPT')) && text().includes('Commercial use requires permission');
+    buttonWith('Continue with ChatGPT').click();
+    await drain();
+    verdict.chatgptSignInStartsAndPolls = chatgptCalls.some(call => call.url.endsWith('/login') && call.method === 'POST')
+        && text().includes('Finish signing in in your browser') && Boolean(buttonWith('Cancel sign-in'));
+    chatgptReply = { ...chatgptReply, connected: true, pending: false, email: 'new@example.com', active_account: 'account',
+        accounts: [{ id: 'account', label: 'new@example.com' }], models: [{ slug: 'model', display_name: 'Model' }], model: 'model' };
+    await advance(2000);
+    verdict.chatgptCompletionShowsConnection = text().includes('Choose Chat GPT when creating or editing an agent.')
+        && Boolean(buttonWith('Sign out')) && [...chatLayer.body.querySelectorAll('button')].some(b => b.getAttribute('aria-label') === 'ChatGPT model');
+    const chatgptReadsBeforeClose = chatgptCalls.length;
+    closeLayer(chatLayer);
+    await advance(10000);
+    verdict.chatgptCloseStopsPolling = chatgptCalls.length === chatgptReadsBeforeClose;
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

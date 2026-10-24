@@ -140,6 +140,12 @@ def complete_text(
         return None
     try:
         try:
+            from core.chatgpt import API_BASE as CHATGPT_API_BASE
+            if api_base == CHATGPT_API_BASE:
+                from core.chatgpt.auth import access_token
+                from core.chatgpt.provider import complete_sync
+                return complete_sync(access_token(), model, messages,
+                                     timeout=kwargs["timeout"], extra=extra)
             response = litellm.completion(**kwargs)
         except Exception as exc:
             logger.warning("system completion failed: %s", type(exc).__name__)

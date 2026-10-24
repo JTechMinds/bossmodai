@@ -87,7 +87,7 @@ const BossModExtensionsDialog = (() => {
 
         function schedulePoll() {
             clearTimeout(timer);
-            const installing = state.items.some((item) => item.setup && item.setup.state === 'installing');
+            const installing = state.items.some((item) => (item.setup && item.setup.state === 'installing') || (item.account && item.account.pending));
             if (!closed && installing) timer = setTimeout(() => load(false), POLL_MS);
         }
 
@@ -98,6 +98,12 @@ const BossModExtensionsDialog = (() => {
             }
             try {
                 state.items = await API.listExtensions();
+                for (const item of state.items) {
+                    if (item.account_connection && item.enabled) {
+                        try { item.account = await API.chatgptAccount(); }
+                        catch (err) { state.errors[item.id] = String(err.message || err); }
+                    }
+                }
                 state.status = state.items.length ? 'ready' : 'empty';
                 state.error = '';
             } catch (err) {
@@ -115,7 +121,9 @@ const BossModExtensionsDialog = (() => {
             state.focus = switchId(item.id);
             render();
             try {
-                replaceItem(await API.setEnabled(item.id, pressed));
+                const updated = await API.setEnabled(item.id, pressed);
+                if (updated.account_connection && pressed) updated.account = await API.chatgptAccount();
+                replaceItem(updated);
                 void BossModLiveStatus.refresh();
             } catch (err) {
                 // Never show a state the server refused: the item is unchanged,
@@ -127,6 +135,60 @@ const BossModExtensionsDialog = (() => {
             // while the request ran.
             state.focus = switchId(item.id);
             if (!closed) render();
+        }
+
+        async function accountAction(item, action, method, body) {
+            state.busy = item.id;
+            state.errors[item.id] = '';
+            render();
+            try {
+                const result = await API.chatgptAccount(action, method, body);
+                if (result && result.message) state.errors[item.id] = result.message;
+                item.account = await API.chatgptAccount();
+            } catch (err) {
+                state.errors[item.id] = String(err.message || err);
+            }
+            state.busy = null;
+            if (closed) return;
+            render();
+            schedulePoll();
+        }
+
+        function accountControls(item, busy) {
+            const account = item.account;
+            if (!account) return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, 'Retry connection status')];
+            const rows = [];
+            const button = (label, action, method, body) => h('button', {
+                class: 'btn btn-sm', type: 'button', disabled: busy,
+                onclick: () => accountAction(item, action, method, body),
+            }, label);
+            rows.push(h('p', { class: 'market-card-note', 'aria-live': 'polite' }, account.pending
+                ? 'Finish signing in in your browser…'
+                : account.connected ? `Connected${account.email ? ' as ' + account.email : ''}. Choose Chat GPT when creating or editing an agent.`
+                    : 'Sign in to add the Chat GPT connection. Eligible ChatGPT plan usage and limits apply.'));
+            if (account.error) rows.push(h('p', { class: 'market-failed', role: 'alert' }, account.error));
+            if (account.pending) {
+                rows.push(button('Cancel sign-in', 'login', 'DELETE'));
+                return rows;
+            }
+            rows.push(button('Continue with ChatGPT', 'login', 'POST', { account_id: account.active_account || (account.accounts[0] && account.accounts[0].id) || null }));
+            if (account.accounts.length) {
+                rows.push(button('Add another account', 'login', 'POST', { account_id: null }));
+                const options = account.accounts.map((saved) => ({ value: saved.id, label: `${saved.label} (${saved.id.slice(-8)})` }));
+                rows.push(BossModMenuSelect.create({ label: 'ChatGPT account', options,
+                    value: account.active_account || options[0].value,
+                    onChange: (value) => accountAction(item, 'login', 'POST', { account_id: value }),
+                }).element);
+            }
+            if (account.connected && account.models.length) {
+                rows.push(BossModMenuSelect.create({ label: 'ChatGPT model',
+                    options: account.models.map((model) => ({ value: model.slug, label: model.display_name })),
+                    value: account.model || account.models[0].slug,
+                    onChange: (value) => accountAction(item, 'model', 'PUT', { model: value }),
+                }).element);
+                rows.push(button('Sign out', 'logout', 'POST'));
+            }
+            return rows;
         }
 
         async function beginSetup(item) {
@@ -195,6 +257,7 @@ const BossModExtensionsDialog = (() => {
                 }, COPY.configureAgents));
             }
 
+            if (item.enabled && item.account_connection) rows.push(...accountControls(item, busy));
             const excluded = item.excluded_agents || [];
             if (item.enabled && excluded.length) {
                 const names = excluded
