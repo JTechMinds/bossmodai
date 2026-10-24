@@ -87,8 +87,8 @@ const BossModExtensionsDialog = (() => {
 
         function schedulePoll() {
             clearTimeout(timer);
-            const installing = state.items.some((item) => (item.setup && item.setup.state === 'installing') || (item.account && item.account.pending));
-            if (!closed && installing) timer = setTimeout(() => load(false), POLL_MS);
+            const installing = state.items.some((item) => (item.setup && item.setup.state === 'installing') || (item.provider && item.provider.pending));
+            if (!closed && !state.busy && installing) timer = setTimeout(() => load(false), POLL_MS);
         }
 
         async function load(showLoading) {
@@ -99,8 +99,8 @@ const BossModExtensionsDialog = (() => {
             try {
                 state.items = await API.listExtensions();
                 for (const item of state.items) {
-                    if (item.account_connection && item.enabled) {
-                        try { item.account = await API.chatgptAccount(); }
+                    if (item.model_provider && item.enabled) {
+                        try { item.provider = await API.providerRequest(item.id); }
                         catch (err) { state.errors[item.id] = String(err.message || err); }
                     }
                 }
@@ -122,8 +122,11 @@ const BossModExtensionsDialog = (() => {
             render();
             try {
                 const updated = await API.setEnabled(item.id, pressed);
-                if (updated.account_connection && pressed) updated.account = await API.chatgptAccount();
                 replaceItem(updated);
+                if (updated.model_provider && pressed) {
+                    try { updated.provider = await API.providerRequest(updated.id); }
+                    catch (err) { state.errors[item.id] = String(err.message || err); }
+                }
                 void BossModLiveStatus.refresh();
             } catch (err) {
                 // Never show a state the server refused: the item is unchanged,
@@ -137,14 +140,14 @@ const BossModExtensionsDialog = (() => {
             if (!closed) render();
         }
 
-        async function accountAction(item, action, method, body) {
+        async function providerAction(item, action, values) {
+            clearTimeout(timer);
             state.busy = item.id;
             state.errors[item.id] = '';
             render();
             try {
-                const result = await API.chatgptAccount(action, method, body);
-                if (result && result.message) state.errors[item.id] = result.message;
-                item.account = await API.chatgptAccount();
+                const provider = await API.providerRequest(item.id, action, values);
+                replaceItem({ ...item, provider });
             } catch (err) {
                 state.errors[item.id] = String(err.message || err);
             }
@@ -154,39 +157,23 @@ const BossModExtensionsDialog = (() => {
             schedulePoll();
         }
 
-        function accountControls(item, busy) {
-            const account = item.account;
-            if (!account) return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, 'Retry connection status')];
-            const rows = [];
-            const button = (label, action, method, body) => h('button', {
-                class: 'btn btn-sm', type: 'button', disabled: busy,
-                onclick: () => accountAction(item, action, method, body),
-            }, label);
-            rows.push(h('p', { class: 'market-card-note', 'aria-live': 'polite' }, account.pending
-                ? 'Finish signing in in your browser…'
-                : account.connected ? `Connected${account.email ? ' as ' + account.email : ''}. Choose Chat GPT when creating or editing an agent.`
-                    : 'Sign in to add the Chat GPT connection. Eligible ChatGPT plan usage and limits apply.'));
-            if (account.error) rows.push(h('p', { class: 'market-failed', role: 'alert' }, account.error));
-            if (account.pending) {
-                rows.push(button('Cancel sign-in', 'login', 'DELETE'));
-                return rows;
+        function providerControls(item, busy) {
+            const provider = item.provider;
+            if (!provider) return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, 'Retry provider status')];
+            const rows = [h('p', { class: 'market-card-note', 'aria-live': 'polite' }, provider.message)];
+            if (provider.error) rows.push(h('p', { class: 'market-failed', role: 'alert' }, provider.error));
+            for (const action of provider.actions) {
+                rows.push(h('button', { class: 'btn btn-sm', type: 'button', disabled: busy,
+                    onclick: () => providerAction(item, action.key, action.values),
+                }, action.label));
             }
-            rows.push(button('Continue with ChatGPT', 'login', 'POST', { account_id: account.active_account || (account.accounts[0] && account.accounts[0].id) || null }));
-            if (account.accounts.length) {
-                rows.push(button('Add another account', 'login', 'POST', { account_id: null }));
-                const options = account.accounts.map((saved) => ({ value: saved.id, label: `${saved.label} (${saved.id.slice(-8)})` }));
-                rows.push(BossModMenuSelect.create({ label: 'ChatGPT account', options,
-                    value: account.active_account || options[0].value,
-                    onChange: (value) => accountAction(item, 'login', 'POST', { account_id: value }),
-                }).element);
-            }
-            if (account.connected && account.models.length) {
-                rows.push(BossModMenuSelect.create({ label: 'ChatGPT model',
-                    options: account.models.map((model) => ({ value: model.slug, label: model.display_name })),
-                    value: account.model || account.models[0].slug,
-                    onChange: (value) => accountAction(item, 'model', 'PUT', { model: value }),
-                }).element);
-                rows.push(button('Sign out', 'logout', 'POST'));
+            for (const choice of provider.choices) {
+                const control = BossModMenuSelect.create({ label: choice.label, options: choice.options, value: choice.value,
+                    onChange: (value) => providerAction(item, choice.action, { [choice.parameter]: value }),
+                });
+                const trigger = control.element.querySelector('button') || control.element;
+                if (busy) trigger.setAttribute('disabled', '');
+                rows.push(control.element);
             }
             return rows;
         }
@@ -257,7 +244,7 @@ const BossModExtensionsDialog = (() => {
                 }, COPY.configureAgents));
             }
 
-            if (item.enabled && item.account_connection) rows.push(...accountControls(item, busy));
+            if (item.enabled && item.model_provider) rows.push(...providerControls(item, busy));
             const excluded = item.excluded_agents || [];
             if (item.enabled && excluded.length) {
                 const names = excluded

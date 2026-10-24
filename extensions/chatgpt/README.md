@@ -19,57 +19,67 @@ The existing repository license remains authoritative. This notice does not chan
 OpenAI's eligibility requirements or terms. Plan access does not import ChatGPT
 conversation history, memories, or every feature of the ChatGPT app.
 
-## Install these source changes
+## Extension boundary
 
-This integration includes host changes as well as `extensions/chatgpt/`; copying only
-that folder into an older installation is insufficient. Apply the supplied patch to
-the matching BossMod checkout, run `uv sync`, and restart BossMod. No database migration
-or shared developer key is required. The package is a native BossMod extension, not a
-plugin installed in ChatGPT.
+All ChatGPT-specific behavior is in this folder. The host has no imports, route
+names, vendor URLs, connection-name checks, or UI text tied to ChatGPT.
 
-The implementation was based on repository commit
-`ed8b4eb729b1d22b5dc90b6ee0619fe3ae003b9d`.
+The optional `model_provider` manifest capability gives an extension four methods:
+`provider_status`, `provider_action`, `provider_complete`, and `provider_complete_sync`.
+The loader validates the contract and injects `ProviderServices` through the existing
+`ExtensionContext`. Those services can register this extension's connection, check
+whether it is enabled, and wrap/unwrap its own stored credentials. This extension
+never imports the database, global application settings, or the LLM client.
 
-## Implementation
+The host uses `extension://<extension-id>` as an internal routing marker, registers
+connection rows, enforces call budgets/deadlines, and dispatches generic operator
+actions. Provider status contains typed action/choice descriptors, so the normal
+Extensions dialog renders the provider's controls without provider-specific JS.
+Another provider can implement this capability by adding its own extension folder;
+no additional routing, endpoint, or UI branches are needed. Disabling/removing the
+folder fails closed for its managed connections; ordinary connections still work.
 
-- `core/chatgpt/auth.py`: official local-app authorization code + PKCE/OIDC flow.
-  A temporary loopback listener binds only `127.0.0.1`; it starts before the system
-  browser opens. Attempts expire after ten minutes and callbacks are consumed once.
-  State, nonce, signature, issuer, audience, expiration, subject, and plan scope are
-  checked before use. The BossMod `/api` authentication gate is unchanged.
-- `core/chatgpt/store.py`: stable per-installation host ID and separate account/client
-  registrations. Credentials are wrapped using BossMod's existing secret store and
-  written atomically with owner-only file permissions. Cross-process file locking
-  serializes rotating token refreshes between the API and runtime worker.
-- `core/chatgpt/provider.py`: official public Responses API with `store=false` and
-  `stream=true`. No ChatGPT private endpoints, browser cookies, or borrowed CLI tokens.
-  System/developer instructions and full relevant history are sent with each request.
-  A response is successful only after `response.completed`; partial output and
-  subscription-limit failures are errors. Normal agent calls retain budget lanes,
-  cancellation, stall detection, and the absolute timeout.
-- The agent completion path and separate System AI helper both recognize the managed
-  `chatgpt://local` routing marker. That marker is internal, not a network endpoint;
-  OAuth credentials never appear in an AI connection row or API response.
-- The first account-visible model is the initial default; a completed minimal inference
-  check verifies access before the connection appears. A later model selection is also
-  probed before changing the connection. Reauthorization preserves the existing model
-  where it is still offered. Account changes affect the shared connection.
+The files in this folder have distinct responsibilities:
 
-BossMod still owns its personalities, tasks, histories, and local command execution.
-This adapter supplies model responses, rather than introducing a second agent runtime.
-Preview-unsupported parameters (including temperature and output-token caps) are not
-sent to the ChatGPT plan route. Existing per-agent temperature/token settings therefore
-do not constrain this route. Extra body settings, if added programmatically, accept
-only `reasoning` and `text`. Image inputs are translated, but Browser Vision still
-requires the model-capability flag that BossMod normally uses; this integration does
-not assume that every account-visible model supports images.
+- `manifest.json` declares the connection display name, dependency checks, protocol
+  endpoints/scopes, app name, and timeouts.
+- `__init__.py` is the composition root and thin adapter to the host protocol. It owns
+  provider-specific operator labels and action semantics.
+- `auth.py` owns an instance-scoped PKCE/OIDC session. HTTP clients, JWT key lookup,
+  identity decoding, browser opening, clock, credential store, connection publication,
+  and the model-access probe are injected. No module-global login state is used.
+- `store.py` owns atomic encrypted persistence and a cross-process refresh lock, using
+  the data directory and crypto functions supplied by the host.
+- `provider.py` owns the Responses transport. Sync and async calls share message
+  conversion, option validation, error mapping, and one response accumulator. Both
+  client factories are injectable. Only a completed response becomes an agent reply.
+
+BossMod keeps its personalities, tasks, history, and local command execution. This
+extension supplies model responses instead of introducing another agent runtime.
+It uses the official public Responses endpoint with `store=false` and `stream=true`.
+Unsupported ChatGPT plan parameters (including temperature and output-token caps)
+are omitted by this adapter; generic provider requests still carry them for providers
+that support them. Extra body settings accept only `reasoning` and `text`. Browser
+Vision continues to use BossMod's existing per-model image-capability flag.
+
+## Install
+
+The host must support the optional model-provider contract introduced by this PR.
+After installing these source changes, run `uv sync` and restart BossMod. No database
+migration or shared developer key is required. Subsequent model-provider extensions
+use this same host contract. The manifest declares the Python modules it requires;
+the shipped runtime includes their dependencies through the existing uv dependency
+policy. This is a native BossMod extension, not a plugin installed in ChatGPT.
 
 ## Validation and remaining acceptance check
 
 Automated tests cover PKCE setup, callback validation, signed ID-token verification,
 credential redaction, refresh rotation/concurrency, managed connection identity,
 disabling/sign-out, Responses history conversion, stream completion/errors/timeouts,
-System AI, and extension UI sign-in/status polling.
+System AI, and extension UI sign-in/status polling. Additional contract tests install
+two unrelated providers and exercise discovery, scoped connection registration,
+operator actions, agent/System AI dispatch, missing/disabled providers, and malformed
+capabilities. Boundary checks prevent vendor logic from moving back into the host.
 
 A real OpenAI account sign-in has **not** been performed in this development session.
 Before release, test the desktop browser round trip, authorization/consent, model

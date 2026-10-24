@@ -26,7 +26,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Query, Response
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 import db
 from api.routes._shared import _open_in_file_explorer
@@ -163,7 +163,7 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
         "setup": entry_setup_status(entry).model_dump(),
         "setup_label": manifest.setup.label,
         "excluded_agents": _excluded_agents() if requires_image and valid else [],
-        "account_connection": entry.id == "chatgpt",
+        "model_provider": manifest.model_provider.model_dump() if manifest.model_provider else None,
     }
 
 
@@ -193,9 +193,12 @@ async def set_extension_enabled(ext_id: str, body: EnabledBody) -> dict[str, Any
         state = entry_setup_status(entry).state
         if state not in {"ready", "not_required"}:
             raise _conflict("SETUP_REQUIRED", f"Set up {entry.manifest.name} before turning it on (setup is {state}).")
-    if ext_id == "chatgpt" and not body.enabled:
-        from core.chatgpt.auth import cancel_login
-        await asyncio.to_thread(cancel_login)
+    if not body.enabled and entry.manifest.model_provider is not None:
+        from core.extensions.loader import loaded_extensions, unload_extension
+        instance = loaded_extensions().get(ext_id)
+        if instance is not None:
+            await asyncio.to_thread(instance.shutdown)
+            unload_extension(ext_id)
     set_enabled(ext_id, body.enabled)
     runtime_services.extensions_reconcile()
     # Turning a live-view extension off empties its live view and on again
@@ -714,3 +717,37 @@ async def agent_view_item(
     except AgentViewError as exc:
         raise _view_failed(exc) from exc
     return item.model_dump()
+
+
+class ProviderActionBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: str
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+async def _provider_call(ext_id, action=None, values=None):
+    from core.extensions.model_provider import ProviderError, resolve_provider
+    def run():
+        provider = resolve_provider(ext_id)
+        if action is not None:
+            provider.provider_action(action, values or {})
+        return provider.provider_status()
+    try:
+        result = await asyncio.to_thread(run)
+    except ProviderError as exc:
+        raise HTTPException(409, str(exc)) from None
+    if action is not None or result.connected:
+        await manager.broadcast_operator_invalidate(["connections"])
+    return result
+
+
+@router.get("/extensions/{ext_id}/provider")
+async def provider_status(ext_id: str):
+    """Read the declared provider's credential-free operator surface."""
+    return await _provider_call(ext_id)
+
+
+@router.post("/extensions/{ext_id}/provider/actions")
+async def provider_action(ext_id: str, body: ProviderActionBody):
+    """Dispatch an operator action without knowing any provider's semantics."""
+    return await _provider_call(ext_id, body.action, body.values)

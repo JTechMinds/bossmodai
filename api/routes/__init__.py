@@ -14,7 +14,6 @@ from api.routes import (
     agents,
     attachments,
     cli_policy,
-    chatgpt,
     company_files,
     extensions,
     floors,
@@ -49,4 +48,3 @@ router.include_router(office_chatter.router)
 router.include_router(settings.router)
 router.include_router(attachments.router)
 router.include_router(extensions.router)
-router.include_router(chatgpt.router)

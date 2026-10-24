@@ -237,19 +237,20 @@ const BossModExtensionsApi = (() => {
         return res.json();
     }
 
-    async function chatgptAccount(action = 'account', method = 'GET', body) {
-        const options = { method, cache: 'no-store' };
-        if (body !== undefined) {
+    async function providerRequest(id, action = null, values = {}) {
+        const base = `/api/extensions/${enc(id)}/provider`;
+        const options = { method: action === null ? 'GET' : 'POST', cache: 'no-store' };
+        if (action !== null) {
             options.headers = { 'Content-Type': 'application/json' };
-            options.body = JSON.stringify(body);
+            options.body = JSON.stringify({ action, values });
         }
-        const res = await apiFetch(`/api/extensions/chatgpt/${action}`, options);
-        if (!res.ok) throw await failure(res, 'Couldn’t update the ChatGPT connection.');
-        return res.status === 204 ? null : res.json();
+        const res = await apiFetch(action === null ? base : `${base}/actions`, options);
+        if (!res.ok) throw await failure(res, 'Couldn’t update the model provider.');
+        return res.json();
     }
 
     return {
-        chatgptAccount, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
+        providerRequest, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
         extensionAgents, agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
     };
 })();

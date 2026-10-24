@@ -139,5 +139,5 @@ def test_nothing_but_the_data_table_names_tabulator() -> None:
 
 def test_chatgpt_extension_sign_in_and_connection_status() -> None:
     payload = _payload()
-    for key in ("chatgptSignInInExtension", "chatgptSignInStartsAndPolls", "chatgptCompletionShowsConnection", "chatgptCloseStopsPolling"):
+    for key in ("chatgptSignInInExtension", "chatgptSignInStartsAndPolls", "chatgptCompletionShowsConnection", "chatgptCloseStopsPolling", "providerControlsHandleUnrelatedExtension"):
         assert payload.get(key) is True, (key, payload)

@@ -176,8 +176,10 @@ const liveCallsBy = {};
 let listCalls = 0;
 const folderOpens = [];
 let listReply = [bv];
-let chatgptReply = { connected: false, pending: false, error: null, accounts: [], models: [], active_account: null };
+let chatgptReply = { connected: false, pending: false, message: 'Sign in to add the Chat GPT connection.', error: null,
+    actions: [{ key: 'login', label: 'Continue with ChatGPT', values: { account_id: '' } }], choices: [] };
 const chatgptCalls = [];
+let demoConnected = false;
 global.BossModMenuSelect = {
     create: ({label, options, value, onChange}) => ({ element: h('button', { 'aria-label': label,
         onclick: () => onChange(options[options.length - 1].value) }, label + ': ' + value) }),
@@ -225,6 +227,11 @@ const layerCalls = [];
 global.apiFetch = async (url, init) => {
     const ok = (body) => ({ ok: true, status: 200, json: async () => body });
     if (url === "/api/extensions") { listCalls += 1; return ok(listReply); }
+    if (url.startsWith('/api/extensions/demo-provider/provider')) {
+        if (init && init.method === 'POST') demoConnected = JSON.parse(init.body).action === 'start-demo';
+        return ok({ connected: demoConnected, pending: false, message: demoConnected ? 'Demo ready' : 'Connect demo provider',
+            actions: [{ key: 'start-demo', label: 'Start demo', values: {} }], choices: [] });
+    }
     const agentsMatch = url.match(/^\/api\/extensions\/([\w-]+)\/agents$/);
     if (agentsMatch) {
         agentsReads += 1;
@@ -249,10 +256,10 @@ global.apiFetch = async (url, init) => {
     if (url.startsWith('/api/extensions/chatgpt/')) {
         const method = (init && init.method) || 'GET';
         if (url.endsWith('/enabled')) return ok({ ...listReply[0], enabled: JSON.parse(init.body).enabled });
-        chatgptCalls.push({ url, method, body: init && init.body ? JSON.parse(init.body) : null });
-        if (url.endsWith('/login') && method === 'POST') chatgptReply = { ...chatgptReply, pending: true };
-        if (url.endsWith('/login') && method === 'DELETE') chatgptReply = { ...chatgptReply, pending: false };
-        if (url.endsWith('/logout')) chatgptReply = { ...chatgptReply, connected: false };
+        const body = init && init.body ? JSON.parse(init.body) : null;
+        chatgptCalls.push({ url, method, body });
+        if (body && body.action === 'login') chatgptReply = { ...chatgptReply, pending: true,
+            message: 'Finish signing in in your browser…', actions: [{ key: 'cancel', label: 'Cancel sign-in', values: {} }] };
         return ok(chatgptReply);
     }
     const viewMatch = url.match(/^\/api\/extensions\/mail\/agents\/a1\/view\?view=(\w+)&skip=(\d+)&top=(\d+)$/);
@@ -1028,7 +1035,7 @@ const verdict = {};
     closeLayer(mailLayer);
     closeLayer(extDialog);
 
-    listReply = [{ ...bv, id: 'chatgpt', name: 'ChatGPT', enabled: true, account_connection: true,
+    listReply = [{ ...bv, id: 'chatgpt', name: 'ChatGPT', enabled: true, model_provider: { connection_name: 'Chat GPT' },
         requires_image_model: false, setup: { state: 'not_required' }, description: 'Commercial use requires permission from JtechMinds LLC.' }];
     global.BossModExtensionsDialog.open();
     await drain();
@@ -1037,10 +1044,12 @@ const verdict = {};
     verdict.chatgptSignInInExtension = Boolean(buttonWith('Continue with ChatGPT')) && text().includes('Commercial use requires permission');
     buttonWith('Continue with ChatGPT').click();
     await drain();
-    verdict.chatgptSignInStartsAndPolls = chatgptCalls.some(call => call.url.endsWith('/login') && call.method === 'POST')
+    verdict.chatgptSignInStartsAndPolls = chatgptCalls.some(call => call.url.endsWith('/provider/actions') && call.body.action === 'login')
         && text().includes('Finish signing in in your browser') && Boolean(buttonWith('Cancel sign-in'));
-    chatgptReply = { ...chatgptReply, connected: true, pending: false, email: 'new@example.com', active_account: 'account',
-        accounts: [{ id: 'account', label: 'new@example.com' }], models: [{ slug: 'model', display_name: 'Model' }], model: 'model' };
+    chatgptReply = { connected: true, pending: false, error: null,
+        message: 'Connected as new@example.com. Choose Chat GPT when creating or editing an agent.',
+        actions: [{ key: 'logout', label: 'Sign out', values: {} }],
+        choices: [{ label: 'ChatGPT model', value: 'model', options: [{ value: 'model', label: 'Model' }], action: 'model', parameter: 'model' }] };
     await advance(2000);
     verdict.chatgptCompletionShowsConnection = text().includes('Choose Chat GPT when creating or editing an agent.')
         && Boolean(buttonWith('Sign out')) && [...chatLayer.body.querySelectorAll('button')].some(b => b.getAttribute('aria-label') === 'ChatGPT model');
@@ -1048,6 +1057,17 @@ const verdict = {};
     closeLayer(chatLayer);
     await advance(10000);
     verdict.chatgptCloseStopsPolling = chatgptCalls.length === chatgptReadsBeforeClose;
+
+    listReply = [{ ...bv, id: 'demo-provider', name: 'Demo provider', enabled: true,
+        requires_image_model: false, setup: { state: 'not_required' }, model_provider: { connection_name: 'Demo' } }];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    const demoLayer = layers[layers.length - 1];
+    const startDemo = [...demoLayer.body.querySelectorAll('button')].find(b => b.textContent === 'Start demo');
+    startDemo.click();
+    await drain();
+    verdict.providerControlsHandleUnrelatedExtension = demoConnected && demoLayer.body.textContent.includes('Demo ready');
+    closeLayer(demoLayer);
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

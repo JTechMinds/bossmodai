@@ -22,6 +22,8 @@ refuses an instance that lacks the Protocol its manifest declares:
 - ``wake`` → :class:`SupportsWake` (new events per configured agent, polled
   by the runtime worker's wake service, which wakes the agent with an
   ``extension_event`` trigger);
+- ``model_provider`` → :class:`core.extensions.model_provider.SupportsModelProvider`
+  (operator controls and model calls);
 - :class:`SupportsPromptState`, :class:`SupportsAgentConfigChanged` and
   :class:`SupportsAgentReconcile` need no manifest flag (the last two are
   called in the runtime worker by ``core.extensions.agent_hooks``).
@@ -37,6 +39,7 @@ from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, runtime_
 from pydantic import BaseModel, Field
 
 from core.extensions.manifest import ExtensionManifest
+from core.extensions.model_provider import ProviderServices
 
 if TYPE_CHECKING:
     from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
@@ -84,6 +87,9 @@ class ExtensionContext:
     # Required, so it sits before the defaulted field.
     read_agent_config: Callable[[str], dict[str, str] | None]
     runtime_worker: bool = False
+    # Only supplied to a manifest declaring model_provider. These callbacks
+    # are scoped to that extension; no database access is handed to it.
+    model_provider: ProviderServices | None = None
 
 
 class Extension(Protocol):
