@@ -20,6 +20,7 @@ const BossModConnectionForm = (() => {
      */
     const THINKING_LEVELS = Object.freeze([
         { key: 'off', label: 'Off' },
+        { key: 'minimal', label: 'Minimal' },
         { key: 'low', label: 'Low' },
         { key: 'medium', label: 'Medium' },
         { key: 'high', label: 'High' },

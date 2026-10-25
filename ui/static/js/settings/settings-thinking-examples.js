@@ -13,7 +13,7 @@
  */
 const BossModThinkingExamples = (() => {
     /**
-     * One entry per format family. Each `snippets` map has exactly the five
+     * One entry per format family. Each `snippets` map contains its demonstrated
      * ThinkingLevel keys, as the JSON text an operator would paste.
      *
      * Claude is left out on purpose: it goes through a different litellm
@@ -91,7 +91,7 @@ const BossModThinkingExamples = (() => {
             <div class="space-y-1">
                 <p class="text-xs font-medium">${BossModFormat.escapeHtml(family.title)}</p>
                 <p class="text-xs text-bm-muted">${BossModFormat.escapeHtml(family.usedBy)}</p>
-                ${levels.map(({ key, label }) => `<div class="flex items-center gap-2">
+                ${levels.filter(({ key }) => Object.hasOwn(family.snippets, key)).map(({ key, label }) => `<div class="flex items-center gap-2">
                     <span class="w-20 shrink-0 text-xs text-bm-muted">${BossModFormat.escapeHtml(label)}</span>
                     <code class="flex-1 min-w-0 break-all text-xs font-mono">${BossModFormat.escapeHtml(snippetFor(index, key))}</code>
                     <button type="button"

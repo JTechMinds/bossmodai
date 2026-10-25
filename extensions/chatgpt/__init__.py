@@ -109,7 +109,7 @@ class ChatGPTExtension:
             if connected and account["models"]:
                 choices.append(
                     {
-                        "label": "ChatGPT model",
+                        "label": "Model controls (does not change agents)",
                         "value": account["model"] or account["models"][0]["slug"],
                         "action": "model",
                         "parameter": "model",
@@ -119,7 +119,14 @@ class ChatGPTExtension:
                         ],
                     }
                 )
+                from .capabilities import for_model
+                capability = for_model(account["model"] or account["models"][0]["slug"])
+                choices.append({"label": "Image input (Auto: " + ("on" if capability.images == "supported" else "off; support unknown") + ")",
+                                "value": account["image_policy"], "action": "images", "parameter": "policy",
+                                "options": [{"value": p, "label": p.title()} for p in ("auto", "enabled", "disabled")]})
+                actions.append({"key": "refresh", "label": "Refresh models"})
                 actions.append({"key": "logout", "label": "Sign out"})
+                message += " Thinking: Server default" + (", " + ", ".join(capability.thinking_levels()) if capability.efforts else " only (capabilities unverified)") + ". Last catalog refresh: " + str(account["refreshed_at"] or "unknown")
         return ProviderStatus(
             connected=connected,
             pending=pending,
@@ -135,6 +142,10 @@ class ChatGPTExtension:
             self.session.begin_login(values.get("account_id") or None)
         elif action == "model" and set(values) == {"model"}:
             self.session.select_model(values["model"])
+        elif action == "refresh" and not values:
+            self.session.refresh_models()
+        elif action == "images" and set(values) == {"policy"}:
+            self.session.set_image_policy(values["policy"])
         elif action == "cancel" and not values:
             self.session.cancel_login()
         elif action == "logout" and not values:
@@ -143,8 +154,8 @@ class ChatGPTExtension:
             raise ChatGPTError("Unknown ChatGPT action or invalid parameters.")
 
     async def provider_complete(self, request):
-        token = await asyncio.to_thread(self.session.access_token)
+        token = await asyncio.to_thread(self.session.validate_request, request)
         return await self.adapter.complete(token, request)
 
     def provider_complete_sync(self, request):
-        return self.adapter.complete_sync(self.session.access_token(), request)
+        return self.adapter.complete_sync(self.session.validate_request(request), request)

@@ -68,9 +68,20 @@ class ChatGPTSession:
             ]
             signed_in = bool(active.get("access_token"))
             connected = signed_in and PLAN_SCOPE in active.get("scopes", [])
+            if connected and self.services.is_enabled():
+                try:
+                    # Reconcile local host state on every readiness check; no remote polling.
+                    self._ensure_connection(data, data.get("model") or active["models"][0]["slug"])
+                    self.store.save(data)
+                    self._login_error = None
+                except Exception:
+                    connected = False
+                    self._login_error = "Model publication needs repair. Retry Refresh models."
             connection_id = data.get("connection_id")
             models = active.get("models", [])
             model = data.get("model")
+            policy = active.get("image_policies", {}).get(model, "auto")
+            refreshed = active.get("refreshed_at")
             email = active.get("email")
             active_id = data["active"]
         with self._lock:
@@ -86,6 +97,8 @@ class ChatGPTSession:
             "models": models,
             "connection_id": connection_id,
             "model": model,
+            "image_policy": policy,
+            "refreshed_at": refreshed,
         }
 
     def _validate_identity(
@@ -211,28 +224,90 @@ class ChatGPTSession:
                     headers={"Authorization": f"Bearer {token}"},
                 )
             response.raise_for_status()
-            models = [
-                {
-                    "slug": item["slug"],
-                    "display_name": item.get("display_name") or item["slug"],
-                }
-                for item in response.json().get("models", [])
-                if item.get("visibility") == "list"
-                and isinstance(item.get("slug"), str)
-            ]
-            if not models:
-                raise ChatGPTError(
-                    "No ChatGPT models are available for this account or workspace."
-                )
-            return models
+            from .catalog import normalize
+            return normalize(response.json())
         except (httpx.HTTPError, ValueError, KeyError) as exc:
             raise ChatGPTError(
                 "Couldn’t load models for your ChatGPT account. Try signing in again."
             ) from exc
 
     def _ensure_connection(self, data, model):
+        from core.extensions.model_provider import ManagedModel
+        from .capabilities import for_model
         data["model"] = model
-        data["connection_id"] = self.services.publish_connection(model)
+        account = data["accounts"][data["active"]]
+        # Durable catalog precedes publication; load/status repairs interrupted publication.
+        account["catalog_version"] = 1
+        self.store.save(data)
+        if self.services.reconcile_connections is None:
+            data["connection_id"] = self.services.publish_connection(model)
+            return
+        policies = account.get("image_policies", {})
+        entries = [ManagedModel(key=m["slug"], model=m["slug"], name=m["display_name"],
+                                image_policy=policies.get(m["slug"], "auto"),
+                                thinking_levels=for_model(m["slug"]).thinking_levels(),
+                                images=for_model(m["slug"]).images)
+                   for m in account.get("models", [])]
+        data["connection_ids"] = self.services.reconcile_connections(entries)
+        data["connection_id"] = data["connection_ids"].get(model)
+
+    def refresh_models(self):
+        self.require_enabled()
+        with self._lock:
+            token = self.access_token()
+            try:
+                models = self.model_catalog(token)
+                with self.store.locked() as data:
+                    account = data["accounts"][data["active"]]
+                    account["models"] = models
+                    account["refreshed_at"] = self.clock()
+                    self._ensure_connection(data, data.get("model") or models[0]["slug"])
+                    self.store.save(data)
+                self._login_error = None
+            except Exception:
+                self._login_error = "Model refresh failed. Last successful catalog retained; retry Refresh models."
+                raise
+
+    def set_image_policy(self, policy):
+        if policy not in {"auto", "enabled", "disabled"}:
+            raise ChatGPTError("Choose Auto, Enabled, or Disabled.")
+        self.require_enabled()
+        with self.store.locked() as data:
+            account = data["accounts"].get(data["active"], {})
+            model = data.get("model")
+            if not account.get("access_token") or model not in {m["slug"] for m in account.get("models", [])}:
+                raise ChatGPTError("Sign in and choose an available model first.")
+            account.setdefault("image_policies", {})[model] = policy
+            self._ensure_connection(data, model)
+            self.store.save(data)
+
+    def validate_request(self, request):
+        import json
+        token = self.access_token()
+        status = self.account_status()
+        if not status["connected"]:
+            raise ChatGPTError("Model publication needs repair. Retry Refresh models.")
+        with self.store.locked() as data:
+            account = data["accounts"].get(data["active"], {})
+            if request.model not in {m["slug"] for m in account.get("models", [])}:
+                raise ChatGPTError("This model is unavailable in the active ChatGPT account. Refresh models in Extensions.")
+            try:
+                extra = json.loads(request.extra_body or "{}")
+                if not isinstance(extra, dict) or not isinstance(extra.get("reasoning", {}), dict):
+                    raise ValueError
+            except (ValueError, TypeError):
+                raise ChatGPTError("ChatGPT connection options must be a JSON object with valid reasoning options.") from None
+            from .capabilities import for_model
+            capability = for_model(request.model)
+            reasoning = extra.get("reasoning", {})
+            if "effort" in reasoning and reasoning["effort"] not in capability.efforts:
+                raise ChatGPTError("Explicit thinking effort is not verified for this model. Choose a supported level or Server default.")
+            images = capability.images_enabled(account.get("image_policies", {}).get(request.model, "auto"))
+            for message in request.messages:
+                content = message.get("content")
+                if isinstance(content, list) and not images and any(isinstance(part, dict) and part.get("type") in {"image_url", "input_image", "image"} for part in content):
+                    raise ChatGPTError("Image input is disabled for this ChatGPT model. Enable it in Extensions to assert support.")
+        return token
 
     def accept_callback(self, query: dict[str, list[str]], attempt: dict) -> None:
         if any((len(values) != 1 for values in query.values())):
@@ -305,8 +380,12 @@ class ChatGPTSession:
         )
         self.probe(account["access_token"], model)
         account["models"] = models
+        account["refreshed_at"] = self.clock()
         self.require_enabled()
         with self.store.locked() as data:
+            previous = data["accounts"].get(client_id, {})
+            if previous.get("subject") == account["subject"]:
+                account["image_policies"] = previous.get("image_policies", {})
             data["accounts"][client_id] = account
             data["active"] = client_id
             self._ensure_connection(data, model)
@@ -447,15 +526,14 @@ class ChatGPTSession:
 
     def select_model(self, model: str) -> None:
         self.require_enabled()
-        token = self.access_token()
-        probe_model = model
+        self.access_token()
         with self.store.locked() as data:
             account = data["accounts"].get(data["active"], {})
             if model not in {item["slug"] for item in account.get("models", [])}:
                 raise ChatGPTError(
                     "Choose a model offered by your connected ChatGPT account."
                 )
-        self.probe(token, probe_model)
+        # Control target only: agent routes are independent connections.
         with self.store.locked() as data:
             account = data["accounts"].get(data["active"], {})
             if not account.get("access_token") or model not in {
@@ -464,7 +542,7 @@ class ChatGPTSession:
                 raise ChatGPTError(
                     "Choose a model offered by your connected ChatGPT account."
                 )
-            self._ensure_connection(data, model)
+            data["model"] = model
             self.store.save(data)
 
     def sign_out(self) -> dict:
@@ -502,6 +580,8 @@ class ChatGPTSession:
             for key in ("access_token", "refresh_token", "id_token", "expires_at"):
                 account.pop(key, None)
             self.store.save(data)
+            if self.services.reconcile_connections is not None and self.services.is_enabled():
+                self.services.reconcile_connections([])
         return {
             "revoked": revoked,
             "message": (

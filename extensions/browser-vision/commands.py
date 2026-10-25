@@ -43,7 +43,7 @@ from core.bm_cli.virtual_fs import resolve_cli_path
 from core.extensions.contract import SetupStatus
 from core.llm.routing import agent_model
 from core.models import Agent
-from db.model_capabilities import supports_images
+from db.managed_connections import agent_images
 
 from .botwall import BotWallRules, detect
 from .browser_host import ActionOutcome, BrowserActionError, Capture, Paced, SessionInfo, WaitOutcome
@@ -216,7 +216,7 @@ def routed_vision_model(agent: Agent) -> tuple[str | None, bool]:
     one CLI commands run on; None when the agent has no usable connection.
     """
     model = agent_model(agent)
-    return model, model is not None and supports_images(model)
+    return model, agent_images(agent)
 
 
 def agent_downloads_dir(agent: Agent) -> Path:

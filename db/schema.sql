@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS agents (
     -- The one AI connection, read live each turn. No FK: the 409 delete
     -- guard keeps it valid and names the agents that use it.
     connection_id                 VARCHAR,
-    thinking_social               VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','low','medium','high','xhigh')),
-    thinking_work                 VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','low','medium','high','xhigh')),
+    thinking_social               VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','minimal','low','medium','high','xhigh')),
+    thinking_work                 VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','minimal','low','medium','high','xhigh')),
     desk_x                        INTEGER,
     desk_y                        INTEGER,
     guardian_token_limit           INTEGER DEFAULT 30000,
@@ -995,8 +995,8 @@ CREATE TABLE IF NOT EXISTS agent_snapshots (
     communication         TEXT,                      -- same JSON text as agents.communication
     color                 VARCHAR,
     connection_id         VARCHAR,
-    thinking_social       VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','low','medium','high','xhigh')),
-    thinking_work         VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','low','medium','high','xhigh')),
+    thinking_social       VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','minimal','low','medium','high','xhigh')),
+    thinking_work         VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','minimal','low','medium','high','xhigh')),
     desk_x                INTEGER,
     desk_y                INTEGER,
     prompt_history_policy TEXT,                      -- JSON: the 4 policy fields, or NULL
@@ -1186,3 +1186,13 @@ CREATE TABLE IF NOT EXISTS agent_processes (
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_processes_agent_status ON agent_processes(agent_id, status);
+
+-- Extension-scoped identity; schema application also upgrades existing databases.
+CREATE TABLE IF NOT EXISTS managed_connections (
+ connection_id VARCHAR PRIMARY KEY REFERENCES ai_connections(id) ON DELETE CASCADE,
+ owner VARCHAR NOT NULL, local_key VARCHAR NOT NULL,
+ available BOOLEAN NOT NULL DEFAULT 0, reason TEXT,
+ images VARCHAR NOT NULL DEFAULT 'unknown' CHECK(images IN ('unknown','supported','unsupported')),
+ image_policy VARCHAR NOT NULL DEFAULT 'auto' CHECK(image_policy IN ('auto','enabled','disabled')),
+ UNIQUE(owner, local_key)
+);

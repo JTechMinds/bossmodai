@@ -13,7 +13,8 @@
     "required": false
   },
   "model_provider": {
-    "connection_name": "Chat GPT"
+    "connection_name": "Chat GPT",
+    "scoped_capabilities": true
   },
   "requires": {
     "python_modules": [

@@ -244,6 +244,8 @@ class ModelProviderSpec(_Strict):
     """The display name of the connection registered by a model extension."""
 
     connection_name: str = Field(min_length=1)
+    # Missing scoped metadata never inherits model-global image flags.
+    scoped_capabilities: bool = False
 
 
 class ExtensionManifest(_Strict):

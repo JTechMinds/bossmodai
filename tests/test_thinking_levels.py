@@ -23,7 +23,7 @@ _ZAI = {"off": {"thinking": {"type": "disabled"}}, "high": {"thinking": {"type":
 
 
 def test_the_vocabulary_is_default_plus_five_levels() -> None:
-    assert THINKING_LEVELS == ("off", "low", "medium", "high", "xhigh")
+    assert THINKING_LEVELS == ("off", "minimal", "low", "medium", "high", "xhigh")
     assert THINKING_CHOICES == ("default", *THINKING_LEVELS)
 
 

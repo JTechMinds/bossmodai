@@ -158,7 +158,7 @@ def test_callback_creates_connection_and_reauth_preserves_id(monkeypatch):
     auth.accept_callback(callback_query(), attempt())
     first = db.list_connections()
     assert len(first) == 1
-    assert first[0].name == "Chat GPT" and first[0].api_base_url == API_BASE
+    assert first[0].name == "Chat GPT — Test" and first[0].api_base_url == API_BASE
     assert first[0].api_key is None
     auth.accept_callback(
         callback_query(), attempt(client_id="oaiapp_test", subject="subject")
@@ -791,7 +791,7 @@ def test_completed_probe_without_text_finishes_login(monkeypatch):
     auth.accept_callback(callback_query(), attempt())
     assert auth.account_status()["connected"]
     connection = db.list_connections()[0]
-    assert connection.name == "Chat GPT" and connection.api_key is None
+    assert connection.name == "Chat GPT — Test" and connection.api_key is None
 
 
 def test_empty_agent_reply_is_still_rejected(monkeypatch):
@@ -862,3 +862,215 @@ def test_sync_stream_recovers_ordered_text_without_duplication(monkeypatch):
         provider.complete_sync("token", ProviderRequest("test-model", [])).content
         == "first second"
     )
+
+
+def test_per_model_identity_removal_reappearance_and_policy(monkeypatch):
+    from db.managed_connections import image_capability, metadata
+    saved_account(models=[{'slug': 'test-model', 'display_name': 'Test'}, {'slug': 'second', 'display_name': 'Second'}])
+    initial = {c.model: c.id for c in db.list_connections()}
+    assert len(initial) == 2
+    auth.select_model('second')
+    assert {c.model: c.id for c in db.list_connections()} == initial
+    auth.set_image_policy('enabled')
+    assert image_capability(db.get_connection_by_id(initial['second']))
+    monkeypatch.setattr(auth, 'model_catalog', lambda _: [{'slug': 'test-model', 'display_name': 'Renamed'}])
+    auth.refresh_models()
+    assert not metadata(initial['second'])['available']
+    monkeypatch.setattr(auth, 'model_catalog', lambda _: [{'slug': 'second', 'display_name': 'Back'}, {'slug': 'test-model', 'display_name': 'Renamed'}])
+    auth.refresh_models()
+    assert {c.model: c.id for c in db.list_connections()} == initial
+    assert image_capability(db.get_connection_by_id(initial['second']))
+
+
+def test_catalog_normalization_unknown_fields_not_capabilities():
+    from importlib import import_module
+    normalize = import_module(package.__name__ + '.catalog').normalize
+    assert normalize({'models': [None, {'visibility': 'list', 'slug': ''}, {'visibility': 'list', 'slug': 'new', 'display_name': 2, 'supports_images': True}, {'visibility': 'list', 'slug': 'new'}, {'visibility': 'hidden', 'slug': 'hidden'}]}) == [{'slug': 'new', 'display_name': 'new'}]
+    for payload in ([], {}, {'models': []}, {'models': None}):
+        with pytest.raises(ChatGPTError):
+            normalize(payload)
+
+
+def test_unknown_effort_and_direct_images_fail_closed():
+    from core.extensions.model_provider import ProviderRequest
+    saved_account()
+    for request in (ProviderRequest('missing', []), ProviderRequest('test-model', [], '{"reasoning":{"effort":"high"}}'), ProviderRequest('test-model', [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,secret'}}]}])):
+        with pytest.raises(ChatGPTError):
+            auth.validate_request(request)
+    auth.set_image_policy('enabled')
+    assert auth.validate_request(ProviderRequest('test-model', [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'https://example.com/image'}}]}])) == 'secret-access'
+    auth.set_image_policy('disabled')
+    with pytest.raises(ChatGPTError):
+        auth.validate_request(ProviderRequest('test-model', [{'content': [{'type': 'input_image'}]}]))
+
+
+def test_scoped_image_policy_does_not_inherit_global_flag():
+    from db.model_capabilities import set_supports_images
+    from db.managed_connections import image_capability
+    connection_id = saved_account()
+    set_supports_images('test-model', True)
+    ordinary = db.create_connection(name='ordinary', api_base_url='https://example.com', model='test-model')
+    assert image_capability(ordinary)
+    assert not image_capability(db.get_connection_by_id(connection_id))
+
+
+def test_legacy_adoption_and_failed_refresh_preserve_links(monkeypatch):
+    from db.managed_connections import metadata
+    legacy = db.create_connection(name='Chat GPT', api_base_url=API_BASE, model='legacy')
+    saved_account()
+    assert db.get_connection_by_id(legacy.id).model == 'legacy'
+    assert not metadata(legacy.id)['available']
+    before = [(c.id, c.model) for c in db.list_connections()]
+    def fail(_):
+        raise ChatGPTError('Catalog unavailable')
+    monkeypatch.setattr(auth, 'model_catalog', fail)
+    with pytest.raises(ChatGPTError):
+        auth.refresh_models()
+    assert [(c.id, c.model) for c in db.list_connections()] == before
+    assert auth.account_status()['connected']
+
+
+def test_publication_failure_repaired_without_network(monkeypatch):
+    saved_account()
+    services = auth.services
+    def fail(_):
+        raise RuntimeError('private diagnostic')
+    from dataclasses import replace
+    auth.services = replace(services, reconcile_connections=fail)
+    assert not auth.account_status()['connected']
+    assert 'private diagnostic' not in json.dumps(auth.account_status())
+    auth.services = services
+    assert auth.account_status()['connected']
+
+
+def test_signed_out_and_disabled_images_fail_closed(monkeypatch):
+    from db.managed_connections import image_capability
+    from core.extensions.model_provider import ProviderRequest
+    connection_id = saved_account(refresh_token=None)
+    auth.set_image_policy('enabled')
+    assert image_capability(db.get_connection_by_id(connection_id))
+    set_enabled('chatgpt', False)
+    assert not image_capability(db.get_connection_by_id(connection_id))
+    with pytest.raises(ChatGPTError):
+        auth.validate_request(ProviderRequest('test-model', []))
+    set_enabled('chatgpt', True)
+    auth.sign_out()
+    assert not image_capability(db.get_connection_by_id(connection_id))
+    assert db.get_connection_by_id(connection_id)
+
+
+def test_same_account_reauth_preserves_disabled_image_policy(monkeypatch):
+    saved_account()
+    auth.set_image_policy('disabled')
+    mock_login(monkeypatch)
+    auth.accept_callback(callback_query(), attempt())
+    assert auth.account_status()['image_policy'] == 'disabled'
+
+
+def test_reconciliation_concurrent_stable_ids():
+    from concurrent.futures import ThreadPoolExecutor
+    from core.extensions.model_provider import ManagedModel
+    services = auth.services
+    entries = [ManagedModel(key='a', name='A', model='a'), ManagedModel(key='b', name='B', model='b')]
+    def publish(_):
+        return services.reconcile_connections(entries)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(publish, range(8)))
+    assert all(result == results[0] for result in results)
+    assert len(db.list_connections()) == 2
+
+
+@pytest.mark.parametrize('slug,efforts', [
+    ('gpt-5', ('minimal', 'low', 'medium', 'high')),
+    ('gpt-5-2025-08-07', ('minimal', 'low', 'medium', 'high')),
+    ('gpt-5.1', ('none', 'low', 'medium', 'high')),
+    ('gpt-5.1-2025-11-13', ('none', 'low', 'medium', 'high')),
+])
+def test_evidenced_exact_model_publication_and_validation(slug, efforts):
+    from core.extensions.model_provider import ProviderRequest
+    from importlib import import_module
+    capabilities = import_module(package.__name__ + '.capabilities')
+    saved_account(models=[{'slug': slug, 'display_name': 'Verified'}])
+    connection_id = db.query("SELECT id FROM ai_connections WHERE model = ?", [slug])[0]["id"]
+    row = db.query('SELECT thinking_levels FROM ai_connections WHERE id = ?', [connection_id])[0]
+    levels = json.loads(row['thinking_levels'])
+    expected = {('off' if e == 'none' else e): {'reasoning': {'effort': e}} for e in efforts}
+    assert levels == expected
+    assert capabilities.for_model(slug).images == 'supported'
+    for effort in efforts:
+        assert auth.validate_request(ProviderRequest(slug, [], json.dumps({'reasoning': {'effort': effort}}))) == 'secret-access'
+    assert auth.validate_request(ProviderRequest(slug, [])) == 'secret-access'
+    for effort in ('off', 'xhigh', 'bogus', None):
+        with pytest.raises(ChatGPTError, match='not verified'):
+            auth.validate_request(ProviderRequest(slug, [], json.dumps({'reasoning': {'effort': effort}})))
+    image = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
+    assert auth.validate_request(ProviderRequest(slug, image)) == 'secret-access'
+    auth.select_model(slug)
+    auth.set_image_policy('disabled')
+    with pytest.raises(ChatGPTError, match='Image input is disabled'):
+        auth.validate_request(ProviderRequest(slug, image))
+
+
+def test_capability_table_does_not_guess_names_or_trust_catalog_fields():
+    from importlib import import_module
+    capabilities = import_module(package.__name__ + '.capabilities')
+    catalog = import_module(package.__name__ + '.catalog')
+    for slug in ('gpt-5-custom', 'GPT-5', 'gpt-5.1-preview', 'unknown'):
+        assert capabilities.for_model(slug).thinking_levels() == {}
+        assert capabilities.for_model(slug).images == 'unknown'
+    assert catalog.normalize({'models': [{'visibility': 'list', 'slug': 'unknown',
+        'reasoning_efforts': ['high'], 'supports_images': True}]}) == [{'slug': 'unknown', 'display_name': 'unknown'}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('slug', ['gpt-5', 'gpt-5.1'])
+async def test_evidenced_choices_exact_wire_sync_and_async(monkeypatch, slug):
+    from importlib import import_module
+    from core.extensions.model_provider import ProviderRequest
+    from core.llm.thinking import effective_extra_body
+    capabilities = import_module(package.__name__ + '.capabilities')
+    saved_account(models=[{'slug': slug, 'display_name': slug}])
+    captured = []
+    event = NS(type='response.completed', response=NS(model=slug, usage=None,
+        output=[NS(type='message', content=[NS(type='output_text', text='Done')])]))
+
+    class Stream:
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def __iter__(self): return iter([event])
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def __aiter__(self):
+            yield event
+        async def close(self): pass
+
+    class SyncClient:
+        def __init__(self, **kwargs): self.responses = self
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def create(self, **kwargs):
+            captured.append(kwargs)
+            return Stream()
+
+    class AsyncClient(SyncClient):
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def create(self, **kwargs):
+            captured.append(kwargs)
+            return Stream()
+
+    monkeypatch.setattr(provider, 'sync_client_factory', SyncClient)
+    monkeypatch.setattr(provider, 'async_client_factory', AsyncClient)
+    instance = __import__('core.extensions.loader', fromlist=['_loaded'])._loaded['chatgpt']
+    levels = capabilities.for_model(slug).thinking_levels()
+    for choice in ('default', *levels):
+        request = ProviderRequest(slug, [{'role': 'user', 'content': 'Hello'}],
+                                  effective_extra_body(None, levels, choice))
+        assert instance.provider_complete_sync(request).content == 'Done'
+        assert (await instance.provider_complete(request)).content == 'Done'
+        for body in captured[-2:]:
+            assert body['model'] == slug
+            if choice == 'default':
+                assert 'reasoning' not in body
+            else:
+                assert body['reasoning'] == levels[choice]['reasoning']
