@@ -985,6 +985,10 @@ def test_reconciliation_concurrent_stable_ids():
     ('gpt-5-2025-08-07', ('minimal', 'low', 'medium', 'high')),
     ('gpt-5.1', ('none', 'low', 'medium', 'high')),
     ('gpt-5.1-2025-11-13', ('none', 'low', 'medium', 'high')),
+    *[(s, ('none', 'low', 'medium', 'high', 'xhigh')) for s in
+      ('gpt-5.2', 'gpt-5.2-2025-12-11', 'gpt-5.4', 'gpt-5.4-2026-03-05')],
+    *[(s, ('low', 'medium', 'high', 'xhigh')) for s in
+      ('gpt-5.2-codex', 'gpt-5.3-codex', 'gpt-5.4-mini')],
 ])
 def test_evidenced_exact_model_publication_and_validation(slug, efforts):
     from core.extensions.model_provider import ProviderRequest
@@ -1000,7 +1004,7 @@ def test_evidenced_exact_model_publication_and_validation(slug, efforts):
     for effort in efforts:
         assert auth.validate_request(ProviderRequest(slug, [], json.dumps({'reasoning': {'effort': effort}}))) == 'secret-access'
     assert auth.validate_request(ProviderRequest(slug, [])) == 'secret-access'
-    for effort in ('off', 'xhigh', 'bogus', None):
+    for effort in set(('none', 'minimal', 'off', 'xhigh', 'bogus', None)) - set(efforts):
         with pytest.raises(ChatGPTError, match='not verified'):
             auth.validate_request(ProviderRequest(slug, [], json.dumps({'reasoning': {'effort': effort}})))
     image = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
@@ -1023,7 +1027,7 @@ def test_capability_table_does_not_guess_names_or_trust_catalog_fields():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('slug', ['gpt-5', 'gpt-5.1'])
+@pytest.mark.parametrize('slug', ['gpt-5', 'gpt-5.1', 'gpt-5.2', 'gpt-5.2-2025-12-11', 'gpt-5.4', 'gpt-5.4-2026-03-05', 'gpt-5.2-codex', 'gpt-5.3-codex', 'gpt-5.4-mini'])
 async def test_evidenced_choices_exact_wire_sync_and_async(monkeypatch, slug):
     from importlib import import_module
     from core.extensions.model_provider import ProviderRequest
