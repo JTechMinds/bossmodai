@@ -18,8 +18,8 @@ installIconsStub();
 
 const [
     agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, gatesPath, consentPath,
-    overlayFocusPath, modalTrailPath, overlayActionsPath, overlaysPath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath, threadRequestsPath,
-    autoApproveSwitchPath, threadSourcePath,
+    overlayFocusPath, modalTrailPath, overlayActionsPath, overlaysPath, yoloModePath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath,
+    threadRequestsPath, approvalControlsPath, threadSourcePath,
     menuButtonPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
     rosterThreadsPath, agentRoutesPath, rosterPath,
 ] = process.argv.slice(2);
@@ -38,6 +38,7 @@ load(overlayFocusPath, "BossModOverlayFocus");
 load(modalTrailPath, "BossModModalTrail");
 load(overlayActionsPath, "BossModOverlayActions");
 load(overlaysPath, "BossModOverlays");
+load(yoloModePath, "BossModYoloMode");
 load(menuPath, "BossModMenu");
 // Both rails render their last-activity column through these two.
 load(formatPath, "BossModFormat");
@@ -46,8 +47,8 @@ load(rowMetaPath, "BossModRosterRowMeta");
 load(archivePath, "BossModThreadArchive");
 // The source's rename / reopen / pause requests live in their own module.
 load(threadRequestsPath, "BossModThreadRequests");
-// The source's auto-approve menu switch descriptor.
-load(autoApproveSwitchPath, "BossModAutoApproveSwitch");
+// The source's approval switches and Yolo badge descriptors.
+load(approvalControlsPath, "BossModApprovalControls");
 load(threadSourcePath, "BossModThreadSource");
 // Every `⋯` — the Threads header's one this harness opens, and the People
 // one — then the People one's owner, before the half that mounts it.

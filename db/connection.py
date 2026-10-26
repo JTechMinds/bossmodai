@@ -430,6 +430,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
         con, "agents", "cli_auto_approve_dm",
         "INTEGER NOT NULL DEFAULT 0",
     )
+    # Yolo for a thread and for an agent's DM: existing rows read as off (0).
+    _add_column_if_missing(con, "channels", "cli_yolo", "INTEGER NOT NULL DEFAULT 0")
+    _add_column_if_missing(con, "agents", "cli_yolo_dm", "INTEGER NOT NULL DEFAULT 0")
     _ensure_floors(con)
     # After _ensure_floors: the one-time backfill reads agents.floor_id.
     _ensure_message_floors(con)

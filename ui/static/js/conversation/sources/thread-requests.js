@@ -5,8 +5,8 @@
  * last channel it was told about, maps wire rows to Messages, and signals the
  * chrome. What is here is the other half of each header action — the HTTP
  * request that changes one of the thread's settings (its name, paused or not,
- * CLI auto-approve, reopening a sealed room) and hands back the channel the
- * server answered with. None of it holds state, and none of it touches the DOM.
+ * CLI auto-approve, Yolo mode, reopening a sealed room) and hands back the
+ * channel the server answered with. None of it holds state, and none of it touches the DOM.
  * Archive and seating have their own dialogs and live beside this, in
  * thread-archive.js and thread-seat.js.
  *
@@ -52,7 +52,8 @@ const BossModThreadRequests = (() => {
      *             pause: () => Promise<object>,
      *             resume: () => Promise<object>,
      *             reopen: () => Promise<object>,
-     *             setCliAutoApprove: (enabled: boolean) => Promise<object> }}
+     *             setCliAutoApprove: (enabled: boolean) => Promise<object>,
+     *             setCliYolo: (enabled: boolean) => Promise<object> }}
      *   Each resolves to the channel the server returned.
      * @throws {Error} When `api` or `threadId` is missing.
      */
@@ -117,6 +118,26 @@ const BossModThreadRequests = (() => {
             return res.json();
         }
 
+        /**
+         * Turn this thread's Yolo mode on or off. The request writes only the
+         * thread's Yolo flag; the confirm before it goes on is the caller's.
+         *
+         * @param {boolean} enabled
+         * @returns {Promise<object>} The updated channel.
+         * @throws {Error} With the server's reason on any non-2xx.
+         */
+        async function setCliYolo(enabled) {
+            const res = await api(`/api/channels/${threadId}/cli-yolo`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: enabled === true }),
+            });
+            if (!res.ok) {
+                throw new Error(await refusal(res, 'Could not update Yolo mode for this thread.'));
+            }
+            return res.json();
+        }
+
         /** @returns {Promise<object>} The reopened channel. */
         async function reopen() {
             const res = await api(`/api/channels/${threadId}/reopen`, { method: 'POST' });
@@ -124,7 +145,7 @@ const BossModThreadRequests = (() => {
             return res.json();
         }
 
-        return { rename, pause, resume, reopen, setCliAutoApprove };
+        return { rename, pause, resume, reopen, setCliAutoApprove, setCliYolo };
     }
 
     return { createThreadRequests, refusal };

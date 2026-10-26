@@ -1,6 +1,6 @@
 /**
- * BossMod AI — the desk's Details facts, and the two destructive actions on an
- * agent.
+ * BossMod AI — the desk's Details facts, the two destructive actions on an
+ * agent, and Yolo mode.
  *
  * Split out of desk-panel.js, which composes read-only sections; the two
  * runners here destroy work that cannot be recovered, so both confirm through
@@ -14,6 +14,11 @@
  * the desk panel's head `⋯` calls `confirmReset()` and `confirmRemove()` here,
  * and what this renders is the quiet facts — workspace and model — plus the
  * error line either runner reports into.
+ *
+ * Yolo mode is here for the same reason: it is a confirm-then-act on the
+ * agent, and its state is the agent detail this module already reads. The
+ * desk `⋯`'s Advanced switch (context/desk-menu.js) reads `yoloEnabled()`
+ * and calls `toggleYolo()`.
  */
 const BossModDeskActions = (() => {
     const { h, clear } = BossModDom;
@@ -39,9 +44,12 @@ const BossModDeskActions = (() => {
      *   desk dialog's job, not this module's.
      * @returns {{ element: HTMLElement, refresh: () => Promise<void>,
      *   confirmReset: () => void, confirmRemove: () => void,
+     *   yoloEnabled: () => boolean|null, toggleYolo: (enabled: boolean) => Promise<void>,
      *   destroy: () => void }} `element` is the facts and the error line.
      *   `confirmReset`/`confirmRemove` open the confirmation layer; nothing
-     *   reaches the API until the operator confirms.
+     *   reaches the API until the operator confirms. `yoloEnabled` is the
+     *   agent's Yolo flag, null until the detail loads; `toggleYolo` sets it,
+     *   confirming first when it turns on.
      * @throws {Error} When any dependency is missing.
      */
     function createDeskActions(deps) {
@@ -173,6 +181,54 @@ const BossModDeskActions = (() => {
             });
         }
 
+        /**
+         * This agent's Yolo flag as the detail read last answered it.
+         * @returns {boolean|null} Null until that read lands: the switch is
+         *   withheld rather than painted from no answer.
+         */
+        function yoloEnabled() {
+            return detail ? detail.cli_yolo_dm === true : null;
+        }
+
+        /**
+         * Turn this agent's Yolo mode on or off, for its DM and its work with
+         * no origin thread.
+         *
+         * On asks first (core/yolo-mode.js); off never does, because it puts
+         * the safeguards back. A save adopts the server's answer and tells an
+         * open DM to refetch (`chat`), so its badge and greyed switch follow
+         * (conversation/conversation-focus-invalidate.js).
+         *
+         * @param {boolean} enabled
+         * @returns {Promise<void>} Never rejects; a failure becomes the error
+         *   line, and the switch shows the true state on the next open.
+         */
+        async function toggleYolo(enabled) {
+            if (enabled && !(await BossModYoloMode.confirmEnable('agent'))) return;
+            // Confirmed over a desk that has closed since: nothing to act for.
+            if (destroyed) return;
+            clear(errorEl);
+            let payload;
+            try {
+                const res = await api(`/api/agents/${agentId}/cli-yolo`, {
+                    method: 'PATCH',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: enabled === true }),
+                });
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                payload = await res.json();
+            } catch (err) {
+                reportError('Could not change Yolo mode. Try again.', err);
+                return;
+            }
+            // The flag changed on the server, so an open DM refetches even if
+            // this desk closed while the request was in flight.
+            BossModOperatorInvalidate.notifyLocal(['chat']);
+            if (destroyed) return;
+            detail = payload;
+            renderMeta();
+        }
+
         async function removeAgent() {
             clear(errorEl);
             try {
@@ -199,6 +255,8 @@ const BossModDeskActions = (() => {
             refresh,
             confirmReset,
             confirmRemove,
+            yoloEnabled,
+            toggleYolo,
 
             /**
              * Stop painting; an in-flight detail response is dropped.

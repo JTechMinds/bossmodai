@@ -39,8 +39,10 @@ CREATE TABLE IF NOT EXISTS agents (
     floor_id                      VARCHAR,
     vacation_since                TIMESTAMP,
     -- System AI auto-approve for this agent's DM and its work with no origin
-    -- thread (core.bm_cli.approval_gate.gate.auto_approve_effective).
+    -- thread (core.bm_cli.approval_gate.gate.approval_mode).
     cli_auto_approve_dm           INTEGER NOT NULL DEFAULT 0,
+    -- Yolo for this agent's DM and its work with no origin thread.
+    cli_yolo_dm                   INTEGER NOT NULL DEFAULT 0,
     -- Provenance: the pack a hire came from (pack_id for catalog, source_url
     -- for URL packs — the template natural keys, so the link survives a
     -- template reinstall), the commit and file hash its contract was last
@@ -233,6 +235,9 @@ CREATE TABLE IF NOT EXISTS channels (
     archived_at TIMESTAMP,
     -- Per-thread opt-in. Off leaves approval_required on the Approve card.
     cli_auto_approve INTEGER NOT NULL DEFAULT 0,
+    -- Per-thread Yolo: approval_required commands run without a card or
+    -- review (core.bm_cli.approval_gate.gate.approval_mode).
+    cli_yolo         INTEGER NOT NULL DEFAULT 0,
     -- Inherited from the roster's home floor at create. Never mixed.
     floor_id         VARCHAR
 );

@@ -196,6 +196,9 @@
     <!-- A modal's action row, which overlays.js also reads at load time. -->
     <script defer src="{{ static_url('js/core/overlay-actions.js') }}"></script>
     <script defer src="{{ static_url('js/core/overlays.js') }}"></script>
+    <!-- Yolo mode's words and its confirm (a modal), shared by the thread's
+         `⋯` and the desk's. -->
+    <script defer src="{{ static_url('js/core/yolo-mode.js') }}"></script>
     <script defer src="{{ static_url('js/core/menu.js') }}"></script>
     <!-- The one `⋯` and its panel lifecycle, which composes the panel above. -->
     <script defer src="{{ static_url('js/core/menu-button.js') }}"></script>
@@ -235,6 +238,7 @@
     <script defer src="{{ static_url('js/conversation/event-cards.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/title-rename.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/chrome-menu.js') }}"></script>
+    <script defer src="{{ static_url('js/conversation/chrome-switch.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/chrome.js') }}"></script>
     <script defer src="{{ static_url('js/core/desktop-clipboard.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/composer-attachments.js') }}"></script>
@@ -259,7 +263,7 @@
     <script defer src="{{ static_url('js/conversation/sources/thread-archive.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/thread-seat.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/thread-requests.js') }}"></script>
-    <script defer src="{{ static_url('js/conversation/auto-approve-switch.js') }}"></script>
+    <script defer src="{{ static_url('js/conversation/approval-controls.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/thread-source.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/agent-requests.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/agent-source.js') }}"></script>

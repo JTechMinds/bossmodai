@@ -4,7 +4,7 @@
  * Adapts `/api/agents/{id}/messages` and `/api/agents/{id}/activate` plus the
  * `chat_*` and `meeting_message` broadcasts to the one Message shape, and
  * `/api/agents/{id}` (plus its `/cli-auto-approve`) to the DM's auto-approve
- * switch, and exports the Rewind calls (`/messages`, `/chat-rewind`; see
+ * switch and Yolo badge, and exports the Rewind calls (`/messages`, `/chat-rewind`; see
  * agent-requests.js). Like every source it is a data adapter and never
  * touches the DOM.
  *
@@ -316,10 +316,12 @@ const BossModAgentSource = (() => {
          * rule event-cards.js follows for the origin note link.
          *
          * The DM's auto-approve switch sits in the `⋯`'s Chat section once the
-         * agent has loaded, the same switch a thread carries.
+         * agent has loaded, the same switch a thread carries. While the
+         * agent's Yolo mode (its desk's) is on it is greyed with a hint, and
+         * the header's badge says so (approval-controls.js).
          *
          * @returns {{title: string, subtitle: string, avatar: object,
-         *            menuTitle: string, actions: object[]}}
+         *            menuTitle: string, actions: object[], badge: object|null}}
          */
         function chrome() {
             const who = agent();
@@ -347,20 +349,17 @@ const BossModAgentSource = (() => {
                     onSelect: () => ctx.liveViews.open(view.extensionId, agentId, who.name),
                 }));
             }
-            if (record) {
-                actions.push(BossModAutoApproveSwitch.describe({
-                    id: 'agent-cli-auto-approve',
-                    enabled: record.cli_auto_approve_dm === true,
-                    globalEnabled: record.cli_auto_approve_global === true,
-                    onSelect: setCliAutoApprove,
-                }));
-            }
+            const approvals = record
+                ? BossModApprovalControls.forAgent(record, { onAutoApprove: setCliAutoApprove })
+                : null;
+            if (approvals) actions.push(...approvals.actions);
             return {
                 title: who.name,
                 subtitle: who.role || '',
                 avatar: { name: who.name, color: who.color || null },
                 menuTitle: 'Agent',
                 actions,
+                badge: approvals ? approvals.badge : null,
             };
         }
 

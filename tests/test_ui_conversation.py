@@ -32,6 +32,7 @@ CONVERSATION_MODULES = [
     JS / "core" / "modal-trail.js",
     JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "yolo-mode.js",
     JS / "core" / "menu.js",
     JS / "core" / "menu-button.js",
     CONVERSATION / "empty-state.js",
@@ -42,6 +43,7 @@ CONVERSATION_MODULES = [
     CONVERSATION / "event-cards.js",
     CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome-menu.js",
+    CONVERSATION / "chrome-switch.js",
     CONVERSATION / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
     CONVERSATION / "composer-attachments.js",
@@ -52,7 +54,7 @@ CONVERSATION_MODULES = [
     SOURCES / "thread-archive.js",
     SOURCES / "thread-seat.js",
     SOURCES / "thread-requests.js",
-    CONVERSATION / "auto-approve-switch.js",
+    CONVERSATION / "approval-controls.js",
     SOURCES / "thread-source.js",
     SOURCES / "agent-requests.js",
     SOURCES / "agent-source.js",
@@ -202,11 +204,12 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
             str(JS / "core" / "modal-trail.js"),
             str(JS / "core" / "overlay-actions.js"),
             str(JS / "core" / "overlays.js"),
+            str(JS / "core" / "yolo-mode.js"),
             str(JS / "core" / "menu.js"),
             str(SOURCES / "thread-archive.js"),
             str(SOURCES / "thread-seat.js"),
             str(SOURCES / "thread-requests.js"),
-            str(CONVERSATION / "auto-approve-switch.js"),
+            str(CONVERSATION / "approval-controls.js"),
             str(SOURCES / "thread-source.js"),
         ],
         check=False,
@@ -416,6 +419,21 @@ def test_conversation_harness() -> None:
         "globalGreysOutTheDmSwitch": True,
         "globalGreysOutTheThreadSwitch": True,
         "ownFlagsComeBack": True,
+        # Yolo mode: the thread's switch sits in the `⋯`'s Advanced section and
+        # asks before it goes on — Cancel sends nothing, confirming PATCHes —
+        # while off never asks. While it applies the header wears the badge and
+        # the auto-approve switch greys out with Yolo's hint, which wins over
+        # Global's. A DM has no Yolo switch; the desk's flag reaches it through
+        # operator_invalidate(chat) as the same badge and greyed switch.
+        "threadYoloSwitchIsInAdvanced": True,
+        "yoloCancelSendsNothing": True,
+        "yoloConfirmPatchesTheThread": True,
+        "threadBadgeShowsWhileYolo": True,
+        "yoloGreysTheThreadAutoApprove": True,
+        "yoloHintWinsOverGlobal": True,
+        "yoloOffNeverAsks": True,
+        "dmShowsYoloFromItsDesk": True,
+        "dmYoloOffRestoresItsOwnFlag": True,
         # Round four turned the word `Save` into a green check and gave it the
         # red cross the mode never had — Esc cancelled and nothing said so.
         # Both are icon-only, so each carries its own accessible name and the

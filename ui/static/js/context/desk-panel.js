@@ -170,6 +170,8 @@ const BossModDeskPanel = (() => {
             onDiagnostics: () => navigate('log', { agentId }),
             onReset: () => actions.confirmReset(),
             onRemove: () => actions.confirmRemove(),
+            yoloEnabled: () => actions.yoloEnabled(),
+            onYolo: (on) => { void actions.toggleYolo(on); },
         });
         const tools = [deskMenu.button];
 

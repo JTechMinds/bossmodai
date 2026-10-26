@@ -7,11 +7,13 @@
  * is an injected callback, so this never learns how a chat opens or how a
  * runtime is reset — and the `⋯` and its panel are core/menu-button.js's.
  *
- * TWO SECTIONS, each a core/menu.js `createMenuSection`, the conversation
+ * THREE SECTIONS, each a core/menu.js `createMenuSection`, the conversation
  * panel's shape (`.menu-sections`): **Agent** — the agent's own doors (Open
  * chat, Memory, Edit role) — then a divider and **Manage** — the operational
- * ones (Diagnostics, Reset runtime, Remove agent). Destructive actions belong
- * behind a menu and a confirm, not at the bottom of the reading flow.
+ * ones (Diagnostics, Reset runtime, Remove agent) — then a divider and
+ * **Advanced** — the Yolo mode switch, a setting that removes safeguards,
+ * kept apart from everyday ones. Destructive actions belong behind a menu and
+ * a confirm, not at the bottom of the reading flow.
  */
 const BossModDeskMenu = (() => {
     const { h } = BossModDom;
@@ -22,6 +24,7 @@ const BossModDeskMenu = (() => {
     const LABELS = Object.freeze({
         agent: 'Agent',
         manage: 'Manage',
+        advanced: 'Advanced',
         chat: 'Open chat',
         memory: 'Memory',
         edit: 'Edit role',
@@ -59,6 +62,10 @@ const BossModDeskMenu = (() => {
      * @param {() => void} deps.onDiagnostics  Leave for this agent's log.
      * @param {() => void} deps.onReset  Ask to reset the agent's runtime.
      * @param {() => void} deps.onRemove  Ask to remove the agent.
+     * @param {() => boolean|null} deps.yoloEnabled  The agent's Yolo flag, or
+     *   null while its detail has not loaded. Read on each open.
+     * @param {(enabled: boolean) => void} deps.onYolo  Turn Yolo mode on
+     *   (confirmed by the callee) or off.
      * @returns {{ button: HTMLElement, close: () => void, destroy: () => void }}
      *   `button` is the head's one tool.
      * @throws {Error} When any callback is missing — a row that does nothing
@@ -66,9 +73,11 @@ const BossModDeskMenu = (() => {
      */
     function create(deps) {
         const {
-            canEdit, onChat, onMemory, onEdit, onDiagnostics, onReset, onRemove,
+            canEdit, onChat, onMemory, onEdit, onDiagnostics, onReset, onRemove, yoloEnabled, onYolo,
         } = deps || {};
-        const required = { canEdit, onChat, onMemory, onEdit, onDiagnostics, onReset, onRemove };
+        const required = {
+            canEdit, onChat, onMemory, onEdit, onDiagnostics, onReset, onRemove, yoloEnabled, onYolo,
+        };
         Object.entries(required).forEach(([name, fn]) => {
             if (typeof fn !== 'function') throw new Error(`[desk-menu] deps.${name} is required`);
         });
@@ -82,8 +91,33 @@ const BossModDeskMenu = (() => {
         const pick = (run) => () => { menu.close(); run(); };
 
         /**
-         * The panel's content, built on each open: Edit role's state is read
-         * from the roster at that moment.
+         * The Advanced section's one row: the Yolo switch, with its hint as a
+         * visible line that is also its accessible description.
+         *
+         * Withheld until the agent's detail loads, the same rule as Edit role.
+         * Picking closes the panel first, so the confirm returns focus to the
+         * `⋯`. Rebuilt on every open, so a cancelled confirm or a failed save
+         * shows the true state the next time.
+         * @returns {HTMLElement}
+         */
+        function yoloRow() {
+            const state = yoloEnabled();
+            const control = BossModSwitch.create({
+                label: BossModYoloMode.LABEL,
+                pressed: state === true,
+                onChange: (pressed) => { menu.close(); onYolo(pressed); },
+            });
+            const row = control.element;
+            row.id = 'desk-yolo';
+            row.disabled = state === null;
+            row.setAttribute('aria-describedby', 'desk-yolo-hint');
+            return h('div', { class: 'menu-switch' }, row,
+                h('p', { class: 'menu-switch-hint', id: 'desk-yolo-hint' }, BossModYoloMode.HINTS.agent));
+        }
+
+        /**
+         * The panel's content, built on each open: Edit role's and Yolo
+         * mode's states are read at that moment.
          * @returns {HTMLElement[]}
          */
         function getItems() {
@@ -106,6 +140,12 @@ const BossModDeskMenu = (() => {
                         menuRow('desk-diagnostics', 'activity', LABELS.diagnostics, pick(onDiagnostics)),
                         menuRow('desk-reset-runtime', 'rotate-ccw', LABELS.reset, pick(onReset), { danger: true }),
                         menuRow('desk-remove', 'trash-2', LABELS.remove, pick(onRemove), { danger: true }))],
+                }),
+                h('hr', { class: 'menu-divider' }),
+                BossModMenu.createMenuSection({
+                    id: 'desk-menu-advanced',
+                    label: LABELS.advanced,
+                    children: [h('div', { class: 'menu-actions' }, yoloRow())],
                 }))];
         }
 

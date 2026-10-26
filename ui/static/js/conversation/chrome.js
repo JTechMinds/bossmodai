@@ -34,12 +34,14 @@
  *   slot: 'menu'   behind the `⋯`, in the `section` it names.
  *   slot: 'title'  beside the title. Confirming an edit to the title itself.
  *
- * The `⋯` is the header's OVERFLOW, in two titled sections. `subject` is the
+ * The `⋯` is the header's OVERFLOW, in three titled sections. `subject` is the
  * agent or the thread — Open desk, Archive — headed by the descriptor's
  * `menuTitle`, the source's word. `chat` is this conversation: Rewind, its
- * switches, and the surface's view options. A once-a-month control does not
- * earn a permanent seat beside the title, and a bordered `Archive` sitting
- * there every time you open a thread reads as a suggestion.
+ * switches, and the surface's view options. `advanced` holds the settings
+ * that remove safeguards (Yolo mode), apart from the everyday ones. A
+ * once-a-month control does not earn a permanent seat beside the title, and a
+ * bordered `Archive` sitting there every time you open a thread reads as a
+ * suggestion. The BADGE beside the title is for a standing risk only.
  *
  * The sections, their stable nodes, the `⋯` itself and the panel's
  * open/close lifecycle are conversation/chrome-menu.js's; this view only
@@ -95,10 +97,12 @@ const BossModConversationChrome = (() => {
         // Empty out of edit mode, and `:empty` collapses it, so the header at
         // rest is the name and nothing beside it.
         const titleActionsEl = h('div', { class: 'conversation-title-actions' });
+        // Stable, and `:empty` collapses it the same way, while nothing applies.
+        const badgeEl = h('span', { class: 'status-pill conversation-badge' });
         const actionsEl = h('div', { class: 'conversation-actions' });
         const element = h('header', { class: 'conversation-chrome' },
             avatarEl,
-            h('div', { class: 'conversation-identity' }, title.element, titleActionsEl),
+            h('div', { class: 'conversation-identity' }, title.element, titleActionsEl, badgeEl),
             // The subtitle leads the action group: a fact about the room, at
             // the end of the row, where a long name cannot shove it.
             actionsEl);
@@ -113,21 +117,16 @@ const BossModConversationChrome = (() => {
         let latest = null;
         /** `name|color`, or 'group'. Compared so a presence repaint does not churn the node. */
         let avatarKey = null;
+        /** `label|icon`, or '' for none; compared for the same reason. */
+        let badgeKey = '';
 
         /**
-         * One reused switch for a menu setting, with its optional hint.
+         * One reused switch for a menu setting, with its optional hint. The
+         * node is conversation/chrome-switch.js's to build and sync.
          *
-         * The pill is core/switch.js. The handler is rewritten every paint
-         * because the open conversation changes and the node does not: a
-         * switch built for the previous thread must not keep that thread's
-         * callback. `set` restores the server's value, so a failed save
-         * puts the pill back.
-         *
-         * `disabled` means the setting is decided somewhere else, which the
-         * source names in `hint`. It is announced as well as styled
-         * (`aria-disabled`), and the hint is the switch's accessible
-         * description. The hint sits BESIDE the switch rather than inside
-         * it: the disabled row is dimmed, and its explanation must stay readable.
+         * The handler is rewritten every paint because the open conversation
+         * changes and the node does not: a switch built for the previous
+         * thread must not keep that thread's callback.
          *
          * @param {object} action
          * @returns {HTMLElement} The wrapper; `_row` is the switch itself.
@@ -135,10 +134,10 @@ const BossModConversationChrome = (() => {
         function ensureMenuSwitch(action) {
             let node = actionNodes.get(action.id);
             if (!node) {
-                const control = BossModSwitch.create({
+                node = BossModChromeSwitch.create({
+                    id: action.id,
                     label: action.label,
-                    pressed: action.pressed === true,
-                    onChange: (pressed) => {
+                    onToggle: (pressed) => {
                         const current = actionNodes.get(action.id);
                         const select = current && current._onSelect;
                         closeMenu();
@@ -149,27 +148,10 @@ const BossModConversationChrome = (() => {
                         });
                     },
                 });
-                const row = control.element;
-                row.id = action.id;
-                node = h('div', { class: 'menu-switch' }, row);
-                node._row = row;
-                node._switch = control;
-                node._hint = h('p', { class: 'menu-switch-hint', id: `${action.id}-hint` });
                 actionNodes.set(action.id, node);
             }
             node._onSelect = action.onSelect;
-            node._switch.set(action.pressed === true);
-            if (action.disabled === true) node._row.setAttribute('aria-disabled', 'true');
-            else node._row.removeAttribute('aria-disabled');
-            const hint = String(action.hint || '').trim();
-            node._hint.textContent = hint;
-            if (hint) {
-                node.append(node._hint);
-                node._row.setAttribute('aria-describedby', node._hint.id);
-            } else {
-                node._hint.remove();
-                node._row.removeAttribute('aria-describedby');
-            }
+            BossModChromeSwitch.sync(node, action);
             return node;
         }
 
@@ -192,6 +174,20 @@ const BossModConversationChrome = (() => {
                 : BossModAvatar.create({ group: true, size: 'md' }));
         }
 
+        /**
+         * Paint the badge beside the title, only when it changed (as above):
+         * always alert-toned, as the header pins one only for a standing
+         * risk, with its text carrying the meaning (SC 1.4.1).
+         * @param {{label: string, icon: string}|null} badge  Null empties it.
+         */
+        function applyBadge(badge) {
+            const key = badge ? `${badge.label}|${badge.icon}` : '';
+            if (key === badgeKey) return;
+            badgeKey = key;
+            clear(badgeEl);
+            if (badge) badgeEl.append(h('i', { 'data-lucide': badge.icon, 'aria-hidden': 'true' }), badge.label);
+        }
+
         async function run(btn, action) {
             btn.disabled = true;
             try {
@@ -210,9 +206,10 @@ const BossModConversationChrome = (() => {
          * Paint one chrome descriptor.
          *
          * @param {{title: string, subtitle: string, avatar?: object, menuTitle?: string,
-         *   actions: object[], onRename?: (name: string) => Promise<void>}} chrome
+         *   badge?: object|null, actions: object[], onRename?: (name: string) => Promise<void>}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
-         *   shown. `menuTitle` is the subject section's heading, required once
+         *   shown. The badge is optional `{label, icon}` beside the title, or
+         *   null for none. `menuTitle` is the subject section's heading, required once
          *   any action names `section: 'subject'`. Each action is `{id, label,
          *   icon?, iconOnly?, slot?, section?, tone?, onSelect}`, where `icon`
          *   is a Lucide glyph NAME — the source names it, this builds it —
@@ -220,7 +217,7 @@ const BossModConversationChrome = (() => {
          *   accessible name instead of its text (SC 4.1.2) and as its tooltip,
          *   and `slot` is `'menu'` to put it behind the `⋯`, `'title'` to put
          *   it beside the name, or absent for the action row; a `'menu'`
-         *   action's `section` is `'subject'` or `'chat'`. `tone` is `'live'`
+         *   action's `section` is one of BossModChromeMenu.SECTIONS. `tone` is `'live'`
          *   (the only tone so far) for an action that marks something running
          *   now — an extension's live view — and sets `data-tone="live"`, which
          *   the stylesheet colours soft green. A `kind: 'switch'` menu action also
@@ -236,8 +233,8 @@ const BossModConversationChrome = (() => {
         function apply(chrome) {
             (chrome.actions || []).forEach((action) => {
                 if (action.slot !== 'menu') return;
-                if (action.section !== 'subject' && action.section !== 'chat') {
-                    throw new Error(`[chrome] menu action "${action.id}" needs section "subject" or "chat"`);
+                if (!BossModChromeMenu.SECTIONS.includes(action.section)) {
+                    throw new Error(`[chrome] menu action "${action.id}" needs section ${BossModChromeMenu.SECTIONS.map((s) => `"${s}"`).join(', ')}`);
                 }
                 if (action.section === 'subject' && !chrome.menuTitle) {
                     throw new Error('[chrome] a subject menu action needs descriptor.menuTitle');
@@ -246,6 +243,7 @@ const BossModConversationChrome = (() => {
             latest = chrome;
             overflow.setTitle(chrome.menuTitle || '');
             applyAvatar(chrome.avatar || null);
+            applyBadge(chrome.badge || null);
             title.apply({ title: chrome.title || '', onRename: chrome.onRename });
             subtitleEl.textContent = chrome.subtitle || '';
             const wanted = new Set();

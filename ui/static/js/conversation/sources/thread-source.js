@@ -46,8 +46,8 @@ const BossModThreadSource = (() => {
             throw new Error('[thread-source] ctx.forgetCache is required');
         }
 
-        // Rename, pause, resume, auto-approve and reopen: the HTTP half of
-        // each header action. What stays here is adopting the answer.
+        // Rename, pause, resume, auto-approve, Yolo and reopen: the HTTP half
+        // of each header action. What stays here is adopting the answer.
         const requests = BossModThreadRequests.createThreadRequests({ api, threadId });
 
         let channel = null;
@@ -275,15 +275,15 @@ const BossModThreadSource = (() => {
         }
 
         /**
-         * Opt this thread in or out of System AI auto-approve.
+         * Adopt the channel a thread-setting request answered with, and
+         * repaint the header from it. Both approval switches save through it.
          *
-         * Off is the default. The request writes only the thread flag.
-         *
-         * @param {boolean} enabled
+         * @param {Promise<object>} pending  The request, already sent.
          * @returns {Promise<void>}
+         * @throws {Error} What the request threw, so chrome's onError says so.
          */
-        async function setCliAutoApprove(enabled) {
-            channel = await requests.setCliAutoApprove(enabled);
+        async function adopt(pending) {
+            channel = await pending;
             signal('chrome');
         }
 
@@ -315,14 +315,20 @@ const BossModThreadSource = (() => {
          * writes, and renaming it is a write. Reopen is the way back.
          *
          * Add people…, Pause / Resume and Archive / Reopen act on the thread,
-         * so all three sit in that section behind the header's `⋯`.
+         * so all three sit in that section behind the header's `⋯`. The
+         * approval switches (Chat, Advanced) and the Yolo badge come from
+         * approval-controls.js once the channel has loaded, and never archived.
          *
-         * @returns {{title: string, subtitle: string, menuTitle: string,
+         * @returns {{title: string, subtitle: string, menuTitle: string, badge: object|null,
          *            actions: object[], onRename?: (name: string) => Promise<void>}}
          */
         function chrome() {
             const archived = !isLiveThread();
             const actions = [];
+            const approvals = channel && !archived ? BossModApprovalControls.forThread(channel, {
+                onAutoApprove: (on) => adopt(requests.setCliAutoApprove(on)),
+                onYolo: (on) => adopt(requests.setCliYolo(on)),
+            }) : null;
             if (!archived) {
                 actions.push({
                     id: 'channel-seat-btn',
@@ -331,12 +337,7 @@ const BossModThreadSource = (() => {
                     slot: 'menu', section: 'subject',
                     onSelect: seatAgent,
                 });
-                actions.push(BossModAutoApproveSwitch.describe({
-                    id: 'channel-cli-auto-approve',
-                    enabled: !!(channel && channel.cli_auto_approve),
-                    globalEnabled: !!(channel && channel.cli_auto_approve_global),
-                    onSelect: setCliAutoApprove,
-                }));
+                if (approvals) actions.push(...approvals.actions);
                 actions.push(channel && channel.conversation_paused
                     ? {
                         id: 'channel-resume-btn',
@@ -374,6 +375,7 @@ const BossModThreadSource = (() => {
                 onRename: archived ? null : renameThread,
                 menuTitle: 'Thread',
                 actions,
+                badge: approvals ? approvals.badge : null,
             };
         }
 

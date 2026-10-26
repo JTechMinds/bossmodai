@@ -41,6 +41,7 @@ _AGENT_COLUMNS = (
     "agents.guardian_token_limit, agents.guardian_velocity_limit, "
     "agents.guardian_repetition_threshold, agents.guardian_no_progress_threshold, "
     "agents.floor_id, agents.vacation_since, agents.cli_auto_approve_dm, "
+    "agents.cli_yolo_dm, "
     "agents.pack_id, agents.pack_source_url, agents.pack_commit_sha, "
     "agents.pack_commit_date, agents.pack_content_hash, agents.pack_contract_hash, "
     "agents.created_at"
@@ -380,6 +381,28 @@ def set_agent_cli_auto_approve_dm(agent_id: str, enabled: bool) -> Agent | None:
     """
     execute(
         "UPDATE agents SET cli_auto_approve_dm = $1 WHERE id = $2",
+        [1 if enabled else 0, agent_id],
+    )
+    return get_agent(agent_id)
+
+
+def set_agent_cli_yolo_dm(agent_id: str, enabled: bool) -> Agent | None:
+    """Turn Yolo mode on or off for one agent's DM and its no-thread work.
+
+    The Yolo counterpart of ``set_agent_cli_auto_approve_dm``: it writes
+    only that flag and, being a conversation setting rather than part of the
+    agent's setup, does not re-capture the agent's snapshot. It is not in
+    ``_AGENT_VALID_COLUMNS``, so ``update_agent`` cannot write it.
+
+    Args:
+        agent_id: The agent to change.
+        enabled: The new flag value.
+
+    Returns:
+        The agent after the write, or None when no agent has ``agent_id``.
+    """
+    execute(
+        "UPDATE agents SET cli_yolo_dm = $1 WHERE id = $2",
         [1 if enabled else 0, agent_id],
     )
     return get_agent(agent_id)

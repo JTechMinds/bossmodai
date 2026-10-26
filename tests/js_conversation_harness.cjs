@@ -21,12 +21,12 @@ installIconsStub();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
-    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
-    "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome",
+    "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
+    "BossModThreadRequests", "BossModApprovalControls", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
@@ -65,10 +65,15 @@ const THREADS = {
 let autoApproveGlobal = false;
 const agentAutoApprove = {};
 const autoApprovePatches = [];
+// Each agent's Yolo flag (set from its desk, never from the DM), and every
+// PATCH a thread's Yolo switch sends.
+const agentYolo = {};
+const yoloPatches = [];
 const agentRecord = (id) => ({
     id,
     cli_auto_approve_dm: agentAutoApprove[id] === true,
     cli_auto_approve_global: autoApproveGlobal,
+    cli_yolo_dm: agentYolo[id] === true,
 });
 const RENAME_FAILURE = "Thread name cannot be empty";
 const renamePayloads = [];
@@ -112,6 +117,17 @@ const api = async (url, init) => {
         autoApprovePatches.push({ id: dmFlag[1], method: init.method, body });
         agentAutoApprove[dmFlag[1]] = body.enabled === true;
         return { ok: true, async json() { return agentRecord(dmFlag[1]); } };
+    }
+    const threadYolo = text.match(/^\/api\/channels\/([^/]+)\/cli-yolo$/);
+    if (threadYolo) {
+        const body = JSON.parse(init.body);
+        yoloPatches.push({ id: threadYolo[1], method: init.method, body });
+        const room = THREADS[threadYolo[1]];
+        room.cli_yolo = body.enabled === true;
+        return {
+            ok: true,
+            async json() { return { ...room, members: room.members, cli_auto_approve_global: autoApproveGlobal }; },
+        };
     }
     const record = text.match(/^\/api\/agents\/([^/?]+)$/);
     if (record) return { ok: true, async json() { return agentRecord(record[1]); } };
@@ -781,10 +797,10 @@ async function main() {
         throw new Error(`a live thread's row must be empty at rest, got ${actionNames().join("|")}`);
     }
     // The panel, in DOM order: the Thread section (Add people…, Pause, then
-    // Archive), then the Chat section's switches. Archive is in there and
-    // nowhere on the row.
+    // Archive), then the Chat section's switches, then Advanced's Yolo mode.
+    // Archive is in there and nowhere on the row.
     const archiveLivesInTheMenu = await menuActionNames()
-        === "Add people…|Pause thread|Archive|Auto-approve safe commands|Show system notifications";
+        === "Add people…|Pause thread|Archive|Auto-approve safe commands|Show system notifications|Yolo mode";
     if (!archiveLivesInTheMenu) {
         throw new Error(`Archive must be behind the \`⋯\`, got ${await menuActionNames()}`);
     }
@@ -949,7 +965,7 @@ async function main() {
 
     // ─── Auto-approve: the DM's own switch, and Global greying both out ───
     //
-    // The DM switch is the thread switch's twin (auto-approve-switch.js):
+    // The DM switch is the thread switch's twin (approval-controls.js):
     // same label, same place behind the `⋯`, its own flag on the agent.
     // While Global auto-approve is on, every conversation's switch shows ON,
     // is disabled and announced so, and says where the setting that wins
@@ -1017,7 +1033,7 @@ async function main() {
         && state.checked === "true"
         && state.disabled === true
         && state.ariaDisabled === "true"
-        && state.hint === BossModAutoApproveSwitch.GLOBAL_HINT
+        && state.hint === BossModApprovalControls.GLOBAL_HINT
         && state.describedBy === `${id}-hint`
         && state.hintOutsideTheRow;
     const globalGreysOutTheDmSwitch = greyedOut(dmGlobal, "agent-cli-auto-approve");
@@ -1048,21 +1064,162 @@ async function main() {
             + `${JSON.stringify(threadBack)} / ${JSON.stringify(dmBack)}`);
     }
 
-    // ─── The thread's `⋯`: Thread, one rule, then Chat ───
+    // ─── Yolo mode: the thread's Advanced switch, its confirm, and the badge ───
+    //
+    // The thread's Yolo switch sits in Advanced with its hint. Turning it on
+    // asks first (core/yolo-mode.js): Cancel sends nothing and puts the pill
+    // back; confirming PATCHes the thread, the header shows the badge, and the
+    // auto-approve switch greys out with Yolo's hint, which wins over
+    // Global's. Turning it off never asks. A DM has no Yolo switch: the
+    // agent's flag (its desk's) shows as the same badge and greyed switch.
+    const modalPanels = () => documentStub.body.querySelectorAll(".modal-panel");
+    const modalAction = (label) => modalPanels()[0].querySelectorAll(".modal-action")
+        .find((btn) => btn.textLabel === label);
+    const badgeState = () => {
+        const node = conversation.element.querySelector(".conversation-badge");
+        const glyph = node && node.querySelector("i");
+        return {
+            text: node ? node.textContent : null,
+            glyph: glyph ? glyph.getAttribute("data-lucide") : null,
+            pill: Boolean(node) && node.classList.contains("status-pill"),
+            besideTitle: Boolean(node) && node.parentNode.matches(".conversation-identity"),
+        };
+    };
+    await conversation.open("t1", "thread");
+    menu = await openMenu();
+    const yoloOff = switchState(menu.panel, "channel-cli-yolo");
+    const yoloSection = menu.panel.querySelector("#channel-cli-yolo").closest(".menu-section");
+    const threadYoloSwitchIsInAdvanced = Boolean(yoloOff)
+        && yoloOff.label === "Yolo mode" && yoloOff.checked === "false" && yoloOff.disabled === false
+        && yoloOff.hint === BossModYoloMode.HINTS.thread
+        && yoloOff.describedBy === "channel-cli-yolo-hint" && yoloOff.hintOutsideTheRow
+        && Boolean(yoloSection) && yoloSection.querySelector(".menu-label").textContent === "Advanced"
+        && badgeState().text === "" && badgeState().besideTitle;
+    if (!threadYoloSwitchIsInAdvanced) {
+        throw new Error(`the thread's Yolo switch must sit in Advanced, off, with its hint, got `
+            + `${JSON.stringify(yoloOff)} / ${JSON.stringify(badgeState())}`);
+    }
+    await menu.panel.querySelector("#channel-cli-yolo").dispatchClick();
+    await tick();
+    const confirmShown = modalPanels().length === 1
+        ? modalPanels()[0].querySelector(".modal-title").textContent : "";
+    const confirmBody = modalPanels().length === 1
+        ? modalPanels()[0].querySelector(".modal-body").textContent : "";
+    await modalAction("Cancel").dispatchClick();
+    await tick();
+    await tick();
+    menu = await openMenu();
+    const yoloCancelled = switchState(menu.panel, "channel-cli-yolo");
+    await menu.dotsBtn.dispatchClick();
+    const yoloCancelSendsNothing = confirmShown === "Turn on Yolo mode?"
+        && confirmBody.startsWith("Agents in this thread won't stop to ask before running commands.")
+        && yoloPatches.length === 0 && modalPanels().length === 0
+        && yoloCancelled.checked === "false" && badgeState().text === "";
+    if (!yoloCancelSendsNothing) {
+        throw new Error(`Cancel must send nothing and put the Yolo pill back, got "${confirmShown}" `
+            + `${JSON.stringify(yoloPatches)} / ${JSON.stringify(yoloCancelled)}`);
+    }
+    menu = await openMenu();
+    await menu.panel.querySelector("#channel-cli-yolo").dispatchClick();
+    await tick();
+    await modalAction("Turn on Yolo mode").dispatchClick();
+    await tick();
+    await tick();
+    await tick();
+    menu = await openMenu();
+    const yoloOn = switchState(menu.panel, "channel-cli-yolo");
+    const autoUnderYolo = switchState(menu.panel, "channel-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    const yoloConfirmPatchesTheThread = yoloPatches.length === 1 && yoloPatches[0].id === "t1"
+        && yoloPatches[0].method === "PATCH" && yoloPatches[0].body.enabled === true
+        && modalPanels().length === 0 && yoloOn.checked === "true";
+    const greyedByYolo = (state, id, hint) => Boolean(state)
+        && state.checked === "true" && state.disabled === true && state.ariaDisabled === "true"
+        && state.hint === hint && state.describedBy === `${id}-hint` && state.hintOutsideTheRow;
+    const threadBadgeShowsWhileYolo = badgeState().text === "Yolo mode"
+        && badgeState().glyph === "alert-triangle" && badgeState().pill;
+    const yoloGreysTheThreadAutoApprove = greyedByYolo(
+        autoUnderYolo, "channel-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.thread,
+    );
+    if (!yoloConfirmPatchesTheThread || !threadBadgeShowsWhileYolo || !yoloGreysTheThreadAutoApprove) {
+        throw new Error(`confirming must PATCH, badge the header and grey auto-approve, got `
+            + `${JSON.stringify(yoloPatches)} / ${JSON.stringify(badgeState())} / ${JSON.stringify(autoUnderYolo)}`);
+    }
+    // Global on as well: the switch says what actually decides, which is Yolo.
+    autoApproveGlobal = true;
+    BossModOperatorInvalidate.notifyLocal(["advanced-system", "chat"]);
+    await wait(5);
+    menu = await openMenu();
+    const autoUnderBoth = switchState(menu.panel, "channel-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    const yoloHintWinsOverGlobal = greyedByYolo(
+        autoUnderBoth, "channel-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.thread,
+    );
+    autoApproveGlobal = false;
+    BossModOperatorInvalidate.notifyLocal(["advanced-system", "chat"]);
+    await wait(5);
+    if (!yoloHintWinsOverGlobal) {
+        throw new Error(`Yolo's hint must win over Global's, got ${JSON.stringify(autoUnderBoth)}`);
+    }
+    // Off puts the safeguards back, so it never asks.
+    menu = await openMenu();
+    await menu.panel.querySelector("#channel-cli-yolo").dispatchClick();
+    await tick();
+    await tick();
+    menu = await openMenu();
+    const autoAfterYolo = switchState(menu.panel, "channel-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    const yoloOffNeverAsks = modalPanels().length === 0 && yoloPatches.length === 2
+        && yoloPatches[1].body.enabled === false && badgeState().text === ""
+        && autoAfterYolo.checked === "false" && autoAfterYolo.disabled === false && autoAfterYolo.hint === null;
+    if (!yoloOffNeverAsks) {
+        throw new Error(`turning Yolo off must not ask and must clear the badge, got `
+            + `${JSON.stringify(yoloPatches)} / ${JSON.stringify(badgeState())} / ${JSON.stringify(autoAfterYolo)}`);
+    }
+    // The DM: the agent's Yolo arrives from its desk as operator_invalidate(chat).
+    await conversation.open("a", "agent");
+    const dmBadgeStartsOff = badgeState().text === "";
+    agentYolo.a = true;
+    BossModOperatorInvalidate.notifyLocal(["chat"]);
+    await wait(5);
+    menu = await openMenu();
+    const dmUnderYolo = switchState(menu.panel, "agent-cli-auto-approve");
+    const dmHeadings = headingsOf(menu.panel).join("|");
+    await menu.dotsBtn.dispatchClick();
+    const dmShowsYoloFromItsDesk = dmBadgeStartsOff && badgeState().text === "Yolo mode"
+        && greyedByYolo(dmUnderYolo, "agent-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.dm)
+        && dmHeadings === "Agent|Chat";
+    agentYolo.a = false;
+    BossModOperatorInvalidate.notifyLocal(["chat"]);
+    await wait(5);
+    menu = await openMenu();
+    const dmAfterYolo = switchState(menu.panel, "agent-cli-auto-approve");
+    await menu.dotsBtn.dispatchClick();
+    const dmYoloOffRestoresItsOwnFlag = badgeState().text === ""
+        && dmAfterYolo.checked === "true" && dmAfterYolo.disabled === false && dmAfterYolo.hint === null;
+    if (!dmShowsYoloFromItsDesk || !dmYoloOffRestoresItsOwnFlag) {
+        throw new Error(`the DM must show the desk's Yolo as a badge and a greyed switch, got `
+            + `${dmHeadings} / ${JSON.stringify(dmUnderYolo)} / ${JSON.stringify(dmAfterYolo)}`);
+    }
+
+    // ─── The thread's `⋯`: Thread, Chat, then Advanced, a rule between each ───
     await conversation.open("t1", "thread");
     menu = await openMenu();
     const threadSections = panelSections(menu.panel);
-    const threadMenuIsSectioned = headingsOf(menu.panel).join("|") === "Thread|Chat"
-        && threadSections.length === 3
+    const threadMenuIsSectioned = headingsOf(menu.panel).join("|") === "Thread|Chat|Advanced"
+        && threadSections.length === 5
         && threadSections[1].matches(".menu-divider")
-        && menu.panel.querySelectorAll(".menu-divider").length === 1
+        && threadSections[3].matches(".menu-divider")
+        && menu.panel.querySelectorAll(".menu-divider").length === 2
         && sectionRows(threadSections[0]).join("|") === "Add people…|Pause thread|Archive"
         && sectionRows(threadSections[2]).join("|")
             === "Auto-approve safe commands|Show system notifications"
+        && sectionRows(threadSections[4]).join("|") === "Yolo mode"
         && sectionIsLabelled(threadSections[0]) && sectionIsLabelled(threadSections[2])
+        && sectionIsLabelled(threadSections[4])
         && !conversation.element.querySelector(".conversation-actions").querySelector("#channel-seat-btn");
     if (!threadMenuIsSectioned) {
-        throw new Error(`the thread's \`⋯\` must read Thread | Chat, got ${headingsOf(menu.panel).join("|")}: `
+        throw new Error(`the thread's \`⋯\` must read Thread | Chat | Advanced, got ${headingsOf(menu.panel).join("|")}: `
             + threadSections.map((node) => (node.matches(".menu-divider") ? "—" : sectionRows(node).join("|"))).join(" / "));
     }
     // Archived elsewhere while the panel is open: the repaint lands in the
@@ -1117,7 +1274,7 @@ async function main() {
         title: "x", subtitle: "",
         actions: [Object.assign({ id: "x-act", label: "X", slot: "menu", onSelect() {} }, extra)],
     });
-    const UNSECTIONED = '[chrome] menu action "x-act" needs section "subject" or "chat"';
+    const UNSECTIONED = '[chrome] menu action "x-act" needs section "subject", "chat", "advanced"';
     const applyRefusesBadMenuActions = refusalOf(menuItem({})) === UNSECTIONED
         && refusalOf(menuItem({ section: "elsewhere" })) === UNSECTIONED
         && refusalOf(menuItem({ section: "subject" }))
@@ -1489,6 +1646,15 @@ async function main() {
         globalGreysOutTheDmSwitch,
         globalGreysOutTheThreadSwitch,
         ownFlagsComeBack,
+        threadYoloSwitchIsInAdvanced,
+        yoloCancelSendsNothing,
+        yoloConfirmPatchesTheThread,
+        threadBadgeShowsWhileYolo,
+        yoloGreysTheThreadAutoApprove,
+        yoloHintWinsOverGlobal,
+        yoloOffNeverAsks,
+        dmShowsYoloFromItsDesk,
+        dmYoloOffRestoresItsOwnFlag,
     }));
 }
 

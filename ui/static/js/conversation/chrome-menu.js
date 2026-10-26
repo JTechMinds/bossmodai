@@ -9,10 +9,12 @@
  * opening and closing — is core/menu-button.js's, the one every `⋯` shares.
  * The chrome never touches the panel; this module never reads a descriptor.
  *
- * TWO SECTIONS, each a core/menu.js `createMenuSection`: `subject` — the agent
- * or the thread, titled by the source's word through `setTitle` — and `chat`,
- * this conversation's history and settings, titled by the surface's own word.
- * Inside each, actions paint above settings: the doing comes first.
+ * THREE SECTIONS, each a core/menu.js `createMenuSection`: `subject` — the
+ * agent or the thread, titled by the source's word through `setTitle` —
+ * `chat`, this conversation's history and settings, and `advanced`, settings
+ * that remove safeguards (Yolo mode), kept apart from the everyday ones; the
+ * last two are titled by the surface's own words. Inside each, actions paint
+ * above settings: the doing comes first.
  *
  * Every node is STABLE, owned here and built once, rather than handed to the
  * menu at open time, which is what lets a repaint that happens while the
@@ -26,6 +28,10 @@ const BossModChromeMenu = (() => {
     const MENU_LABEL = 'More actions';
     /** The chat section's heading: the surface's word, not any source's. */
     const CHAT_LABEL = 'Chat';
+    /** The advanced section's heading, the surface's word like CHAT_LABEL. */
+    const ADVANCED_LABEL = 'Advanced';
+    /** The sections, in panel order; `place` accepts exactly these. */
+    const SECTIONS = Object.freeze(['subject', 'chat', 'advanced']);
     /**
      * The subject heading until the first apply() names it. Never seen: the
      * section shows only with an action in it, and chrome.js refuses a
@@ -43,14 +49,14 @@ const BossModChromeMenu = (() => {
      * @param {HTMLElement[]} [deps.viewOptions]  The surface's preference
      *   controls, placed once, last in the chat section's settings.
      * @returns {{ button: HTMLElement,
-     *             place: (section: 'subject'|'chat', kind: string, node: HTMLElement) => void,
+     *             place: (section: 'subject'|'chat'|'advanced', kind: string, node: HTMLElement) => void,
      *             setTitle: (text: string) => void, settle: () => void,
      *             close: () => void, paint: () => void }}
      *   `button` is the `⋯` the chrome places in its row. `place` appends a
      *   node to a section — a `kind === 'switch'` to its settings, anything
      *   else to its actions — and throws on an unknown section. `setTitle`
      *   writes the subject heading. `settle` shows only the sections with
-     *   something in them, and the divider only between two. `close` puts an
+     *   something in them, and a divider only between two. `close` puts an
      *   open panel away and `paint` paints glyphs inside it (both no-ops when
      *   closed).
      * @throws {Error} When `container` is missing — the panel would have no
@@ -73,6 +79,7 @@ const BossModChromeMenu = (() => {
         const bodies = {
             subject: { actions: h('div', { class: 'menu-actions' }), settings: h('div', { class: 'menu-actions' }) },
             chat: { actions: h('div', { class: 'menu-actions' }), settings: h('div', { class: 'menu-actions' }) },
+            advanced: { actions: h('div', { class: 'menu-actions' }), settings: h('div', { class: 'menu-actions' }) },
         };
         const sections = {
             subject: BossModMenu.createMenuSection({
@@ -85,9 +92,15 @@ const BossModChromeMenu = (() => {
                 label: CHAT_LABEL,
                 children: [bodies.chat.actions, bodies.chat.settings],
             }),
+            advanced: BossModMenu.createMenuSection({
+                id: 'conversation-menu-advanced',
+                label: ADVANCED_LABEL,
+                children: [bodies.advanced.actions, bodies.advanced.settings],
+            }),
         };
         const subjectLabel = sections.subject.querySelector('.menu-label');
-        const divider = h('hr', { class: 'menu-divider' });
+        /** Stable rules, keyed by the section each one precedes. */
+        const dividers = { chat: h('hr', { class: 'menu-divider' }), advanced: h('hr', { class: 'menu-divider' }) };
         /** What the panel holds: the sections in view, settled after each apply. */
         const content = h('div', { class: 'menu-sections' });
         // The surface's preferences are the chat's settings, and they are the
@@ -112,7 +125,7 @@ const BossModChromeMenu = (() => {
          * A chat switch goes in ahead of the view options rather than after
          * them, so they stay last without being moved on every apply().
          *
-         * @param {'subject'|'chat'} section
+         * @param {'subject'|'chat'|'advanced'} section
          * @param {string} kind  `'switch'` for a setting; anything else is an
          *   action.
          * @param {HTMLElement} node
@@ -141,19 +154,20 @@ const BossModChromeMenu = (() => {
         }
 
         /**
-         * Show only the sections with something in them, and the divider
-         * only between two — an empty heading is not a section. The panel is
-         * left alone when nothing changed, so a repaint does not move nodes
-         * under the operator's pointer.
+         * Show only the sections with something in them, in SECTIONS order,
+         * and a divider only between two — an empty heading is not a section.
+         * The panel is left alone when nothing changed, so a repaint does not
+         * move nodes under the operator's pointer.
          * @returns {void}
          */
         function settle() {
             const filled = (key) => bodies[key].actions.children.length > 0
                 || bodies[key].settings.children.length > 0;
             const wanted = [];
-            if (filled('subject')) wanted.push(sections.subject);
-            if (filled('subject') && filled('chat')) wanted.push(divider);
-            if (filled('chat')) wanted.push(sections.chat);
+            SECTIONS.filter(filled).forEach((key) => {
+                if (wanted.length) wanted.push(dividers[key]);
+                wanted.push(sections[key]);
+            });
             const current = Array.from(content.children);
             const same = current.length === wanted.length
                 && wanted.every((node, index) => current[index] === node);
@@ -179,5 +193,5 @@ const BossModChromeMenu = (() => {
         return { button: menu.button, place, setTitle, settle, close: menu.close, paint };
     }
 
-    return { createChromeMenu };
+    return { createChromeMenu, SECTIONS };
 })();

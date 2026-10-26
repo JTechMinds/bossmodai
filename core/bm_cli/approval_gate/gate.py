@@ -5,6 +5,10 @@ Code computes facts and enforces invariants; System AI judges intent and
 relevance with the work context. Deny, never-allow and the project git
 fence are decided before this module and stay in place. A jail escape or
 a system path found here is returned as a block so System AI never sees it.
+
+Yolo mode (``approval_mode`` → ``"yolo"``) approves right after those two
+blocks, before the card-producing invariants and the System AI review: it
+removes asking, never a check the system can perform.
 """
 
 from __future__ import annotations
@@ -51,7 +55,12 @@ NOT_ASKED_HOST_PROCESS = (
     "System AI was not asked: this affects host processes or containers the path jail cannot bound"
 )
 
+YOLO_THREAD_WHY = "[yolo] Yolo mode is on in this thread"
+YOLO_DM_WHY = "[yolo] Yolo mode is on for this agent's DM"
+YOLO_NOT_RUN_CWD = "Yolo mode did not run this: the working directory is not a workspace path"
+
 PlanAction = Literal["card", "block", "approve"]
+ApprovalMode = Literal["ask", "review", "yolo"]
 _MOVE_NAMES = frozenset({"mv"})
 _MV_TARGET_FLAGS = ("-t", "--target-directory")
 
@@ -102,24 +111,33 @@ def global_auto_approve_enabled() -> bool:
     return value == "true"
 
 
-def auto_approve_effective(agent: Agent, channel_id: str | None) -> bool:
-    """Return whether auto-approve applies to this agent's command here.
+def approval_mode(agent: Agent, channel_id: str | None) -> ApprovalMode:
+    """Return how an approval_required command from this agent is decided here.
 
-    The single resolver for every place auto-approve can be turned on:
+    The single resolver for every place auto-approve or Yolo can be turned
+    on. Its modes:
 
-    1. Global auto-approve on: True everywhere. The conversation flags are
-       kept, not overwritten, so turning it off restores each one.
-    2. ``channel_id`` set (the command's origin thread): that thread is
-       active and has ``cli_auto_approve``. A missing, archived or unknown
-       thread is off.
-    3. ``channel_id`` None (the agent's DM, and work with no origin thread:
-       DM-assigned, Focus or scheduled tasks, whose cards also land on the
-       DM/Focus surface): the agent's ``cli_auto_approve_dm``.
+    * ``"ask"``: the operator decides on an Approve card.
+    * ``"review"``: the gate runs (invariants, then the System AI review).
+    * ``"yolo"``: approved **without** review or card. The path-jail and
+      host-refusal blocks still apply, as do never-allow, the consent gates
+      and the executor's own jail, which sit outside the gate.
 
-    "Effective" means the gate runs (invariants, then the System AI
-    review). It never means a command is approved without review.
+    Precedence, highest first; no flag ever overwrites another, so turning
+    one off restores whatever the others say:
 
-    Both flags are read from the database here rather than from ``agent``,
+    1. The conversation's Yolo flag: an active ``channel_id`` thread's
+       ``cli_yolo``, or (``channel_id`` None) the agent's ``cli_yolo_dm``.
+    2. Global auto-approve on: ``"review"`` everywhere.
+    3. The conversation's own auto-approve flag: the active thread's
+       ``cli_auto_approve``, or the agent's ``cli_auto_approve_dm``.
+
+    ``channel_id`` None covers the agent's DM and its work with no origin
+    thread (DM-assigned, Focus or scheduled tasks, whose cards also land on
+    the DM/Focus surface). A missing, archived or unknown thread has no
+    flags of its own: ``"review"`` with global on, else ``"ask"``.
+
+    Every flag is read from the database here rather than from ``agent``,
     so a toggle the operator flips mid-turn applies to the next command.
 
     Args:
@@ -127,24 +145,33 @@ def auto_approve_effective(agent: Agent, channel_id: str | None) -> bool:
         channel_id: The origin thread id, or None for a DM or no thread.
 
     Returns:
-        Whether the gate should try to approve instead of carding.
+        ``"ask"``, ``"review"`` or ``"yolo"``.
 
     Raises:
-        ConfigError: The global setting is missing or not a boolean.
+        ConfigError: The global setting is missing or not a boolean. It is
+            read first, so a bad value surfaces even when Yolo is on.
         LookupError: ``channel_id`` is None and the agent row is gone.
     """
-    if global_auto_approve_enabled():
-        return True
+    global_on = global_auto_approve_enabled()
     token = (channel_id or "").strip()
     if token:
         channel = db.get_channel(token)
-        if channel is None or channel.status != "active":
-            return False
-        return bool(channel.cli_auto_approve)
+        live = channel is not None and channel.status == "active"
+        if live and channel.cli_yolo:
+            return "yolo"
+        if global_on or (live and channel.cli_auto_approve):
+            return "review"
+        return "ask"
+    # The agent row is the only place the DM's Yolo flag lives, so it is
+    # read even when global auto-approve alone would decide "review".
     current = db.get_agent(agent.id)
     if current is None:
         raise LookupError(f"Agent {agent.id} not found")
-    return current.cli_auto_approve_dm
+    if current.cli_yolo_dm:
+        return "yolo"
+    if global_on or current.cli_auto_approve_dm:
+        return "review"
+    return "ask"
 
 
 def plan_auto_approve(
@@ -158,11 +185,15 @@ def plan_auto_approve(
 ) -> AutoApprovePlan:
     """Decide card, block, or approve. Does not execute or write a decision.
 
-    Order: enablement, facts, host refusal, invariants (whole-root delete or
-    move, host processes), review context, System AI review. A script is
-    one decision: its facts are the union over *segments* (with each
-    segment's facts listed for the reviewer), and every invariant applies
-    to every segment.
+    Order: enablement (``approval_mode``; ``"ask"`` is a plain card), facts,
+    host refusal, then Yolo, then invariants (whole-root delete or move,
+    host processes), review context, System AI review. Yolo approves after
+    the two block steps and before everything that would ask, so a jail
+    escape or a system path is still blocked under Yolo. When the working
+    directory cannot be resolved, the host refusal cannot run, so Yolo
+    fails closed to a card that says so. A script is one decision: its
+    facts are the union over *segments* (with each segment's facts listed
+    for the reviewer), and every invariant applies to every segment.
 
     Args:
         agent: The agent running the command.
@@ -175,7 +206,8 @@ def plan_auto_approve(
         segments: A script's simple commands; empty for a single command.
 
     Returns:
-        The plan. Every review failure is a card that says why.
+        The plan. Every review failure is a card that says why. A Yolo
+        approval's ``why`` is ``YOLO_THREAD_WHY`` or ``YOLO_DM_WHY``.
 
     Raises:
         ConfigError: The global auto-approve setting is missing or not a
@@ -183,7 +215,8 @@ def plan_auto_approve(
         LookupError: No agent owns ``agent.storage_key``, or (for a DM)
             ``agent.id``.
     """
-    if not auto_approve_effective(agent, channel_id):
+    mode = approval_mode(agent, channel_id)
+    if mode == "ask":
         return AutoApprovePlan(action="card")
     units = tuple(segments) or (GateSegment(parsed, cwd),)
     try:
@@ -194,11 +227,15 @@ def plan_auto_approve(
     except PathJailError as exc:
         return AutoApprovePlan(action="block", jail_message=str(exc))
     except ValueError:
-        return AutoApprovePlan(action="card", card_why=NOT_ASKED_CWD)
+        card_why = YOLO_NOT_RUN_CWD if mode == "yolo" else NOT_ASKED_CWD
+        return AutoApprovePlan(action="card", card_why=card_why)
 
     refusal = host_refusal(agent, facts)
     if refusal is not None:
         return AutoApprovePlan(action="block", jail_message=refusal)
+    if mode == "yolo":
+        why = YOLO_THREAD_WHY if (channel_id or "").strip() else YOLO_DM_WHY
+        return AutoApprovePlan(action="approve", why=why)
     each = facts.segments or (facts,)
     if any(
         _removes_or_moves_a_root(agent, unit.parsed, unit.cwd, unit_facts)

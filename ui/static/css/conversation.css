@@ -64,6 +64,17 @@
 
 .conversation-title { margin: 0; font-size: 15px; font-weight: 600; }
 
+/* A standing risk on this conversation (Yolo mode), beside the name. Shape is
+   the shared .status-pill; always alert-toned, and --alert-ink on --alert-bg
+   is 5.86:1 (tokens.css). The tone is written against .status-pill itself
+   because places.css, which loads after this file, sets the neutral pill's
+   colours at the same specificity. Empty while nothing applies, and it
+   collapses rather than holding a gap open, like the title actions above. */
+.conversation-badge { flex: none; white-space: nowrap; }
+.status-pill.conversation-badge { background: var(--alert-bg); color: var(--alert-ink); }
+.conversation-badge svg { width: 12px; height: 12px; }
+.conversation-badge:empty { display: none; }
+
 /* The title, editable in place. Easy but non-obvious: at rest it wears no
    affordance at all — no underline, no accent, nothing visible — so it reads
    as the heading it is. `font: inherit` is what keeps it identical to the

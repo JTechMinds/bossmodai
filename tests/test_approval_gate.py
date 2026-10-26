@@ -2,7 +2,8 @@
 
 Auto-approve is off by default. An active thread's flag, an agent's DM
 flag, or Global auto-approve (Settings → Advanced) turns the gate on, and
-Global wins over both. Hard blocks still win.
+Global wins over both. Yolo (the thread's or the DM's) outranks all of
+them and approves without a card or review. Hard blocks still win.
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from core import config
 from core.agent_loop.cli_turn_result import map_cli_result
 from core.agent_loop.work_binding import bind_turn
 from api.routes.settings import _operator_surfaces_for_setting
-from core.bm_cli.approval_gate import AUDIT_PREFIX, auto_approve_effective
+from core.bm_cli.approval_gate import AUDIT_PREFIX, approval_mode, plan_auto_approve
 from core.config import ConfigError
 from core.bm_cli.approval_gate.context import build_review_context, command_shape
 from core.bm_cli.approval_gate.effects import classify_effect
@@ -34,8 +35,12 @@ from core.bm_cli.approval_gate.gate import (
     NOT_ASKED_ROOT,
     REVIEW_ERROR_PREFIX,
     UNSURE_PREFIX,
+    YOLO_DM_WHY,
+    YOLO_NOT_RUN_CWD,
+    YOLO_THREAD_WHY,
 )
 from core.bm_cli.approval_gate.review import parse_verdict
+from core.bm_cli.approvals import ALWAYS_ALLOWED_NOTE
 from core.bm_cli.filesystem import agent_artifact_dir
 from core.bm_cli.floor_roots import floor_root, project_dir
 from core.bm_cli.parser import parse_cli_command
@@ -43,6 +48,7 @@ from core.bm_cli.policy_engine import policy_engine
 from core.bm_cli.runtime import execute_bm_cli
 from core.bm_cli.session import set_cli_cwd
 from db.floors import LOBBY_ID, create_floor
+from tests.test_workspace_preference import _lock_workspace_copy
 
 ROOT = Path(__file__).resolve().parent.parent
 _COMPLETE = "core.bm_cli.approval_gate.review.complete_text"
@@ -94,6 +100,13 @@ def _thread(agent_id: str, *, enabled: bool):
     if enabled:
         channel = db.update_channel(channel.id, cli_auto_approve=True)
     assert channel is not None
+    return channel
+
+
+def _yolo_thread(agent_id: str):
+    channel = _thread(agent_id, enabled=False)
+    channel = db.update_channel(channel.id, cli_yolo=True)
+    assert channel is not None and channel.cli_yolo is True
     return channel
 
 
@@ -723,11 +736,11 @@ def test_resolver_uses_an_active_thread_flag() -> None:
     on = _thread(agent.id, enabled=True)
     off = _thread(agent.id, enabled=False)
 
-    assert auto_approve_effective(agent, on.id) is True
-    assert auto_approve_effective(agent, off.id) is False
-    assert auto_approve_effective(agent, "missing-channel") is False
+    assert approval_mode(agent, on.id) == "review"
+    assert approval_mode(agent, off.id) == "ask"
+    assert approval_mode(agent, "missing-channel") == "ask"
     db.archive_channel(on.id)
-    assert auto_approve_effective(agent, on.id) is False
+    assert approval_mode(agent, on.id) == "ask"
 
 
 def test_resolver_uses_the_dm_flag_when_there_is_no_thread() -> None:
@@ -736,19 +749,19 @@ def test_resolver_uses_the_dm_flag_when_there_is_no_thread() -> None:
     other, _other_state = _agent_and_state("Other Clerk")
     off_thread = _thread(agent.id, enabled=False)
     assert agent.cli_auto_approve_dm is False
-    assert auto_approve_effective(agent, None) is False
+    assert approval_mode(agent, None) == "ask"
 
     updated = db.set_agent_cli_auto_approve_dm(agent.id, True)
     assert updated is not None and updated.cli_auto_approve_dm is True
     # Read live, so the Agent object a turn started with does not go stale.
-    assert auto_approve_effective(agent, None) is True
+    assert approval_mode(agent, None) == "review"
     # The DM flag is the DM's only: a thread still follows its own flag,
     # and another agent's DM keeps its own.
-    assert auto_approve_effective(agent, off_thread.id) is False
-    assert auto_approve_effective(other, None) is False
+    assert approval_mode(agent, off_thread.id) == "ask"
+    assert approval_mode(other, None) == "ask"
 
     db.set_agent_cli_auto_approve_dm(agent.id, False)
-    assert auto_approve_effective(agent, None) is False
+    assert approval_mode(agent, None) == "ask"
 
 
 def test_resolver_global_overrides_both_flags_and_keeps_them() -> None:
@@ -758,23 +771,153 @@ def test_resolver_global_overrides_both_flags_and_keeps_them() -> None:
     assert config.get_live("cli_auto_approve_global") == "false"
 
     _set_global("true")
-    assert auto_approve_effective(agent, off_thread.id) is True
-    assert auto_approve_effective(agent, None) is True
-    assert auto_approve_effective(agent, "missing-channel") is True
+    assert approval_mode(agent, off_thread.id) == "review"
+    assert approval_mode(agent, None) == "review"
+    assert approval_mode(agent, "missing-channel") == "review"
     # Neither conversation's own flag was written.
     assert db.get_channel(off_thread.id).cli_auto_approve is False
     assert db.get_agent(agent.id).cli_auto_approve_dm is False
 
     _set_global("false")
-    assert auto_approve_effective(agent, off_thread.id) is False
-    assert auto_approve_effective(agent, None) is False
+    assert approval_mode(agent, off_thread.id) == "ask"
+    assert approval_mode(agent, None) == "ask"
 
 
 def test_resolver_refuses_to_guess_a_bad_global_value() -> None:
     agent, _state = _agent_and_state()
     _set_global("yes")
     with pytest.raises(ConfigError, match="must be true or false"):
-        auto_approve_effective(agent, None)
+        approval_mode(agent, None)
+
+
+def test_resolver_yolo_thread_and_its_archive() -> None:
+    agent, _state = _agent_and_state()
+    yolo = _yolo_thread(agent.id)
+
+    assert approval_mode(agent, yolo.id) == "yolo"
+    # Yolo is the thread's own: the DM and a plain thread are unchanged.
+    assert approval_mode(agent, None) == "ask"
+    assert approval_mode(agent, _thread(agent.id, enabled=False).id) == "ask"
+
+    db.archive_channel(yolo.id)
+    assert approval_mode(agent, yolo.id) == "ask"
+    _set_global("true")
+    assert approval_mode(agent, yolo.id) == "review"
+
+
+def test_resolver_dm_yolo_covers_only_the_no_thread_work() -> None:
+    agent, _state = _agent_and_state()
+    other, _other_state = _agent_and_state("Other Clerk")
+    plain = _thread(agent.id, enabled=False)
+    assert agent.cli_yolo_dm is False
+
+    updated = db.set_agent_cli_yolo_dm(agent.id, True)
+    assert updated is not None and updated.cli_yolo_dm is True
+    # Read live from the row, not from the Agent the turn started with.
+    assert approval_mode(agent, None) == "yolo"
+    assert approval_mode(agent, plain.id) == "ask"
+    assert approval_mode(other, None) == "ask"
+
+    db.set_agent_cli_yolo_dm(agent.id, False)
+    assert approval_mode(agent, None) == "ask"
+
+
+def test_resolver_yolo_outranks_global_and_keeps_every_flag() -> None:
+    agent, _state = _agent_and_state()
+    yolo = _yolo_thread(agent.id)
+    db.set_agent_cli_yolo_dm(agent.id, True)
+    _set_global("true")
+
+    assert approval_mode(agent, yolo.id) == "yolo"
+    assert approval_mode(agent, None) == "yolo"
+
+    # Turning Yolo off restores what the other flags say, untouched.
+    db.update_channel(yolo.id, cli_yolo=False)
+    db.set_agent_cli_yolo_dm(agent.id, False)
+    assert approval_mode(agent, yolo.id) == "review"
+    assert approval_mode(agent, None) == "review"
+    assert db.get_channel(yolo.id).cli_auto_approve is False
+    assert db.get_agent(agent.id).cli_auto_approve_dm is False
+
+
+def test_resolver_bad_global_still_raises_under_yolo() -> None:
+    agent, _state = _agent_and_state()
+    yolo = _yolo_thread(agent.id)
+    db.set_agent_cli_yolo_dm(agent.id, True)
+    _set_global("yes")
+
+    with pytest.raises(ConfigError, match="must be true or false"):
+        approval_mode(agent, yolo.id)
+    with pytest.raises(ConfigError, match="must be true or false"):
+        approval_mode(agent, None)
+
+
+# ── Yolo plans ─────────────────────────────────────────────────────────
+
+
+def _no_review(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("Yolo never asks System AI")
+
+    monkeypatch.setattr("core.bm_cli.approval_gate.gate.review_command", _boom)
+
+
+def _plan(agent, command: str, cwd: str, channel_id: str | None):
+    return plan_auto_approve(
+        agent, parse_cli_command(command), cwd,
+        policy_tier="approval_required", channel_id=channel_id,
+    )
+
+
+@pytest.mark.parametrize("command", ["rm -rf /projects/demo", "kill 1"])
+def test_yolo_approves_what_review_would_card(
+    monkeypatch: pytest.MonkeyPatch, command: str,
+) -> None:
+    agent, _state = _agent_and_state()
+    _project_file()
+    yolo = _yolo_thread(agent.id)
+    _no_review(monkeypatch)
+
+    in_thread = _plan(agent, command, "/projects/demo", yolo.id)
+    assert (in_thread.action, in_thread.why) == ("approve", YOLO_THREAD_WHY)
+
+    db.set_agent_cli_yolo_dm(agent.id, True)
+    in_dm = _plan(agent, command, "/projects/demo", None)
+    assert (in_dm.action, in_dm.why) == ("approve", YOLO_DM_WHY)
+    assert in_dm.why.startswith("[yolo] ")
+
+
+def test_yolo_still_blocks_system_paths_and_jail_escapes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, _state = _agent_and_state()
+    _project_file()
+    yolo = _yolo_thread(agent.id)
+    _no_review(monkeypatch)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("x", encoding="utf-8")
+
+    system = _plan(agent, "rm /etc/passwd", "/projects/demo", yolo.id)
+    assert system.action == "block"
+    assert "host system path" in system.jail_message
+
+    escaped = _plan(agent, f"rm {outside}", "/projects/demo", yolo.id)
+    assert escaped.action == "block"
+    assert "outside the allowed workspace roots" in escaped.jail_message
+
+
+def test_yolo_cards_when_the_working_directory_is_not_a_workspace_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The virtual root ``/`` has no real path, so the host refusal cannot run."""
+    agent, _state = _agent_and_state()
+    yolo = _yolo_thread(agent.id)
+    _no_review(monkeypatch)
+
+    plan = _plan(agent, "rm notes.txt", "/", yolo.id)
+
+    assert plan.action == "card"
+    assert plan.card_why == YOLO_NOT_RUN_CWD
 
 
 # ── end to end: audit, route, UI strings ───────────────────────────────
@@ -1096,17 +1239,209 @@ def test_global_setting_refetches_open_conversations() -> None:
     assert _operator_surfaces_for_setting("diagnostics_enabled", "advanced") == ["advanced-system"]
 
 
+# ── Yolo end to end: audit, kept checks, routes, columns ──────────────
+
+
+def test_yolo_thread_runs_without_a_card_and_stays_out_of_precedents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+    yolo = _yolo_thread(agent.id)
+    notes = _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    monkeypatch.setattr(_COMPLETE, _boom_if_asked("Yolo never asks System AI"))
+
+    result = execute_bm_cli(agent, state, "rm notes.txt", channel_id=yolo.id)
+
+    assert result.ok is True, result.detail
+    assert result.approval_required is False
+    assert not notes.exists()
+    line = f"{AUDIT_PREFIX} {YOLO_THREAD_WHY}"
+    assert result.data is not None
+    assert result.data.get("audit") == line
+    assert result.data.get("approved_by") == "system"
+    approved = db.list_cli_approval_requests(status="approved", decision_by="system")
+    assert len(approved) == 1
+    assert approved[0].decision_by == "system"
+    assert str(approved[0].decision_note).startswith(f"{AUDIT_PREFIX} [yolo]")
+    assert db.list_cli_approval_requests(status="pending", agent_id=agent.id) == []
+    # A Yolo run is not an operator decision, so it never becomes a precedent.
+    assert db.list_human_cli_decisions(
+        [agent.id], limit=10, excluded_note_prefix=ALWAYS_ALLOWED_NOTE,
+    ) == []
+    feed = db.get_recent_activity_log_entries(limit=10)
+    assert any(
+        row.get("event") == "cli_auto_approved" and line in str(row.get("detail") or "")
+        for row in feed
+    )
+
+
+def test_yolo_keeps_never_allowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    _enable_shell()
+    agent, state = _agent_and_state()
+    yolo = _yolo_thread(agent.id)
+    db.set_agent_cli_yolo_dm(agent.id, True)
+    _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    monkeypatch.setattr(_COMPLETE, _boom_if_asked("never-allow is decided before the gate"))
+
+    for channel_id in (yolo.id, None):
+        blocked = execute_bm_cli(agent, state, "bash -c 'echo hi'", channel_id=channel_id)
+        assert blocked.ok is False
+        assert blocked.approval_required is False
+        assert "Blocked" in blocked.detail
+    assert db.list_cli_approval_requests(status="approved", decision_by="system") == []
+
+
+def test_yolo_keeps_the_shell_executor_consent() -> None:
+    """With the shell off, a Yolo thread still pauses on the Shell Executor card."""
+    agent, state = _agent_and_state()
+    yolo = _yolo_thread(agent.id)
+    _lock_workspace_copy(
+        agent.id,
+        path="/home/operator/Projects/sample_repo",
+        dest="/me/host-work/sample_repo",
+    )
+    assert config.get("cli_shell_enabled") == "false"
+
+    paused = execute_bm_cli(agent, state, "pytest -q", channel_id=yolo.id)
+
+    assert paused.ok is False
+    assert paused.consent_required is True
+    assert paused.kind == "shell_executor_consent_required"
+    assert db.list_cli_approval_requests(status="approved", decision_by="system") == []
+
+
+def test_yolo_reuses_a_pending_twin_instead_of_running_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A card still waiting on the operator stays theirs once Yolo is turned on."""
+    _enable_shell()
+    agent, state = _agent_and_state()
+    channel = _thread(agent.id, enabled=False)
+    notes = _project_file()
+    set_cli_cwd(agent.id, "/projects/demo")
+    first = execute_bm_cli(agent, state, "rm notes.txt", channel_id=channel.id)
+    assert first.approval_required is True
+    assert first.approval_request_id is not None
+
+    db.update_channel(channel.id, cli_yolo=True)
+    monkeypatch.setattr(_COMPLETE, _boom_if_asked("a pending twin is reused before the gate"))
+    fresh = db.get_agent_state(agent.id)
+    assert fresh is not None
+    again = execute_bm_cli(agent, fresh, "rm notes.txt", channel_id=channel.id)
+
+    assert again.approval_required is True
+    assert again.approval_request_id == first.approval_request_id
+    assert (again.data or {}).get("reused_pending") is True
+    assert notes.read_text(encoding="utf-8") == "keep"
+    assert db.list_cli_approval_requests(status="approved", decision_by="system") == []
+
+
+def test_thread_yolo_route_sets_only_its_flag_and_broadcasts(
+    monkeypatch: pytest.MonkeyPatch, client: TestClient,
+) -> None:
+    agent, _state = _agent_and_state()
+    channel = _thread(agent.id, enabled=False)
+    sent: list[dict] = []
+
+    async def _capture(summary: dict) -> None:
+        sent.append(summary)
+
+    monkeypatch.setattr("api.routes.agents.manager.broadcast_channel_updated", _capture)
+
+    missing = client.patch(
+        "/api/channels/no-such-thread/cli-yolo", headers=_auth(), json={"enabled": True},
+    )
+    assert missing.status_code == 404
+    assert sent == []
+
+    on = client.patch(f"/api/channels/{channel.id}/cli-yolo", headers=_auth(), json={"enabled": True})
+    assert on.status_code == 200, on.text
+    assert on.json()["id"] == channel.id
+    assert on.json()["cli_yolo"] is True
+    assert on.json()["cli_auto_approve"] is False
+    assert db.get_channel(channel.id).cli_yolo is True
+    assert db.get_channel(channel.id).cli_auto_approve is False
+    assert [(row["id"], row["cli_yolo"]) for row in sent] == [(channel.id, True)]
+
+    got = client.get(f"/api/channels/{channel.id}", headers=_auth())
+    assert got.status_code == 200, got.text
+    assert got.json()["channel"]["cli_yolo"] is True
+    listed = client.get("/api/channels", headers=_auth())
+    assert listed.status_code == 200, listed.text
+    assert [row["cli_yolo"] for row in listed.json() if row["id"] == channel.id] == [True]
+
+    off = client.patch(f"/api/channels/{channel.id}/cli-yolo", headers=_auth(), json={"enabled": False})
+    assert off.status_code == 200, off.text
+    assert off.json()["cli_yolo"] is False
+    assert [row["cli_yolo"] for row in sent] == [True, False]
+
+
+def test_agent_yolo_route_sets_only_the_dm_flag(client: TestClient) -> None:
+    agent, _state = _agent_and_state()
+    channel = _thread(agent.id, enabled=False)
+
+    missing = client.patch(
+        "/api/agents/no-such-agent/cli-yolo", headers=_auth(), json={"enabled": True},
+    )
+    assert missing.status_code == 404
+
+    on = client.patch(f"/api/agents/{agent.id}/cli-yolo", headers=_auth(), json={"enabled": True})
+    assert on.status_code == 200, on.text
+    assert on.json()["id"] == agent.id
+    assert on.json()["cli_yolo_dm"] is True
+    assert on.json()["cli_auto_approve_dm"] is False
+    assert "api_key" not in on.json()
+    assert db.get_agent(agent.id).cli_yolo_dm is True
+    assert db.get_channel(channel.id).cli_yolo is False
+
+    got = client.get(f"/api/agents/{agent.id}", headers=_auth())
+    assert got.status_code == 200, got.text
+    assert got.json()["cli_yolo_dm"] is True
+
+    off = client.patch(f"/api/agents/{agent.id}/cli-yolo", headers=_auth(), json={"enabled": False})
+    assert off.status_code == 200, off.text
+    assert off.json()["cli_yolo_dm"] is False
+    assert db.get_agent(agent.id).cli_yolo_dm is False
+
+
+def test_yolo_columns_default_off_and_are_added_to_an_older_database() -> None:
+    agent, _state = _agent_and_state()
+    channel = _thread(agent.id, enabled=False)
+    assert channel.cli_yolo is False
+    assert db.get_agent(agent.id).cli_yolo_dm is False
+
+    # An older database has neither column; boot adds both, reading as off.
+    db.execute("ALTER TABLE channels DROP COLUMN cli_yolo")
+    db.execute("ALTER TABLE agents DROP COLUMN cli_yolo_dm")
+    db.close_connection()
+    db.init_db()
+
+    assert db.query_one("SELECT cli_yolo FROM channels WHERE id = $1", [channel.id]) == {"cli_yolo": 0}
+    assert db.query_one("SELECT cli_yolo_dm FROM agents WHERE id = $1", [agent.id]) == {"cli_yolo_dm": 0}
+    assert db.get_channel(channel.id).cli_yolo is False
+    assert db.get_agent(agent.id).cli_yolo_dm is False
+
+
 def test_thread_toggle_is_off_in_the_menu_until_the_flag_is_set() -> None:
     thread = (ROOT / "ui/static/js/conversation/sources/thread-source.js").read_text(encoding="utf-8")
-    assert "id: 'channel-cli-auto-approve'" in thread
-    assert "enabled: !!(channel && channel.cli_auto_approve)" in thread
-    assert "globalEnabled: !!(channel && channel.cli_auto_approve_global)" in thread
-    switch = (ROOT / "ui/static/js/conversation/auto-approve-switch.js").read_text(encoding="utf-8")
-    assert "const LABEL = 'Auto-approve safe commands';" in switch
-    # The request itself moved to thread-requests.js with the other
-    # thread-setting requests; the menu switch above stays in the source.
+    assert "BossModApprovalControls.forThread(channel, {" in thread
+    # The switches' one owner (it replaced auto-approve-switch.js): each flag
+    # is on only when the server says true, and Yolo outranks Global.
+    controls = (ROOT / "ui/static/js/conversation/approval-controls.js").read_text(encoding="utf-8")
+    assert "id: 'channel-cli-auto-approve'" in controls
+    assert "own: channel.cli_auto_approve === true" in controls
+    assert "global: channel.cli_auto_approve_global === true" in controls
+    assert "const yolo = channel.cli_yolo === true;" in controls
+    assert "pressed: yolo || global || own" in controls
+    assert "const AUTO_APPROVE_LABEL = 'Auto-approve safe commands';" in controls
+    # The requests live in thread-requests.js with the other thread-setting
+    # requests; the menu switches above are built from the source's channel.
     requests = (ROOT / "ui/static/js/conversation/sources/thread-requests.js").read_text(encoding="utf-8")
     assert "/cli-auto-approve" in requests
+    assert "/cli-yolo" in requests
     popover = (ROOT / "ui/static/js/needs/needs-popover.js").read_text(encoding="utf-8")
     assert "audit: 'Auto-approved'" not in popover
     assert "popover-need-review" in popover

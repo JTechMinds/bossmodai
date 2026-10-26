@@ -32,6 +32,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/channels/{channel_id}", "get_channel"),
     (("PATCH",), "/api/channels/{channel_id}", "rename_channel"),
     (("PATCH",), "/api/channels/{channel_id}/cli-auto-approve", "set_channel_cli_auto_approve"),
+    (("PATCH",), "/api/channels/{channel_id}/cli-yolo", "set_channel_cli_yolo"),
     (("POST",), "/api/channels/{channel_id}/pause", "pause_channel_thread"),
     (("POST",), "/api/channels/{channel_id}/resume", "resume_channel_thread"),
     (("POST",), "/api/channels/{channel_id}/archive", "archive_channel"),
@@ -52,6 +53,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/agents/{agent_id}/pack-status", "get_agent_pack_status"),
     (("POST",), "/api/agents/{agent_id}/pack-update", "update_agent_from_pack"),
     (("PATCH",), "/api/agents/{agent_id}/cli-auto-approve", "set_agent_cli_auto_approve"),
+    (("PATCH",), "/api/agents/{agent_id}/cli-yolo", "set_agent_cli_yolo"),
     (("PATCH",), "/api/agents/{agent_id}/prompt-history-policy", "update_agent_prompt_history_policy"),
     (("DELETE",), "/api/agents", "delete_all_agents"),
     (("DELETE",), "/api/agents/{agent_id}", "delete_agent"),
@@ -192,7 +194,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 168
+    assert len(got) == 170
 
 
 def test_from_api_routes_import_router_still_works() -> None:

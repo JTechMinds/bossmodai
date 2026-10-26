@@ -120,6 +120,12 @@ class AgentCliAutoApproveBody(BaseModel):
     enabled: bool
 
 
+class CliYoloBody(BaseModel):
+    """Body of both Yolo routes (a thread's and an agent's DM)."""
+
+    enabled: bool
+
+
 class ChannelMemberBody(BaseModel):
     agent_id: str
 
@@ -344,6 +350,42 @@ async def set_channel_cli_auto_approve(channel_id: str, body: ChannelCliAutoAppr
     updated = db.update_channel(channel_id, cli_auto_approve=body.enabled)
     if updated is None:
         raise HTTPException(404, "Thread not found")
+    members = db.list_channel_member_details(updated.id)
+    latest = db.get_latest_channel_message(updated.id)
+    summary = _serialize_channel_summary(updated, members=members, latest_message=latest)
+    await manager.broadcast_channel_updated(summary)
+    return summary
+
+
+@router.patch("/channels/{channel_id}/cli-yolo")
+async def set_channel_cli_yolo(channel_id: str, body: CliYoloBody) -> dict[str, object]:
+    """Turn Yolo mode on or off for one thread.
+
+    With Yolo on, the thread's approval_required commands run without an
+    Approve card or a System AI review. It outranks Global auto-approve and
+    the thread's own auto-approve flag (``approval_mode``), and writes only
+    its own flag, so turning it off restores what those say. Never-allow,
+    the path jail and the consent cards still apply.
+
+    Args:
+        channel_id: The thread whose Yolo flag changes.
+        body: ``{enabled: bool}``.
+
+    Returns:
+        The thread summary, with ``cli_yolo``; also broadcast as
+        ``channel_updated``.
+
+    Raises:
+        HTTPException: 404 when no thread has ``channel_id``.
+        ConfigError: The Global auto-approve setting is missing or not a boolean.
+    """
+    if db.get_channel(channel_id) is None:
+        raise HTTPException(404, "Thread not found")
+    updated = db.update_channel(channel_id, cli_yolo=body.enabled)
+    if updated is None:
+        raise HTTPException(404, "Thread not found")
+    # A switch that removes every approval leaves a trace in the app log.
+    logger.info("Yolo mode %s for thread %s", "on" if body.enabled else "off", channel_id)
     members = db.list_channel_member_details(updated.id)
     latest = db.get_latest_channel_message(updated.id)
     summary = _serialize_channel_summary(updated, members=members, latest_message=latest)
@@ -1089,6 +1131,37 @@ async def set_agent_cli_auto_approve(agent_id: str, body: AgentCliAutoApproveBod
     return _serialize_agent(updated)
 
 
+@router.patch("/agents/{agent_id}/cli-yolo")
+async def set_agent_cli_yolo(agent_id: str, body: CliYoloBody) -> dict[str, object]:
+    """Turn Yolo mode on or off for one agent's DM and its no-thread work.
+
+    The DM counterpart of ``set_channel_cli_yolo``: it covers the agent's DM
+    and its work with no origin thread (DM-assigned, Focus or scheduled
+    tasks). It outranks Global auto-approve and the DM's auto-approve flag
+    (``approval_mode``), and writes only its own flag. Never-allow, the path
+    jail and the consent cards still apply.
+
+    Args:
+        agent_id: The agent whose Yolo flag changes.
+        body: ``{enabled: bool}``.
+
+    Returns:
+        The agent payload, with ``cli_yolo_dm``.
+
+    Raises:
+        HTTPException: 404 when no agent has ``agent_id``.
+        ConfigError: The Global auto-approve setting is missing or not a boolean.
+    """
+    if db.get_agent(agent_id) is None:
+        raise HTTPException(404, "Agent not found")
+    updated = db.set_agent_cli_yolo_dm(agent_id, body.enabled)
+    if updated is None:
+        raise HTTPException(404, "Agent not found")
+    # A switch that removes every approval leaves a trace in the app log.
+    logger.info("Yolo mode %s for agent %s", "on" if body.enabled else "off", agent_id)
+    return _serialize_agent(updated)
+
+
 @router.patch("/agents/{agent_id}/prompt-history-policy")
 async def update_agent_prompt_history_policy(
     agent_id: str,
@@ -1554,8 +1627,9 @@ def _serialize_company_agent(item: dict[str, object]) -> dict[str, object]:
 def _serialize_agent(agent: Agent) -> dict[str, object]:
     """Serialize one agent for the single-agent routes.
 
-    The Agent model's own JSON, plus ``cli_auto_approve_global`` so the DM's
-    auto-approve switch can be greyed out without a second request, and
+    The Agent model's own JSON (its ``cli_yolo_dm`` is the desk/DM's Yolo
+    flag), plus ``cli_auto_approve_global`` so the DM's auto-approve switch
+    can be greyed out without a second request, and
     ``connection`` — ``{id, name, model}`` of the linked AI connection, or
     None when unlinked or the connection is gone — for the desk and the
     form. Never a secret.
@@ -1621,6 +1695,7 @@ def _serialize_channel_summary(
         "archived_at": channel.archived_at.isoformat() if getattr(channel, "archived_at", None) else None,
         "conversation_paused": conversation_paused,
         "cli_auto_approve": bool(getattr(channel, "cli_auto_approve", False)),
+        "cli_yolo": bool(channel.cli_yolo),
         # Global on overrides the thread flag; the header greys its switch.
         "cli_auto_approve_global": auto_approve_global,
         "floor_id": getattr(channel, "floor_id", None),

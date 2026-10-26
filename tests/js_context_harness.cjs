@@ -94,13 +94,13 @@ documentStub.createElement = (tag) => {
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModApi", "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
-    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModMenuSelect",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModMenuSelect",
     "BossModAutoGrow", "BossModTimeField", "BossModDateField",
     "BossModFileListing",
     "BossModEmptyState", "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage",
-    "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
+    "BossModEventCards", "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome", "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer",
     "BossModSystemReceipts", "BossModNeedShape", "BossModNeedCoalesce", "BossModNeeds", "BossModNeedsBar",
-    "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModAutoApproveSwitch", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
+    "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModApprovalControls", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
     "BossModFloorPlan", "BossModMiniOffice", "BossModOfficeChatter",
@@ -406,7 +406,10 @@ const cancels = [];
 const AGENT_DETAIL = {
     id: "a1", name: "Jim", storage_key: "jim-workspace",
     connection_id: null, thinking_social: "default", thinking_work: "default", connection: null,
+    cli_yolo_dm: false,
 };
+// Every PATCH /api/agents/{id}/cli-yolo the desk's Yolo switch sends, in order.
+const yoloWrites = [];
 // Set by the section that clicks Remove before that read has landed: while it
 // holds a promise, every GET /api/agents/{id} waits on it.
 let heldAgentDetail = null;
@@ -604,6 +607,13 @@ function api(url, init) {
         mapRequests += 1;
         if (mapFails) return jsonResponse({ detail: "unavailable" }, 503);
         return jsonResponse({ width: 28, height: 20, tiles: [], rooms: mapRooms, desks: MAP_DESKS });
+    }
+    const agentYolo = String(url).match(/^\/api\/agents\/([^/]+)\/cli-yolo$/);
+    if (agentYolo && init && init.method === "PATCH") {
+        const body = JSON.parse(init.body);
+        yoloWrites.push({ agentId: agentYolo[1], body });
+        AGENT_DETAIL.cli_yolo_dm = body.enabled === true;
+        return jsonResponse({ ...AGENT_DETAIL });
     }
     const oneAgent = String(url).match(/^\/api\/agents\/([^/]+)$/);
     if (oneAgent) {
@@ -1086,7 +1096,8 @@ async function main() {
     // The actions on the agent are the HEAD's, and all of them sit behind its
     // one `⋯` (context/desk-menu.js): the "Agent" section's own doors, a
     // divider, then the "Manage" section's operational three, the destructive
-    // two marked.
+    // two marked, then a divider and "Advanced", whose one row is the Yolo
+    // mode switch.
     const head = deskModal().querySelector(".modal-head");
     const headTools = head.querySelector(".modal-tools").querySelectorAll("button")
         .map((node) => node.getAttribute("aria-label"));
@@ -1099,13 +1110,14 @@ async function main() {
     await drain();
     const menuRows = head.querySelectorAll(".menu-action");
     const menuPanel = head.querySelector(".menu");
-    // Exactly one divider, and it sits between the two titled sections:
-    // Agent (to Edit role) and Manage (from Diagnostics). Each section is a
-    // role="group" labelled by its own visible heading.
+    // Two dividers, one between each pair of titled sections: Agent (to Edit
+    // role), Manage (from Diagnostics) and Advanced (Yolo mode). Each section
+    // is a role="group" labelled by its own visible heading.
     const menuStack = menuPanel.querySelector(".menu-sections");
     const menuParts = menuStack.children.map((node) => (node.classList.contains("menu-divider")
         ? "—" : `${node.querySelector(".menu-label").textContent}:`
-            + node.querySelectorAll(".menu-action").map((row) => row.textContent).join(",")));
+            + [...node.querySelectorAll(".menu-action"), ...node.querySelectorAll(".switch-row")]
+                .map((row) => row.textContent).join(",")));
     const sectionsAreLabelled = menuStack.children
         .filter((node) => !node.classList.contains("menu-divider"))
         .every((node) => node.getAttribute("role") === "group"
@@ -1115,17 +1127,18 @@ async function main() {
             === "Open chat|Memory|Edit role|Diagnostics|Reset runtime|Remove agent"
         && menuRows.map((node) => node.getAttribute("data-tone") || "").join("|")
             === "||||danger|danger"
-        && menuPanel.querySelectorAll(".menu-divider").length === 1
+        && menuPanel.querySelectorAll(".menu-divider").length === 2
         && menuParts.join("|")
-            === "Agent:Open chat,Memory,Edit role|—|Manage:Diagnostics,Reset runtime,Remove agent"
+            === "Agent:Open chat,Memory,Edit role|—|Manage:Diagnostics,Reset runtime,Remove agent|—|Advanced:Yolo mode"
         && sectionsAreLabelled
         && inDesk("#desk-edit").disabled === false
         && optionsTrigger.classList.contains("menu-trigger")
         && optionsTrigger.getAttribute("data-size") === "header"
         && optionsTrigger.getAttribute("aria-expanded") === "true";
     if (!optionsMenuHoldsEveryAction) {
-        throw new Error(`the ⋯ must hold an Agent section (Open chat, Memory, Edit role), a divider, then a `
-            + `Manage section (Diagnostics, Reset runtime, Remove agent), got ${menuParts.join("|")}`);
+        throw new Error(`the ⋯ must hold an Agent section (Open chat, Memory, Edit role), a divider, a `
+            + `Manage section (Diagnostics, Reset runtime, Remove agent), a divider, then Advanced (Yolo mode), `
+            + `got ${menuParts.join("|")}`);
     }
     // The contract is CLOSED until the operator asks for it.
     if (inDesk(".desk-contract").hasAttribute("open")) {
@@ -1347,6 +1360,87 @@ async function main() {
     const removeClosesTheDesk = modals().length === 0;
     if (!removeClosesTheDesk) {
         throw new Error(`a removed agent's desk must close, got ${modals().length} dialogs`);
+    }
+
+    // ─── Yolo mode: the desk `⋯`'s Advanced switch ───
+    //
+    // Withheld until the agent's detail loads, like Edit role. Turning it on
+    // closes the panel and asks first: Cancel writes nothing and the next
+    // open shows the true state; confirming PATCHes the agent and tells an
+    // open DM to refetch (operator_invalidate for `chat`). Off never asks.
+    const deskYolo = () => deskModal().querySelector("#desk-yolo");
+    const yoloNotices = [];
+    const realNotifyLocal = BossModOperatorInvalidate.notifyLocal;
+    BossModOperatorInvalidate.notifyLocal = (surfaces) => {
+        yoloNotices.push(surfaces.join("|"));
+        realNotifyLocal(surfaces);
+    };
+    let releaseYoloDetail = null;
+    heldAgentDetail = { promise: new Promise((resolve) => { releaseYoloDetail = resolve; }) };
+    desk.open("a1");
+    await drain();
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const deskYoloWaitsForTheDetail = Boolean(deskYolo()) && deskYolo().disabled === true;
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    heldAgentDetail = null;
+    releaseYoloDetail(jsonResponse(AGENT_DETAIL));
+    await drain();
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const deskYoloHint = deskModal().querySelector("#desk-yolo-hint");
+    const deskYoloIsLiveInAdvanced = deskYoloWaitsForTheDetail && deskYolo().disabled === false
+        && deskYolo().getAttribute("aria-checked") === "false"
+        && deskYolo().getAttribute("aria-describedby") === "desk-yolo-hint"
+        && Boolean(deskYoloHint) && deskYoloHint.textContent === BossModYoloMode.HINTS.agent
+        && !deskYolo().contains(deskYoloHint)
+        && deskYolo().closest(".menu-section").querySelector(".menu-label").textContent === "Advanced";
+    if (!deskYoloIsLiveInAdvanced) {
+        throw new Error(`the desk's Yolo switch must wait for the detail, then sit live in Advanced, `
+            + `withheld ${deskYoloWaitsForTheDetail}, hint "${deskYoloHint && deskYoloHint.textContent}"`);
+    }
+    await deskYolo().dispatchClick();
+    await drain();
+    const yoloAsk = modals()[modals().length - 1];
+    const yoloAskText = yoloAsk ? yoloAsk.textContent : "";
+    const yoloAskButton = (label) => yoloAsk.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+        .find((btn) => btn.textContent === label);
+    const deskYoloAsksOverTheDesk = modals().length === 2 && yoloAsk !== deskModal()
+        && !deskModal().querySelector(".modal-head").querySelector(".menu")
+        && yoloAskText.includes("Turn on Yolo mode?")
+        && yoloAskText.includes("This agent won't stop to ask before running commands in its DM");
+    await yoloAskButton("Cancel").dispatchClick();
+    await drain();
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const deskYoloCancelWritesNothing = deskYoloAsksOverTheDesk && modals().length === 1
+        && yoloWrites.length === 0 && yoloNotices.length === 0
+        && deskYolo().getAttribute("aria-checked") === "false";
+    if (!deskYoloCancelWritesNothing) {
+        throw new Error(`Cancel must write nothing over a desk that stays, got "${yoloAskText}" `
+            + `${JSON.stringify(yoloWrites)} ${yoloNotices.join(",")}`);
+    }
+    await deskYolo().dispatchClick();
+    await drain();
+    await modals()[1].querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+        .find((btn) => btn.textContent === "Turn on Yolo mode").dispatchClick();
+    await drain();
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const deskYoloConfirmPatchesAndRefetchesChat = modals().length === 1
+        && yoloWrites.length === 1 && yoloWrites[0].agentId === "a1" && yoloWrites[0].body.enabled === true
+        && yoloNotices.join(",") === "chat"
+        && deskYolo().getAttribute("aria-checked") === "true";
+    await deskYolo().dispatchClick();
+    await drain();
+    const deskYoloOffNeverAsks = modals().length === 1 && yoloWrites.length === 2
+        && yoloWrites[1].body.enabled === false && yoloNotices.join(",") === "chat,chat"
+        && AGENT_DETAIL.cli_yolo_dm === false;
+    BossModOperatorInvalidate.notifyLocal = realNotifyLocal;
+    if (!deskYoloConfirmPatchesAndRefetchesChat || !deskYoloOffNeverAsks) {
+        throw new Error(`confirming must PATCH and refetch chat, and off must not ask, got `
+            + `${JSON.stringify(yoloWrites)} ${yoloNotices.join(",")}`);
     }
 
     // ─── The roster is the desk's source of truth while it is open ───
@@ -3120,6 +3214,10 @@ async function main() {
         recreateSavesAsACreate,
         thePackLineNamesThePackAndTheUpdate,
         thePackConfirmWarnsAboutEdits,
+        deskYoloIsLiveInAdvanced,
+        deskYoloCancelWritesNothing,
+        deskYoloConfirmPatchesAndRefetchesChat,
+        deskYoloOffNeverAsks,
         thePackUpdateSendsTheHashItShowed,
         anUnlinkedAgentHasNoPackLine,
         theMemoryToolOpensALayer,

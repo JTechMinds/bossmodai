@@ -68,6 +68,9 @@ class Agent(BaseModel):
     # System AI auto-approve for this agent's DM, and for its work with no
     # origin thread. Set only through PATCH /api/agents/{id}/cli-auto-approve.
     cli_auto_approve_dm: bool = False
+    # Yolo for this agent's DM and no-thread work. Set only through
+    # PATCH /api/agents/{id}/cli-yolo.
+    cli_yolo_dm: bool = False
 
     # Provenance: the pack this agent was hired from, all None for an agent
     # not hired from a pack. ``pack_id`` (catalog) or ``pack_source_url``

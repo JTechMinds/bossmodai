@@ -37,6 +37,7 @@ CONTEXT_MODULES = [
     JS / "core" / "modal-trail.js",
     JS / "core" / "overlay-actions.js",
     JS / "core" / "overlays.js",
+    JS / "core" / "yolo-mode.js",
     JS / "core" / "menu.js",
     JS / "core" / "menu-button.js",
     # A desk task's Edit mode picks its assignee from a dropdown.
@@ -55,6 +56,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "event-cards.js",
     CONVERSATION / "title-rename.js",
     CONVERSATION / "chrome-menu.js",
+    CONVERSATION / "chrome-switch.js",
     CONVERSATION / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
     CONVERSATION / "composer-attachments.js",
@@ -67,7 +69,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "sources" / "thread-archive.js",
     CONVERSATION / "sources" / "thread-seat.js",
     CONVERSATION / "sources" / "thread-requests.js",
-    CONVERSATION / "auto-approve-switch.js",
+    CONVERSATION / "approval-controls.js",
     CONVERSATION / "sources" / "thread-source.js",
     CONVERSATION / "sources" / "agent-requests.js",
     CONVERSATION / "sources" / "agent-source.js",
@@ -311,6 +313,38 @@ def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
     index = _read(ROOT / "ui" / "templates" / "index.html")
     assert index.index("js/context/desk-memory.js") < index.index("js/context/desk-panel.js")
     assert index.index("js/context/desk-menu.js") < index.index("js/context/desk-panel.js")
+
+
+def test_desk_yolo_switch_sits_in_advanced_and_confirms_first() -> None:
+    """The agent's Yolo mode is the desk `⋯`'s, in its own Advanced section.
+
+    It covers the agent's DM and its work with no origin thread. The switch is
+    withheld until the agent detail loads, turning it on asks first (Cancel
+    writes nothing), confirming PATCHes /cli-yolo and tells an open DM to
+    refetch through operator_invalidate(chat), and turning it off never asks.
+    """
+    payload = _harness()
+    for key in (
+        "deskYoloIsLiveInAdvanced", "deskYoloCancelWritesNothing",
+        "deskYoloConfirmPatchesAndRefetchesChat", "deskYoloOffNeverAsks",
+    ):
+        assert payload[key] is True, key
+
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert "yoloEnabled: () => actions.yoloEnabled()," in panel
+    assert "onYolo: (on) => { void actions.toggleYolo(on); }," in panel
+    desk_menu = _read(CONTEXT / "desk-menu.js")
+    # Manage, a second divider, then Advanced: the safeguard-removing setting
+    # is kept apart from the everyday rows.
+    assert (desk_menu.index("menuRow('desk-remove'")
+            < desk_menu.rindex("h('hr', { class: 'menu-divider' })")
+            < desk_menu.index("id: 'desk-menu-advanced'"))
+    actions = _read(CONTEXT / "desk-actions.js")
+    toggle = actions.split("async function toggleYolo(enabled) {", 1)[1]
+    assert toggle.index("BossModYoloMode.confirmEnable('agent')") < toggle.index("/cli-yolo")
+    assert "BossModOperatorInvalidate.notifyLocal(['chat'])" in toggle
+    index = _read(ROOT / "ui" / "templates" / "index.html")
+    assert index.index("js/core/yolo-mode.js") < index.index("js/context/desk-menu.js")
 
 
 def test_desk_notes_read_the_workspace_not_a_column() -> None:

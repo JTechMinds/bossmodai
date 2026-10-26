@@ -20,7 +20,7 @@ from db.crud import execute, fetch_all, fetch_one, insert_returning, query, quer
 
 _CHANNEL_COLUMNS = (
     "id, name, kind, status, created_by, created_at, updated_at, archived_at, "
-    "cli_auto_approve, floor_id"
+    "cli_auto_approve, cli_yolo, floor_id"
 )
 _MEMBER_COLUMNS = "channel_id, agent_id, created_at"
 _MESSAGE_COLUMNS = (
@@ -167,12 +167,13 @@ def update_channel(
     status: str | None = None,
     archived_at: datetime | None = None,
     cli_auto_approve: bool | None = None,
+    cli_yolo: bool | None = None,
     touch: bool = True,
 ) -> Channel | None:
     """Update one channel's metadata.
 
     ``cli_auto_approve`` writes only that flag. It does not touch CLI default
-    policy, Soft-block, or Deny rules.
+    policy, Soft-block, or Deny rules. ``cli_yolo`` writes only that flag.
     """
     fields: dict[str, object] = {}
     if name is not None:
@@ -183,6 +184,8 @@ def update_channel(
         fields["archived_at"] = archived_at
     if cli_auto_approve is not None:
         fields["cli_auto_approve"] = 1 if cli_auto_approve else 0
+    if cli_yolo is not None:
+        fields["cli_yolo"] = 1 if cli_yolo else 0
     if touch:
         fields["updated_at"] = datetime.now(timezone.utc)
     if not fields:
