@@ -41,18 +41,19 @@
  * that remove safeguards (Yolo mode), apart from the everyday ones. A
  * once-a-month control does not earn a permanent seat beside the title, and a
  * bordered `Archive` sitting there every time you open a thread reads as a
- * suggestion. The BADGE beside the title is for a standing risk only.
+ * suggestion. The BADGE leads the action row, before the subtitle, and is for
+ * a standing risk only.
  *
  * The sections, their stable nodes, the `⋯` itself and the panel's
  * open/close lifecycle are conversation/chrome-menu.js's; this view only
  * decides what goes behind it. Stable nodes are what let a repaint while the
  * panel is open — Archive becoming Reopen — land in the panel on screen.
  *
- * The SUBTITLE sits with the actions rather than with the title. `3
- * participants` is a fact about the room and the title is its name; putting
- * the fact directly after the name meant a long name shoved it, and the two
- * controls that confirm a rename had to go somewhere else because the space
- * beside the title was already spent.
+ * The SUBTITLE sits with the actions rather than with the title, with the
+ * badge just before it. `3 participants` is a fact about the room and the
+ * title is its name; putting the fact directly after the name meant a long
+ * name shoved it, and the two controls that confirm a rename had to go
+ * somewhere else because the space beside the title was already spent.
  */
 const BossModConversationChrome = (() => {
     const { h, clear } = BossModDom;
@@ -102,11 +103,11 @@ const BossModConversationChrome = (() => {
         const actionsEl = h('div', { class: 'conversation-actions' });
         const element = h('header', { class: 'conversation-chrome' },
             avatarEl,
-            h('div', { class: 'conversation-identity' }, title.element, titleActionsEl, badgeEl),
-            // The subtitle leads the action group: a fact about the room, at
-            // the end of the row, where a long name cannot shove it.
+            h('div', { class: 'conversation-identity' }, title.element, titleActionsEl),
+            // The badge, then the subtitle, lead the action group: facts about
+            // the room, at the row's end, where a long name cannot shove them.
             actionsEl);
-        actionsEl.append(subtitleEl);
+        actionsEl.append(badgeEl, subtitleEl);
 
         // The `⋯` and its panel's lifecycle are conversation/chrome-menu.js's;
         // what goes behind it is decided below, in apply().
@@ -175,9 +176,9 @@ const BossModConversationChrome = (() => {
         }
 
         /**
-         * Paint the badge beside the title, only when it changed (as above):
-         * always alert-toned, as the header pins one only for a standing
-         * risk, with its text carrying the meaning (SC 1.4.1).
+         * Paint the badge at the head of the action row when it changed (as above).
+         * Caution-toned (the warn tone), not error red: it marks a risk the operator
+         * chose, not a failure. Its text carries the meaning (SC 1.4.1).
          * @param {{label: string, icon: string}|null} badge  Null empties it.
          */
         function applyBadge(badge) {
@@ -208,9 +209,10 @@ const BossModConversationChrome = (() => {
          * @param {{title: string, subtitle: string, avatar?: object, menuTitle?: string,
          *   badge?: object|null, actions: object[], onRename?: (name: string) => Promise<void>}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
-         *   shown. The badge is optional `{label, icon}` beside the title, or
-         *   null for none. `menuTitle` is the subject section's heading, required once
-         *   any action names `section: 'subject'`. Each action is `{id, label,
+         *   shown. The badge is optional `{label, icon}` at the head of the
+         *   action row, before the subtitle, or null for none. `menuTitle` is
+         *   the subject section's heading, required once any action names
+         *   `section: 'subject'`. Each action is `{id, label,
          *   icon?, iconOnly?, slot?, section?, tone?, onSelect}`, where `icon`
          *   is a Lucide glyph NAME — the source names it, this builds it —
          *   `iconOnly` shows the glyph alone with `label` as the button's

@@ -1075,14 +1075,19 @@ async function main() {
     const modalPanels = () => documentStub.body.querySelectorAll(".modal-panel");
     const modalAction = (label) => modalPanels()[0].querySelectorAll(".modal-action")
         .find((btn) => btn.textLabel === label);
+    // The badge leads the action row, directly before the subtitle, so it sits
+    // in the same spot in a thread and a DM however long the name is.
     const badgeState = () => {
         const node = conversation.element.querySelector(".conversation-badge");
         const glyph = node && node.querySelector("i");
+        const row = node && node.parentNode;
         return {
             text: node ? node.textContent : null,
             glyph: glyph ? glyph.getAttribute("data-lucide") : null,
             pill: Boolean(node) && node.classList.contains("status-pill"),
-            besideTitle: Boolean(node) && node.parentNode.matches(".conversation-identity"),
+            leadsTheActions: Boolean(row) && row.matches(".conversation-actions")
+                && row.children[0] === node
+                && Boolean(row.children[1]) && row.children[1].matches(".conversation-subtitle"),
         };
     };
     await conversation.open("t1", "thread");
@@ -1094,7 +1099,7 @@ async function main() {
         && yoloOff.hint === BossModYoloMode.HINTS.thread
         && yoloOff.describedBy === "channel-cli-yolo-hint" && yoloOff.hintOutsideTheRow
         && Boolean(yoloSection) && yoloSection.querySelector(".menu-label").textContent === "Advanced"
-        && badgeState().text === "" && badgeState().besideTitle;
+        && badgeState().text === "" && badgeState().leadsTheActions;
     if (!threadYoloSwitchIsInAdvanced) {
         throw new Error(`the thread's Yolo switch must sit in Advanced, off, with its hint, got `
             + `${JSON.stringify(yoloOff)} / ${JSON.stringify(badgeState())}`);
@@ -1137,7 +1142,8 @@ async function main() {
         && state.checked === "true" && state.disabled === true && state.ariaDisabled === "true"
         && state.hint === hint && state.describedBy === `${id}-hint` && state.hintOutsideTheRow;
     const threadBadgeShowsWhileYolo = badgeState().text === "Yolo mode"
-        && badgeState().glyph === "alert-triangle" && badgeState().pill;
+        && badgeState().glyph === "alert-triangle" && badgeState().pill
+        && badgeState().leadsTheActions;
     const yoloGreysTheThreadAutoApprove = greyedByYolo(
         autoUnderYolo, "channel-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.thread,
     );
@@ -1187,6 +1193,7 @@ async function main() {
     const dmHeadings = headingsOf(menu.panel).join("|");
     await menu.dotsBtn.dispatchClick();
     const dmShowsYoloFromItsDesk = dmBadgeStartsOff && badgeState().text === "Yolo mode"
+        && badgeState().leadsTheActions
         && greyedByYolo(dmUnderYolo, "agent-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.dm)
         && dmHeadings === "Agent|Chat";
     agentYolo.a = false;
