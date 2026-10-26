@@ -12,6 +12,10 @@ import db
 from db import channel_host as host_db
 
 
+# A seat that has not started its turn. ``responding`` is claimed and excluded.
+_UNSTARTED_SEAT_STATUSES = frozenset({"pending", "queued"})
+
+
 class ThreadSeatError(ValueError):
     """Fail-closed seat outcome the API maps to an operator-visible status."""
 
@@ -80,8 +84,12 @@ def remove_agent_from_thread(channel_id: str, agent_id: str) -> Channel:
     The runtime reads membership live, so the row delete alone would leave the
     agent's thread-scoped state behind. In one transaction this also prunes
     the agent from the host's pass/demotion/protection lists and deletes their
-    queued triggers bound to this thread. A claimed (in-flight) turn is the
-    runtime's to finish, as on a floor move.
+    queued triggers bound to this thread. Their ``pending``/``queued`` seats
+    in the thread's active response rounds are closed as ``observed`` (and a
+    round with nothing left open completes), so the round never wakes someone
+    who is no longer a member; the next ``pending`` member still advances when
+    the current turn finishes. A ``responding`` seat is a claimed in-flight
+    turn and is the runtime's to finish, as on a floor move.
 
     Raises ``ThreadSeatError``: 404 when the thread is missing or the agent is
     not a member, 409 when the thread is archived or this is the last member
@@ -124,6 +132,11 @@ def remove_agent_from_thread(channel_id: str, agent_id: str) -> Channel:
             state[key] = [item for item in state[key] if item != agent_token]
         host_db.save_channel_host_state(state)
         db.delete_queued_triggers_for_agent_channels(agent_token, {channel.id})
+        for round_record in db.list_channel_response_rounds(channel.id, status="active"):
+            seat = db.get_channel_response_candidate(round_id=round_record.id, agent_id=agent_token)
+            if seat is not None and str(seat.status or "") in _UNSTARTED_SEAT_STATUSES:
+                db.mark_channel_candidate_observed(round_id=round_record.id, agent_id=agent_token)
+                db.maybe_complete_channel_response_round(round_record.id)
 
     remaining = db.get_channel(channel.id)
     if remaining is None:

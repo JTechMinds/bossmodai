@@ -1325,6 +1325,14 @@
    dimming as .btn[disabled] (controls.css). */
 .thread-member-remove:disabled { opacity: 0.5; cursor: not-allowed; }
 
+/* The inline "still has open tasks" confirmation: the row's text, then the two
+   buttons. They wrap under the text on a narrow dialog instead of squeezing it. */
+.thread-member-confirm { flex-wrap: wrap; }
+
+.thread-member-confirm .floor-item-who { flex-basis: 50%; }
+
+.thread-member-confirm-actions { display: flex; flex: none; gap: 8px; }
+
 /* Seat picker: one live agent per row, same left-edge as the add-agent doors.
    Name then specialty, so two Hughs are still distinguishable. */
 .thread-seat-list {

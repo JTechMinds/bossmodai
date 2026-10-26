@@ -303,3 +303,62 @@ def test_remove_member_refusals_are_fail_closed() -> None:
     assert archived.value.status_code == 409
     assert "archived" in str(archived.value).lower()
     assert [item.id for item in db.list_channel_messages(channel.id, limit=80)] == [first.id, second.id]
+
+
+def _round_with_seats(channel_id: str, source_id: str, seats: dict[str, str]) -> Any:
+    """An active round whose candidates carry the given ``{agent_id: status}``."""
+    record = db.create_channel_response_round(channel_id=channel_id, source_message_id=source_id)
+    for position, (agent_id, status) in enumerate(seats.items(), start=1):
+        db.create_channel_response_candidate(round_id=record.id, agent_id=agent_id)
+        db.update_channel_response_candidate(
+            round_id=record.id, agent_id=agent_id, status=status, queue_position=position,
+        )
+    return record
+
+
+def _seat_status(round_id: str, agent_id: str) -> str:
+    return str(db.get_channel_response_candidate(round_id=round_id, agent_id=agent_id).status)
+
+
+def test_remove_member_closes_unstarted_seats_and_round_still_advances() -> None:
+    channel, hugh, first, _second = _thread_with_history()
+    debra_id, jim_id = (row["id"] for row in db.list_channel_member_details(channel.id))
+    seat_agent_in_thread(channel.id, hugh.id)
+    mine = _round_with_seats(
+        channel.id, first.id, {debra_id: "responding", jim_id: "pending", hugh.id: "pending"},
+    )
+    other_channel = db.create_channel(
+        name="Other", member_agent_ids=[debra_id, jim_id], created_by=HUMAN_SENDER_ID,
+    )
+    elsewhere = _round_with_seats(other_channel.id, first.id, {jim_id: "pending"})
+
+    remove_agent_from_thread(channel.id, jim_id)
+
+    assert _seat_status(mine.id, jim_id) == "observed"
+    assert _seat_status(mine.id, debra_id) == "responding"
+    assert _seat_status(mine.id, hugh.id) == "pending"
+    assert _seat_status(elsewhere.id, jim_id) == "pending"
+    assert db.get_channel_response_round(mine.id).status == "active"
+    # The round's own advance step reads these rows: the removed seat is skipped.
+    from core.agent_loop.channel_rounds import _pending_candidates
+
+    db.mark_channel_candidate_responded(round_id=mine.id, agent_id=debra_id)
+    pending = _pending_candidates(db.list_channel_response_candidates(mine.id))
+    assert [row.agent_id for row in pending] == [hugh.id]
+
+    # A claimed seat is the runtime's to finish: removing its owner leaves it.
+    db.update_channel_response_candidate(round_id=mine.id, agent_id=hugh.id, status="responding")
+    remove_agent_from_thread(channel.id, hugh.id)
+    assert _seat_status(mine.id, hugh.id) == "responding"
+    assert db.get_channel_response_round(mine.id).status == "active"
+
+
+def test_remove_member_completes_a_round_with_nothing_left_open() -> None:
+    channel, _hugh, first, _second = _thread_with_history()
+    debra_id, jim_id = (row["id"] for row in db.list_channel_member_details(channel.id))
+    record = _round_with_seats(channel.id, first.id, {debra_id: "responded", jim_id: "queued"})
+
+    remove_agent_from_thread(channel.id, jim_id)
+
+    assert _seat_status(record.id, jim_id) == "observed"
+    assert db.get_channel_response_round(record.id).status == "completed"

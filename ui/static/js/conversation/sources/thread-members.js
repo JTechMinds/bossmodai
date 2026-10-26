@@ -26,25 +26,33 @@ const BossModThreadMembers = (() => {
      *   (`{id, name, role?, color?}`), read on every render.
      * @param {(agentId: string) => Promise<void>} deps.remove  Takes one member
      *   out; rejects with the server's reason.
+     * @param {() => Promise<object[]>} deps.openTasks  The thread's open tasks
+     *   (`{assigned_to, ...}`). Read before every removal; rejects when the
+     *   read fails, and then nothing is removed.
      * @param {() => Promise<void>} deps.add  Picks a teammate from the thread's
      *   floor and seats them. Resolves quietly when the picker is cancelled;
      *   rejects when nobody is left to add or the seat is refused.
      * @param {() => void} [deps.onClose]  Called once the dialog has closed,
      *   however it closed, so the source can forget it.
      * @returns {{render: () => void, close: () => void, element: HTMLElement}}
-     * @throws {Error} When `members`, `remove` or `add` is not a function.
+     * @throws {Error} When `members`, `remove`, `openTasks` or `add` is not a function.
      */
     function open(deps) {
         const members = deps && deps.members;
         const remove = deps && deps.remove;
         const add = deps && deps.add;
+        const openTasks = deps && deps.openTasks;
         const onClose = deps && deps.onClose;
         if (typeof members !== 'function') throw new Error('[thread-members] deps.members is required');
         if (typeof remove !== 'function') throw new Error('[thread-members] deps.remove is required');
         if (typeof add !== 'function') throw new Error('[thread-members] deps.add is required');
+        if (typeof openTasks !== 'function') throw new Error('[thread-members] deps.openTasks is required');
 
         let busy = false;
         let failure = '';
+        // The member whose removal waits on the operator, with the tasks that
+        // stay assigned to them: `{id, count}`. At most one at a time.
+        let confirming = null;
 
         const list = h('ul', { class: 'floor-item-list' });
         const note = h('p', { class: 'field-hint' });
@@ -78,7 +86,56 @@ const BossModThreadMembers = (() => {
             }
         }
 
+        /**
+         * Start a removal. A member with no open tasks from this thread goes at
+         * once; one with some is parked on an inline confirmation, because
+         * their tasks keep their name and the operator should know that first.
+         *
+         * @param {object} member
+         * @returns {Promise<void>}
+         */
+        async function requestRemove(member) {
+            const tasks = await openTasks();
+            const assigned = tasks.filter((task) => task && task.assigned_to === member.id);
+            if (!assigned.length) {
+                await remove(member.id);
+                return;
+            }
+            confirming = { id: member.id, count: assigned.length };
+        }
+
+        /** The confirmed removal. The prompt stays up if the server refuses. */
+        async function confirmRemove() {
+            await remove(confirming.id);
+            confirming = null;
+        }
+
+        function confirmRow(member, count) {
+            const name = member.name || 'Agent';
+            const tasks = count === 1 ? '1 open task' : `${count} open tasks`;
+            return h('li', { class: 'floor-item thread-member-confirm' },
+                BossModAvatar.create({ name, color: member.color || null, size: 'sm' }),
+                h('div', { class: 'floor-item-who' },
+                    h('span', { class: 'floor-item-name' }, name),
+                    h('span', { class: 'floor-item-meta' },
+                        `${name} still has ${tasks} from this thread. They stay assigned to ${name}.`)),
+                h('div', { class: 'thread-member-confirm-actions' },
+                    h('button', {
+                        class: 'btn btn-sm btn-danger',
+                        type: 'button',
+                        disabled: busy,
+                        onclick: () => { void run(confirmRemove); },
+                    }, 'Remove anyway'),
+                    h('button', {
+                        class: 'btn btn-sm',
+                        type: 'button',
+                        disabled: busy,
+                        onclick: () => { confirming = null; render(); },
+                    }, 'Keep')));
+        }
+
         function row(member, onlyOne) {
+            if (confirming && confirming.id === member.id) return confirmRow(member, confirming.count);
             const name = member.name || 'Agent';
             const label = `Remove ${name}`;
             const button = h('button', {
@@ -87,8 +144,8 @@ const BossModThreadMembers = (() => {
                 'data-size': 'inline',
                 'aria-label': label,
                 'data-tooltip': label,
-                disabled: busy || onlyOne,
-                onclick: () => { void run(() => remove(member.id)); },
+                disabled: busy || onlyOne || !!confirming,
+                onclick: () => { void run(() => requestRemove(member)); },
             }, h('i', { 'data-lucide': 'x', 'aria-hidden': 'true' }));
             return h('li', { class: 'floor-item' },
                 BossModAvatar.create({ name, color: member.color || null, size: 'sm' }),
@@ -101,13 +158,15 @@ const BossModThreadMembers = (() => {
         /** Repaint from the source's current members. */
         function render() {
             const current = members();
+            // Someone else took them out meanwhile: nothing left to confirm.
+            if (confirming && !current.some((member) => member.id === confirming.id)) confirming = null;
             clear(list);
             current.forEach((member) => list.append(row(member, current.length <= 1)));
             note.textContent = current.length <= 1 ? LAST_MEMBER_NOTE : '';
             note.hidden = current.length > 1;
             error.textContent = failure;
             error.hidden = !failure;
-            door.disabled = busy;
+            door.disabled = busy || !!confirming;
             BossModIcons.paint(body, 'thread-members');
         }
 
@@ -137,13 +196,15 @@ const BossModThreadMembers = (() => {
      * @param {string} deps.threadId
      * @param {object} deps.seat  From BossModThreadSeat.createThreadSeat.
      * @param {object} deps.requests  From BossModThreadRequests.createThreadRequests.
+     * @param {object} deps.archive  From BossModThreadArchive.createThreadArchive;
+     *   its `openTasks` is read before a removal.
      * @param {(pending: Promise<object>) => Promise<void>} deps.adopt  Takes
      *   the channel a request answered with and repaints the header from it.
      * @param {() => object[]} deps.members  The source's current members.
      * @param {() => object|null} deps.channel  The source's channel, null until loaded.
      * @returns {{open: () => Promise<void>, render: () => void, close: () => void}}
      */
-    function createController({ threadId, seat, requests, adopt, members, channel }) {
+    function createController({ threadId, seat, requests, archive, adopt, members, channel }) {
         let dialog = null;
         return {
             /**
@@ -157,6 +218,7 @@ const BossModThreadMembers = (() => {
                 dialog = open({
                     members,
                     remove: (agentId) => adopt(requests.removeMember(agentId)),
+                    openTasks: async () => (await archive.openTasks(threadId)).tasks,
                     add: async () => {
                         const updated = await seat.pickAndSeat(threadId, members(), channel().floor_id);
                         if (updated) await adopt(Promise.resolve(updated));

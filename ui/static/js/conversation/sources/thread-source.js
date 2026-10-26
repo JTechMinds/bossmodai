@@ -294,7 +294,7 @@ const BossModThreadSource = (() => {
 
         // "Agents in thread": Add people… and the participant count both open it.
         const membersDialog = BossModThreadMembers.createController({
-            threadId, seat, requests, adopt, members, channel: () => channel,
+            threadId, seat, requests, archive, adopt, members, channel: () => channel,
         });
 
         async function reopenThread() {

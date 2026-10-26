@@ -38,6 +38,9 @@ const messages = [
     { id: "m2", content: "Locked. Waiting on CLEAR.", author_type: "agent", author_name: "Debra", author_agent_id: "debra" },
 ];
 
+// What GET /open-tasks answers: a task list, or null for a failed read.
+let openTasks = [];
+
 const api = async (url, init) => {
     const method = String((init && init.method) || "GET").toUpperCase();
     calls.push({ method, url: String(url), body: (init && init.body) || null });
@@ -64,6 +67,10 @@ const api = async (url, init) => {
         }
         thread.members = thread.members.filter((row) => row.id !== member[2]);
         return { ok: true, async json() { return { ...thread, members: thread.members.slice() }; } };
+    }
+    if (String(url) === "/api/channels/t1/open-tasks" && method === "GET") {
+        if (openTasks === null) return { ok: false, status: 500, async text() { return "Open tasks are unavailable"; } };
+        return { ok: true, async json() { return { count: openTasks.length, tasks: openTasks }; } };
     }
     const one = String(url).match(/^\/api\/channels\/([^/?]+)$/);
     if (one && method === "GET") {
@@ -195,6 +202,59 @@ async function main() {
     const deleted = calls.find((item) => item.method === "DELETE" && item.url === "/api/channels/t1/members/jim");
     if (!deleted || removeButtons().length !== 2) throw new Error("removing must DELETE and repaint");
 
+    const deletes = (id) => calls.filter((item) => item.method === "DELETE" && item.url === `/api/channels/t1/members/${id}`);
+    // The dialog frame has its own .btn-sm; the confirmation's two are the last two.
+    const confirmButtons = () => {
+        if (!documentStub.querySelector(".thread-member-confirm")) return [];
+        return documentStub.querySelectorAll(".btn-sm").slice(-2);
+    };
+
+    // A failed task read is shown and removes nobody (no silent skip).
+    openTasks = null;
+    await removeButtons()[1].dispatchClick();
+    await settle();
+    if (deletes("hugh").length) throw new Error("a failed open-tasks read must not remove");
+    if (!documentStub.querySelector(".context-error").textContent.includes("unavailable")) {
+        throw new Error("a failed open-tasks read must be shown in the dialog");
+    }
+
+    // Only Debra's task is open: Hugh has none assigned, so he goes at once.
+    openTasks = [{ assigned_to: "debra" }];
+    await removeButtons()[1].dispatchClick();
+    await settle();
+    if (deletes("hugh").length !== 1) throw new Error("no assigned tasks must remove at once");
+    // The picker offers the first floor-mate left out: Jim.
+    const addMember = async () => { await documentStub.querySelector(".menu-door").dispatchClick(); await settle(); };
+    await addMember();
+
+    // Open tasks assigned to Jim: confirm in place, DELETE only on Remove anyway.
+    openTasks = [{ assigned_to: "jim" }, { assigned_to: "jim" }, { assigned_to: "debra" }];
+    await removeButtons()[1].dispatchClick();
+    await settle();
+    const confirmText = documentStub.querySelector(".thread-member-confirm").textContent;
+    if (!confirmText.includes("Jim still has 2 open tasks") || !confirmText.includes("stay assigned to Jim")) {
+        throw new Error(`confirmation copy: ${confirmText}`);
+    }
+    if (deletes("jim").length > 1) throw new Error("no DELETE before the operator confirms");
+    if (documentStub.querySelectorAll(".modal-panel").length !== 1) throw new Error("the confirmation must not open a second modal");
+    const [confirmBtn, keepBtn] = confirmButtons();
+    if (confirmBtn.textContent !== "Remove anyway" || keepBtn.textContent !== "Keep") throw new Error(`confirmation buttons: ${confirmButtons().map((b) => b.textContent)}`);
+    const jimDeletes = deletes("jim").length;
+    await keepBtn.dispatchClick();
+    await settle();
+    if (deletes("jim").length !== jimDeletes || confirmButtons().length || removeButtons().length !== 2) {
+        throw new Error("Keep must cancel without removing");
+    }
+    await removeButtons()[1].dispatchClick();
+    await settle();
+    await confirmButtons()[0].dispatchClick();
+    await settle();
+    if (deletes("jim").length !== jimDeletes + 1 || confirmButtons().length || removeButtons().length !== 1) {
+        throw new Error("Remove anyway must DELETE and repaint");
+    }
+    openTasks = [];
+    await addMember();
+
     // Down to one member: Remove is off and the reason is on screen.
     await removeButtons()[1].dispatchClick();
     await settle();
@@ -235,6 +295,7 @@ async function main() {
         subtitleOpensMembers: true,
         removeRepaints: true,
         lastMemberLocked: true,
+        taskWarning: true,
         mentionScope: scope,
     }));
 }

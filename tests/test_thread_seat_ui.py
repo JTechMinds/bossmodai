@@ -84,6 +84,7 @@ def test_seat_harness_preserves_history_and_fail_closes() -> None:
         "subtitleOpensMembers": True,
         "removeRepaints": True,
         "lastMemberLocked": True,
+        "taskWarning": True,
         # Everyone plus the members read live from the channel, Hugh included.
         "mentionScope": {"everyone": True, "memberIds": ["debra", "jim", "hugh"]},
     }
