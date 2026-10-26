@@ -26,7 +26,7 @@ const NAMES = [
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
-    "BossModThreadRequests", "BossModApprovalControls", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
+    "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
 ];
 if (paths.length !== NAMES.length) {
@@ -721,9 +721,12 @@ async function main() {
     await conversation.open("t1", "thread");
     const titleSlot = () => conversation.element.querySelector(".conversation-title");
     const titleInput = () => conversation.element.querySelector("#conversation-title-edit");
+    // The participant count is a button now, but it is the subtitle and not an action.
+    const isAction = (btn) => btn.getAttribute("class") !== "conversation-subtitle-link";
     const actionLabels = () => conversation.element
         .querySelector(".conversation-actions")
         .querySelectorAll("button")
+        .filter(isAction)
         .map((btn) => btn.textContent)
         .filter((label) => label.length > 0);
     // Round four made the rename pair ICON-ONLY, so textContent no longer
@@ -733,6 +736,7 @@ async function main() {
     const actionNames = () => conversation.element
         .querySelector(".conversation-actions")
         .querySelectorAll("button")
+        .filter(isAction)
         .map((btn) => btn.textContent || btn.getAttribute("aria-label") || "")
         .filter((name) => name && name !== "More actions");
     // `3 participants` sits at the END of the row with the actions now — a

@@ -70,6 +70,7 @@ CONTEXT_MODULES = [
     CONVERSATION / "sources" / "thread-seat.js",
     CONVERSATION / "sources" / "thread-requests.js",
     CONVERSATION / "approval-controls.js",
+    CONVERSATION / "sources" / "thread-members.js",
     CONVERSATION / "sources" / "thread-source.js",
     CONVERSATION / "sources" / "agent-requests.js",
     CONVERSATION / "sources" / "agent-source.js",

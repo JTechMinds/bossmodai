@@ -14,7 +14,7 @@ from core.models import (
     THREAD_STALE_SKIP_KIND,
     THREAD_STALE_SKIP_LINE,
 )
-from db.connection import transaction
+from db.connection import get_connection, transaction
 from db.conversation_notes import AnchorMissing, delete_conversation_notes, get_conversation_notes
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
 
@@ -375,6 +375,20 @@ def add_channel_members(channel_id: str, agent_ids: list[str]) -> int:
             )
             added += 1
     return added
+
+
+def remove_channel_member(channel_id: str, agent_id: str) -> int:
+    """Delete one agent's membership row from a shared channel.
+
+    Returns:
+        Rows deleted: 1, or 0 when the agent was not a member. Callers that
+        must refuse a non-member check the count instead of assuming.
+    """
+    cursor = get_connection().execute(
+        "DELETE FROM channel_members WHERE channel_id = $1 AND agent_id = $2",
+        [channel_id, agent_id],
+    )
+    return cursor.rowcount
 
 
 def create_channel_message(

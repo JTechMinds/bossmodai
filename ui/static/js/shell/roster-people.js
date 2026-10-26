@@ -315,7 +315,7 @@ const BossModRosterPeople = (() => {
             const thread = openThread();
             if (!seat || !thread || thread.status === 'archived') return;
             try {
-                await seat.pickAndSeat(thread.id, thread.members || []);
+                await seat.pickAndSeat(thread.id, thread.members || [], thread.floor_id);
             } catch (err) {
                 if (typeof onError === 'function') {
                     onError((err && err.message) || 'Could not add that agent to this thread.', err);

@@ -40,7 +40,7 @@ from core.models.agent_template import AgentTemplate
 from core.models.message import HUMAN_SENDER_ID
 from core.agent_loop.channel_host import is_thread_paused, pause_thread, paused_thread_ids, resume_thread
 from core.channel_archive import archive_thread_as_operator, reopen_thread_as_operator
-from core.channel_members import ThreadSeatError, seat_agent_in_thread
+from core.channel_members import ThreadSeatError, remove_agent_from_thread, seat_agent_in_thread
 from core.tasking.service import list_open_origin_tasks_for_channel
 from core.tasking.transitions import IllegalTaskTransition
 from core.runtime import runtime_services
@@ -619,6 +619,26 @@ async def seat_channel_member(channel_id: str, body: ChannelMemberBody):
     await manager.broadcast_activity(
         event="channel_member_seated",
         detail=f'Seated a teammate in "{seated.name}"',
+        agent_name=None,
+    )
+    return summary
+
+
+@router.delete("/channels/{channel_id}/members/{agent_id}")
+async def remove_channel_member(channel_id: str, agent_id: str):
+    """Take one member out of a live thread. History is not rewritten."""
+    try:
+        updated = remove_agent_from_thread(channel_id, agent_id)
+    except ThreadSeatError as exc:
+        raise HTTPException(exc.status_code, str(exc)) from exc
+
+    members = db.list_channel_member_details(updated.id)
+    latest = db.get_latest_channel_message(updated.id)
+    summary = _serialize_channel_summary(updated, members=members, latest_message=latest)
+    await manager.broadcast_channel_updated(summary)
+    await manager.broadcast_activity(
+        event="channel_member_removed",
+        detail=f'Removed a teammate from "{updated.name}"',
         agent_name=None,
     )
     return summary

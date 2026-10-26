@@ -511,6 +511,7 @@ CONTEXT_MODULES = [
     JS / "conversation" / "sources" / "thread-seat.js",
     JS / "conversation" / "sources" / "thread-requests.js",
     JS / "conversation" / "approval-controls.js",
+    JS / "conversation" / "sources" / "thread-members.js",
     JS / "conversation" / "sources" / "thread-source.js",
     JS / "conversation" / "sources" / "agent-requests.js",
     JS / "conversation" / "sources" / "agent-source.js",

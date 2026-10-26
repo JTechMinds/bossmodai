@@ -19,7 +19,7 @@ installIconsStub();
 const [
     agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, gatesPath, consentPath,
     overlayFocusPath, modalTrailPath, overlayActionsPath, overlaysPath, yoloModePath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath,
-    threadRequestsPath, approvalControlsPath, threadSourcePath,
+    threadRequestsPath, approvalControlsPath, threadMembersPath, threadSourcePath,
     menuButtonPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
     rosterThreadsPath, agentRoutesPath, rosterPath,
 ] = process.argv.slice(2);
@@ -49,6 +49,8 @@ load(archivePath, "BossModThreadArchive");
 load(threadRequestsPath, "BossModThreadRequests");
 // The source's approval switches and Yolo badge descriptors.
 load(approvalControlsPath, "BossModApprovalControls");
+// The source opens the members dialog through this controller.
+load(threadMembersPath, "BossModThreadMembers");
 load(threadSourcePath, "BossModThreadSource");
 // Every `⋯` — the Threads header's one this harness opens, and the People
 // one — then the People one's owner, before the half that mounts it.

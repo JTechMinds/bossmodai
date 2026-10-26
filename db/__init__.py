@@ -131,6 +131,7 @@ from db.notification_links import (
 )
 from db.channels import (
     add_channel_members,
+    remove_channel_member,
     archive_channel,
     reopen_channel,
     create_channel,
@@ -530,6 +531,7 @@ __all__ = [
     "list_queue_visibility_channel_messages",
     "update_channel_message_content",
     "add_channel_members",
+    "remove_channel_member",
     "archive_channel",
     "reopen_channel",
     "find_active_channel_for_members",

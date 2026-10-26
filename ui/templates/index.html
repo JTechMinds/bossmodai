@@ -260,10 +260,13 @@
     <script defer src="{{ static_url('js/places/tasks/assign-outcomes.js') }}"></script>
     <script defer src="{{ static_url('js/places/tasks/assign-form.js') }}"></script>
 
+    <!-- Before thread-seat.js, whose picker filters agents to the thread's floor. -->
+    <script defer src="{{ static_url('js/shell/floor-scope.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/thread-archive.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/thread-seat.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/thread-requests.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/approval-controls.js') }}"></script>
+    <script defer src="{{ static_url('js/conversation/sources/thread-members.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/thread-source.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/agent-requests.js') }}"></script>
     <script defer src="{{ static_url('js/conversation/sources/agent-source.js') }}"></script>
@@ -277,7 +280,6 @@
     <script defer src="{{ static_url('js/shell/navigator.js') }}"></script>
     <script defer src="{{ static_url('js/shell/session.js') }}"></script>
     <script defer src="{{ static_url('js/context/agent-api.js') }}"></script>
-    <script defer src="{{ static_url('js/shell/floor-scope.js') }}"></script>
     <script defer src="{{ static_url('js/shell/floor-chat.js') }}"></script>
     <script defer src="{{ static_url('js/shell/floor-api.js') }}"></script>
     <script defer src="{{ static_url('js/shell/floor-delete.js') }}"></script>

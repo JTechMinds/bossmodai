@@ -5,7 +5,7 @@
  * last channel it was told about, maps wire rows to Messages, and signals the
  * chrome. What is here is the other half of each header action — the HTTP
  * request that changes one of the thread's settings (its name, paused or not,
- * CLI auto-approve, Yolo mode, reopening a sealed room) and hands back the
+ * CLI auto-approve, Yolo mode, reopening a sealed room, taking a member out) and hands back the
  * channel the server answered with. None of it holds state, and none of it touches the DOM.
  * Archive and seating have their own dialogs and live beside this, in
  * thread-archive.js and thread-seat.js.
@@ -53,7 +53,8 @@ const BossModThreadRequests = (() => {
      *             resume: () => Promise<object>,
      *             reopen: () => Promise<object>,
      *             setCliAutoApprove: (enabled: boolean) => Promise<object>,
-     *             setCliYolo: (enabled: boolean) => Promise<object> }}
+     *             setCliYolo: (enabled: boolean) => Promise<object>,
+     *             removeMember: (agentId: string) => Promise<object> }}
      *   Each resolves to the channel the server returned.
      * @throws {Error} When `api` or `threadId` is missing.
      */
@@ -145,7 +146,24 @@ const BossModThreadRequests = (() => {
             return res.json();
         }
 
-        return { rename, pause, resume, reopen, setCliAutoApprove, setCliYolo };
+        /**
+         * Take one member out of this thread. History stays.
+         *
+         * @param {string} agentId
+         * @returns {Promise<object>} The channel without them.
+         * @throws {Error} With the server's reason on any non-2xx (last member,
+         *   not a member, archived).
+         */
+        async function removeMember(agentId) {
+            if (!agentId) throw new Error('Pick someone to remove.');
+            const res = await api(`/api/channels/${threadId}/members/${encodeURIComponent(agentId)}`, {
+                method: 'DELETE',
+            });
+            if (!res.ok) throw new Error(await refusal(res, 'Could not remove that agent from this thread.'));
+            return res.json();
+        }
+
+        return { rename, pause, resume, reopen, setCliAutoApprove, setCliYolo, removeMember };
     }
 
     return { createThreadRequests, refusal };

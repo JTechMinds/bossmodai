@@ -1,14 +1,15 @@
-"""Seat one live agent into an existing shared thread.
+"""Seat one live agent into, or take one out of, an existing shared thread.
 
-Membership is fixed at create today. This is the one write that adds a
-hired agent to a live room without archiving or minting a replacement
-thread. Catch-up is the existing transcript — no summary is generated.
+Membership is fixed at create. These are the two writes that change it on a
+live room without archiving or minting a replacement thread. Catch-up for a
+seat is the existing transcript — no summary is generated.
 """
 
 from __future__ import annotations
 
 from core.models import Channel
 import db
+from db import channel_host as host_db
 
 
 class ThreadSeatError(ValueError):
@@ -71,3 +72,60 @@ def seat_agent_in_thread(channel_id: str, agent_id: str) -> Channel:
     if seated is None:
         raise ThreadSeatError("Thread not found", status_code=404)
     return seated
+
+
+def remove_agent_from_thread(channel_id: str, agent_id: str) -> Channel:
+    """Take one member out of an active thread. History is not rewritten.
+
+    The runtime reads membership live, so the row delete alone would leave the
+    agent's thread-scoped state behind. In one transaction this also prunes
+    the agent from the host's pass/demotion/protection lists and deletes their
+    queued triggers bound to this thread. A claimed (in-flight) turn is the
+    runtime's to finish, as on a floor move.
+
+    Raises ``ThreadSeatError``: 404 when the thread is missing or the agent is
+    not a member, 409 when the thread is archived or this is the last member
+    (an empty room wakes nobody, and create requires at least one).
+    """
+    token = (channel_id or "").strip()
+    agent_token = (agent_id or "").strip()
+    if not token:
+        raise ThreadSeatError("Thread not found", status_code=404)
+    if not agent_token:
+        raise ThreadSeatError("Select a member to remove", status_code=400)
+
+    channel = db.get_channel(token)
+    if channel is None:
+        raise ThreadSeatError("Thread not found", status_code=404)
+    if channel.status != "active":
+        raise ThreadSeatError(
+            "Thread is archived — reopen it before removing someone",
+            status_code=409,
+        )
+
+    member_ids = {member.agent_id for member in db.list_channel_members(channel.id)}
+    if agent_token not in member_ids:
+        raise ThreadSeatError("That agent is not in this thread", status_code=404)
+    if len(member_ids) == 1:
+        raise ThreadSeatError(
+            "A thread needs at least one agent — add someone else first",
+            status_code=409,
+        )
+
+    with db.transaction():
+        removed = db.remove_channel_member(channel.id, agent_token)
+        if removed != 1:
+            raise ThreadSeatError("That agent is not in this thread", status_code=404)
+        state = host_db.get_channel_host_state(channel.id)
+        state["pass_streaks"] = {
+            key: count for key, count in state["pass_streaks"].items() if key != agent_token
+        }
+        for key in ("demoted_ids", "protected_ids"):
+            state[key] = [item for item in state[key] if item != agent_token]
+        host_db.save_channel_host_state(state)
+        db.delete_queued_triggers_for_agent_channels(agent_token, {channel.id})
+
+    remaining = db.get_channel(channel.id)
+    if remaining is None:
+        raise ThreadSeatError("Thread not found", status_code=404)
+    return remaining

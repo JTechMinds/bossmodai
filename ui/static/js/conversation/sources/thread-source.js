@@ -54,6 +54,8 @@ const BossModThreadSource = (() => {
         let signals = null;
 
         function signal(name) {
+            // Every channel change the header repaints for repaints the dialog too.
+            if (name === 'chrome') membersDialog.render();
             if (signals && typeof signals[name] === 'function') signals[name]();
         }
 
@@ -72,10 +74,11 @@ const BossModThreadSource = (() => {
             return !channel || channel.status !== 'archived';
         }
 
-        /** A sealed room keeps no presence and no cached transcript. */
+        /** A sealed room keeps no presence, no cached transcript and no members dialog. */
         function seal() {
             presence.stopAll(threadId);
             forgetCache(threadId);
+            membersDialog.close();
         }
 
         /**
@@ -140,6 +143,7 @@ const BossModThreadSource = (() => {
             if (!res.ok) throw new Error((await res.text()) || 'Could not load this thread.');
             const payload = await res.json();
             channel = payload.channel || null;
+            membersDialog.render();
             return (Array.isArray(payload.messages) ? payload.messages : [])
                 .filter((raw) => !isRoundMarker(raw))
                 .map(toMessage);
@@ -226,12 +230,13 @@ const BossModThreadSource = (() => {
                 if (topic === 'channel_updated') {
                     if (!data || data.id !== threadId) return;
                     channel = data;
+                    membersDialog.render();
                     if (!isLiveThread()) seal();
                     on.chrome();
                 }
             }
             return {
-                dispose() { signals = null; },
+                dispose() { signals = null; membersDialog.close(); },
                 onLiveEvent,
             };
         }
@@ -287,23 +292,13 @@ const BossModThreadSource = (() => {
             signal('chrome');
         }
 
+        // "Agents in thread": Add people… and the participant count both open it.
+        const membersDialog = BossModThreadMembers.createController({
+            threadId, seat, requests, adopt, members, channel: () => channel,
+        });
+
         async function reopenThread() {
             channel = await requests.reopen();
-            signal('chrome');
-        }
-
-        /**
-         * Seat one live agent who is not already in this room.
-         *
-         * Cancel is null, not a failure. A rejected seat throws so chrome's
-         * onError can say so — adding someone must never look like it worked.
-         *
-         * @returns {Promise<void>}
-         */
-        async function seatAgent() {
-            const updated = await seat.pickAndSeat(threadId, members());
-            if (!updated) return;
-            channel = updated;
             signal('chrome');
         }
 
@@ -320,7 +315,8 @@ const BossModThreadSource = (() => {
          * approval-controls.js once the channel has loaded, and never archived.
          *
          * @returns {{title: string, subtitle: string, menuTitle: string, badge: object|null,
-         *            actions: object[], onRename?: (name: string) => Promise<void>}}
+         *            actions: object[], onRename?: (name: string) => Promise<void>,
+         *            onSubtitleSelect: (() => Promise<void>)|null}}
          */
         function chrome() {
             const archived = !isLiveThread();
@@ -335,7 +331,7 @@ const BossModThreadSource = (() => {
                     label: 'Add people…',
                     icon: 'user-plus',
                     slot: 'menu', section: 'subject',
-                    onSelect: seatAgent,
+                    onSelect: membersDialog.open,
                 });
                 if (approvals) actions.push(...approvals.actions);
                 actions.push(channel && channel.conversation_paused
@@ -372,6 +368,8 @@ const BossModThreadSource = (() => {
             return {
                 title: (channel && channel.name) || 'Thread',
                 subtitle: `${members().length} participants`,
+                // The count opens the members dialog; a sealed room is not written to.
+                onSubtitleSelect: archived ? null : membersDialog.open,
                 onRename: archived ? null : renameThread,
                 menuTitle: 'Thread',
                 actions,

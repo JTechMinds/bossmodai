@@ -71,5 +71,45 @@ const BossModChromeSwitch = (() => {
         }
     }
 
-    return { create, sync };
+    /**
+     * The reused switch for a menu setting, built on first sight and re-synced
+     * on every paint.
+     *
+     * The handler is rewritten every paint because the open conversation
+     * changes and the node does not: a switch built for the previous thread
+     * must not keep that thread's callback.
+     *
+     * @param {Map<string, HTMLElement>} nodes  The header's nodes by action id.
+     * @param {object} action  A `kind: 'switch'` menu action.
+     * @param {object} hooks
+     * @param {() => void} hooks.closeMenu  Puts the `⋯` panel away on toggle.
+     * @param {(btn: HTMLElement, action: object) => Promise<void>} hooks.run
+     *   The header's in-flight gate and error path.
+     * @returns {HTMLElement} The wrapper; `_row` is the switch itself.
+     */
+    function ensure(nodes, action, { closeMenu, run }) {
+        let node = nodes.get(action.id);
+        if (!node) {
+            node = create({
+                id: action.id,
+                label: action.label,
+                onToggle: (pressed) => {
+                    const current = nodes.get(action.id);
+                    const select = current && current._onSelect;
+                    closeMenu();
+                    if (typeof select !== 'function') return;
+                    void run(current._row, {
+                        label: action.label,
+                        onSelect: () => select(pressed),
+                    });
+                },
+            });
+            nodes.set(action.id, node);
+        }
+        node._onSelect = action.onSelect;
+        sync(node, action);
+        return node;
+    }
+
+    return { create, sync, ensure };
 })();

@@ -1311,6 +1311,20 @@
 
 .vacation-meta { font-size: 12px; color: var(--muted); }
 
+/* Agents in thread (conversation/sources/thread-members.js): the floor
+   settings' rows and Add door, in the same centred reading column. */
+.thread-members { display: flex; flex-direction: column; gap: 12px; width: 100%; max-width: var(--panel-column); margin: 0 auto; }
+
+.thread-members > .field-hint { margin: 0; padding: 0 8px; }
+
+.thread-members > .context-error { margin: 0; }
+
+.thread-members > .menu-door { align-self: flex-start; }
+
+/* Remove is off on the last member; the note above the door says why. Same
+   dimming as .btn[disabled] (controls.css). */
+.thread-member-remove:disabled { opacity: 0.5; cursor: not-allowed; }
+
 /* Seat picker: one live agent per row, same left-edge as the add-agent doors.
    Name then specialty, so two Hughs are still distinguishable. */
 .thread-seat-list {

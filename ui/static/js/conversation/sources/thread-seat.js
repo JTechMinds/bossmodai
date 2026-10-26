@@ -13,15 +13,24 @@ const BossModThreadSeat = (() => {
     const { h } = BossModDom;
 
     /**
-     * Live hired agents who are not already in `memberIds`.
+     * Live hired agents on the thread's floor who are not already in it.
      *
-     * @param {object[]} roster
+     * Floors are hard isolation domains and the server refuses a cross-floor
+     * seat, so offering one only fails after the operator chose it. The rule
+     * lives here because the header and the People rail both pick through it.
+     *
+     * @param {object[]} roster  Every floor's agents.
      * @param {string[]} memberIds
+     * @param {string} floorId  The thread's floor.
      * @returns {object[]}
+     * @throws {Error} When `floorId` is empty: with no floor there is no
+     *   correct filter, and falling back to every floor is the bug.
      */
-    function liveCandidates(roster, memberIds) {
+    function liveCandidates(roster, memberIds, floorId) {
+        if (!floorId) throw new Error('[thread-seat] a floor id is required to list who can be added');
         const taken = new Set((memberIds || []).filter(Boolean));
-        return (roster || []).filter((agent) => agent && agent.id && !taken.has(agent.id));
+        return (roster || []).filter((agent) => agent && agent.id && !taken.has(agent.id)
+            && BossModFloorScope.floorOf(agent) === floorId);
     }
 
     /**
@@ -90,7 +99,7 @@ const BossModThreadSeat = (() => {
          */
         function prompt(candidates) {
             if (!candidates.length) {
-                throw new Error('Everyone live is already in this thread.');
+                throw new Error('Everyone on this floor is already in this thread.');
             }
             if (typeof confirm === 'function') {
                 return Promise.resolve(confirm(candidates));
@@ -136,15 +145,17 @@ const BossModThreadSeat = (() => {
         }
 
         /**
-         * Pick a live non-member and seat them.
+         * Pick a live non-member from the thread's floor and seat them.
          *
          * @param {string} threadId
          * @param {object[]} members  Current thread roster.
+         * @param {string} floorId  The thread's floor.
          * @returns {Promise<object|null>} Updated summary, or null on cancel.
+         * @throws {Error} When `floorId` is empty or nobody on the floor is left.
          */
-        async function pickAndSeat(threadId, members) {
+        async function pickAndSeat(threadId, members, floorId) {
             const memberIds = (members || []).map((member) => member && member.id).filter(Boolean);
-            const chosen = await prompt(liveCandidates(store.getState().roster, memberIds));
+            const chosen = await prompt(liveCandidates(store.getState().roster, memberIds, floorId));
             if (!chosen) return null;
             return request(threadId, chosen);
         }

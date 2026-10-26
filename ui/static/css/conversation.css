@@ -146,6 +146,18 @@
   font-size: 13px;
 }
 
+/* A subtitle that opens something (the thread's participant count) is a
+   button that must look exactly like the plain text beside it: no chrome, no
+   underline, no colour change. Its focus ring is base.css's :focus-visible. */
+.conversation-subtitle-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
 /* The actions and the `⋯` share this row, aligned on the centre line rather
    than on the top of a two-line identity block. */
 .conversation-actions {

@@ -6,15 +6,17 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+from db import channel_host as host_db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from core.agent_loop.channel_rounds import post_agent_channel_share, start_channel_peer_round
-from core.channel_members import ThreadSeatError, seat_agent_in_thread
+from core.channel_members import ThreadSeatError, remove_agent_from_thread, seat_agent_in_thread
 from core.models.message import HUMAN_SENDER_ID
 
 
@@ -226,3 +228,78 @@ def test_service_does_not_mint_a_new_thread() -> None:
         assert exc.status_code == 409
     else:
         raise AssertionError("duplicate seat must fail closed")
+
+
+def _queue_trigger(agent_id: str, channel_id: str | None) -> Any:
+    payload = {"channel_id": channel_id} if channel_id else {}
+    return db.create_agent_trigger(agent_id, "channel_message", "channel", payload)
+
+
+def test_remove_member_keeps_history_and_cleans_thread_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    broadcasts: list[dict[str, Any]] = []
+
+    async def _capture(summary: dict[str, Any]) -> None:
+        broadcasts.append(summary)
+
+    monkeypatch.setattr("api.routes.agents.manager.broadcast_channel_updated", _capture)
+    client = _api_client()
+    channel, _hugh, first, second = _thread_with_history()
+    debra_id, jim_id = (row["id"] for row in db.list_channel_member_details(channel.id))
+    other = db.create_channel(
+        name="Other", member_agent_ids=[debra_id, jim_id], created_by=HUMAN_SENDER_ID,
+    )
+    here = _queue_trigger(jim_id, channel.id)
+    elsewhere = _queue_trigger(jim_id, other.id)
+    unbound = _queue_trigger(jim_id, None)
+    peer = _queue_trigger(debra_id, channel.id)
+    host_db.save_channel_host_state({
+        "channel_id": channel.id,
+        "pass_streaks": {jim_id: 2, debra_id: 1},
+        "demoted_ids": [jim_id, debra_id],
+        "protected_ids": [jim_id],
+    })
+
+    removed = client.delete(f"/api/channels/{channel.id}/members/{jim_id}", headers=_headers())
+
+    assert removed.status_code == 200
+    body = removed.json()
+    assert [row["id"] for row in body["members"]] == [debra_id]
+    assert [row.agent_id for row in db.list_channel_members(channel.id)] == [debra_id]
+    assert [item.id for item in db.list_channel_messages(channel.id, limit=80)] == [first.id, second.id]
+    assert db.get_agent_trigger(here.id) is None
+    assert db.get_agent_trigger(elsewhere.id) is not None
+    assert db.get_agent_trigger(unbound.id) is not None
+    assert db.get_agent_trigger(peer.id) is not None
+    state = host_db.get_channel_host_state(channel.id)
+    assert state["pass_streaks"] == {debra_id: 1}
+    assert state["demoted_ids"] == [debra_id]
+    assert state["protected_ids"] == []
+    assert [summary["id"] for summary in broadcasts] == [channel.id]
+    assert [row["id"] for row in broadcasts[0]["members"]] == [debra_id]
+
+
+def test_remove_member_refusals_are_fail_closed() -> None:
+    client = _api_client()
+    channel, hugh, first, second = _thread_with_history()
+    debra_id, jim_id = (row["id"] for row in db.list_channel_member_details(channel.id))
+
+    not_member = client.delete(f"/api/channels/{channel.id}/members/{hugh.id}", headers=_headers())
+    assert not_member.status_code == 404
+    unknown = client.delete(f"/api/channels/missing-thread/members/{jim_id}", headers=_headers())
+    assert unknown.status_code == 404
+    assert unknown.json()["detail"] == "Thread not found"
+
+    assert client.delete(
+        f"/api/channels/{channel.id}/members/{jim_id}", headers=_headers(),
+    ).status_code == 200
+    last = client.delete(f"/api/channels/{channel.id}/members/{debra_id}", headers=_headers())
+    assert last.status_code == 409
+    assert "at least one" in last.json()["detail"].lower()
+    assert [row.agent_id for row in db.list_channel_members(channel.id)] == [debra_id]
+
+    db.archive_channel(channel.id)
+    with pytest.raises(ThreadSeatError) as archived:
+        remove_agent_from_thread(channel.id, debra_id)
+    assert archived.value.status_code == 409
+    assert "archived" in str(archived.value).lower()
+    assert [item.id for item in db.list_channel_messages(channel.id, limit=80)] == [first.id, second.id]

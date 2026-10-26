@@ -49,11 +49,9 @@
  * decides what goes behind it. Stable nodes are what let a repaint while the
  * panel is open — Archive becoming Reopen — land in the panel on screen.
  *
- * The SUBTITLE sits with the actions rather than with the title, with the
- * badge just before it. `3 participants` is a fact about the room and the
- * title is its name; putting the fact directly after the name meant a long
- * name shoved it, and the two controls that confirm a rename had to go
- * somewhere else because the space beside the title was already spent.
+ * The SUBTITLE sits with the actions, after the badge: `3 participants` is a
+ * fact about the room, and beside the name a long name shoved it and spent
+ * the space the rename's confirm and cancel now use.
  */
 const BossModConversationChrome = (() => {
     const { h, clear } = BossModDom;
@@ -95,6 +93,15 @@ const BossModConversationChrome = (() => {
             onEditingChange: () => { if (latest) apply(latest); },
         });
         const subtitleEl = h('p', { class: 'conversation-subtitle' });
+        // One reused node (a repaint must not replace it under a pointer); it
+        // reads the descriptor at click time, so it never runs a stale handler.
+        const subtitleLink = h('button', {
+            class: 'conversation-subtitle-link',
+            type: 'button',
+            onclick: () => {
+                void run(subtitleLink, { label: latest.subtitle, onSelect: latest.onSubtitleSelect });
+            },
+        });
         // Empty out of edit mode, and `:empty` collapses it, so the header at
         // rest is the name and nothing beside it.
         const titleActionsEl = h('div', { class: 'conversation-title-actions' });
@@ -121,40 +128,12 @@ const BossModConversationChrome = (() => {
         /** `label|icon`, or '' for none; compared for the same reason. */
         let badgeKey = '';
 
-        /**
-         * One reused switch for a menu setting, with its optional hint. The
-         * node is conversation/chrome-switch.js's to build and sync.
-         *
-         * The handler is rewritten every paint because the open conversation
-         * changes and the node does not: a switch built for the previous
-         * thread must not keep that thread's callback.
-         *
-         * @param {object} action
-         * @returns {HTMLElement} The wrapper; `_row` is the switch itself.
-         */
-        function ensureMenuSwitch(action) {
-            let node = actionNodes.get(action.id);
-            if (!node) {
-                node = BossModChromeSwitch.create({
-                    id: action.id,
-                    label: action.label,
-                    onToggle: (pressed) => {
-                        const current = actionNodes.get(action.id);
-                        const select = current && current._onSelect;
-                        closeMenu();
-                        if (typeof select !== 'function') return;
-                        void run(current._row, {
-                            label: action.label,
-                            onSelect: () => select(pressed),
-                        });
-                    },
-                });
-                actionNodes.set(action.id, node);
-            }
-            node._onSelect = action.onSelect;
-            BossModChromeSwitch.sync(node, action);
-            return node;
-        }
+        // One reused node per switch id (conversation/chrome-switch.js).
+        const ensureMenuSwitch = (action) => BossModChromeSwitch.ensure(
+            actionNodes,
+            action,
+            { closeMenu, run },
+        );
 
         /**
          * Paint the identity, but only when it actually changed.
@@ -207,7 +186,8 @@ const BossModConversationChrome = (() => {
          * Paint one chrome descriptor.
          *
          * @param {{title: string, subtitle: string, avatar?: object, menuTitle?: string,
-         *   badge?: object|null, actions: object[], onRename?: (name: string) => Promise<void>}} chrome
+         *   badge?: object|null, actions: object[], onRename?: (name: string) => Promise<void>,
+         *   onSubtitleSelect?: (() => Promise<void>)|null}} chrome
          *   `avatar` is optional `{name, color}`; without it the group glyph is
          *   shown. The badge is optional `{label, icon}` at the head of the
          *   action row, before the subtitle, or null for none. `menuTitle` is
@@ -227,7 +207,8 @@ const BossModConversationChrome = (() => {
          *   under the switch that is also its accessible description).
          *   `onSelect` may return a promise and may reject. `onRename` is
          *   optional: with it the title is editable in place, without it the
-         *   title is plain text.
+         *   title is plain text. `onSubtitleSelect` likewise makes the
+         *   subtitle a button that runs it; without it, plain text.
          * @returns {void}
          * @throws {Error} When a menu action has no known `section`, or a
          *   subject action comes without `menuTitle`: no unheaded fallback.
@@ -247,7 +228,12 @@ const BossModConversationChrome = (() => {
             applyAvatar(chrome.avatar || null);
             applyBadge(chrome.badge || null);
             title.apply({ title: chrome.title || '', onRename: chrome.onRename });
-            subtitleEl.textContent = chrome.subtitle || '';
+            const text = chrome.subtitle || '';
+            if (typeof chrome.onSubtitleSelect === 'function' && text) {
+                subtitleLink.textContent = text;
+                subtitleLink.disabled = gate.busy();
+                if (subtitleLink.parentNode !== subtitleEl) subtitleEl.replaceChildren(subtitleLink);
+            } else subtitleEl.textContent = text;
             const wanted = new Set();
             // The pair exists only while a rename is open, and both join the
             // row through the same descriptor every other action uses —
@@ -390,6 +376,7 @@ const BossModConversationChrome = (() => {
                     btn.remove();
                 }
                 actionNodes.clear();
+                subtitleLink.remove();
                 latest = null;
             },
         };

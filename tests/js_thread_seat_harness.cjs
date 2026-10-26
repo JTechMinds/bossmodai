@@ -11,9 +11,10 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModStore", "BossModBus", "BossModGates",
-    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu",
-    "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModApprovalControls", "BossModThreadSource",
+    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModGates",
+    "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton",
+    "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome", "BossModFloorScope",
+    "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -29,6 +30,7 @@ const thread = {
     id: "t1",
     name: "Debra, Jim",
     status: "active",
+    floor_id: "f1",
     members: [{ id: "debra", name: "Debra" }, { id: "jim", name: "Jim" }],
 };
 const messages = [
@@ -48,10 +50,19 @@ const api = async (url, init) => {
         if (thread.members.some((row) => row.id === body.agent_id)) {
             return { ok: false, status: 409, async json() { return { detail: "Hugh is already a member of this thread" }; } };
         }
-        if (body.agent_id !== "hugh") {
+        const known = store.getState().roster.find((row) => row.id === body.agent_id);
+        if (!known) {
             return { ok: false, status: 404, async json() { return { detail: "Agent not found" }; } };
         }
-        thread.members = thread.members.concat([{ id: "hugh", name: "Hugh" }]);
+        thread.members = thread.members.concat([{ id: known.id, name: known.name, role: known.role }]);
+        return { ok: true, async json() { return { ...thread, members: thread.members.slice() }; } };
+    }
+    const member = String(url).match(/^\/api\/channels\/([^/]+)\/members\/([^/]+)$/);
+    if (member && method === "DELETE") {
+        if (thread.members.length === 1) {
+            return { ok: false, status: 409, async text() { return JSON.stringify({ detail: "A thread needs at least one agent" }); } };
+        }
+        thread.members = thread.members.filter((row) => row.id !== member[2]);
         return { ok: true, async json() { return { ...thread, members: thread.members.slice() }; } };
     }
     const one = String(url).match(/^\/api\/channels\/([^/?]+)$/);
@@ -68,9 +79,10 @@ const api = async (url, init) => {
 
 const store = BossModStore.createStore({
     roster: [
-        { id: "debra", name: "Debra", role: "Requirements Analyst" },
-        { id: "jim", name: "Jim", role: "Eng" },
-        { id: "hugh", name: "Hugh", role: "Code Auditor" },
+        { id: "debra", name: "Debra", role: "Requirements Analyst", floorId: "f1" },
+        { id: "jim", name: "Jim", role: "Eng", floorId: "f1" },
+        { id: "hugh", name: "Hugh", role: "Code Auditor", floorId: "f1" },
+        { id: "zed", name: "Zed", role: "Elsewhere", floor_id: "f2" },
     ],
     threads: [thread],
 });
@@ -81,12 +93,25 @@ async function main() {
     const candidates = BossModThreadSeat.liveCandidates(
         store.getState().roster,
         thread.members.map((row) => row.id),
+        "f1",
     );
     if (candidates.length !== 1 || candidates[0].id !== "hugh") {
-        throw new Error("only the live non-member should be offered");
+        throw new Error("only the live non-member on the thread's floor should be offered");
     }
+    // Zed is a live non-member too, but on another floor: never offered.
+    const wide = BossModThreadSeat.liveCandidates(store.getState().roster, [], "f2");
+    if (wide.length !== 1 || wide[0].id !== "zed") {
+        throw new Error("the floor filter must read both floorId and floor_id");
+    }
+    let noFloor = "";
+    try { BossModThreadSeat.liveCandidates(store.getState().roster, [], ""); } catch (err) { noFloor = err.message; }
+    if (!noFloor.includes("floor id is required")) throw new Error("a missing floor id must throw");
+    const strictSeat = BossModThreadSeat.createThreadSeat({ api, store, prompt: async (rows) => rows[0].id });
+    let noFloorPick = "";
+    try { await strictSeat.pickAndSeat("t1", thread.members, ""); } catch (err) { noFloorPick = err.message; }
+    if (!noFloorPick.includes("floor id is required")) throw new Error("pickAndSeat must fail closed without a floor");
 
-    const empty = BossModThreadSeat.liveCandidates(store.getState().roster, ["debra", "jim", "hugh"]);
+    const empty = BossModThreadSeat.liveCandidates(store.getState().roster, ["debra", "jim", "hugh"], "f1");
     let emptyFailed = false;
     const emptySeat = BossModThreadSeat.createThreadSeat({ api, store });
     try {
@@ -101,7 +126,7 @@ async function main() {
         store,
         prompt: async (rows) => rows[0].id,
     });
-    const summary = await seater.pickAndSeat("t1", thread.members.filter((row) => row.id !== "hugh"));
+    const summary = await seater.pickAndSeat("t1", thread.members.filter((row) => row.id !== "hugh"), "f1");
     if (!summary || summary.members.length !== 3) {
         throw new Error("seating Hugh must keep the room and add him");
     }
@@ -138,12 +163,65 @@ async function main() {
         throw new Error("a live thread must offer Add to thread");
     }
 
+    // The header's participant count is a button only when the descriptor
+    // supplies onSubtitleSelect, and it opens the same dialog Add people… does.
+    const errors = [];
+    const chrome = BossModConversationChrome.createChrome({ onError: (message) => errors.push(message) });
+    documentStub.body.append(chrome.element);
+    chrome.apply(liveChrome);
+    const link = chrome.element.querySelector(".conversation-subtitle-link");
+    if (!link || link.textContent !== "3 participants") throw new Error("a thread's count must be a button");
+    chrome.apply({ title: "Ann", subtitle: "Online", actions: [] });
+    if (chrome.element.querySelector(".conversation-subtitle-link")) {
+        throw new Error("a descriptor without onSubtitleSelect must keep a plain subtitle");
+    }
+    chrome.apply(liveChrome);
+
+    // The dialog and the chrome fire their handlers without awaiting them.
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+    const panels = () => documentStub.querySelectorAll(".modal-panel");
+    await chrome.element.querySelector(".conversation-subtitle-link").dispatchClick();
+    await settle();
+    if (panels().length !== 1) throw new Error("the count must open the members dialog");
+    await liveChrome.actions.find((item) => item.id === "channel-seat-btn").onSelect();
+    await settle();
+    if (panels().length !== 1) throw new Error("Add people… must reuse the open dialog");
+    const removeButtons = () => documentStub.querySelectorAll(".thread-member-remove");
+    if (removeButtons().length !== 3) throw new Error("the dialog must list all three members");
+
+    // Remove Jim: the DELETE goes out and the list repaints from the answer.
+    await removeButtons()[1].dispatchClick();
+    await settle();
+    const deleted = calls.find((item) => item.method === "DELETE" && item.url === "/api/channels/t1/members/jim");
+    if (!deleted || removeButtons().length !== 2) throw new Error("removing must DELETE and repaint");
+
+    // Down to one member: Remove is off and the reason is on screen.
+    await removeButtons()[1].dispatchClick();
+    await settle();
+    const buttons = removeButtons();
+    if (buttons.length !== 1 || !buttons[0].disabled) throw new Error("the last member cannot be removed");
+    if (!documentStub.querySelector(".thread-members").textContent.includes("at least one agent")) {
+        throw new Error("the last-member reason must be visible");
+    }
+
+    // Add from the dialog: Jim (first non-member on f1) is back; Zed never offered.
+    await documentStub.querySelector(".menu-door").dispatchClick();
+    await settle();
+    if (thread.members.map((row) => row.id).join(",") !== "debra,jim") {
+        throw new Error(`adding from the dialog seated ${thread.members.map((row) => row.id)}`);
+    }
+    if (errors.length) throw new Error(`unexpected header errors: ${errors}`);
+    await documentStub.querySelector(".modal-close").dispatchClick();
+    if (panels().length !== 0) throw new Error("closing must remove the dialog");
+    chrome.destroy();
+
     thread.status = "archived";
     const sealed = await source.load();
     if (sealed.length !== 2) throw new Error("an archived load must keep history");
     if (source.chrome().actions.some((item) => item.id === "channel-seat-btn")) {
         throw new Error("a sealed thread must not offer Add to thread");
     }
+    if (source.chrome().onSubtitleSelect) throw new Error("a sealed thread's count must not open anything");
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -153,6 +231,10 @@ async function main() {
         duplicateFailClosed: true,
         liveChromeOffersSeat: true,
         archivedHidesSeat: true,
+        floorScopedPicker: true,
+        subtitleOpensMembers: true,
+        removeRepaints: true,
+        lastMemberLocked: true,
         mentionScope: scope,
     }));
 }

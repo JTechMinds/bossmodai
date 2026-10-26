@@ -12,6 +12,8 @@ HARNESS = Path(__file__).resolve().parent / "js_thread_seat_harness.cjs"
 
 SEAT_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "avatar.js",
+    JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
     JS / "core" / "gates.js",
@@ -22,10 +24,17 @@ SEAT_MODULES = [
     JS / "core" / "overlays.js",
     JS / "core" / "yolo-mode.js",
     JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
+    JS / "conversation" / "title-rename.js",
+    JS / "conversation" / "chrome-menu.js",
+    JS / "conversation" / "chrome-switch.js",
+    JS / "conversation" / "chrome.js",
+    JS / "shell" / "floor-scope.js",
     JS / "conversation" / "sources" / "thread-archive.js",
     JS / "conversation" / "sources" / "thread-seat.js",
     JS / "conversation" / "sources" / "thread-requests.js",
     JS / "conversation" / "approval-controls.js",
+    JS / "conversation" / "sources" / "thread-members.js",
     JS / "conversation" / "sources" / "thread-source.js",
 ]
 
@@ -41,7 +50,10 @@ def test_seat_picker_is_not_a_source() -> None:
     thread = _read("conversation/sources/thread-source.js")
     assert "ctx.seat is required" in thread
     assert "id: 'channel-seat-btn'" in thread
-    assert "seat.pickAndSeat(" in thread
+    assert "onSelect: membersDialog.open," in thread
+    assert "onSubtitleSelect: archived ? null : membersDialog.open" in thread
+    members = _read("conversation/sources/thread-members.js")
+    assert "seat.pickAndSeat(" in members
     people = _read("shell/roster-people.js")
     assert "id: 'roster-seat-agent'" in people
     assert "seat.pickAndSeat(" in people
@@ -68,6 +80,10 @@ def test_seat_harness_preserves_history_and_fail_closes() -> None:
         "duplicateFailClosed": True,
         "liveChromeOffersSeat": True,
         "archivedHidesSeat": True,
+        "floorScopedPicker": True,
+        "subtitleOpensMembers": True,
+        "removeRepaints": True,
+        "lastMemberLocked": True,
         # Everyone plus the members read live from the channel, Hugh included.
         "mentionScope": {"everyone": True, "memberIds": ["debra", "jim", "hugh"]},
     }
