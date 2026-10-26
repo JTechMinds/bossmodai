@@ -16,6 +16,7 @@ import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from openai import OpenAIError
 
 import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
@@ -862,6 +863,86 @@ def test_sync_stream_recovers_ordered_text_without_duplication(monkeypatch):
         provider.complete_sync("token", ProviderRequest("test-model", [])).content
         == "first second"
     )
+
+
+class CodedOpenAIError(OpenAIError):
+    """An SDK error carrying an OpenAI error code, as on the HTTP 429 path."""
+
+    def __init__(self, code):
+        super().__init__(f"OpenAI rejected the request: {code}")
+        self.code = code
+
+
+def failing_responses(monkeypatch, path, code):
+    """Make both Responses clients fail with ``code`` on one transport path.
+
+    ``stream``: the request opens and streams a ``response.failed`` event.
+    ``http``: ``responses.create`` itself raises an ``OpenAIError``.
+    """
+    if path == "stream":
+        events = [NS(type="response.failed", response=NS(error=NS(code=code)))]
+        sync_responses(monkeypatch, events)
+        mock_responses(monkeypatch, events)
+        return
+
+    class SyncClient:
+        def __init__(self, **kwargs):
+            self.responses = self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def create(self, **kwargs):
+            raise CodedOpenAIError(code)
+
+    class AsyncClient(SyncClient):
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            pass
+
+        async def create(self, **kwargs):
+            raise CodedOpenAIError(code)
+
+    monkeypatch.setattr(provider, "sync_client_factory", SyncClient)
+    monkeypatch.setattr(provider, "async_client_factory", AsyncClient)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["stream", "http"])
+@pytest.mark.parametrize(
+    "code, limited, message",
+    [
+        ("subscription_sharing_usage_limit_exceeded", True, "usage limit was reached"),
+        # Temporary unavailability must stay retryable, never a usage stop.
+        ("subscription_sharing_usage_unavailable", False, "usage is unavailable"),
+    ],
+)
+async def test_usage_limit_is_a_typed_provider_stop(
+    monkeypatch, path, code, limited, message
+):
+    from core.extensions.model_provider import (
+        ProviderRequest,
+        ProviderUsageLimitError,
+    )
+    from core.llm.client import LLMError, LLMUsageLimitError
+
+    saved_account()
+    failing_responses(monkeypatch, path, code)
+    messages = [{"role": "user", "content": "Work"}]
+
+    with pytest.raises(ChatGPTError, match=message) as raised:
+        provider.complete_sync("token", ProviderRequest("test-model", messages))
+    assert isinstance(raised.value, package.config.ChatGPTUsageLimitError) is limited
+    assert isinstance(raised.value, ProviderUsageLimitError) is limited
+
+    with pytest.raises(LLMError, match=message) as host_raised:
+        await call_provider("test-model", messages)
+    assert isinstance(host_raised.value, LLMUsageLimitError) is limited
 
 
 def test_per_model_identity_removal_reappearance_and_policy(monkeypatch):

@@ -14,15 +14,20 @@ from core.extensions.model_provider import (
     ProviderRequest,
     ProviderTimeout,
 )
-from .config import ChatGPTConfig, ChatGPTError
+from .config import ChatGPTConfig, ChatGPTError, ChatGPTUsageLimitError
 
+_USAGE_LIMIT_CODE = "subscription_sharing_usage_limit_exceeded"
 _ERRORS = {
-    "subscription_sharing_usage_limit_exceeded": "Your ChatGPT usage limit was reached. Check ChatGPT Settings → Usage or wait for it to reset.",
+    _USAGE_LIMIT_CODE: "Your ChatGPT usage limit was reached. Check ChatGPT Settings → Usage or wait for it to reset.",
     "subscription_sharing_usage_unavailable": "ChatGPT plan usage is unavailable for this account or workspace. Check ChatGPT Settings.",
 }
 
 
 def _failure(code=None):
+    # OpenAI documents the usage-limit stop as "pause, don't retry"; only that
+    # code gets the typed error the host refuses to retry.
+    if code == _USAGE_LIMIT_CODE:
+        return ChatGPTUsageLimitError(_ERRORS[code])
     return ChatGPTError(
         _ERRORS.get(
             code,

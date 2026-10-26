@@ -30,7 +30,7 @@ from core.llm.call_budget import (
     reset_turn_lane,
 )
 from core.llm.attachment_parts import AttachmentUnavailableError
-from core.llm.client import close_provider_sessions
+from core.llm.client import LLMUsageLimitError, close_provider_sessions
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
@@ -62,6 +62,7 @@ ORPHAN_CLAIM_AFTER = timedelta(seconds=3 * LEASE_HEARTBEAT_SECONDS)
 RETRIES_EXHAUSTED_STALL_REASON = "Runtime exhausted automatic retries"
 NOT_RETRIED_NO_REPEAT_REASON = "Not retried (a command that must not repeat had already run)"
 NOT_RETRIED_ATTACHMENT_REASON = "Not retried (an attached file is no longer available)"
+NOT_RETRIED_USAGE_LIMIT_REASON = "Not retried (usage limit reached)"
 _BLOCKED_ORPHAN_DETAIL = (
     "The runtime stopped during a turn that had already run a command that must not repeat, "
     "so it was not restarted"
@@ -266,7 +267,7 @@ class TurnDispatcher:
         return text[: limit - 3].rstrip() + "..."
 
     def _resolve_stuck_task(self, agent_id: str, trigger: dict[str, Any]):
-        """Return the task that should be marked stalled after retry exhaustion, if any.
+        """Return the task that should be marked stalled when its trigger is given up on, if any.
 
         The trigger's own ``task_id`` wins. Only an attached trigger falls
         back to the agent's live task: a detached one (``work_binding``)
@@ -301,8 +302,9 @@ class TurnDispatcher:
             task: The stalled task; ``None`` for a trigger with no task.
             stall_reason: Why the trigger was given up on
                 (``RETRIES_EXHAUSTED_STALL_REASON`` or one of the
-                ``NOT_RETRIED_*_REASON`` constants); prefixes the stalled
-                task's status line.
+                ``NOT_RETRIED_*_REASON`` constants, such as
+                ``NOT_RETRIED_USAGE_LIMIT_REASON``); prefixes the stalled
+                task's status line and the task-less notice.
             subject: What the agent was handling, named in the task-less
                 notice (a chat is "the request"; a detached trigger is not).
         """
@@ -314,10 +316,9 @@ class TurnDispatcher:
                 reason=f"{stall_reason}: {failure_detail}",
             )
         else:
-            content = (
-                f"I hit repeated runtime failures while handling {subject} and could not recover. "
-                f"Last error: {failure_detail}"
-            )
+            # Name the real reason: "repeated failures" is false for every
+            # not-retried reason, which gives up after a single attempt.
+            content = f"I could not handle {subject}. {stall_reason}: {failure_detail}"
         if origin_thread_target(task) == "channel":
             posted = persist_origin_status_line(
                 task=task,
@@ -373,10 +374,13 @@ class TurnDispatcher:
             stall_reason: Why the trigger is given up on:
                 ``RETRIES_EXHAUSTED_STALL_REASON`` when retries ran out, or
                 the ``NOT_RETRIED_*_REASON`` constant naming why it was never
-                retryable (``NOT_RETRIED_NO_REPEAT_REASON`` also for an
-                orphan recovered after a crash). Used in the stalled task's
-                reason, status note, cancelled-activity detail and the
-                operator's notice.
+                retried (``NOT_RETRIED_NO_REPEAT_REASON`` also for an orphan
+                recovered after a crash; ``NOT_RETRIED_ATTACHMENT_REASON``
+                for a missing attachment; ``NOT_RETRIED_USAGE_LIMIT_REASON``
+                when the connection's account has no usage left). Used in
+                the stalled task's reason, status note, cancelled-activity
+                detail, the ``task_stalled`` broadcast and the operator's
+                notice.
 
         A stale claim generation (the row was requeued and reclaimed) is
         logged at warning and nothing else is touched.
@@ -418,7 +422,7 @@ class TurnDispatcher:
             )
             await manager.broadcast_activity(
                 event="task_stalled",
-                detail=f'Task "{task.title}" stalled after retry exhaustion',
+                detail=f'Task "{task.title}" stalled: {stall_reason}',
                 agent_name=agent.name,
                 extra={
                     "task_id": task.id,
@@ -478,8 +482,10 @@ class TurnDispatcher:
             not_retried_reason: ``None`` when the failure may be retried.
                 Otherwise the ``NOT_RETRIED_*_REASON`` constant naming why it
                 must not be, decided by the caller that knows (the turn's
-                outcome, or the escaped exception and the row's
-                ``retry_blocked``).
+                outcome and its ``cause``, or the escaped exception and the
+                row's ``retry_blocked``): ``NOT_RETRIED_NO_REPEAT_REASON``,
+                ``NOT_RETRIED_ATTACHMENT_REASON`` or
+                ``NOT_RETRIED_USAGE_LIMIT_REASON``.
 
         A retryable failure under the retry limit is requeued. Otherwise the
         trigger is failed through ``_exhaust_failed_trigger`` with
@@ -1202,10 +1208,13 @@ class TurnDispatcher:
                     agent=agent,
                     trigger=trigger,
                     failure_detail=outcome.diagnostic_error or "Turn failed",
-                    # The turn decides: a retry must not replay side effects
-                    # it already had (TurnOutcome.retryable). Its only reason
-                    # for False is a no-retry command (retry_blocked).
-                    not_retried_reason=None if outcome.retryable else NOT_RETRIED_NO_REPEAT_REASON,
+                    # A permanent cause wins over replay safety: it names what
+                    # the operator must act on. Otherwise the turn decides: a
+                    # retry must not replay side effects it already had
+                    # (TurnOutcome.retryable), whose only reason for False is
+                    # a no-retry command (retry_blocked).
+                    not_retried_reason=_cause_not_retried_reason(outcome.cause)
+                    or (None if outcome.retryable else NOT_RETRIED_NO_REPEAT_REASON),
                 )
 
         except Exception as exc:
@@ -1409,18 +1418,44 @@ class TurnDispatcher:
         )
 
 
-def _escaped_not_retried_reason(trigger: dict[str, Any], exc: Exception) -> str | None:
-    """Return why a turn whose exception escaped must not be retried, or ``None``.
+def _cause_not_retried_reason(exc: BaseException | None) -> str | None:
+    """Return why a failure caused by ``exc`` is permanent, or ``None``.
 
-    A missing attachment file will not reappear on retry, so retrying only
-    burns calls. A turn that ran a no-retry command recorded it on the row
-    before raising, and replaying it would repeat that command.
+    The one classifier for failure permanence, shared by in-turn failures
+    (``TurnOutcome.cause``) and exceptions that escaped the turn. A
+    permanent failure cannot succeed on retry, so retrying only burns calls:
+
+    - ``AttachmentUnavailableError``: the attached file will not reappear.
+    - ``LLMUsageLimitError``: the connection's account has no usage left
+      until the operator's allowance resets.
+
+    Args:
+        exc: The exception that failed the turn; ``None`` when the failure
+            had no exception behind it.
+
+    Returns:
+        ``NOT_RETRIED_ATTACHMENT_REASON`` or ``NOT_RETRIED_USAGE_LIMIT_REASON``
+        for a permanent cause; ``None`` when ``exc`` is ``None`` or says
+        nothing about permanence, so the caller's replay-safety rule decides.
     """
     if isinstance(exc, AttachmentUnavailableError):
         return NOT_RETRIED_ATTACHMENT_REASON
-    if _retry_blocked(trigger):
-        return NOT_RETRIED_NO_REPEAT_REASON
+    if isinstance(exc, LLMUsageLimitError):
+        return NOT_RETRIED_USAGE_LIMIT_REASON
     return None
+
+
+def _escaped_not_retried_reason(trigger: dict[str, Any], exc: Exception) -> str | None:
+    """Return why a turn whose exception escaped must not be retried, or ``None``.
+
+    A permanent cause (``_cause_not_retried_reason``: a missing attachment
+    or an exhausted usage limit) wins, since it names what the operator must
+    act on. Otherwise a turn that ran a no-retry command recorded it on the
+    row before raising, and replaying it would repeat that command.
+    """
+    return _cause_not_retried_reason(exc) or (
+        NOT_RETRIED_NO_REPEAT_REASON if _retry_blocked(trigger) else None
+    )
 
 
 def _retry_blocked(trigger: dict[str, Any]) -> bool:

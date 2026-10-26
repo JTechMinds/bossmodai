@@ -17,6 +17,13 @@ class TurnOutcome:
     ``retryable`` only matters on a failure: the dispatcher retries a failed
     trigger only when it is ``True``, i.e. when a retry cannot replay side
     effects the failed turn already had.
+
+    ``cause`` is the exception that failed the turn, when one did (a failed
+    model call); ``None`` for failures with no exception behind them (parse
+    repairs, guardian stops, missing work). The dispatcher reads it to decide
+    whether the failure is permanent, so no retry could succeed. That is a
+    separate question from ``retryable`` (replay safety): a usage-limit stop
+    is replay-safe yet must not be retried.
     """
 
     result: dict[str, Any] = field(default_factory=dict)
@@ -31,6 +38,7 @@ class TurnOutcome:
     total_tokens: int = 0
     steps: list[dict[str, Any]] = field(default_factory=list)
     retryable: bool = True
+    cause: BaseException | None = None
 
     @classmethod
     def success(
@@ -72,6 +80,7 @@ class TurnOutcome:
         completion_tokens: int,
         total_tokens: int,
         steps: list[dict[str, Any]] | None = None,
+        cause: BaseException | None = None,
     ) -> "TurnOutcome":
         """A failed turn; the trigger is retried only when ``retryable``.
 
@@ -88,6 +97,11 @@ class TurnOutcome:
             completion_tokens: Completion tokens spent this turn.
             total_tokens: Total tokens spent this turn.
             steps: The step traces.
+            cause: The exception that failed the turn, when one did (for
+                example the model call's ``LLMError``); ``None`` otherwise.
+                The dispatcher uses it to decide whether the failure is
+                permanent and must not be retried, independently of
+                ``retryable``.
 
         Returns:
             A ``failed``/``error`` outcome.
@@ -105,6 +119,7 @@ class TurnOutcome:
             total_tokens=total_tokens,
             steps=list(steps or []),
             retryable=retryable,
+            cause=cause,
         )
 
     @classmethod

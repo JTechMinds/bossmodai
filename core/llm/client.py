@@ -481,6 +481,9 @@ async def completion(
     LLMError
         If the LLM call fails with a permanent error, or every transient retry
         failed. The message names the number of attempts.
+    LLMUsageLimitError
+        If an extension provider reports that the connection's account has no
+        usage left (``ProviderUsageLimitError``). It is never retried.
     LLMEmptyResponseError
         If every attempt returned an empty completion.
     LLMTimeoutError
@@ -503,8 +506,8 @@ async def completion(
 
     from dataclasses import asdict
     from core.extensions.model_provider import (
-        ProviderError, ProviderRequest, ProviderTimeout, complete as complete_provider,
-        provider_id, resolve_provider,
+        ProviderError, ProviderRequest, ProviderTimeout, ProviderUsageLimitError,
+        complete as complete_provider, provider_id, resolve_provider,
     )
     try:
         ext_id = provider_id(api_base)
@@ -517,6 +520,8 @@ async def completion(
             return LLMResponse(**asdict(result))
     except ProviderTimeout as exc:
         raise LLMTimeoutError(exc.seconds, kind=exc.kind) from None
+    except ProviderUsageLimitError as exc:
+        raise LLMUsageLimitError(str(exc)) from None
     except ProviderError as exc:
         raise LLMError(str(exc)) from None
 
@@ -680,6 +685,17 @@ def count_history_tokens(text: str) -> int:
 
 class LLMError(Exception):
     """Raised when an LLM call fails."""
+
+
+class LLMUsageLimitError(LLMError):
+    """Raised when the connection's account has no usage left.
+
+    ``completion()`` raises it for an extension provider's
+    ``ProviderUsageLimitError``; the message is the provider's operator-facing
+    text. No retry can succeed until the operator's allowance resets, so it is
+    never retried: the dispatcher stops the work and tells the operator. It is
+    an ``LLMError``, so every turn that catches model failures still catches it.
+    """
 
 
 class LLMEmptyResponseError(LLMError):

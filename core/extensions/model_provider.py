@@ -24,6 +24,20 @@ class ProviderTimeout(ProviderError):
         super().__init__(f"Model request timed out ({kind}).")
 
 
+class ProviderUsageLimitError(ProviderError):
+    """The provider account has no usage left for this request.
+
+    Raised by a provider when its service rejects a request because the
+    account's usage allowance is exhausted. The host must stop the work that
+    made the request and tell the operator; it never retries it, because no
+    retry can succeed until the operator's allowance resets or changes.
+
+    A provider must not raise it for temporary unavailability (an overloaded
+    or briefly unreachable service); that stays a plain ``ProviderError``.
+    The message is operator-facing and must never include credentials.
+    """
+
+
 class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

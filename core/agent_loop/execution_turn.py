@@ -414,6 +414,7 @@ async def _run_execution_turn(
                             error=str(exc),
                         ),
                     ],
+                    cause=exc,
                 ),
                 start=start,
             )

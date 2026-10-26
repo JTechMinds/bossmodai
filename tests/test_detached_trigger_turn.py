@@ -249,7 +249,10 @@ async def test_a_detached_turn_that_ran_a_listed_command_then_failed_is_exhauste
     assert row.status == "failed" and row.retry_count == 0
     assert _live_state(task.id, activity.id) == before
     [notice] = _operator_dms(agent.id)
-    assert notice.startswith("I hit repeated runtime failures while handling an extension event")
+    assert notice.startswith(
+        "I could not handle an extension event. "
+        "Not retried (a command that must not repeat had already run): "
+    )
     assert "your task is paused unchanged" in notice
 
 
@@ -282,7 +285,9 @@ async def test_a_turn_that_ran_a_listed_command_then_raised_is_failed_not_retrie
     assert row.status == "failed" and row.retry_count == 0
     assert _live_state(task.id, activity.id) == before
     [notice] = _operator_dms(agent.id)
-    assert notice.endswith("Last error: provider crashed mid-turn")
+    assert notice.endswith(
+        "Not retried (a command that must not repeat had already run): provider crashed mid-turn"
+    )
 
 
 @pytest.mark.asyncio
@@ -863,8 +868,8 @@ async def test_r4_detached_retry_exhaustion_leaves_the_live_work_and_tells_the_o
     assert db.get_task(task.id).status == "blocked"
     assert db.get_activity(activity.id).status == "active"
     assert _operator_dms(agent.id) == [
-        "I hit repeated runtime failures while handling an extension event and could not recover. "
-        "Last error: Graph outage"
+        "I could not handle an extension event. "
+        "Not retried (a command that must not repeat had already run): Graph outage"
     ]
 
 
@@ -934,6 +939,67 @@ async def test_a_missing_attachment_stall_names_the_attachment(monkeypatch: pyte
     assert stalled.status_note == (
         "Not retried (an attached file is no longer available): Attachment gone no longer exists"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_usage_limit_stalls_the_task_without_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.llm.client import LLMUsageLimitError
+
+    agent, task, _activity = _working_agent_with_snapshot()
+
+    async def _limit(**_kwargs: Any) -> LLMResponse:
+        raise LLMUsageLimitError("Your plan usage limit was reached.")
+
+    monkeypatch.setattr("core.llm.client.completion", _limit)
+    trigger = _claimed_trigger(agent.id, "activity_resumed", {})
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    # The turn failed in-turn and replay-safe, yet no retry was spent on it.
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.status == "failed" and row.retry_count == 0
+    stalled = db.get_task(task.id)
+    assert stalled.status == "stalled"
+    assert stalled.status_note == "Not retried (usage limit reached): Your plan usage limit was reached."
+
+
+@pytest.mark.asyncio
+async def test_an_escaped_usage_limit_stalls_without_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.llm.client import LLMUsageLimitError
+
+    agent, task, _activity = _working_agent_with_snapshot()
+
+    async def _limit(*_args: Any, **_kwargs: Any):
+        raise LLMUsageLimitError("Your plan usage limit was reached.")
+
+    monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _limit)
+    trigger = _claimed_trigger(agent.id, "activity_resumed", {})
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.status == "failed" and row.retry_count == 0
+    stalled = db.get_task(task.id)
+    assert stalled.status == "stalled"
+    assert stalled.status_note == "Not retried (usage limit reached): Your plan usage limit was reached."
+
+
+@pytest.mark.asyncio
+async def test_a_plain_model_error_is_still_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    from core.llm.client import LLMError
+
+    agent, _task_row, _activity = _working_agent_with_snapshot()
+
+    async def _error(**_kwargs: Any) -> LLMResponse:
+        raise LLMError("provider unreachable")
+
+    monkeypatch.setattr("core.llm.client.completion", _error)
+    trigger = _claimed_trigger(agent.id, "activity_resumed", {})
+
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), trigger)
+
+    row = db.get_agent_trigger(trigger["trigger_id"])
+    assert row.status == "queued" and row.retry_count == 1
 
 
 @pytest.mark.asyncio

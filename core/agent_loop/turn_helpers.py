@@ -585,9 +585,12 @@ async def summarize_before_restore(
       is skipped. Nothing is left to do, and the dispatcher completes a
       skipped trigger without a retry or a new resume;
     - the summary failed (``WorkSummaryError``, a failed model call
-      included): the turn fails as retryable and records the tokens the
-      fold spent. No step has run and the snapshot is untouched, so a retry
-      replays nothing.
+      included): the turn fails as replay-safe (``retryable``) and records
+      the tokens the fold spent. No step has run and the snapshot is
+      untouched, so a retry replays nothing. A failed call's chained
+      ``LLMError`` is the outcome's ``cause``, so the dispatcher retries
+      the turn unless that cause is permanent (a usage-limit stop); then
+      the work is stalled without a retry.
 
     Args:
         agent: The agent whose work is resumed.
@@ -660,6 +663,10 @@ async def summarize_before_restore(
                 prompt_tokens=exc.prompt_tokens,
                 completion_tokens=exc.completion_tokens,
                 total_tokens=exc.total_tokens,
+                # A failed summary call chains its LLMError here (``raise ... from
+                # exc``), so a usage-limit stop is still seen as permanent; a
+                # summary that failed on its content has no cause (None).
+                cause=exc.__cause__,
             ),
             start=start,
         )

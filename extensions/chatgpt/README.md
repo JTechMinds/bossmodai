@@ -33,8 +33,10 @@ never imports the database, global application settings, or the LLM client.
 
 The host uses `extension://<extension-id>` as an internal routing marker, registers
 connection rows, enforces call budgets/deadlines, and dispatches generic operator
-actions. Provider status contains typed action/choice descriptors, so the normal
-Extensions dialog renders the provider's controls without provider-specific JS.
+actions. A provider raises the contract's `ProviderUsageLimitError` when the account's
+plan usage is exhausted, and the host stops that work without retrying it. Provider
+status contains typed action/choice descriptors, so the normal Extensions dialog
+renders the provider's controls without provider-specific JS.
 Another provider can implement this capability by adding its own extension folder;
 no additional routing, endpoint, or UI branches are needed. Disabling/removing the
 folder fails closed for its managed connections; ordinary connections still work.

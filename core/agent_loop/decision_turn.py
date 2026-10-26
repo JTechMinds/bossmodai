@@ -236,6 +236,7 @@ async def _run_decision_turn(
                             error=str(exc),
                         )
                     ],
+                    cause=exc,
                 ),
                 start=start,
             )
