@@ -76,8 +76,8 @@ class SetupSpec(_Strict):
     ready_requires: dict[str, str] = Field(default_factory=dict)
 
 
-class AgentConfigField(_Strict):
-    """One per-agent setting the operator fills in at an agent's desk.
+class ConfigField(_Strict):
+    """One setting the operator fills in on a form: an agent's (``agent_config``) or the extension's own (``settings``).
 
     Attributes:
         key: The stored key, a lowercase identifier.
@@ -104,7 +104,7 @@ class AgentConfigField(_Strict):
     default: str | None = None
 
     @model_validator(mode="after")
-    def _number_bounds_and_default(self) -> "AgentConfigField":
+    def _number_bounds_and_default(self) -> "ConfigField":
         if self.kind != "number":
             if self.min is not None or self.max is not None or self.default is not None:
                 raise ValueError(f"field {self.key}: min, max and default apply only to a number field")
@@ -122,8 +122,10 @@ class AgentConfigField(_Strict):
         return self
 
 
-class AgentConfigSpec(_Strict):
-    """Declarative per-agent settings (``contract.SupportsAgentConfig``).
+class ConfigSpec(_Strict):
+    """A declarative settings form, used by ``agent_config`` (``contract.SupportsAgentConfig``,
+    one stored set per agent) and by ``settings`` (``contract.SupportsSettings``, one stored set
+    for the whole extension).
 
     Attributes:
         label: The name of the setting group, e.g. "Microsoft 365 mailbox".
@@ -134,10 +136,10 @@ class AgentConfigSpec(_Strict):
 
     label: str = Field(min_length=1)
     help: str = Field(min_length=1)
-    fields: tuple[AgentConfigField, ...] = Field(min_length=1)
+    fields: tuple[ConfigField, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
-    def _keys_unique_and_one_summary(self) -> "AgentConfigSpec":
+    def _keys_unique_and_one_summary(self) -> "ConfigSpec":
         keys = [item.key for item in self.fields]
         duplicates = sorted({key for key in keys if keys.count(key) > 1})
         if duplicates:
@@ -259,21 +261,61 @@ class ExtensionManifest(_Strict):
     name: str = Field(min_length=1)
     version: str = Field(min_length=1)
     description: str = Field(min_length=1)
-    command: CommandSpec
+    # None: the extension gives agents no CLI command (a service or panel
+    # extension). Every agent-facing block below then needs a command.
+    command: CommandSpec | None = None
     prompt: str | None = None
     requires: RequiresSpec = RequiresSpec()
-    setup: SetupSpec
+    # An extension without a download step says nothing here.
+    setup: SetupSpec = SetupSpec(required=False)
     # Set when the instance implements contract.SupportsLiveView; its label
     # names the view in the UI. None: the extension has no live view.
     live_view: LiveViewSpec | None = None
     # Set when the instance implements contract.SupportsAgentConfig.
-    agent_config: AgentConfigSpec | None = None
+    agent_config: ConfigSpec | None = None
     # Set when the instance implements contract.SupportsAgentView.
     agent_view: AgentViewSpec | None = None
     # Set when the instance implements contract.SupportsWake.
     wake: WakeSpec | None = None
     model_provider: ModelProviderSpec | None = None
+    # Set when the instance implements contract.SupportsSettings: the
+    # extension-wide values the operator edits on the extension's card.
+    settings: ConfigSpec | None = None
+    # Set when the instance implements contract.SupportsService: it runs
+    # something in the app process while enabled. A plain flag: it carries no
+    # further declarative data.
+    service: bool = False
+    # Set when the instance implements contract.SupportsPanel: the card shows
+    # the extension's status and actions. A plain flag, like ``service``.
+    panel: bool = False
     defaults: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def _agent_facing_parts_need_a_command(self) -> "ExtensionManifest":
+        if self.command is not None:
+            return self
+        agent_facing = [
+            name for name, present in (
+                ("prompt", self.prompt is not None),
+                ("agent_config", self.agent_config is not None),
+                ("agent_view", self.agent_view is not None),
+                ("wake", self.wake is not None),
+                ("live_view", self.live_view is not None),
+                ("requires.image_model", self.requires.image_model),
+            ) if present
+        ]
+        if agent_facing:
+            raise ValueError(f"agent-facing parts need a command: {', '.join(agent_facing)}")
+        return self
+
+    @model_validator(mode="after")
+    def _service_has_no_setup(self) -> "ExtensionManifest":
+        # Setup finishing enables the extension from a background thread
+        # (setup_runner.start_setup), which would skip the app process's
+        # service reconcile. Refused here rather than left as a silent gap.
+        if self.service and self.setup.required:
+            raise ValueError("service cannot be combined with setup.required")
+        return self
 
     @model_validator(mode="after")
     def _agent_view_config_declared(self) -> "ExtensionManifest":
@@ -307,16 +349,16 @@ class ExtensionManifest(_Strict):
         return value
 
 
-def agent_config_value(spec: AgentConfigSpec, stored: Mapping[str, str], key: str) -> str:
-    """Return one declared field's value from an agent's stored config.
+def config_value(spec: ConfigSpec, stored: Mapping[str, str], key: str) -> str:
+    """Return one declared field's value from a stored config.
 
     A config saved before a field existed has no key for it; a field with a
     manifest ``default`` then reads as that default. This is the declared
     schema default, not a cover for missing data.
 
     Args:
-        spec: The extension's ``agent_config`` block.
-        stored: The agent's stored values.
+        spec: The extension's ``agent_config`` or ``settings`` block.
+        stored: The stored values (one agent's, or the extension's).
         key: A field key.
 
     Returns:
@@ -328,7 +370,7 @@ def agent_config_value(spec: AgentConfigSpec, stored: Mapping[str, str], key: st
     """
     field = next((item for item in spec.fields if item.key == key), None)
     if field is None:
-        raise KeyError(f"{key!r} is not a declared agent_config field")
+        raise KeyError(f"{key!r} is not a declared config field")
     if key in stored:
         return stored[key]
     if field.default is None:

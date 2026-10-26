@@ -580,19 +580,19 @@ def test_wake_without_its_protocol_is_a_contract_failure(tmp_path: Path) -> None
     assert "poll_wake" in contract_failure("no-wake")
 
 
-def test_agent_config_value_reads_a_declared_default_for_an_absent_key(tmp_path: Path) -> None:
-    from core.extensions.manifest import agent_config_value
+def test_config_value_reads_a_declared_default_for_an_absent_key(tmp_path: Path) -> None:
+    from core.extensions.manifest import config_value
 
     _write_ext(tmp_path, "defaults", _manifest(
         ext_id="defaults", command="defaults", agent_config=_agent_config(fields=[*_agent_config()["fields"], _NUMBER]),
     ))
     spec = discover(tmp_path, CORE_COMMAND_NAMES).get("defaults").manifest.agent_config
-    assert agent_config_value(spec, {"every": "30"}, "every") == "30"
-    assert agent_config_value(spec, {}, "every") == "90"
+    assert config_value(spec, {"every": "30"}, "every") == "30"
+    assert config_value(spec, {}, "every") == "90"
     with pytest.raises(KeyError):
-        agent_config_value(spec, {}, "note")
+        config_value(spec, {}, "note")
     with pytest.raises(KeyError):
-        agent_config_value(spec, {}, "undeclared")
+        config_value(spec, {}, "undeclared")
 
 
 # ─── setup.ready_requires (R35 amendment) ───

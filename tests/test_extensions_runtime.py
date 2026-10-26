@@ -185,6 +185,8 @@ def test_a_disabled_extensions_command_does_not_shut_it_down(monkeypatch: pytest
     (folder / "__init__.py").write_text(
         "class _Ext:\n"
         "    shutdowns = 0\n"
+        "    def handle(self, ctx, parsed, body):\n"
+        "        return None\n"
         "    def shutdown(self):\n"
         "        self.shutdowns += 1\n"
         "def create(ctx):\n"

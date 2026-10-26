@@ -46,7 +46,7 @@ from core import config
 from core.agent_loop.dispatcher import dispatcher
 from core.extensions.contract import SupportsWake, WakeBatch
 from core.extensions.loader import ExtensionLoadError, load_extension
-from core.extensions.manifest import agent_config_value
+from core.extensions.manifest import config_value
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery
 from core.floors import is_on_vacation
 
@@ -305,7 +305,7 @@ class ExtensionWakeWatch:
                     if stored is None:
                         continue
                     interval = (
-                        int(agent_config_value(spec, stored, wake.interval_field))
+                        int(config_value(spec, stored, wake.interval_field))
                         if wake.interval_field is not None
                         else wake.interval_seconds
                     )

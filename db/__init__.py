@@ -400,6 +400,13 @@ from db.extension_agent_configs import (
 )
 from db.extension_wake_status import get_wake_status, record_wake_check
 
+# Extension-wide settings (manifest settings)
+from db.extension_settings import (
+    delete_extension_settings,
+    get_extension_settings,
+    set_extension_settings,
+)
+
 # Background processes agents started with `&` (core/bm_cli/background_processes.py)
 from db.agent_processes import (
     create_agent_process,
@@ -728,6 +735,10 @@ __all__ = [
     "extension_agent_config_updated_at",
     "get_extension_agent_config",
     "set_extension_agent_config",
+    # Extension-wide settings
+    "delete_extension_settings",
+    "get_extension_settings",
+    "set_extension_settings",
     # Per-agent extension wake checks
     "get_wake_status",
     "record_wake_check",

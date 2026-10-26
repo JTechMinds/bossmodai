@@ -78,8 +78,8 @@ def discover(root: Path, reserved_commands: frozenset[str]) -> Discovery:
     (``__pycache__``, dot folders) are ignored. An extension is invalid, and
     listed with its reason, when its manifest fails, its package or prompt
     file is missing, its id is used by another folder, a required Python
-    module is not installed, or its command collides with a core command or
-    another extension's.
+    module is not installed, or its command (when it declares one) collides
+    with a core command or another extension's.
 
     Args:
         root: The folder to scan. A missing folder means no extensions.
@@ -132,7 +132,7 @@ def _mark_collisions(
     command_counts: dict[str, int] = {}
     for entry in candidates:
         id_counts[entry.id] = id_counts.get(entry.id, 0) + 1
-        if entry.valid:
+        if entry.valid and entry.manifest.command is not None:
             name = entry.manifest.command.name
             command_counts[name] = command_counts.get(name, 0) + 1
 
@@ -141,7 +141,7 @@ def _mark_collisions(
         reason = entry.invalid_reason
         if reason is None and id_counts[entry.id] > 1:
             reason = f"id {entry.id!r} is used by more than one extension folder"
-        if reason is None and entry.manifest is not None:
+        if reason is None and entry.manifest is not None and entry.manifest.command is not None:
             name = entry.manifest.command.name
             if name in reserved_commands:
                 reason = f"command {name!r} collides with a core command"

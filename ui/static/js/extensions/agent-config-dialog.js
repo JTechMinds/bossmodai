@@ -2,39 +2,19 @@
  * BossMod AI — one agent's settings for one extension (manifest `agent_config`).
  *
  * A default-size modal from core/overlays.js, opened from the agent's desk or
- * as a layer over the Extensions dialog's Configure agents table. The form is
- * built from the fields the server describes, so this module knows nothing
- * about any one extension:
- *   - the extension's help text first, as text, one paragraph per blank line;
- *   - one labelled input per field: `secret` through BossModSecretField
- *     (never pre-filled; when one is stored the placeholder says a blank keeps
- *     it), `email` as type=email, `number` as type=number with the server's
- *     min/max and its default as placeholder (and value until one is saved),
- *     `text` as text;
- *   - Save verifies on the server before anything is stored. While it runs
- *     the status line says "Checking…"; a refusal shows the server's message
- *     verbatim (e.g. an AADSTS error) and keeps the typing; success shows the
- *     extension's own `verified` text (what it checked, in its words) and
- *     leaves a Done button.
- *   - Remove (only when configured) asks first, in a layer over the form.
- *
- * States: loading, load failed (with retry), form, verifying, refused, saved.
+ * as a layer over the Extensions dialog's Configure agents table. The form
+ * itself (fields, secrets, Save and its states) is BossModConfigForm, driven
+ * here by the per-agent endpoints, so this module knows nothing about any one
+ * extension. What it adds is Remove (only when configured), which asks first,
+ * in a layer over the form.
  */
 const BossModAgentConfigDialog = (() => {
-    const { h, clear } = BossModDom;
+    const { h } = BossModDom;
     const API = BossModExtensionsApi;
-    const FORM_ID = 'ext-config-form';
-    const SAVE_ID = 'ext-config-save';
+    const ID_PREFIX = 'ext-config';
 
     const COPY = Object.freeze({
-        loading: 'Loading settings…',
-        retry: 'Try again',
-        keepSecret: 'Leave blank to keep the current secret',
-        show: 'Show',
-        save: 'Save',
-        verifying: 'Checking…',
         cancel: 'Cancel',
-        done: 'Done',
         remove: 'Remove',
         removeBody: 'The agent stops using this until someone sets it up again. Its settings are removed.',
         removeFailed: 'Couldn’t remove these settings.',
@@ -64,150 +44,33 @@ const BossModAgentConfigDialog = (() => {
         if (typeof onClosed !== 'function') throw new Error('[agent-config-dialog] onClosed is required');
 
         const body = h('div', { class: 'ext-config' });
-        const statusEl = h('p', { class: 'field-hint ext-config-status', role: 'status', 'aria-live': 'polite' });
-        const errorEl = h('div', { class: 'callout', 'data-tone': 'alert', role: 'alert' });
-        errorEl.hidden = true;
-        let config = null;
-        let inputs = {};
-        let busy = false;
+        let form = null;
         let closed = false;
 
         const modal = BossModOverlays.createModal({
             title: `Settings for ${agentName}`,
             body,
             actions: [],
-            onClose: () => { closed = true; onClosed(); },
+            onClose: () => { closed = true; if (form) form.dispose(); onClosed(); },
         });
 
-        function showError(message) {
-            clear(errorEl);
-            errorEl.append(h('p', { class: 'callout-body' }, message));
-            errorEl.hidden = !message;
-            // The form can be taller than the dialog; keep the refusal in view.
-            if (message && typeof errorEl.scrollIntoView === 'function') errorEl.scrollIntoView({ block: 'nearest' });
-        }
-
-        function renderLoading() {
-            clear(body);
-            body.append(h('p', { class: 'field-hint', role: 'status' }, COPY.loading));
-            modal.setActions([{ label: COPY.cancel, tone: 'quiet' }]);
-        }
-
-        function renderLoadFailed(message) {
-            clear(body);
-            body.append(
-                h('p', { class: 'field-hint', role: 'alert' }, message),
-                h('button', { class: 'btn btn-sm', id: 'ext-config-retry', type: 'button', onclick: () => { void load(); } }, COPY.retry));
-            modal.setActions([{ label: COPY.cancel, tone: 'quiet' }]);
-        }
-
-        function fieldControl(field) {
-            const id = `ext-config-${field.key}`;
-            const label = h('label', { class: 'field-label', for: id }, field.label);
-            if (field.kind === 'secret') {
-                const input = h('input', {
-                    class: 'field-input bm-secret-masked', id, type: 'text', autocomplete: 'off', spellcheck: 'false',
-                    autocapitalize: 'off', 'data-kind': 'secret',
-                    placeholder: field.set ? COPY.keepSecret : null,
-                    required: field.required && !field.set ? true : null,
-                });
-                BossModSecretField.bind(input);
-                const reveal = h('button', {
-                    class: 'btn btn-sm', type: 'button', 'aria-pressed': 'false',
-                    'aria-controls': id,
-                    onclick: (event) => BossModSecretField.toggle(input, event.currentTarget),
-                }, COPY.show);
-                inputs[field.key] = { field, input };
-                return h('div', { class: 'field' }, label, h('div', { class: 'ext-config-secret' }, input, reveal));
-            }
-            if (field.kind === 'number') {
-                const input = h('input', {
-                    class: 'field-input', id, type: 'number', step: '1', inputmode: 'numeric', autocomplete: 'off',
-                    min: field.min === null || field.min === undefined ? null : String(field.min),
-                    max: field.max === null || field.max === undefined ? null : String(field.max),
-                    placeholder: field.default, required: field.required ? true : null,
-                });
-                input.value = field.value || '';
-                inputs[field.key] = { field, input };
-                return h('div', { class: 'field' }, label, input);
-            }
-            const input = h('input', {
-                class: 'field-input', id, type: field.kind === 'email' ? 'email' : 'text',
-                autocomplete: 'off', spellcheck: 'false', required: field.required ? true : null,
-            });
-            input.value = field.value || '';
-            inputs[field.key] = { field, input };
-            return h('div', { class: 'field' }, label, input);
-        }
-
-        function renderForm() {
-            clear(body);
-            inputs = {};
-            const help = String(config.help || '').split(/\n\s*\n/).map((para) => para.trim()).filter(Boolean);
-            const form = h('form', {
-                class: 'ext-config-form', id: FORM_ID, novalidate: true,
-                onsubmit: (event) => { event.preventDefault(); void save(); },
+        form = BossModConfigForm.create({
+            modal,
+            body,
+            idPrefix: ID_PREFIX,
+            adapter: {
+                load: () => API.getAgentConfig(extensionId, agentId),
+                save: (values) => API.saveAgentConfig(extensionId, agentId, values),
             },
-            h('div', { class: 'ext-config-help' }, help.map((para) => h('p', { class: 'field-hint' }, para))),
-            config.fields.map(fieldControl),
-            statusEl,
-            errorEl);
-            body.append(form);
-            const actions = [];
-            if (config.configured) {
-                actions.push({ label: COPY.remove, tone: 'danger', id: 'ext-config-remove', keepOpen: true, onSelect: confirmRemove });
-            }
-            actions.push({ label: COPY.cancel, tone: 'quiet' });
-            actions.push({ label: COPY.save, tone: 'primary', id: SAVE_ID, form: FORM_ID });
-            modal.setActions(actions);
-        }
-
-        function values() {
-            const out = {};
-            Object.keys(inputs).forEach((key) => {
-                const { field, input } = inputs[key];
-                // A blank secret is sent as "": the server keeps the stored one.
-                out[key] = field.kind === 'secret' ? BossModSecretField.read(input) : String(input.value || '').trim();
-            });
-            return out;
-        }
-
-        async function save() {
-            if (busy) return;
-            busy = true;
-            const saveBtn = modal.element.querySelector(`#${SAVE_ID}`);
-            if (saveBtn) saveBtn.disabled = true;
-            showError('');
-            statusEl.textContent = COPY.verifying;
-            try {
-                const result = await API.saveAgentConfig(extensionId, agentId, values());
-                if (closed) return;
-                statusEl.textContent = '';
-                config = result;
-                onSaved();
-                renderSaved(result.verified);
-            } catch (err) {
-                if (closed) return;
-                statusEl.textContent = '';
-                showError(String((err && err.message) || err));
-                if (saveBtn) saveBtn.disabled = false;
-            } finally {
-                busy = false;
-            }
-        }
-
-        function renderSaved(verified) {
-            clear(body);
-            body.append(h('div', { class: 'callout', 'data-tone': 'ok', role: 'status' },
-                h('p', { class: 'callout-body' }, verified)));
-            modal.setActions([{ label: COPY.done, tone: 'primary', id: 'ext-config-done' }]);
-            const done = modal.element.querySelector('#ext-config-done');
-            if (done) done.focus();
-        }
+            onSaved: () => onSaved(),
+            extraActions: (config) => (config.configured
+                ? [{ label: COPY.remove, tone: 'danger', id: 'ext-config-remove', keepOpen: true, onSelect: confirmRemove }]
+                : []),
+        });
 
         function confirmRemove() {
             BossModOverlays.createModal({
-                title: `Remove ${config.label} for ${agentName}?`,
+                title: `Remove ${form.config().label} for ${agentName}?`,
                 body: COPY.removeBody,
                 actions: [
                     { label: COPY.remove, tone: 'danger', id: 'ext-config-remove-confirm', onSelect: () => { void remove(); } },
@@ -220,25 +83,14 @@ const BossModAgentConfigDialog = (() => {
             try {
                 await API.deleteAgentConfig(extensionId, agentId);
             } catch (err) {
-                if (!closed) showError(String((err && err.message) || COPY.removeFailed));
+                if (!closed) form.showError(String((err && err.message) || COPY.removeFailed));
                 return;
             }
             onSaved();
             if (!closed) modal.close();
         }
 
-        async function load() {
-            renderLoading();
-            try {
-                config = await API.getAgentConfig(extensionId, agentId);
-            } catch (err) {
-                if (!closed) renderLoadFailed(String((err && err.message) || err));
-                return;
-            }
-            if (!closed) renderForm();
-        }
-
-        void load();
+        void form.load();
         return { close: () => modal.close() };
     }
 

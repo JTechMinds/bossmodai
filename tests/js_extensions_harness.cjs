@@ -19,9 +19,9 @@ installDom();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModAvatar", "BossModExtensionsApi",
-    "BossModLiveStatus", "BossModExtensionsLive", "BossModExtensionsDialog",
-    "BossModGates", "BossModSecretField", "BossModDataTable", "BossModAgentConfigDialog",
-    "BossModExtensionAgentsLayer", "BossModDeskExtensions",
+    "BossModLiveStatus", "BossModExtensionsLive", "BossModExtensionPanel", "BossModExtensionsDialog",
+    "BossModGates", "BossModSecretField", "BossModDataTable", "BossModConfigForm", "BossModAgentConfigDialog",
+    "BossModExtensionSettingsDialog", "BossModExtensionAgentsLayer", "BossModDeskExtensions",
     "BossModTabs", "BossModFactList", "BossModAgentViewDialog", "BossModExternalOpen", "BossModDeskOpener",
 ];
 if (paths.length !== NAMES.length) {
@@ -180,6 +180,31 @@ let chatgptReply = { connected: false, pending: false, message: 'Sign in to add 
     actions: [{ key: 'login', label: 'Continue with ChatGPT', values: { account_id: '' } }], choices: [] };
 const chatgptCalls = [];
 let demoConnected = false;
+// The Local Network Access stand-in: a command-less service with a panel and
+// settings. Each reply is a function so a case can swap behaviour.
+const networkCalls = [];
+const networkStatus = (code) => ({
+    message: 'Other devices can open BossMod at the address below. Use this only on a network you trust: the connection isn’t encrypted.',
+    error: null,
+    facts: [
+        { label: 'Address', value: 'http://192.168.1.20:38472', copyable: true, secret: false },
+        { label: 'Access code', value: code, copyable: true, secret: true },
+    ],
+    actions: [{ key: 'new_code', label: 'Generate new code', values: {} }],
+});
+let networkCode = 'ABCD2345';
+let networkPanel = () => ({ ok: true, body: networkStatus(networkCode) });
+let networkEnabled = (enabled) => ({ ok: true, body: { ...networkItem(), enabled } });
+let networkSettingsPut = () => ({ ok: true, body: { label: 'Network access', help: 'h', configured: true, verified: null, fields: [] } });
+const networkSettings = {
+    label: 'Network access', help: 'Choose the port other devices use.\n\nPick another if it is taken.', configured: false,
+    fields: [{ key: 'port', label: 'Port', kind: 'number', required: false, min: 1024, max: 65535, default: '38472', value: '38472' }],
+};
+const networkItem = () => ({
+    ...bv, id: 'network', name: 'Local Network Access', command: null, live_view: null, requires_image_model: false,
+    setup: { state: 'not_required', detail: null }, setup_label: null, enabled: true, panel: true,
+    settings: { label: 'Network access' }, service_error: null, description: 'Lets other devices open BossMod.',
+});
 global.BossModMenuSelect = {
     create: ({label, options, value, onChange}) => ({ element: h('button', { 'aria-label': label,
         onclick: () => onChange(options[options.length - 1].value) }, label + ': ' + value) }),
@@ -271,6 +296,17 @@ global.apiFetch = async (url, init) => {
     if (itemMatch) {
         viewCalls.push({ item: itemMatch[1], view: itemMatch[2] });
         return ok({ title: "Opened", facts: [["To", "jordan@contoso.com"]], body_text: "Body" });
+    }
+    if (url.startsWith('/api/extensions/network/')) {
+        const method = (init && init.method) || 'GET';
+        const body = init && init.body ? JSON.parse(init.body) : null;
+        networkCalls.push({ url, method, body });
+        const reply = (r) => (r.ok
+            ? ok(r.body)
+            : { ok: false, status: r.status, json: async () => ({ detail: { error: r.code, message: r.message } }) });
+        if (url.endsWith('/enabled')) return reply(networkEnabled(body.enabled));
+        if (url.endsWith('/panel') || url.endsWith('/panel/actions')) return reply(networkPanel(body));
+        if (url.endsWith('/settings')) return method === 'GET' ? ok(JSON.parse(JSON.stringify(networkSettings))) : reply(networkSettingsPut(body));
     }
     if (url.endsWith("/open-folder")) {
         folderOpens.push({ url, method: init && init.method });
@@ -1068,6 +1104,166 @@ const verdict = {};
     await drain();
     verdict.providerControlsHandleUnrelatedExtension = demoConnected && demoLayer.body.textContent.includes('Demo ready');
     closeLayer(demoLayer);
+
+    // 7. A panel extension's card: status, facts, actions and the Settings button.
+    const clipboardWrites = [];
+    Object.defineProperty(global, 'navigator', {
+        configurable: true, value: { clipboard: { writeText: async (value) => { clipboardWrites.push(value); } } },
+    });
+    listReply = [networkItem()];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    let netLayer = layers[layers.length - 1];
+    const netButton = (label) => [...netLayer.body.querySelectorAll('button')].find(b => b.textContent === label);
+    const factInput = (label) => netLayer.body.querySelector(`#ext-panel-network-fact-${label}`);
+    const codeField = factInput(1);
+    verdict.panelShowsMessageFactsAndAction = text().includes('Use this only on a network you trust')
+        && factInput(0).value === 'http://192.168.1.20:38472' && codeField.value === 'ABCD2345'
+        && !factInput(0).classList.contains('bm-secret-masked') && codeField.classList.contains('bm-secret-masked')
+        && codeField.getAttribute('readonly') !== null
+        && netLayer.body.querySelector('label[for="ext-panel-network-fact-1"]').textContent === 'Access code'
+        && Boolean(netButton('Generate new code')) && [...netLayer.body.querySelectorAll('button')].filter(b => b.classList.contains('btn')).length >= 5;
+    verdict.panelHasNoCommandLineAndShowsTheServiceSwitch = !netLayer.body.querySelector('.market-card-specialty')
+        && Boolean(byId('ext-switch-network')) && Boolean(byId('ext-card-settings-network'));
+    verdict.panelMasksTheSecretUntilShown = netButton('Show').getAttribute('aria-pressed') === 'false';
+    netButton('Show').click();
+    verdict.panelShowRevealsTheSecret = !codeField.classList.contains('bm-secret-masked')
+        && Boolean(netButton('Hide')) && netButton('Hide').getAttribute('aria-pressed') === 'true';
+    const copyButtons = [...netLayer.body.querySelectorAll('button')].filter(b => b.textContent === 'Copy');
+    copyButtons[1].click();
+    await drain();
+    verdict.panelCopyWritesTheValue = copyButtons.length === 2 && clipboardWrites.join('|') === 'ABCD2345'
+        && copyButtons[1].textContent === 'Copied' && copyButtons[1].getAttribute('aria-label') === 'Copy access code';
+    await advance(2000);
+    verdict.panelCopyFeedbackFadesBack = copyButtons[1].textContent === 'Copy';
+
+    // An action posts, then the refreshed panel replaces the old one.
+    networkCode = 'ZZZZ9999';
+    networkPanel = (body) => ({ ok: true, body: networkStatus(networkCode) });
+    netButton('Generate new code').click();
+    await drain();
+    const post = networkCalls.filter(call => call.url.endsWith('/panel/actions')).pop();
+    verdict.panelActionPostsAndRerenders = Boolean(post) && post.method === 'POST' && sameJson(post.body, { action: 'new_code', values: {} })
+        && factInput(1).value === 'ZZZZ9999' && !netButton('Generate new code').disabled;
+    // A refusal is an alert on the card and leaves the panel in place.
+    networkPanel = () => ({ ok: false, status: 409, code: 'PANEL_FAILED', message: 'Couldn’t save the new code: disk full.' });
+    netButton('Generate new code').click();
+    await drain();
+    const alerts = [...netLayer.body.querySelectorAll('[role="alert"]')].map(el => el.textContent);
+    verdict.panelActionRefusalIsAnAlert = alerts.includes('Couldn’t save the new code: disk full.')
+        && factInput(1).value === 'ZZZZ9999';
+    closeLayer(netLayer);
+
+    // The status's own error is an alert; a service that could not start is too.
+    networkPanel = () => ({ ok: true, body: { ...networkStatus(networkCode), error: 'Something is wrong.' } });
+    listReply = [{ ...networkItem(), service_error: 'Port 38472 is already in use.' }];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    netLayer = layers[layers.length - 1];
+    const netAlerts = [...netLayer.body.querySelectorAll('.market-failed')].filter(el => el.getAttribute('role') === 'alert').map(el => el.textContent);
+    verdict.panelErrorAndServiceErrorAreAlerts = netAlerts.includes('Something is wrong.')
+        && netAlerts.includes('Port 38472 is already in use.');
+    closeLayer(netLayer);
+
+    // A panel that cannot be read says why and offers a retry.
+    networkPanel = () => ({ ok: false, status: 409, code: 'PANEL_FAILED', message: 'The panel could not be read.' });
+    listReply = [networkItem()];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    netLayer = layers[layers.length - 1];
+    verdict.panelLoadFailureShowsTheReasonAndRetry = text().includes('The panel could not be read.')
+        && Boolean(netButton('Retry status')) && !factInput(0);
+    networkPanel = () => ({ ok: true, body: networkStatus(networkCode) });
+    netButton('Retry status').click();
+    await drain();
+    verdict.panelRetryRereads = Boolean(factInput(0));
+    closeLayer(netLayer);
+
+    // An off extension shows Settings but no panel, and no panel read happens.
+    networkCalls.length = 0;
+    listReply = [{ ...networkItem(), enabled: false }];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    netLayer = layers[layers.length - 1];
+    verdict.settingsButtonShowsWhileOffWithoutAPanel = Boolean(netButton('Settings')) && !netLayer.body.querySelector('.ext-fact')
+        && !networkCalls.some(call => call.url.endsWith('/panel'));
+
+    // The settings dialog: the shared form on the extension-wide endpoints.
+    const listBeforeSettings = listCalls;
+    netButton('Settings').click();
+    await drain();
+    const settingsLayer = layers[layers.length - 1];
+    const portInput = settingsLayer.body.querySelector('#ext-settings-port');
+    verdict.settingsDialogRendersTheSharedForm = settingsLayer !== netLayer && settingsLayer.options.title === 'Local Network Access settings'
+        && Boolean(portInput) && portInput.getAttribute('type') === 'number' && portInput.getAttribute('min') === '1024'
+        && portInput.getAttribute('max') === '65535' && portInput.value === '38472' && portInput.getAttribute('placeholder') === '38472'
+        && settingsLayer.body.textContent.includes('Pick another if it is taken.')
+        && networkCalls.some(call => call.url === '/api/extensions/network/settings' && call.method === 'GET');
+    portInput.value = '41000';
+    await settingsLayer.body.querySelector('#ext-settings-save').dispatchClick();
+    await drain();
+    const settingsPut = networkCalls.filter(call => call.method === 'PUT' && call.url.endsWith('/settings')).pop();
+    verdict.settingsDialogSavesAndSaysSaved = Boolean(settingsPut) && sameJson(settingsPut.body, { values: { port: '41000' } })
+        && settingsLayer.body.textContent.includes('Saved.') && Boolean(settingsLayer.body.querySelector('#ext-settings-done'))
+        && listCalls === listBeforeSettings + 1;
+    closeLayer(settingsLayer);
+
+    // A verified save shows the extension's own words; a refusal keeps the typing.
+    networkSettingsPut = () => ({ ok: false, status: 422, code: 'CONFIG_VERIFY_FAILED', message: 'Port 2000 is already in use.' });
+    netButton('Settings').click();
+    await drain();
+    let again2 = layers[layers.length - 1];
+    again2.body.querySelector('#ext-settings-port').value = '2000';
+    await again2.body.querySelector('#ext-settings-save').dispatchClick();
+    await drain();
+    verdict.settingsRefusalKeepsTheTyping = again2.body.textContent.includes('Port 2000 is already in use.')
+        && again2.body.querySelector('#ext-settings-port').value === '2000' && !again2.body.querySelector('#ext-settings-save').disabled;
+    // Values stored but not applied: the card is told to re-read, the reason is shown.
+    const listBeforeApply = listCalls;
+    networkSettingsPut = () => ({ ok: false, status: 409, code: 'SERVICE_START_FAILED', message: 'Port 2000 is already in use.' });
+    await again2.body.querySelector('#ext-settings-save').dispatchClick();
+    await drain();
+    verdict.settingsApplyFailureRereadsTheCard = listCalls === listBeforeApply + 1
+        && again2.body.textContent.includes('Port 2000 is already in use.');
+    closeLayer(again2);
+    networkSettingsPut = () => ({ ok: true, body: { label: 'Network access', help: 'h', configured: true, verified: 'Port 41001 is available.', fields: [] } });
+    netButton('Settings').click();
+    await drain();
+    again2 = layers[layers.length - 1];
+    await again2.body.querySelector('#ext-settings-save').dispatchClick();
+    await drain();
+    verdict.settingsVerifiedTextIsShown = again2.body.textContent.includes('Port 41001 is available.');
+    closeLayer(again2);
+    closeLayer(netLayer);
+
+    // Turning a service on that cannot start: the switch stays off and says why.
+    networkEnabled = () => ({ ok: false, status: 409, code: 'SERVICE_START_FAILED', message: 'Port 38472 is already in use.' });
+    global.BossModExtensionsDialog.open();
+    await drain();
+    netLayer = layers[layers.length - 1];
+    byId('ext-switch-network').click();
+    await drain();
+    verdict.failedServiceStartRevertsTheSwitchWithTheReason = text().includes('Port 38472 is already in use.')
+        && byId('ext-switch-network').getAttribute('aria-checked') === 'false';
+    networkEnabled = (enabled) => ({ ok: true, body: { ...networkItem(), enabled } });
+    byId('ext-switch-network').click();
+    await drain();
+    verdict.serviceSwitchOnLoadsThePanel = Boolean(factInput(0)) && byId('ext-switch-network').getAttribute('aria-checked') === 'true';
+    closeLayer(netLayer);
+
+    // Provider controls render through the shared message / error / action helpers: same markup as before.
+    listReply = [{ ...bv, id: 'demo-provider', name: 'Demo provider', enabled: true, requires_image_model: false,
+        setup: { state: 'not_required' }, model_provider: { connection_name: 'Demo' } }];
+    global.BossModExtensionsDialog.open();
+    await drain();
+    const demoCard = layers[layers.length - 1];
+    const note = [...demoCard.body.querySelectorAll('.market-card-note')].find(el => el.getAttribute('aria-live') === 'polite');
+    const startButton = [...demoCard.body.querySelectorAll('button')].find(b => b.textContent === 'Start demo');
+    verdict.providerControlsKeepTheirMarkup = note.textContent === 'Demo ready'
+        && startButton.classList.contains('btn') && startButton.classList.contains('btn-sm')
+        && startButton.getAttribute('type') === 'button'
+        && note.parentNode.children.indexOf(startButton) === note.parentNode.children.indexOf(note) + 1;
+    closeLayer(demoCard);
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

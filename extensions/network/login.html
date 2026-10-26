@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BossMod AI</title>
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/controls.css">
+  <link rel="stylesheet" href="/lan-login/style.css">
+</head>
+<body>
+  <main class="lan-login">
+    <h1 class="lan-login-title">BossMod AI</h1>
+    <form class="lan-login-form" method="post" action="/lan-login">
+      <p class="field-hint">Enter the access code shown on the computer running BossMod.</p>
+      <div class="field">
+        <label class="field-label" for="lan-code">Access code</label>
+        <input class="field-input" id="lan-code" name="code" type="text" autocomplete="off" autocapitalize="characters" spellcheck="false" required autofocus>
+      </div>
+      $error_block
+      <button class="btn btn-primary" type="submit">Open BossMod</button>
+    </form>
+  </main>
+</body>
+</html>

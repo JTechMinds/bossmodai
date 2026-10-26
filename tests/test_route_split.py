@@ -181,6 +181,10 @@ EXPECTED_ROUTES = {
     (("DELETE",), "/api/extensions/{ext_id}/agents/{agent_id}/config", "delete_agent_config"),
     (("GET",), "/api/extensions/{ext_id}/agents/{agent_id}/view", "agent_view"),
     (("GET",), "/api/extensions/{ext_id}/agents/{agent_id}/view/{item_id}", "agent_view_item"),
+    (("GET",), "/api/extensions/{ext_id}/settings", "get_extension_settings"),
+    (("PUT",), "/api/extensions/{ext_id}/settings", "put_extension_settings"),
+    (("GET",), "/api/extensions/{ext_id}/panel", "extension_panel"),
+    (("POST",), "/api/extensions/{ext_id}/panel/actions", "extension_panel_action"),
 }
 
 

@@ -18,11 +18,14 @@ MODULES = [
     JS / "extensions" / "extensions-api.js",
     JS / "extensions" / "live-status.js",
     JS / "extensions" / "extensions-live.js",
+    JS / "extensions" / "extension-panel.js",
     JS / "extensions" / "extensions-dialog.js",
     JS / "core" / "gates.js",
     JS / "core" / "secret-field.js",
     JS / "core" / "data-table.js",
+    JS / "extensions" / "config-form.js",
     JS / "extensions" / "agent-config-dialog.js",
+    JS / "extensions" / "extension-settings-dialog.js",
     JS / "extensions" / "extension-agents-layer.js",
     JS / "context" / "desk-extensions.js",
     JS / "core" / "tabs.js",
@@ -141,3 +144,28 @@ def test_chatgpt_extension_sign_in_and_connection_status() -> None:
     payload = _payload()
     for key in ("chatgptSignInInExtension", "chatgptSignInStartsAndPolls", "chatgptCompletionShowsConnection", "chatgptCloseStopsPolling", "providerControlsHandleUnrelatedExtension"):
         assert payload.get(key) is True, (key, payload)
+
+
+def test_a_panel_extensions_card_its_settings_and_the_shared_provider_markup() -> None:
+    payload = _payload()
+    for key in (
+        "panelShowsMessageFactsAndAction", "panelHasNoCommandLineAndShowsTheServiceSwitch",
+        "panelMasksTheSecretUntilShown", "panelShowRevealsTheSecret", "panelCopyWritesTheValue",
+        "panelCopyFeedbackFadesBack", "panelActionPostsAndRerenders", "panelActionRefusalIsAnAlert",
+        "panelErrorAndServiceErrorAreAlerts", "panelLoadFailureShowsTheReasonAndRetry", "panelRetryRereads",
+        "settingsButtonShowsWhileOffWithoutAPanel", "settingsDialogRendersTheSharedForm",
+        "settingsDialogSavesAndSaysSaved", "settingsRefusalKeepsTheTyping", "settingsApplyFailureRereadsTheCard",
+        "settingsVerifiedTextIsShown", "failedServiceStartRevertsTheSwitchWithTheReason",
+        "serviceSwitchOnLoadsThePanel", "providerControlsKeepTheirMarkup",
+    ):
+        assert payload.get(key) is True, (key, payload)
+
+
+def test_one_form_implementation_serves_both_settings_dialogs() -> None:
+    agent = (JS / "extensions" / "agent-config-dialog.js").read_text(encoding="utf-8")
+    settings = (JS / "extensions" / "extension-settings-dialog.js").read_text(encoding="utf-8")
+    form = (JS / "extensions" / "config-form.js").read_text(encoding="utf-8")
+    for source in (agent, settings):
+        assert "BossModConfigForm.create(" in source
+        assert "BossModSecretField" not in source and "field-input" not in source
+    assert "BossModSecretField.bind" in form and "type: 'number'" in form

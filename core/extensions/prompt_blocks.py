@@ -22,8 +22,8 @@ def render_extension_blocks(
 ) -> str | None:
     """Return the prompt text of every extension that applies to this turn.
 
-    An extension applies when it is valid, enabled, set up (or needs no
-    setup), when it requires an image model the model of the agent's AI
+    An extension applies when it is valid, enabled, declares a ``command``,
+    is set up (or needs no setup), when it requires an image model the model of the agent's AI
     connection (the one every activation is routed to) is flagged
     image-capable, and — when its manifest declares ``agent_config`` — this
     agent has a stored config (an agent without a mailbox is not told about
@@ -65,6 +65,10 @@ def render_extension_blocks(
 
 
 def _applies(entry: ExtensionEntry, model: str | None, agent: Agent) -> bool:
+    # An extension without a command is not for agents: never told to one,
+    # and never loaded in the worker for its prompt.
+    if entry.manifest.command is None:
+        return False
     if entry_setup_status(entry).state not in {"ready", "not_required"}:
         return False
     if entry.manifest.requires.image_model and not (agent_images(agent)):

@@ -8,7 +8,7 @@ import logging
 import httpx
 import pytest
 
-from core.extensions.contract import AgentConfigError, ExtensionContext
+from core.extensions.contract import ConfigError, ExtensionContext
 from core.extensions.loader import import_package
 from core.extensions.registry import get_discovery
 
@@ -71,7 +71,7 @@ def test_verify_shows_the_sentence_and_logs_the_detail_without_the_secret(tmp_pa
 
     extension = _extension(tmp_path, handler)
     with caplog.at_level(logging.WARNING, logger=_PACKAGE.__name__):
-        with pytest.raises(AgentConfigError) as caught:
+        with pytest.raises(ConfigError) as caught:
             extension.verify_agent_config(CONFIG)
 
     message = str(caught.value)
@@ -92,7 +92,7 @@ def test_verify_logs_the_graph_status_and_code_for_an_inbox_failure(tmp_path, ca
 
     extension = _extension(tmp_path, handler)
     with caplog.at_level(logging.WARNING, logger=_PACKAGE.__name__):
-        with pytest.raises(AgentConfigError, match=f"^{NO_MAILBOX}$"):
+        with pytest.raises(ConfigError, match=f"^{NO_MAILBOX}$"):
             extension.verify_agent_config(CONFIG)
     logged = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
     assert any("HTTP 404 ErrorInvalidUser" in line for line in logged)

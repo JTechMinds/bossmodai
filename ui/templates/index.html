@@ -403,13 +403,18 @@
     <script defer src="{{ static_url('js/extensions/extensions-api.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/live-status.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extensions-live.js') }}"></script>
-    <!-- Per-agent settings and view, opened from the desk's Extensions section;
-         the settings also open from the Configure agents table. -->
+    <!-- The settings form both settings dialogs share, then per-agent settings
+         and view, opened from the desk's Extensions section; the settings also
+         open from the Configure agents table. -->
+    <script defer src="{{ static_url('js/extensions/config-form.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/agent-config-dialog.js') }}"></script>
+    <script defer src="{{ static_url('js/extensions/extension-settings-dialog.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/agent-view-dialog.js') }}"></script>
     <!-- The Configure agents table, after the settings dialog it opens as a
-         layer; then the Extensions dialog, whose cards open the table. -->
+         layer; the status panel an Extensions card shows; then the Extensions
+         dialog, whose cards open the table, the settings and the panel. -->
     <script defer src="{{ static_url('js/extensions/extension-agents-layer.js') }}"></script>
+    <script defer src="{{ static_url('js/extensions/extension-panel.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extensions-dialog.js') }}"></script>
 
     <script defer src="{{ static_url('js/context/agent-form-fields.js') }}"></script>

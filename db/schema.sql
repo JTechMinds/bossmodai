@@ -1118,6 +1118,14 @@ CREATE TABLE IF NOT EXISTS extension_agent_configs (
     PRIMARY KEY (extension_id, agent_id)
 );
 
+-- Extension-wide settings an extension declares (manifest settings). config is
+-- a bm1:-wrapped JSON object of str -> str (a settings form may hold a secret).
+CREATE TABLE IF NOT EXISTS extension_settings (
+    extension_id VARCHAR PRIMARY KEY,
+    config       TEXT    NOT NULL,
+    updated_at   TIMESTAMP DEFAULT current_timestamp
+);
+
 -- The last wake check of each (extension, agent) pair (manifest wake), written
 -- by the runtime worker's wake service and read by the app for the desk. error
 -- is the extension's plain sentence for the operator; the technical detail is

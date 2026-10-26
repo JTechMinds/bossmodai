@@ -19,10 +19,15 @@ from core.extensions.contract import (
     ExtensionContext,
     SupportsAgentConfig,
     SupportsAgentView,
+    SupportsCommand,
     SupportsLiveView,
+    SupportsPanel,
+    SupportsService,
+    SupportsSettings,
+    SupportsSetup,
     SupportsWake,
 )
-from core.extensions.manifest import ExtensionManifest
+from core.extensions.manifest import ExtensionManifest, config_value
 from core.extensions.model_provider import SupportsModelProvider, services_for
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry
@@ -99,7 +104,8 @@ def load_extension(entry: ExtensionEntry) -> Extension:
     Raises:
         ExtensionLoadError: The entry is invalid, the package failed to
             import, it has no ``create``, ``create`` raised, or the instance
-            lacks a method its manifest declares (``live_view``,
+            lacks a method its manifest declares (``command``, ``setup``,
+            ``service``, ``panel``, ``settings``, ``live_view``,
             ``agent_config``, ``agent_view``, ``wake``) — that last one also marks the
             extension invalid (see :func:`contract_failure`).
     """
@@ -127,6 +133,9 @@ def load_extension(entry: ExtensionEntry) -> Extension:
             read_agent_config=_agent_config_reader(entry.id),
             runtime_worker=is_runtime_worker(),
             model_provider=services_for(entry) if manifest.model_provider else None,
+            read_settings=_settings_reader(entry.id, manifest),
+            seal=_seal,
+            unseal=_unseal,
         )
         try:
             instance = create(ctx)
@@ -153,6 +162,49 @@ def _agent_config_reader(ext_id: str) -> Callable[[str], dict[str, str] | None]:
     return read
 
 
+def _settings_reader(ext_id: str, manifest: ExtensionManifest) -> Callable[[], dict[str, str]]:
+    """Bind ``db.get_extension_settings`` and the manifest's declared defaults to one extension."""
+
+    def read() -> dict[str, str]:
+        spec = manifest.settings
+        if spec is None:
+            raise RuntimeError(f"extension {ext_id} declares no settings to read")
+        # Imported here: db loads the CLI runtime, which imports this module.
+        import db
+
+        stored = db.get_extension_settings(ext_id)
+        if stored is None:
+            stored = {}
+        return {item.key: config_value(spec, stored, item.key) for item in spec.fields}
+
+    return read
+
+
+def _seal(value: str) -> str:
+    """Wrap ``value`` with the host's at-rest secret wrap."""
+    from db.secret_store import encrypt_secret
+
+    wrapped = encrypt_secret(value)
+    if wrapped is None:
+        raise ValueError("cannot seal None")
+    return wrapped
+
+
+def _unseal(value: str) -> str:
+    """Reverse :func:`_seal`.
+
+    Raises:
+        RuntimeError: The wrapped value is truncated or fails its MAC (a
+            wrong data key or a damaged value).
+    """
+    from db.secret_store import decrypt_secret
+
+    plain = decrypt_secret(value)
+    if plain is None:
+        raise ValueError("cannot unseal None")
+    return plain
+
+
 def _broken_contract(manifest: ExtensionManifest, instance: object) -> str | None:
     """Name the first capability the manifest declares that the instance lacks."""
     if manifest.model_provider is not None and not isinstance(instance, SupportsModelProvider):
@@ -165,6 +217,16 @@ def _broken_contract(manifest: ExtensionManifest, instance: object) -> str | Non
         return "manifest declares agent_view but the extension has no agent_view()/agent_view_item() methods"
     if manifest.wake is not None and not isinstance(instance, SupportsWake):
         return "manifest declares wake but the extension has no poll_wake()/commit_wake()/skip_wake()/describe_wake_error() methods"
+    if manifest.command is not None and not isinstance(instance, SupportsCommand):
+        return "manifest declares command but the extension has no handle() method"
+    if manifest.setup.required and not isinstance(instance, SupportsSetup):
+        return "manifest declares setup.required but the extension has no run_setup() method"
+    if manifest.service and not isinstance(instance, SupportsService):
+        return "manifest declares service but the extension has no start_service()/stop_service() methods"
+    if manifest.panel and not isinstance(instance, SupportsPanel):
+        return "manifest declares panel but the extension has no panel()/panel_action() methods"
+    if manifest.settings is not None and not isinstance(instance, SupportsSettings):
+        return "manifest declares settings but the extension has no verify_settings() method"
     return None
 
 

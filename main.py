@@ -21,6 +21,7 @@ from api.auth import ensure_local_api_token, install_local_api_auth, install_set
 from api.routes import router as api_router
 from core import config
 from core.agent_repository import agent_repository
+from core.extensions.service_host import extension_services
 from core.runtime import runtime_services
 from db import init_db, close_connection
 
@@ -82,6 +83,13 @@ async def lifespan(app: FastAPI):
     runtime_services.set_event_sink(manager)
     await runtime_services.start()
 
+    # Extension services (e.g. a network listener) run in this process. A
+    # start that fails is recorded for the extension's card and logged; it
+    # must not keep the app from booting.
+    extension_services.attach(app)
+    for ext_id, message in (await extension_services.reconcile()).items():
+        logger.error("Extension %s service did not start at boot: %s", ext_id, message)
+
     try:
         from integrations import telegram as tg
         telegram_bridge = await tg.start(services=runtime_services, broadcast_manager=manager)
@@ -100,6 +108,7 @@ async def lifespan(app: FastAPI):
     except (ImportError, Exception):
         pass
 
+    await extension_services.stop_all()
     await runtime_services.stop()
     close_connection()
 

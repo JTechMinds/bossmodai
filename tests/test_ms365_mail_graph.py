@@ -337,18 +337,18 @@ def _extension(tmp_path, handler, tokens, config=CONFIG):
 
 
 def test_verify_gives_a_plain_sentence_and_succeeds_with_a_readable_inbox(tmp_path) -> None:
-    from core.extensions.contract import AgentConfigError
+    from core.extensions.contract import ConfigError
 
     failing = _extension(tmp_path, lambda r: httpx.Response(200, json={"value": []}),
                          FakeTokens(error=auth.GraphAuthError("AADSTS7000215: Invalid client secret provided.", (7000215,))))
-    with pytest.raises(AgentConfigError, match="^The client secret is wrong or has expired. Create a new secret and try again.$"):
+    with pytest.raises(ConfigError, match="^The client secret is wrong or has expired. Create a new secret and try again.$"):
         failing.verify_agent_config(CONFIG)
     seen = []
     ok = _extension(tmp_path, lambda r: seen.append(r) or httpx.Response(200, json={"value": []}), FakeTokens())
     assert ok.verify_agent_config(CONFIG) == f"Connected to {MAILBOX}"
     assert seen[0].url.params["$top"] == "1"
     denied = _extension(tmp_path, lambda r: httpx.Response(403, json={"error": {"code": "ErrorAccessDenied", "message": "Access is denied."}}), FakeTokens())
-    with pytest.raises(AgentConfigError, match="^The app doesn't have permission to open this mailbox.$"):
+    with pytest.raises(ConfigError, match="^The app doesn't have permission to open this mailbox.$"):
         denied.verify_agent_config(CONFIG)
 
 

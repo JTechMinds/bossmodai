@@ -88,7 +88,7 @@ span.ext-live-url { text-decoration: none; }
   border: 1px solid var(--line);
 }
 
-/* ─── Per-agent settings (extensions/agent-config-dialog.js) ─── */
+/* ─── Settings forms (extensions/config-form.js, used by agent-config-dialog.js and extension-settings-dialog.js) ─── */
 
 .ext-config-form { display: flex; flex-direction: column; gap: 12px; }
 .ext-config-help { display: flex; flex-direction: column; gap: 6px; }
@@ -96,9 +96,34 @@ span.ext-live-url { text-decoration: none; }
 .ext-config-secret { display: flex; gap: 6px; align-items: center; }
 .ext-config-status:empty { display: none; }
 
-/* An Extensions card's Configure agents button, under its switch. The card
-   is a flex column that stretches its children; a button keeps its width. */
-.ext-card-agents { align-self: flex-start; }
+/* An Extensions card's Configure agents and Settings buttons, under its
+   switch. The card is a flex column that stretches its children; a button
+   keeps its width. */
+.ext-card-agents,
+.ext-card-settings { align-self: flex-start; }
+
+/* ─── An extension's status panel (extensions/extension-panel.js) ───
+
+   A fact is its label with Show / Copy on the same line, and its value in a
+   read-only field under them at the card's full width: a card is narrow, and
+   an address clipped beside its buttons would hide the port. Actions sit in
+   one row at their own width. */
+
+.ext-fact { display: flex; flex-direction: column; gap: 4px; }
+
+.ext-fact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.ext-fact-tools { display: flex; gap: 6px; }
+
+/* An address is the one thing here that must not be cut off. */
+.ext-fact .field-input { font-size: 12px; text-overflow: ellipsis; }
+
+.ext-panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
 /* ─── Configure agents (extensions/extension-agents-layer.js) ───
 

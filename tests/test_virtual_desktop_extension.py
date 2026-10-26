@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from core.extensions.contract import (
-    AgentConfigError,
+    ConfigError,
     ExtensionContext,
     SupportsAgentConfig,
     SupportsAgentConfigChanged,
@@ -111,14 +111,14 @@ def test_verify_accepts_specs_within_the_host_and_says_so(tmp_path: Path) -> Non
 ])
 def test_verify_refuses_specs_larger_than_the_host(tmp_path: Path, values: dict, message: str) -> None:
     extension = _extension(tmp_path, {})
-    with pytest.raises(AgentConfigError, match=f"^{message}$"):
+    with pytest.raises(ConfigError, match=f"^{message}$"):
         extension.verify_agent_config(values)
 
 
 def test_verify_without_docker_says_so(tmp_path: Path) -> None:
     host = FakeHost()
     host.fail["capacity"] = types.DockerUnavailable(types.UNAVAILABLE)
-    with pytest.raises(AgentConfigError, match="^Docker isn't running or BossMod can't reach it.$"):
+    with pytest.raises(ConfigError, match="^Docker isn't running or BossMod can't reach it.$"):
         _extension(tmp_path, {}, host).verify_agent_config({})
 
 

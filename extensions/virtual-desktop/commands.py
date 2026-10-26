@@ -24,7 +24,7 @@ from core.bm_cli.host_roots import PathOutsideRootsError
 from core.bm_cli.results import error_result, success_result
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.extensions.contract import SetupStatus
-from core.extensions.manifest import AgentConfigSpec
+from core.extensions.manifest import ConfigSpec
 from core.llm.routing import agent_model
 from core.models import Agent
 from db.model_capabilities import supports_images
@@ -83,7 +83,7 @@ class VirtualDesktopCommands:
         idle: IdleTracker,
         setup_status: Callable[[], SetupStatus],
         read_agent_config: Callable[[str], Mapping[str, str] | None],
-        config_spec: AgentConfigSpec,
+        config_spec: ConfigSpec,
         vision_model: Callable[[Agent], tuple[str | None, bool]] = routed_vision_model,
         clock: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,

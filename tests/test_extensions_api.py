@@ -209,6 +209,8 @@ def _fake_setup_extension(root: Path, ext_id: str, *, fail: bool) -> None:
         "class _Ext:\n"
         "    def __init__(self, ctx):\n"
         "        self.data_dir = ctx.data_dir\n"
+        "    def handle(self, ctx, parsed, body):\n"
+        "        return None\n"
         "    def run_setup(self, log_path):\n"
         f"        {body}\n"
         "    def shutdown(self):\n"
@@ -580,7 +582,7 @@ _fake_counter = iter(range(1, 10_000))
 _FAKE_INIT = '''
 import json
 from core.extensions.contract import (
-    AgentConfigError, AgentViewColumn, AgentViewError, AgentViewItem, AgentViewPage, AgentViewRow,
+    ConfigError, AgentViewColumn, AgentViewError, AgentViewItem, AgentViewPage, AgentViewRow,
 )
 
 class _Ext:
@@ -594,7 +596,7 @@ class _Ext:
         self.ctx.data_dir.mkdir(parents=True, exist_ok=True)
         (self.ctx.data_dir / "verified.json").write_text(json.dumps(dict(values)), encoding="utf-8")
         if values.get("token") == "bad":
-            raise AgentConfigError("The client secret is wrong or has expired. Create a new secret and try again.")
+            raise ConfigError("The client secret is wrong or has expired. Create a new secret and try again.")
         return "Connected to " + values.get("address", "nobody")
     def agent_view(self, agent_id, *, view, skip, top):
         assert view == "inbox"

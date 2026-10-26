@@ -22,6 +22,12 @@
  * Configure agents button under its switch, which opens a layer listing
  * every agent (BossModExtensionAgentsLayer); each agent's desk sets them too.
  *
+ * An extension with its own settings (`settings`) has a Settings button under
+ * its switch, on or off, which opens BossModExtensionSettingsDialog. An
+ * enabled extension with a `panel` shows the status it reports under the
+ * switch (BossModExtensionPanel), and a `service_error` — it is on but could
+ * not start at boot — as an alert.
+ *
  * A live view is not shown here: it is a screen button in each agent's chat
  * header. After a successful toggle this asks BossModLiveStatus to re-read,
  * so those buttons follow at once.
@@ -45,6 +51,8 @@ const BossModExtensionsDialog = (() => {
         excludedTail: ' — their models aren’t marked image-capable (Settings → Connections).',
         noModel: 'no model',
         configureAgents: 'Configure agents',
+        settings: 'Settings',
+        retryPanel: 'Retry status',
     });
 
     /**
@@ -103,6 +111,10 @@ const BossModExtensionsDialog = (() => {
                         try { item.provider = await API.providerRequest(item.id); }
                         catch (err) { state.errors[item.id] = String(err.message || err); }
                     }
+                    if (item.panel && item.enabled) {
+                        try { item.panelStatus = await API.panelRequest(item.id); }
+                        catch (err) { state.errors[item.id] = String(err.message || err); }
+                    }
                 }
                 state.status = state.items.length ? 'ready' : 'empty';
                 state.error = '';
@@ -125,6 +137,10 @@ const BossModExtensionsDialog = (() => {
                 replaceItem(updated);
                 if (updated.model_provider && pressed) {
                     try { updated.provider = await API.providerRequest(updated.id); }
+                    catch (err) { state.errors[item.id] = String(err.message || err); }
+                }
+                if (updated.panel && pressed) {
+                    try { updated.panelStatus = await API.panelRequest(updated.id); }
                     catch (err) { state.errors[item.id] = String(err.message || err); }
                 }
                 void BossModLiveStatus.refresh();
@@ -157,16 +173,36 @@ const BossModExtensionsDialog = (() => {
             schedulePoll();
         }
 
+        async function panelAction(item, action) {
+            state.busy = item.id;
+            state.errors[item.id] = '';
+            render();
+            try {
+                const panelStatus = await API.panelRequest(item.id, action.key, action.values);
+                replaceItem({ ...item, panelStatus });
+            } catch (err) {
+                state.errors[item.id] = String(err.message || err);
+            }
+            state.busy = null;
+            if (!closed) render();
+        }
+
+        function panelControls(item, busy) {
+            if (!item.panelStatus) {
+                return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, COPY.retryPanel)];
+            }
+            return BossModExtensionPanel.render(item.panelStatus, {
+                idPrefix: `ext-panel-${item.id}`, busy, onAction: (action) => panelAction(item, action),
+            });
+        }
+
         function providerControls(item, busy) {
             const provider = item.provider;
             if (!provider) return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, 'Retry provider status')];
-            const rows = [h('p', { class: 'market-card-note', 'aria-live': 'polite' }, provider.message)];
-            if (provider.error) rows.push(h('p', { class: 'market-failed', role: 'alert' }, provider.error));
-            for (const action of provider.actions) {
-                rows.push(h('button', { class: 'btn btn-sm', type: 'button', disabled: busy,
-                    onclick: () => providerAction(item, action.key, action.values),
-                }, action.label));
-            }
+            const rows = [
+                ...BossModExtensionPanel.messageRows(provider),
+                ...BossModExtensionPanel.actionButtons(provider.actions, busy, (action) => providerAction(item, action.key, action.values)),
+            ];
             for (const choice of provider.choices) {
                 const control = BossModMenuSelect.create({ label: choice.label, options: choice.options, value: choice.value,
                     onChange: (value) => providerAction(item, choice.action, { [choice.parameter]: value }),
@@ -236,14 +272,26 @@ const BossModExtensionsDialog = (() => {
                 rows.push(switchFor(item, item.enabled, busy, (pressed) => toggleEnabled(item, pressed)));
             }
             // Every branch puts the switch first; Configure agents follows it
-            // while the extension is on.
+            // while the extension is on, and Settings whether it is on or off.
             if (item.enabled && item.agent_config) {
                 rows.splice(1, 0, h('button', {
                     class: 'btn btn-sm ext-card-agents', type: 'button', id: `ext-agents-${item.id}`, disabled: busy,
                     onclick: () => BossModExtensionAgentsLayer.open({ extensionId: item.id, extensionName: item.name }),
                 }, COPY.configureAgents));
             }
+            if (item.settings) {
+                rows.splice(1, 0, h('button', {
+                    class: 'btn btn-sm ext-card-settings', type: 'button', id: `ext-card-settings-${item.id}`, disabled: busy,
+                    onclick: () => BossModExtensionSettingsDialog.open({
+                        extensionId: item.id, extensionName: item.name, onChanged: () => { void load(false); },
+                    }),
+                }, COPY.settings));
+            }
 
+            if (item.enabled && item.service_error) {
+                rows.push(h('p', { class: 'market-failed', role: 'alert' }, item.service_error));
+            }
+            if (item.enabled && item.panel) rows.push(...panelControls(item, busy));
             if (item.enabled && item.model_provider) rows.push(...providerControls(item, busy));
             const excluded = item.excluded_agents || [];
             if (item.enabled && excluded.length) {

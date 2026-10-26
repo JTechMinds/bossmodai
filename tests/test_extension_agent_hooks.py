@@ -329,7 +329,7 @@ def _write_extension(root: Path, ext_id: str, *, live_view: bool = False) -> Ext
         manifest["live_view"] = {"label": "View", "icon": "monitor"}
     (folder / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (folder / "__init__.py").write_text(
-        "class _Ext:\n    def shutdown(self):\n        pass\ndef create(ctx):\n    return _Ext()\n", encoding="utf-8",
+        "class _Ext:\n    def handle(self, ctx, parsed, body):\n        return None\n    def shutdown(self):\n        pass\ndef create(ctx):\n    return _Ext()\n", encoding="utf-8",
     )
     return discover(root, CORE_COMMAND_NAMES).get(ext_id)
 

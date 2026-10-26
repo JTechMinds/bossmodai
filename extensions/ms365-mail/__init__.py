@@ -18,7 +18,7 @@ import httpx
 
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.extensions.contract import (
-    AgentConfigError,
+    ConfigError,
     AgentViewColumn,
     AgentViewError,
     AgentViewItem,
@@ -172,7 +172,7 @@ class Ms365MailExtension:
             ``Connected to <mailbox>``.
 
         Raises:
-            AgentConfigError: The token request or the inbox read failed; the
+            ConfigError: The token request or the inbox read failed; the
                 message is a plain sentence from ``friendly_config_error``,
                 shown to the operator as it is.
         """
@@ -182,7 +182,7 @@ class Ms365MailExtension:
         except (GraphAuthError, GraphUnreachable, GraphHttpError) as exc:
             codes = f" (error_codes {list(exc.codes)})" if isinstance(exc, GraphAuthError) and exc.codes else ""
             logger.warning("Verifying mailbox %s failed: %s: %s%s", mailbox.mailbox, type(exc).__name__, exc, codes)
-            raise AgentConfigError(friendly_config_error(exc)) from exc
+            raise ConfigError(friendly_config_error(exc)) from exc
         return f"Connected to {mailbox.mailbox}"
 
     def agent_view(self, agent_id: str, *, view: str, skip: int, top: int) -> AgentViewPage:

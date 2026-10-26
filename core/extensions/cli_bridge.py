@@ -1,6 +1,7 @@
 """BossMod AI — extension commands in the BossMod CLI.
 
-Each valid extension adds one virtual command (its ``command.name``). The
+Each valid extension that declares a ``command`` adds one virtual command
+(its ``command.name``); an extension without one adds nothing here. The
 handler is registered at import from the static discovery, so the command is
 always known to the parser and policy (virtual commands are auto-allowed);
 whether it RUNS is decided per call from the live enabled set. A disabled
@@ -17,8 +18,9 @@ names an extension's commands.
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
+from core.extensions.contract import SupportsCommand
 from core.extensions.loader import ExtensionLoadError, load_extension
 from core.extensions.registry import Discovery, ExtensionEntry, enabled_ids, get_discovery, is_enabled
 
@@ -37,8 +39,13 @@ CliHandler = Callable[["CliExecutionContext", "ParsedCliCommand", "str | None"],
 EXTENSIONS_CATEGORY = "extensions"
 
 
+def _command_entries(found: Discovery) -> tuple[ExtensionEntry, ...]:
+    """Return the valid entries that declare a CLI command, in discovery order."""
+    return tuple(entry for entry in found.valid_entries() if entry.manifest.command is not None)
+
+
 def extension_handlers(discovery: Discovery | None = None) -> dict[str, CliHandler]:
-    """Return one CLI handler per valid extension, keyed by command name.
+    """Return one CLI handler per valid command-declaring extension, keyed by command name.
 
     Args:
         discovery: Defaults to this process's discovery.
@@ -47,13 +54,13 @@ def extension_handlers(discovery: Discovery | None = None) -> dict[str, CliHandl
         ``{command name: handler}``.
     """
     found = discovery if discovery is not None else get_discovery()
-    return {entry.manifest.command.name: _handler_for(entry) for entry in found.valid_entries()}
+    return {entry.manifest.command.name: _handler_for(entry) for entry in _command_entries(found)}
 
 
 def extension_command_meta(discovery: Discovery | None = None) -> dict[str, VirtualCommandMeta]:
     """Return help metadata for every valid extension's command, enabled or not."""
     found = discovery if discovery is not None else get_discovery()
-    return {entry.manifest.command.name: _meta_for(entry) for entry in found.valid_entries()}
+    return {entry.manifest.command.name: _meta_for(entry) for entry in _command_entries(found)}
 
 
 def enabled_extension_command_meta(discovery: Discovery | None = None) -> dict[str, VirtualCommandMeta]:
@@ -67,7 +74,7 @@ def enabled_extension_command_meta(discovery: Discovery | None = None) -> dict[s
     enabled = enabled_ids()
     return {
         entry.manifest.command.name: _meta_for(entry)
-        for entry in found.valid_entries()
+        for entry in _command_entries(found)
         if entry.id in enabled
     }
 
@@ -130,7 +137,9 @@ def _handler_for(entry: ExtensionEntry) -> CliHandler:
             instance = load_extension(entry)
         except ExtensionLoadError as exc:
             return error_result(parsed.raw, f"EXTENSION_LOAD_FAILED: {exc}", cwd=ctx.cwd)
-        result = instance.handle(ctx, parsed, body)
+        # The loader refuses an instance without handle() when the manifest
+        # declares a command, and this handler exists only for such entries.
+        result = cast(SupportsCommand, instance).handle(ctx, parsed, body)
         return replace(result, blocks_retry=True) if blocks_retry(parsed, no_retry) else result
 
     def handler(ctx: CliExecutionContext, parsed: ParsedCliCommand, body: str | None) -> BossModCliResult:

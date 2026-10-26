@@ -1,0 +1,16 @@
+/* The sign-in page for devices on the local network. Colours, radii and the
+   field and button looks come from the app's own sheets (tokens.css,
+   controls.css); this adds only the page's layout. */
+.lan-login {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  max-width: 360px;
+  margin: 0 auto;
+  padding: 48px 16px;
+}
+
+.lan-login-title { margin: 0; font-size: 20px; font-weight: 600; }
+
+.lan-login-form { display: flex; flex-direction: column; gap: 12px; }
+.lan-login-form .btn { align-self: flex-start; }

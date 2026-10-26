@@ -3,7 +3,7 @@
 ``DesktopDefaults`` is the manifest's ``defaults`` block, validated when the
 extension is created. ``DesktopSettings`` is what one desktop is started with
 (screen, memory and CPU limits); it is read from the agent's stored
-``agent_config`` through the host's ``agent_config_value``, so a field added
+``agent_config`` through the host's ``config_value``, so a field added
 to the manifest later reads as its declared default.
 """
 
@@ -14,7 +14,7 @@ from typing import Mapping
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.extensions.manifest import AgentConfigSpec, agent_config_value
+from core.extensions.manifest import ConfigSpec, config_value
 
 # The agent_config field keys (manifest.json).
 FIELD_SCREEN_WIDTH = "screen_width"
@@ -95,7 +95,7 @@ class DesktopSettings:
     cpus: int
 
 
-def settings_from_config(spec: AgentConfigSpec, stored: Mapping[str, str]) -> DesktopSettings:
+def settings_from_config(spec: ConfigSpec, stored: Mapping[str, str]) -> DesktopSettings:
     """Read an agent's desktop settings from its stored config.
 
     Args:
@@ -116,7 +116,7 @@ def settings_from_config(spec: AgentConfigSpec, stored: Mapping[str, str]) -> De
     )
 
 
-def reminder_minutes_from_config(spec: AgentConfigSpec, stored: Mapping[str, str]) -> int:
+def reminder_minutes_from_config(spec: ConfigSpec, stored: Mapping[str, str]) -> int:
     """Read an agent's power-down reminder, in minutes (0 = never).
 
     Raises:
@@ -125,8 +125,8 @@ def reminder_minutes_from_config(spec: AgentConfigSpec, stored: Mapping[str, str
     return _int_field(spec, stored, FIELD_REMINDER_MINUTES)
 
 
-def _int_field(spec: AgentConfigSpec, stored: Mapping[str, str], key: str) -> int:
-    raw = agent_config_value(spec, stored, key)
+def _int_field(spec: ConfigSpec, stored: Mapping[str, str], key: str) -> int:
+    raw = config_value(spec, stored, key)
     try:
         return int(raw)
     except ValueError:

@@ -24,7 +24,7 @@ from typing import Callable, Mapping
 
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.extensions.contract import (
-    AgentConfigError,
+    ConfigError,
     ExtensionContext,
     LiveViewFact,
     LiveViewItem,
@@ -197,18 +197,18 @@ class VirtualDesktopExtension:
             e.g. ``Ready: 1280×800 screen, up to 2048 MB of 16000 MB and 2 of 4 CPUs.``
 
         Raises:
-            AgentConfigError: Docker cannot be reached, or the specs exceed the host.
+            ConfigError: Docker cannot be reached, or the specs exceed the host.
         """
         settings = settings_from_config(self._spec, values)
         try:
             capacity = self._host.capacity()
         except (DockerUnavailable, DesktopActionError) as exc:
-            raise AgentConfigError(str(exc)) from exc
+            raise ConfigError(str(exc)) from exc
         if settings.cpus > capacity.cpus:
             noun = "CPU" if capacity.cpus == 1 else "CPUs"
-            raise AgentConfigError(f"This computer has {capacity.cpus} {noun}; choose {capacity.cpus} or fewer.")
+            raise ConfigError(f"This computer has {capacity.cpus} {noun}; choose {capacity.cpus} or fewer.")
         if settings.memory_mb > capacity.memory_mb:
-            raise AgentConfigError(f"This computer has {capacity.memory_mb} MB of memory; choose {capacity.memory_mb} MB or less.")
+            raise ConfigError(f"This computer has {capacity.memory_mb} MB of memory; choose {capacity.memory_mb} MB or less.")
         return (
             f"Ready: {settings.width}×{settings.height} screen, up to {settings.memory_mb} MB of "
             f"{capacity.memory_mb} MB and {settings.cpus} of {capacity.cpus} CPUs."

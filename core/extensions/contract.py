@@ -24,6 +24,17 @@ refuses an instance that lacks the Protocol its manifest declares:
   ``extension_event`` trigger);
 - ``model_provider`` → :class:`core.extensions.model_provider.SupportsModelProvider`
   (operator controls and model calls);
+- ``command`` → :class:`SupportsCommand` (the extension's CLI namespace for
+  agents; an extension without one gives agents nothing);
+- ``setup.required`` → :class:`SupportsSetup` (the one-click download);
+- ``service`` → :class:`SupportsService` (something long-lived the app process
+  runs while the extension is on, started and stopped by
+  ``core.extensions.service_host``);
+- ``panel`` → :class:`SupportsPanel` (a status and actions the card renders,
+  see ``core.extensions.panel``);
+- ``settings`` → :class:`SupportsSettings` (extension-wide values the host
+  stores wrapped at rest and verifies through the extension on save; the
+  extension reads them only through ``ExtensionContext.read_settings``);
 - :class:`SupportsPromptState`, :class:`SupportsAgentConfigChanged` and
   :class:`SupportsAgentReconcile` need no manifest flag (the last two are
   called in the runtime worker by ``core.extensions.agent_hooks``).
@@ -34,14 +45,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Literal, Mapping, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Literal, Mapping, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
 from core.extensions.manifest import ExtensionManifest
 from core.extensions.model_provider import ProviderServices
+from core.extensions.panel import PanelStatus
 
 if TYPE_CHECKING:
+    from starlette.types import ASGIApp
+
     from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
     from core.models import Agent
 
@@ -64,6 +78,15 @@ class SetupError(Exception):
     """Setup failed; the message is shown to the operator verbatim."""
 
 
+def _not_supplied(name: str) -> Callable[..., Any]:
+    """Return a stand-in for a host service the context was built without; calling it raises."""
+
+    def missing(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError(f"ExtensionContext.{name} was not supplied by the host")
+
+    return missing
+
+
 @dataclass(frozen=True)
 class ExtensionContext:
     """What the host hands an extension's ``create(ctx)``.
@@ -80,6 +103,15 @@ class ExtensionContext:
             runs agents' commands. Only there may an extension treat state
             left by an earlier process as dead (the app process shares the
             data dir with a live worker).
+        model_provider: Host services for a ``model_provider`` extension;
+            ``None`` for any other.
+        read_settings: Returns every declared ``settings`` field's stored
+            value (decrypted), else its manifest default. Raises ``KeyError``
+            for a field with neither, and ``ValueError`` on a corrupt stored
+            row. Bound by the loader so the extension never imports ``db``.
+        seal: Wraps a string with the host's at-rest secret wrap, so an
+            extension can protect a secret it keeps in its own data dir.
+        unseal: Reverses ``seal``.
     """
 
     manifest: ExtensionManifest
@@ -90,10 +122,28 @@ class ExtensionContext:
     # Only supplied to a manifest declaring model_provider. These callbacks
     # are scoped to that extension; no database access is handed to it.
     model_provider: ProviderServices | None = None
+    # Host-bound by the loader for every extension. The defaults raise, so a
+    # context built by hand without them fails loudly if one is used.
+    read_settings: Callable[[], dict[str, str]] = _not_supplied("read_settings")
+    seal: Callable[[str], str] = _not_supplied("seal")
+    unseal: Callable[[str], str] = _not_supplied("unseal")
 
 
 class Extension(Protocol):
-    """What ``create(ctx)`` must return."""
+    """What ``create(ctx)`` must return: the one method every extension has.
+
+    Everything else is an optional capability the manifest declares (see the
+    module docstring); the loader refuses an instance that lacks one.
+    """
+
+    def shutdown(self) -> None:
+        """Release everything the extension holds (browsers, threads)."""
+        ...
+
+
+@runtime_checkable
+class SupportsCommand(Protocol):
+    """Optional: an extension whose manifest has a ``command`` block implements this."""
 
     def handle(
         self,
@@ -104,9 +154,10 @@ class Extension(Protocol):
         """Run one command in the extension's namespace for one agent."""
         ...
 
-    def setup_status(self) -> SetupStatus:
-        """Return the current setup state (read from the data dir's markers)."""
-        ...
+
+@runtime_checkable
+class SupportsSetup(Protocol):
+    """Optional: an extension whose manifest sets ``setup.required`` implements this."""
 
     def run_setup(self, log_path: Path) -> None:
         """Perform setup, blocking, writing progress to ``log_path``.
@@ -116,8 +167,64 @@ class Extension(Protocol):
         """
         ...
 
-    def shutdown(self) -> None:
-        """Release everything the extension holds (browsers, threads)."""
+
+class ServiceStartError(Exception):
+    """A service could not start; the message is shown to the operator verbatim.
+
+    Raise it for an expected, explainable failure (a port already in use).
+    Any other exception is logged by the host with its traceback and shown
+    as a generic "could not start" message.
+    """
+
+
+class PanelError(Exception):
+    """A panel read or action failed; the message is shown to the operator verbatim."""
+
+
+@runtime_checkable
+class SupportsService(Protocol):
+    """Optional: an extension whose manifest sets ``service`` implements this.
+
+    Called only in the app process, on its event loop, by
+    ``core.extensions.service_host``. ``create(ctx)`` stays inert; nothing
+    runs until ``start_service``.
+    """
+
+    async def start_service(self, app: ASGIApp) -> None:
+        """Start serving; return once it is running.
+
+        Args:
+            app: The app process's ASGI application, for an extension that
+                exposes it elsewhere.
+
+        Raises:
+            ServiceStartError: It could not start (the operator-safe reason).
+        """
+        ...
+
+    async def stop_service(self) -> None:
+        """Stop serving and release what ``start_service`` took. Idempotent."""
+        ...
+
+
+@runtime_checkable
+class SupportsPanel(Protocol):
+    """Optional: an extension whose manifest sets ``panel`` implements this."""
+
+    def panel(self) -> PanelStatus:
+        """Return what the card shows now. Cheap: local state only, no network."""
+        ...
+
+    def panel_action(self, key: str, values: Mapping[str, str]) -> None:
+        """Run one of the actions the last :meth:`panel` offered.
+
+        Args:
+            key: The chosen :class:`core.extensions.panel.PanelAction` key.
+            values: That action's ``values``, unchanged.
+
+        Raises:
+            PanelError: The action failed (the operator-safe reason).
+        """
         ...
 
 
@@ -244,8 +351,8 @@ class SupportsAgentReconcile(Protocol):
         ...
 
 
-class AgentConfigError(Exception):
-    """A per-agent config failed verification; the message is shown to the operator verbatim."""
+class ConfigError(Exception):
+    """A config (per-agent or extension-wide) failed verification; the message is shown to the operator verbatim."""
 
 
 class AgentViewError(Exception):
@@ -280,7 +387,31 @@ class SupportsAgentConfig(Protocol):
             A one-line success detail, e.g. ``Connected to reports@contoso.com``.
 
         Raises:
-            AgentConfigError: Verification failed; nothing is stored.
+            ConfigError: Verification failed; nothing is stored.
+        """
+        ...
+
+
+@runtime_checkable
+class SupportsSettings(Protocol):
+    """Optional: an extension whose manifest has a ``settings`` block implements this."""
+
+    def verify_settings(self, values: Mapping[str, str]) -> str:
+        """Check candidate values before they are stored (the verify-before-store contract).
+
+        Called by the app process on save, off the request loop, only while
+        the extension is on (a disabled extension is never imported, so its
+        values are stored after the host's schema checks alone).
+
+        Args:
+            values: Every declared field's value (a blank secret already
+                resolved to the stored one by the host).
+
+        Returns:
+            A one-line success detail, e.g. ``Port 38473 is available``.
+
+        Raises:
+            ConfigError: Verification failed; nothing is stored.
         """
         ...
 

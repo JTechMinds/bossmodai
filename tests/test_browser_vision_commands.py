@@ -1029,6 +1029,12 @@ def test_the_loader_passes_the_worker_flag(monkeypatch: pytest.MonkeyPatch) -> N
     seen: list[bool] = []
 
     class _Instance:
+        def handle(self, ctx, parsed, body):
+            return None
+
+        def run_setup(self, log_path):
+            return None
+
         def live_view(self):
             return []
 

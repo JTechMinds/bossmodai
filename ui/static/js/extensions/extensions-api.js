@@ -249,8 +249,67 @@ const BossModExtensionsApi = (() => {
         return res.json();
     }
 
+    /**
+     * Read an enabled panel extension's status, or run one of its actions and
+     * read the refreshed status.
+     *
+     * @param {string} id
+     * @param {string|null} [action]  An action `key` from the last status; omit to read.
+     * @param {Object<string, string>} [values]  That action's `values`, unchanged.
+     * @returns {Promise<{message: string, error: string|null,
+     *   facts: Array<{label: string, value: string, copyable: boolean, secret: boolean}>,
+     *   actions: Array<{key: string, label: string, values: Object<string, string>}>}>}
+     * @throws {Error} `code` is `EXTENSION_DISABLED`, `NO_PANEL`,
+     *   `INVALID_EXTENSION` or `PANEL_FAILED` (the extension's own sentence).
+     */
+    async function panelRequest(id, action = null, values = {}) {
+        const base = `/api/extensions/${enc(id)}/panel`;
+        const options = { method: action === null ? 'GET' : 'POST', cache: 'no-store' };
+        if (action !== null) {
+            options.headers = { 'Content-Type': 'application/json' };
+            options.body = JSON.stringify({ action, values });
+        }
+        const res = await apiFetch(action === null ? base : `${base}/actions`, options);
+        if (!res.ok) throw await failure(res, 'Couldn’t update this extension.');
+        return res.json();
+    }
+
+    /**
+     * An extension's own settings; secret fields carry only `set`.
+     *
+     * @param {string} id
+     * @returns {Promise<object>} `{label, help, configured, fields}`.
+     * @throws {Error} `code` is `NO_SETTINGS` or `INVALID_EXTENSION`.
+     */
+    async function getSettings(id) {
+        const res = await apiFetch(`/api/extensions/${enc(id)}/settings`, { cache: 'no-store' });
+        if (!res.ok) throw await failure(res, 'Couldn’t load these settings.');
+        return res.json();
+    }
+
+    /**
+     * Store an extension's own settings. While the extension is on they are
+     * verified first and applied to it. A blank secret keeps the stored one.
+     *
+     * @param {string} id
+     * @param {Object<string, string>} values  Every field, secrets as typed ("" = keep).
+     * @returns {Promise<object>} The GET shape plus `verified` (a sentence, or
+     *   null when the extension was off and nothing was verified).
+     * @throws {Error} `code` is `CONFIG_INVALID`, `CONFIG_VERIFY_FAILED` or
+     *   `SERVICE_START_FAILED` (stored, but the running extension could not apply them).
+     */
+    async function putSettings(id, values) {
+        const res = await apiFetch(`/api/extensions/${enc(id)}/settings`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ values }),
+        });
+        if (!res.ok) throw await failure(res, 'Couldn’t save these settings.');
+        return res.json();
+    }
+
     return {
-        providerRequest, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
+        providerRequest, panelRequest, getSettings, putSettings, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
         extensionAgents, agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
     };
 })();

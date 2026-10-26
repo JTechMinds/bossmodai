@@ -1,4 +1,4 @@
-"""Extensions: list, enable/disable, one-click setup, per-agent config and view.
+"""Extensions: list, enable/disable, one-click setup, per-agent config and view, settings and panel.
 
 The enabled set is the ``extensions_enabled`` setting; this is the only route
 that writes it, because enabling needs the extension to be valid and set up.
@@ -11,12 +11,17 @@ at rest, and verified through the extension before it is stored; the worker
 is then told (``extension_config_changed``) so the extension applies it. Secret
 fields never leave the backend: reads say only whether one is set. Calls
 into an extension that may block on the network run in a worker thread.
+
+Extension-wide settings (manifest ``settings``) use the same field rules
+(``core.extensions.config_values``) and are editable whether or not the
+extension is on. A ``service`` extension is started and stopped in this
+process by ``core.extensions.service_host`` on the enable toggle; a ``panel``
+extension's status and actions are served generically under ``/panel``.
 """
 
 from __future__ import annotations
 
 import asyncio
-import re
 import urllib.parse
 import urllib.request
 from datetime import datetime, timezone
@@ -31,19 +36,24 @@ from pydantic import BaseModel, ConfigDict, Field
 import db
 from api.routes._shared import _open_in_file_explorer
 from api.websocket import manager
+from core.extensions.config_values import ConfigValueError, masked_fields, resolve_values
 from core.extensions.contract import (
-    AgentConfigError,
     AgentViewError,
+    ConfigError,
     Extension,
     LiveViewItem,
+    PanelError,
     SupportsAgentConfig,
     SupportsAgentView,
     SupportsLiveView,
+    SupportsPanel,
+    SupportsSettings,
 )
-from core.extensions.manifest import AgentConfigField, AgentConfigSpec, agent_config_value
+from core.extensions.manifest import ConfigSpec
 from core.extensions.loader import ExtensionLoadError, contract_failure, load_extension
 from core.extensions.paths import extension_data_dir
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery, set_enabled
+from core.extensions.service_host import extension_services
 from core.extensions.setup_runner import SetupAlreadyRunning, entry_setup_status, start_setup
 from core.llm.routing import agent_model
 from core.models import Agent
@@ -77,8 +87,21 @@ class AgentConfigBody(BaseModel):
     values: dict[str, str]
 
 
-# An address shape check, not RFC validation: the service is the authority.
-_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+class SettingsBody(BaseModel):
+    """``PUT /extensions/{id}/settings`` body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    values: dict[str, str]
+
+
+class PanelActionBody(BaseModel):
+    """``POST /extensions/{id}/panel/actions`` body."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 def _conflict(code: str, message: str) -> HTTPException:
@@ -133,6 +156,9 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
             "live_view": None,
             "agent_config": None,
             "agent_view": None,
+            "panel": False,
+            "settings": None,
+            "service_error": None,
             "setup": None,
             "setup_label": None,
             "excluded_agents": [],
@@ -146,7 +172,10 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
         "name": manifest.name,
         "version": manifest.version,
         "description": manifest.description,
-        "command": {"name": manifest.command.name, "summary": manifest.command.summary},
+        "command": (
+            {"name": manifest.command.name, "summary": manifest.command.summary}
+            if manifest.command is not None else None
+        ),
         "enabled": valid and entry.id in enabled,
         "valid": valid,
         "invalid_reason": entry.invalid_reason or broken,
@@ -160,6 +189,9 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
             "label": manifest.agent_view.label,
             "views": [{"key": view.key, "label": view.label} for view in manifest.agent_view.views],
         } if manifest.agent_view else None,
+        "panel": manifest.panel,
+        "settings": {"label": manifest.settings.label} if manifest.settings else None,
+        "service_error": extension_services.error(entry.id),
         "setup": entry_setup_status(entry).model_dump(),
         "setup_label": manifest.setup.label,
         "excluded_agents": _excluded_agents() if requires_image and valid else [],
@@ -182,9 +214,15 @@ async def set_extension_enabled(ext_id: str, body: EnabledBody) -> dict[str, Any
     directions: off releases what the extension held (browsers, desktops)
     promptly; on is harmless (a reconcile is idempotent).
 
+    A ``service`` extension is started or stopped in this process right
+    away. When turning one on fails to start it, the flag is rolled back, so
+    the switch never shows a state that is not true.
+
     Raises:
         HTTPException: 404 unknown id; 409 ``INVALID_EXTENSION``; 409
-            ``SETUP_REQUIRED`` when enabling before setup is ready.
+            ``SETUP_REQUIRED`` when enabling before setup is ready; 409
+            ``SERVICE_START_FAILED`` (with the reason) when the service
+            could not start.
     """
     entry = _entry(ext_id)
     if not entry.valid:
@@ -200,10 +238,17 @@ async def set_extension_enabled(ext_id: str, body: EnabledBody) -> dict[str, Any
             await asyncio.to_thread(instance.shutdown)
             unload_extension(ext_id)
     set_enabled(ext_id, body.enabled)
+    failed = await extension_services.reconcile()
+    start_error = failed.get(ext_id) if body.enabled else None
+    if start_error is not None:
+        set_enabled(ext_id, False)
+        await extension_services.reconcile()
     runtime_services.extensions_reconcile()
     # Turning a live-view extension off empties its live view and on again
     # may bring one back; open chat headers re-read /live on this nudge.
     await manager.broadcast_extension_live(ext_id, None)
+    if start_error is not None:
+        raise _conflict("SERVICE_START_FAILED", start_error)
     return _item(entry, enabled_ids())
 
 
@@ -371,7 +416,7 @@ def _enabled_entry(ext_id: str) -> ExtensionEntry:
     return entry
 
 
-def _config_spec(entry: ExtensionEntry) -> AgentConfigSpec:
+def _config_spec(entry: ExtensionEntry) -> ConfigSpec:
     spec = entry.manifest.agent_config
     if spec is None:
         raise _conflict("NO_AGENT_CONFIG", f"{entry.manifest.name} has no per-agent settings.")
@@ -385,95 +430,40 @@ def _load(entry: ExtensionEntry) -> Extension:
         raise _conflict("INVALID_EXTENSION", str(exc)) from exc
 
 
-def _summary(spec: AgentConfigSpec, stored: dict[str, str] | None) -> str | None:
+def _summary(spec: ConfigSpec, stored: dict[str, str] | None) -> str | None:
     if stored is None:
         return None
     field = next((item for item in spec.fields if item.summary), None)
     return None if field is None else stored.get(field.key)
 
 
-def _config_payload(entry: ExtensionEntry, spec: AgentConfigSpec, agent_id: str) -> dict[str, Any]:
+def _config_payload(entry: ExtensionEntry, spec: ConfigSpec, agent_id: str) -> dict[str, Any]:
     """The config as the UI sees it: secrets only say whether they are set."""
     stored = db.get_extension_agent_config(entry.id, agent_id)
     updated = db.extension_agent_config_updated_at(entry.id, agent_id)
-    fields = []
-    for item in spec.fields:
-        field: dict[str, Any] = {"key": item.key, "label": item.label, "kind": item.kind, "required": item.required}
-        if item.kind == "secret":
-            field["set"] = bool(stored and stored.get(item.key))
-        elif item.kind == "number":
-            field.update({"min": item.min, "max": item.max, "default": item.default})
-            # A config saved before the field existed reads as its default.
-            field["value"] = agent_config_value(spec, stored, item.key) if stored else item.default
-        else:
-            field["value"] = stored.get(item.key, "") if stored else ""
-        fields.append(field)
     return {
         "label": spec.label,
         "help": spec.help,
         "configured": stored is not None,
         "updated_at": updated.isoformat() if updated is not None else None,
-        "fields": fields,
+        "fields": masked_fields(spec, stored),
     }
 
 
 def _resolve_values(
-    spec: AgentConfigSpec,
+    spec: ConfigSpec,
     submitted: dict[str, str],
     stored: dict[str, str] | None,
 ) -> dict[str, str]:
-    """Validate a submitted config and fill blank secrets from the stored one.
-
-    A blank secret while a config is stored means "keep the stored secret"
-    (the dialog says so); with nothing stored it is a missing value.
+    """Validate a submitted config (see ``config_values.resolve_values``) as an HTTP refusal.
 
     Raises:
         HTTPException: 422 ``CONFIG_INVALID`` naming the first problem.
     """
-    declared = {item.key for item in spec.fields}
-    unknown = sorted(set(submitted) - declared)
-    if unknown:
-        raise _invalid("CONFIG_INVALID", f"Unknown field: {', '.join(unknown)}")
-    resolved: dict[str, str] = {}
-    for item in spec.fields:
-        value = submitted.get(item.key, "").strip()
-        if item.kind == "secret" and not value and stored is not None and stored.get(item.key):
-            value = stored[item.key]
-        if item.required and not value:
-            raise _invalid("CONFIG_INVALID", f"{item.label} is required.")
-        if item.kind == "email" and value and not _EMAIL_RE.match(value):
-            raise _invalid("CONFIG_INVALID", f"{item.label} is not an email address.")
-        if item.kind == "number":
-            value = _number_value(item, value)
-        resolved[item.key] = value
-    return resolved
-
-
-def _number_value(item: AgentConfigField, value: str) -> str:
-    """A number field's value to store: blank is its default, else a whole number in bounds.
-
-    Raises:
-        HTTPException: 422 ``CONFIG_INVALID`` naming the allowed range.
-    """
-    if not value:
-        return item.default
     try:
-        number = int(value)
-    except ValueError:
-        number = None
-    if number is None or (item.min is not None and number < item.min) or (item.max is not None and number > item.max):
-        raise _invalid("CONFIG_INVALID", f"{item.label} must be a whole number{_range_text(item)}.")
-    return str(number)
-
-
-def _range_text(item: AgentConfigField) -> str:
-    if item.min is not None and item.max is not None:
-        return f" from {item.min} to {item.max}"
-    if item.min is not None:
-        return f" of at least {item.min}"
-    if item.max is not None:
-        return f" of at most {item.max}"
-    return ""
+        return resolve_values(spec, submitted, stored)
+    except ConfigValueError as exc:
+        raise _invalid("CONFIG_INVALID", str(exc)) from exc
 
 
 @router.get("/agents/{agent_id}/extensions")
@@ -623,7 +613,7 @@ async def put_agent_config(ext_id: str, agent_id: str, body: AgentConfigBody) ->
         raise _conflict("INVALID_EXTENSION", "the extension has no verify_agent_config() method")
     try:
         verified = await asyncio.to_thread(instance.verify_agent_config, values)
-    except AgentConfigError as exc:
+    except ConfigError as exc:
         raise _invalid("CONFIG_VERIFY_FAILED", str(exc)) from exc
     db.set_extension_agent_config(entry.id, agent_id, values)
     runtime_services.extension_config_changed(entry.id, agent_id)
@@ -717,6 +707,134 @@ async def agent_view_item(
     except AgentViewError as exc:
         raise _view_failed(exc) from exc
     return item.model_dump()
+
+
+# ─── extension-wide settings and panel ───
+
+
+def _settings_entry(ext_id: str) -> ExtensionEntry:
+    """The entry for a settings route: known, valid, contract intact, declaring ``settings``.
+
+    The extension may be off: settings are editable before turning it on.
+
+    Raises:
+        HTTPException: 404 unknown; 409 ``INVALID_EXTENSION``; 409
+            ``NO_SETTINGS``.
+    """
+    entry = _entry(ext_id)
+    if not entry.valid:
+        raise _conflict("INVALID_EXTENSION", entry.invalid_reason or "This extension is invalid.")
+    broken = contract_failure(entry.id)
+    if broken is not None:
+        raise _conflict("INVALID_EXTENSION", broken)
+    if entry.manifest.settings is None:
+        raise _conflict("NO_SETTINGS", f"{entry.manifest.name} has no settings.")
+    return entry
+
+
+def _settings_payload(entry: ExtensionEntry) -> dict[str, Any]:
+    """The settings as the UI sees them: secrets only say whether they are set."""
+    spec = entry.manifest.settings
+    stored = db.get_extension_settings(entry.id)
+    return {
+        "label": spec.label,
+        "help": spec.help,
+        "configured": stored is not None,
+        "fields": masked_fields(spec, stored),
+    }
+
+
+@router.get("/extensions/{ext_id}/settings")
+async def get_extension_settings(ext_id: str) -> dict[str, Any]:
+    """One extension's own settings, secrets masked as ``{"set": bool}``.
+
+    Raises:
+        HTTPException: 404 unknown extension; 409 ``INVALID_EXTENSION`` /
+            ``NO_SETTINGS``.
+    """
+    return _settings_payload(_settings_entry(ext_id))
+
+
+@router.put("/extensions/{ext_id}/settings")
+async def put_extension_settings(ext_id: str, body: SettingsBody) -> dict[str, Any]:
+    """Validate and store one extension's own settings.
+
+    While the extension is **off** the values are checked against the
+    manifest's field rules and stored without importing the extension. While
+    it is **on**, the extension's ``verify_settings`` runs first and nothing
+    is stored if it refuses. A running ``service`` is then restarted so it
+    uses the new values.
+
+    Returns:
+        The GET shape plus ``verified``: the extension's success detail, or
+        ``null`` when it was off and nothing was verified.
+
+    Raises:
+        HTTPException: 404 unknown extension; 409 ``INVALID_EXTENSION`` /
+            ``NO_SETTINGS``; 422 ``CONFIG_INVALID`` (unknown or missing keys,
+            a bad number); 422 ``CONFIG_VERIFY_FAILED`` with the extension's
+            message; 409 ``SERVICE_START_FAILED`` when the restart failed
+            (the values are stored; the service is stopped).
+    """
+    entry = _settings_entry(ext_id)
+    values = _resolve_values(entry.manifest.settings, body.values, db.get_extension_settings(entry.id))
+    on = ext_id in enabled_ids()
+    verified: str | None = None
+    if on:
+        instance = _load(entry)
+        if not isinstance(instance, SupportsSettings):
+            raise _conflict("INVALID_EXTENSION", "the extension has no verify_settings() method")
+        try:
+            verified = await asyncio.to_thread(instance.verify_settings, values)
+        except ConfigError as exc:
+            raise _invalid("CONFIG_VERIFY_FAILED", str(exc)) from exc
+    db.set_extension_settings(entry.id, values)
+    if on and entry.manifest.service:
+        restart_error = await extension_services.restart(ext_id)
+        if restart_error is not None:
+            raise _conflict("SERVICE_START_FAILED", restart_error)
+    return {**_settings_payload(entry), "verified": verified}
+
+
+async def _panel_call(ext_id: str, action: str | None = None, values: dict[str, str] | None = None):
+    """Run an optional panel action, then read the panel, for an enabled panel extension.
+
+    Raises:
+        HTTPException: 404 unknown; 409 ``INVALID_EXTENSION`` /
+            ``EXTENSION_DISABLED`` / ``NO_PANEL``; 409 ``PANEL_FAILED`` with
+            the extension's message.
+    """
+    entry = _enabled_entry(ext_id)
+    if not entry.manifest.panel:
+        raise _conflict("NO_PANEL", f"{entry.manifest.name} has no panel.")
+    instance = _load(entry)
+    if not isinstance(instance, SupportsPanel):
+        raise _conflict("INVALID_EXTENSION", "the extension has no panel() method")
+
+    def run():
+        if action is not None:
+            instance.panel_action(action, values or {})
+        return instance.panel()
+
+    try:
+        status = await asyncio.to_thread(run)
+    except PanelError as exc:
+        raise _conflict("PANEL_FAILED", str(exc)) from exc
+    if action is not None:
+        await manager.broadcast_operator_invalidate(["extensions"])
+    return status
+
+
+@router.get("/extensions/{ext_id}/panel")
+async def extension_panel(ext_id: str):
+    """Read what an enabled panel extension's card shows (message, error, facts, actions)."""
+    return await _panel_call(ext_id)
+
+
+@router.post("/extensions/{ext_id}/panel/actions")
+async def extension_panel_action(ext_id: str, body: PanelActionBody):
+    """Run one panel action the extension offered, then return the refreshed panel."""
+    return await _panel_call(ext_id, body.action, body.values)
 
 
 class ProviderActionBody(BaseModel):
