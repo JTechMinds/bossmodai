@@ -17,7 +17,7 @@ const BossModTasksColumns = (() => {
      * `delegated` is Working: it is live work that has been handed to someone
      * else. The card carries a visible marker so the column does not imply the
      * owner is the one doing it. The engine's own constants do not settle this
-     * — OPEN_TASK_STATUSES names six and TERMINAL_TASK_STATUSES four, and
+     * — OPEN_TASK_STATUSES names seven and TERMINAL_TASK_STATUSES four, and
      * `delegated` is in neither.
      *
      * `empty` is each column's own copy for when it holds nothing. Done's is
@@ -25,7 +25,7 @@ const BossModTasksColumns = (() => {
      * finished" is only true of the window the column is showing.
      */
     const COLUMNS = Object.freeze([
-        { id: 'backlog', label: 'Backlog',   statuses: ['pending'],
+        { id: 'backlog', label: 'Backlog',   statuses: ['pending', 'held'],
             empty: 'Nothing in the backlog' },
         { id: 'working', label: 'Working',   statuses: ['accepted', 'active', 'waiting', 'delegated'],
             empty: 'Nobody is working right now' },
@@ -59,6 +59,7 @@ const BossModTasksColumns = (() => {
      */
     const STATUS_LABELS = Object.freeze({
         pending: 'Pending',
+        held: 'On hold',
         accepted: 'Accepted',
         active: 'Active',
         waiting: 'Waiting',
@@ -78,6 +79,7 @@ const BossModTasksColumns = (() => {
      */
     const STATUS_VERBS = Object.freeze({
         pending: 'moved it to the backlog',
+        held: 'put it on hold',
         accepted: 'accepted it',
         active: 'started work',
         waiting: 'is waiting',

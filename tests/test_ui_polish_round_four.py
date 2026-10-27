@@ -237,6 +237,8 @@ CONTEXT_MODULES = [
     JS / "places" / "tasks" / "task-edit-files.js",
     JS / "places" / "tasks" / "task-edit-mode.js",
     JS / "places" / "tasks" / "tasks-complete.js",
+    JS / "places" / "tasks" / "tasks-hold.js",
+    JS / "places" / "tasks" / "tasks-release.js",
     JS / "places" / "tasks" / "task-actions.js",
     JS / "places" / "tasks" / "task-layers.js",
     JS / "context" / "desk-task-opener.js",

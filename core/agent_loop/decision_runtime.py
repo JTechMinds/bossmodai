@@ -41,6 +41,7 @@ from core.agent_loop.decision_task_bind import (
     _ensure_deferred_task,
     _persist_work_contract,
     _resolve_or_create_work_task,
+    _unreleased_task_feedback,
 )
 from core.agent_loop.decision_work_plan import (
     _build_initial_work_metadata,
@@ -185,6 +186,10 @@ def apply_decision(
     if decision.decision == "decline":
         _record_meeting_invite_decline(agent, trigger, decision, result)
         if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
+            declining = db.get_task(trigger["task_id"])
+            unreleased = _unreleased_task_feedback(declining, agent_name=agent.name) if declining else None
+            if unreleased is not None:
+                return unreleased["error_result"]
             _complete_assignment_if_present(agent.id)
             transition_task(
                 trigger["task_id"],

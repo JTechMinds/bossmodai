@@ -76,6 +76,8 @@ Task description: {{trigger.task_description}}
 {{if trigger.task_severity}}Severity: {{trigger.task_severity}}{{end}}
 {{if trigger.task_references}}Reference documents (read these before starting):
 {{trigger.task_references}}{{end}}
+{{if trigger.task_prerequisites}}These tasks finished first:
+{{trigger.task_prerequisites}}{{end}}
 {{if trigger.content}}
 Latest note from [{{trigger.from_name}}]: {{trigger.content}}
 {{end}}

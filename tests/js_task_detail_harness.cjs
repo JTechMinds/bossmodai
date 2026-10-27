@@ -15,7 +15,10 @@
  * by accident, and one Deliverables section holds the task's own rows and its
  * subtasks'. The status row's Resume, Mark complete… and Cancel task… appear
  * only in Edit mode, wait for an unsaved draft, and repaint the detail in
- * place; and the completer will not post without a summary.
+ * place; and the completer will not post without a summary. A held task's
+ * Waiting on lists what it waits on and opens it; Hold… asks why in its own
+ * layer, and Release starts a task at once unless something it waits on is
+ * unfinished, when it confirms first.
  *
  * BossModMarkdown is stubbed to hand the source back as one text node and to
  * record what it was asked to render. The real renderer is covered by its own
@@ -52,7 +55,8 @@ const NAMES = [
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
-    "BossModTasksCancel", "BossModTasksComplete", "BossModTaskActions",
+    "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",
+    "BossModTaskActions",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -117,15 +121,47 @@ const DONE = {
     last_activity: ago(3 * HOUR), created_at: ago(48 * HOUR), closed_at: ago(3 * HOUR),
 };
 // Not yet accepted: the state machine has no pending → complete, so the
-// server says it cannot be marked complete.
+// server says it cannot be marked complete. Assigned and unstarted, so it can
+// be held.
 const PENDING = {
     id: "t-pending", title: "Draft the rollout note", status: "pending", severity: "P3",
     assigned_to: "a2", assigned_to_name: "Debra", requester_id: "__human__", parent_task_id: null,
     last_activity: ago(HOUR), created_at: ago(HOUR), closed_at: null,
     operator_can_complete: false,
     operator_can_resume: false,
+    operator_can_hold: true,
 };
-const TASKS = [BLOCKED, CHILD_DONE, CHILD_OPEN, DONE, PENDING];
+// What a held task waits on, as GET /api/tasks lists both ends: one
+// prerequisite finished, one still being worked.
+const RESEARCH = {
+    id: "p-research", title: "Research", status: "complete", severity: "P3",
+    assigned_to: "a3", assigned_to_name: "Taylor", parent_task_id: null,
+    last_activity: ago(2 * HOUR), created_at: ago(30 * HOUR), closed_at: ago(2 * HOUR),
+};
+const OUTLINE = {
+    id: "p-outline", title: "Outline", status: "active", severity: "P3",
+    assigned_to: "a4", assigned_to_name: "Jo", parent_task_id: null,
+    last_activity: ago(HOUR), created_at: ago(30 * HOUR), closed_at: null,
+};
+const prerequisiteRow = (task) => ({
+    id: task.id, title: task.title, status: task.status, assigned_to_name: task.assigned_to_name,
+});
+const HELD = {
+    id: "t-held", title: "Draft the post", status: "held", severity: "P3",
+    assigned_to: "a2", assigned_to_name: "Debra", requester_id: "a1", requester_name: "Jim",
+    parent_task_id: null, last_activity: ago(HOUR), created_at: ago(HOUR), closed_at: null,
+    operator_can_complete: false, operator_can_resume: false,
+    operator_can_hold: false, operator_can_release: true,
+    prerequisite_rows: [prerequisiteRow(RESEARCH), prerequisiteRow(OUTLINE)],
+};
+// Held with nothing left unfinished — what a settle fault leaves for the boss
+// to release. Its one prerequisite is not in the list the detail was given,
+// so its row says so by not being a button.
+const HELD_READY = {
+    ...HELD, id: "t-held-ready", title: "Publish the post",
+    prerequisite_rows: [{ id: "p-elsewhere", title: "Legal review", status: "complete", assigned_to_name: null }],
+};
+const TASKS = [BLOCKED, CHILD_DONE, CHILD_OPEN, DONE, PENDING, RESEARCH, OUTLINE, HELD, HELD_READY];
 
 const EVENTS = [
     { id: "e1", event_type: "status_update", author_name: "Jim", author_agent_id: "a1",
@@ -218,6 +254,8 @@ function open(task, calls) {
             complete: () => { throw new Error("[task-detail-harness] this detail completes nothing"); },
             cancel: () => { throw new Error("[task-detail-harness] this detail cancels nothing"); },
             resume: () => { throw new Error("[task-detail-harness] this detail resumes nothing"); },
+            hold: () => { throw new Error("[task-detail-harness] this detail holds nothing"); },
+            release: () => { throw new Error("[task-detail-harness] this detail releases nothing"); },
         },
         onOpenChat: (t) => calls.chats.push(t),
     });
@@ -414,6 +452,7 @@ async function main() {
     const edit = await editMode();
     const status = await statusActions();
     const { completeNeedsSummary, summaryUncapped } = await operatorActions();
+    const holdRelease = await holdAndRelease();
     const stepCases = await steps();
 
     process.stdout.write(JSON.stringify({
@@ -435,6 +474,7 @@ async function main() {
         ...status,
         completeNeedsSummary,
         summaryUncapped,
+        ...holdRelease,
         contractIsCollapsible,
         activityReadsAsSentences,
         deliverablesCounted,
@@ -810,11 +850,12 @@ async function statusActions() {
     const pencilOf = (panel) => panel.querySelector("#ct-edit-mode-btn");
 
     // ── statusActionsFollowTheFlags ─────────────────────────────────────
-    // A pending task is neither resumable nor completable: Cancel alone.
+    // A pending task is neither resumable nor completable; it can be held.
     const pending = await openLive(PENDING);
     const pendingAtRest = statusIds(pending.panel) === "";
     await click(pencilOf(pending.panel), "the pending task's pencil");
-    const statusActionsFollowTheFlags = pendingAtRest && statusIds(pending.panel) === "ct-cancel-task-btn";
+    const statusActionsFollowTheFlags = pendingAtRest
+        && statusIds(pending.panel) === "ct-hold-task-btn,ct-cancel-task-btn";
     if (!statusActionsFollowTheFlags) fail(`a pending task offered [${statusIds(pending.panel)}]`);
     pending.handle.close();
     await drain();
@@ -948,6 +989,172 @@ async function operatorActions() {
     return { completeNeedsSummary, summaryUncapped };
 }
 
+/**
+ * Waiting on, Hold… and Release, through the real detail and the real
+ * actions: the section lists what a task waits on and opens it as a layer;
+ * Hold… asks why in its own layer; Release starts a task at once when
+ * nothing it waits on is unfinished, and confirms first while something is.
+ */
+async function holdAndRelease() {
+    const { actions, requests, replies, changed } = recordingActions();
+    const reply = (status, body) => replies.push({ status, body });
+    const navigated = [];
+    const openLive = (task) => {
+        const handle = global.BossModTaskDetail.openTaskDetail({
+            api, bus, taskId: task.id, tasks: TASKS, colorOf: () => undefined,
+            onNavigate: (id) => navigated.push(id), actions, onOpenChat: () => {},
+        });
+        return drain().then(() => ({ handle, panel: top() }));
+    };
+    const pill = (panel) => panel.querySelector(".task-detail-status").querySelector(".status-pill")
+        .getAttribute("data-status");
+    const statusIds = (panel) => panel.querySelector(".task-detail-status").querySelectorAll("button")
+        .map((item) => item.getAttribute("id")).join(",");
+    const editingIn = (panel) => Boolean(panel.querySelector(".edit-field-title"));
+    const pencilOf = (panel) => panel.querySelector("#ct-edit-mode-btn");
+    const footerButton = (panel, label) => panel.querySelectorAll(".modal-actions")[0]
+        .querySelectorAll("button").find((item) => item.textContent === label);
+    const errorText = (panel) => {
+        const slot = panel.querySelector(".task-detail-edit-error");
+        const callout = slot && !slot.hidden ? slot.querySelector(".callout") : null;
+        return callout ? callout.textContent : "";
+    };
+    const readRow = (node) => ({
+        tag: node.tagName,
+        title: node.querySelector(".task-detail-check-title").textContent,
+        who: node.querySelector(".task-detail-meta") ? node.querySelector(".task-detail-meta").textContent : null,
+        status: node.querySelector(".status-pill").getAttribute("data-status"),
+        pill: node.querySelector(".status-pill").textContent,
+    });
+
+    // ── waitingOnListsPrerequisites ─────────────────────────────────────
+    // Edge order, finished counted as complete only; a listed row opens its
+    // task, one the list does not hold is not a button; no prerequisites,
+    // no section.
+    const held = await openLive(HELD);
+    const section = sectionHeaded(held.panel, "Waiting on");
+    const rows = section ? section.querySelectorAll(".task-detail-prerequisite") : [];
+    const heldRows = rows.map(readRow);
+    await click(rows[1], "the Outline row");
+    const ready = await openLive(HELD_READY);
+    const readySection = sectionHeaded(ready.panel, "Waiting on");
+    const readyRows = readySection ? readySection.querySelectorAll(".task-detail-prerequisite").map(readRow) : [];
+    const pending = await openLive(PENDING);
+    const noSectionWithout = !sectionHeaded(pending.panel, "Waiting on");
+    pending.handle.close();
+    await drain();
+    const waitingOnListsPrerequisites = Boolean(section)
+        && section.querySelector(".task-detail-count").textContent === "1 of 2 finished"
+        && same(heldRows, [
+            { tag: "BUTTON", title: "Research", who: "Taylor", status: "complete", pill: "Complete" },
+            { tag: "BUTTON", title: "Outline", who: "Jo", status: "active", pill: "Active" },
+        ])
+        && navigated.join(",") === "p-outline"
+        && Boolean(readySection) && readySection.querySelector(".task-detail-count").textContent === "1 of 1 finished"
+        && same(readyRows, [
+            { tag: "DIV", title: "Legal review", who: null, status: "complete", pill: "Complete" },
+        ])
+        && noSectionWithout;
+    if (!waitingOnListsPrerequisites) {
+        fail(`Waiting on read ${JSON.stringify(heldRows)} / ${JSON.stringify(readyRows)}, navigated [${navigated}]`);
+    }
+
+    // ── releaseStartsAtOnce ─────────────────────────────────────────────
+    // Nothing it waits on is unfinished: one POST, no layer.
+    await click(pencilOf(ready.panel), "the ready task's pencil");
+    const readyIds = statusIds(ready.panel);
+    const pendingRow = (task) => ({ ...task, status: "pending", operator_can_release: false, operator_can_hold: true });
+    reply(200, pendingRow(HELD_READY));
+    await click(ready.panel.querySelector("#ct-release-task-btn"), "Release");
+    const releaseStartsAtOnce = readyIds === "ct-release-task-btn,ct-cancel-task-btn"
+        && requests.length === 1 && requests[0].method === "POST"
+        && requests[0].url === "/api/tasks/t-held-ready/release" && requests[0].body === null
+        && top() === ready.panel && pill(ready.panel) === "pending" && !editingIn(ready.panel)
+        && changed.join(",") === "t-held-ready";
+    if (!releaseStartsAtOnce) fail(`Release sent ${JSON.stringify(requests)}; pill ${pill(ready.panel)}`);
+    ready.handle.close();
+    await drain();
+
+    // ── releaseConfirmsWhileWaiting ─────────────────────────────────────
+    // "Outline" is still active: Release asks first, Cancel sends nothing and
+    // keeps Edit mode, Start now posts and repaints in place.
+    await click(pencilOf(held.panel), "the held task's pencil");
+    await click(held.panel.querySelector("#ct-release-task-btn"), "Release");
+    const confirm = top();
+    const asked = confirm !== held.panel && confirm.getAttribute("aria-label") === "Start it now?"
+        && confirm.textContent.includes('It is still waiting on "Outline".')
+        && !confirm.textContent.includes('"Research"');
+    await click(footerButton(confirm, "Cancel"), "Cancel");
+    const keptWaiting = top() === held.panel && editingIn(held.panel) && requests.length === 1
+        && !held.panel.querySelector("#ct-release-task-btn").disabled && pill(held.panel) === "held";
+    await click(held.panel.querySelector("#ct-release-task-btn"), "Release");
+    reply(200, pendingRow(HELD));
+    await click(footerButton(top(), "Start now"), "Start now");
+    const releaseConfirmsWhileWaiting = asked && keptWaiting
+        && requests.length === 2 && requests[1].url === "/api/tasks/t-held/release" && requests[1].body === null
+        && top() === held.panel && pill(held.panel) === "pending" && !editingIn(held.panel)
+        && document.activeElement === pencilOf(held.panel) && changed.join(",") === "t-held-ready,t-held";
+    if (!releaseConfirmsWhileWaiting) {
+        fail(`release confirm: asked ${asked}, kept ${keptWaiting}, sent ${JSON.stringify(requests[1])}`);
+    }
+    held.handle.close();
+    await drain();
+
+    // ── holdAsksThenRepaints ────────────────────────────────────────────
+    // Its own layer with one optional field; Cancel sends nothing, Hold
+    // posts the reason and the detail repaints held.
+    const holding = await openLive(PENDING);
+    await click(pencilOf(holding.panel), "the pending task's pencil");
+    await click(holding.panel.querySelector("#ct-hold-task-btn"), "Hold…");
+    const layer = top();
+    const label = layer.querySelector(".assign-field-label");
+    const holdLayerReads = layer !== holding.panel && layer.getAttribute("aria-label") === "Put this on hold?"
+        && Boolean(label) && label.textContent === "Why? (optional)"
+        && Boolean(layer.querySelector("#ct-hold-note")) && Boolean(footerButton(layer, "Hold"));
+    await click(footerButton(layer, "Cancel"), "Cancel");
+    const cancelledHold = top() === holding.panel && editingIn(holding.panel) && requests.length === 2
+        && !holding.panel.querySelector("#ct-hold-task-btn").disabled;
+    await click(holding.panel.querySelector("#ct-hold-task-btn"), "Hold…");
+    top().querySelector("#ct-hold-note").value = "  Waiting for the brand review  ";
+    reply(200, { ...PENDING, status: "held", status_note: "Waiting for the brand review",
+        operator_can_hold: false, operator_can_release: true });
+    await click(top().querySelector("#ct-hold-submit"), "Hold");
+    const holdAsksThenRepaints = holdLayerReads && cancelledHold
+        && requests.length === 3 && requests[2].method === "POST" && requests[2].url === "/api/tasks/t-pending/hold"
+        && same(requests[2].body, { note: "Waiting for the brand review" })
+        && top() === holding.panel && pill(holding.panel) === "held" && !editingIn(holding.panel)
+        && changed.join(",") === "t-held-ready,t-held,t-pending";
+    if (!holdAsksThenRepaints) {
+        fail(`hold: layer ${holdLayerReads}, cancel ${cancelledHold}, sent ${JSON.stringify(requests[2])}`);
+    }
+    holding.handle.close();
+    await drain();
+
+    // ── holdRefusalStaysInEditMode ──────────────────────────────────────
+    // A blank why is sent as none; the server's refusal shows in Edit mode.
+    const refused = await openLive(PENDING);
+    await click(pencilOf(refused.panel), "the pending task's pencil");
+    await click(refused.panel.querySelector("#ct-hold-task-btn"), "Hold…");
+    reply(400, { detail: "This task just changed. Refresh and try again." });
+    await click(top().querySelector("#ct-hold-submit"), "Hold");
+    const holdRefusalStaysInEditMode = requests.length === 4 && same(requests[3].body, { note: null })
+        && top() === refused.panel && editingIn(refused.panel) && pill(refused.panel) === "pending"
+        && errorText(refused.panel).includes("Could not put on hold: This task just changed. Refresh and try again.")
+        && !refused.panel.querySelector("#ct-hold-task-btn").disabled && changed.length === 3;
+    if (!holdRefusalStaysInEditMode) fail(`a refused hold read "${errorText(refused.panel)}"`);
+    refused.handle.close();
+    await drain();
+    if (top() !== null) fail("hold and release left a layer behind");
+
+    return {
+        waitingOnListsPrerequisites,
+        releaseStartsAtOnce,
+        releaseConfirmsWhileWaiting,
+        holdAsksThenRepaints,
+        holdRefusalStaysInEditMode,
+    };
+}
+
 // ─── Recent steps and the step history ──────────────────────────────────
 
 const SECOND = 1000;
@@ -992,6 +1199,8 @@ const NO_ACTIONS = {
     complete: () => { throw new Error("[task-detail-harness] no completion here"); },
     cancel: () => { throw new Error("[task-detail-harness] no cancel here"); },
     resume: () => { throw new Error("[task-detail-harness] no resume here"); },
+    hold: () => { throw new Error("[task-detail-harness] no hold here"); },
+    release: () => { throw new Error("[task-detail-harness] no release here"); },
 };
 
 /**

@@ -350,9 +350,10 @@ def test_board_sections_hold_the_tasks_one_read_per_status_found() -> None:
     self_board = build_task_board(ids["worker"], scope="self")
     owned_board = build_task_board(ids["boss"], scope="owned")
 
-    assert [task.id for task in self_board["sections"]["my_open_tasks"]] == _legacy_open_ids(
-        assigned_to=ids["worker"]
-    )
+    # Held work is open but not its assignee's to see (core/tasking/dependencies.py).
+    assert [task.id for task in self_board["sections"]["my_open_tasks"]] == [
+        task_id for task_id in _legacy_open_ids(assigned_to=ids["worker"]) if db.get_task(task_id).status != "held"
+    ]
     assert [task.id for task in owned_board["sections"]["tasks_i_own"]] == _legacy_open_ids(owner_id=ids["boss"])
     assert owned_board["assignee_rollup"] == _legacy_rollup(owned_board["sections"]["tasks_i_delegated"])
 

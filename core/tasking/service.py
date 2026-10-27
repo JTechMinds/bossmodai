@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -15,6 +16,14 @@ from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
 from core.models.task import DEFAULT_TASK_SEVERITY, TaskReference, TaskSeverity
 from core.models.work_contract import WorkContract, DeliverableSpec
+from core.tasking.dependencies import (
+    DEAD_PREREQUISITE_STATUSES,
+    MET_PREREQUISITE_STATUSES,
+    PrerequisiteUnavailable,
+    closed_prerequisite_sentence,
+    unfinished_prerequisites,
+    waiting_phrase,
+)
 from core.tasking.resolution import OPEN_TASK_STATUSES, TaskResolution, resolve_existing_task
 from core.tasking.transitions import (
     IllegalTaskTransition,
@@ -98,6 +107,7 @@ def create_or_bind_task(
     severity: TaskSeverity = DEFAULT_TASK_SEVERITY,
     references: list[TaskReference] | None = None,
     origin_attachment_ids: list[str] | None = None,
+    prerequisite_ids: Sequence[str] = (),
 ) -> TaskCreateOrBindResult:
     """Create a task only when the board does not already contain the workstream.
 
@@ -105,6 +115,11 @@ def create_or_bind_task(
     assignee reads first, already checked by ``core/tasking/references.py``)
     are stored on a new task only. A bind returns the existing task as it
     is: neither overwrites what that task already carries.
+
+    ``prerequisite_ids`` (already resolved, ``core.tasking.dependencies``)
+    are the tasks a new task waits on: it is born ``held`` while any is
+    unfinished. A bind ignores them and returns the existing task unchanged;
+    the caller tells the requester so.
 
     ``schedule_id`` marks the task as one run of that schedule
     (core/scheduling/runner.py) and always creates: board resolution
@@ -121,6 +136,10 @@ def create_or_bind_task(
     Raises:
         ValueError: ``bind_task_id`` is combined with ``schedule_id`` (a run
             is never a reuse), or ``bind_task_id`` names no task.
+        PrerequisiteUnavailable: A prerequisite closed without completing
+            in the instant after it was resolved. Its message is the
+            sentence for the requester; the ``db.PrerequisiteClosed`` is
+            chained as ``__cause__``. Nothing is created.
         FloorDenied: The assignment crosses floors.
     """
     from core.floors import assert_assignment
@@ -190,24 +209,32 @@ def create_or_bind_task(
     if resolution.outcome == "clarify_ambiguous_match":
         return TaskCreateOrBindResult(task=None, outcome="clarify_ambiguous_match", resolution=resolution)
 
-    task = db.create_task(
-        title=title,
-        description=description,
-        project=project,
-        assigned_to=assigned_to,
-        requester_id=requester_id,
-        owner_id=requested_owner_id,
-        created_by=created_by,
-        parent_task_id=parent_task_id,
-        work_contract=work_contract,
-        source_channel=source_channel,
-        notification_policy=notification_policy,
-        notification_channel_id=notification_channel_id,
-        schedule_id=schedule_id,
-        severity=severity,
-        references=references,
-        origin_attachment_ids=origin_attachment_ids,
-    )
+    try:
+        task = db.create_task(
+            title=title,
+            description=description,
+            project=project,
+            assigned_to=assigned_to,
+            requester_id=requester_id,
+            owner_id=requested_owner_id,
+            created_by=created_by,
+            parent_task_id=parent_task_id,
+            work_contract=work_contract,
+            source_channel=source_channel,
+            notification_policy=notification_policy,
+            notification_channel_id=notification_channel_id,
+            schedule_id=schedule_id,
+            severity=severity,
+            references=references,
+            origin_attachment_ids=origin_attachment_ids,
+            prerequisite_ids=prerequisite_ids,
+            met_statuses=MET_PREREQUISITE_STATUSES,
+            dead_statuses=DEAD_PREREQUISITE_STATUSES,
+        )
+    except db.PrerequisiteClosed as exc:
+        closed = db.get_task(exc.prerequisite_id)
+        title_text = closed.title if closed is not None else exc.prerequisite_id
+        raise PrerequisiteUnavailable(closed_prerequisite_sentence(title_text, exc.status)) from exc
 
     rewritten_contract = rewrite_shared_work_contract(
         task=task,
@@ -255,8 +282,15 @@ def create_or_bind_subtask(
     audit_author_agent_id: str | None = None,
     audit_source_trigger_id: str | None = None,
     origin_attachment_ids: list[str] | None = None,
+    prerequisite_ids: Sequence[str] = (),
 ) -> TaskCreateOrBindResult:
-    """Create or reuse a child task for one parent workstream."""
+    """Create or reuse a child task for one parent workstream.
+
+    ``prerequisite_ids`` apply to a new child only, as in
+    :func:`create_or_bind_task`, which raises the same errors
+    (``PrerequisiteUnavailable`` for a prerequisite that closed after it
+    was resolved).
+    """
     result = create_or_bind_task(
         title=title,
         description=description,
@@ -276,6 +310,7 @@ def create_or_bind_subtask(
         audit_event_type="assignment",
         audit_source_trigger_id=audit_source_trigger_id,
         origin_attachment_ids=origin_attachment_ids,
+        prerequisite_ids=prerequisite_ids,
     )
     if result.outcome == "create_new_task":
         append_task_event(
@@ -420,8 +455,16 @@ def _task_creation_event_content(task: Task) -> str:
         assignee = db.get_agent(task.assigned_to)
         assignee_name = assignee.name if assignee is not None else task.assigned_to
     if assignee_name:
-        return f'Created task "{task.title}" for {assignee_name}.'
-    return f'Created task "{task.title}".'
+        content = f'Created task "{task.title}" for {assignee_name}.'
+    else:
+        content = f'Created task "{task.title}".'
+    if task.status == "held":
+        waiting_on = [f'"{item.title}"' for item in unfinished_prerequisites(task)]
+        # Empty only when the last one finished since the insert: the task is
+        # already released, so there is no hold to describe.
+        if waiting_on:
+            content += f" On hold until {waiting_phrase(waiting_on)}."
+    return content
 
 
 def _agent_id_for_author(created_by: str | None, author_type: str) -> str | None:

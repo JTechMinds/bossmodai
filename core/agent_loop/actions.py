@@ -214,7 +214,7 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
         raise ValueError('"data" must be an object when provided')
     extra_data = set(extra) - {
         "cmd", "body", "out", "to", "aid", "aids", "msg", "tid", "kind",
-        "dst", "mode", "topic", "sum", "why", "task", "claim", "path",
+        "dst", "mode", "topic", "sum", "why", "task", "claim", "path", "after",
     }
     if extra_data:
         raise ValueError(f'unexpected data keys: {", ".join(sorted(extra_data))}')
@@ -263,6 +263,8 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
             normalized["taskTitle"] = task.get("title")
             normalized["taskDescription"] = task.get("desc")
             normalized["deliverables"] = parse_wire_outs(task.get("outs"))
+            # Titles (or ids) of the agent's own tasks this one waits on.
+            normalized["after"] = extra.get("after")
         case "walk":
             normalized["destination"] = _map_optional_code(extra.get("dst"), _DESTINATION_CODE_TO_NAME, "data.dst")
         case "mtg":
@@ -374,6 +376,12 @@ def _validate_action_payload(action: dict[str, Any]) -> str | None:
         project = action.get("project")
         if project is not None and not isinstance(project, str):
             return '"delegateTask" "project" must be a string when provided'
+        after = action.get("after")
+        # Only the shape is checked here; what an entry matches is resolve_prerequisites' job.
+        if after is not None and not (
+            isinstance(after, list) and all(isinstance(item, str) and item.strip() for item in after)
+        ):
+            return '"delegateTask" "after" must be a list of non-empty strings when provided'
         deliverables = action.get("deliverables")
         if deliverables is not None:
             if not isinstance(deliverables, list):

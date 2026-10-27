@@ -129,18 +129,23 @@ def resolve_live_wake_task(
     """Return a live Board task this agent can continue, if any.
 
     Prefers the current live work activity, then paused work, then any open
-    assigned task. Complete rows are never returned.
+    assigned task. Complete rows are never returned, and neither is
+    unreleased work (held, or blocked because a prerequisite failed): it is
+    not its assignee's to continue.
     """
+    # Local: core.tasking imports this module on its way in.
+    from core.tasking.dependencies import is_released
+
     active = get_active_work_activity(agent_id)
     if active and active.task_id and active.task_id != exclude_task_id:
         task = db.get_task(active.task_id)
-        if is_live_work_task(task):
+        if is_live_work_task(task) and is_released(task):
             return task
 
     for task in db.list_tasks(assigned_to=agent_id):
         if exclude_task_id and task.id == exclude_task_id:
             continue
-        if not is_live_work_task(task):
+        if not is_live_work_task(task) or not is_released(task):
             continue
         if db.get_resumable_work_activity(agent_id, task.id):
             return task
@@ -148,7 +153,7 @@ def resolve_live_wake_task(
     for task in db.list_tasks(assigned_to=agent_id):
         if exclude_task_id and task.id == exclude_task_id:
             continue
-        if is_live_work_task(task):
+        if is_live_work_task(task) and is_released(task):
             return task
     return None
 
@@ -163,11 +168,16 @@ def work_commit_target(agent_id: str, trigger: dict[str, Any] | None) -> Task | 
     decision (such as soft-block reactivation) can change live work.
 
     Order:
-        1. The task on the agent's active work activity, when live.
+        1. The task on the agent's active work activity, when live and
+           released.
         2. The trigger's ``task_id``, when that task is assigned to
-           ``agent_id`` and live.
+           ``agent_id``, live and released.
         3. ``resolve_live_wake_task(agent_id)``: paused work first, then any
            open assigned task.
+
+    Unreleased work (held, or blocked because a prerequisite failed) is
+    never the target: continuing it would start work its assignee was
+    never given (and ``held → active`` is not even a legal move).
 
     Args:
         agent_id: The replying agent.
@@ -177,16 +187,24 @@ def work_commit_target(agent_id: str, trigger: dict[str, Any] | None) -> Task | 
         The live Board task, or ``None`` when the agent has nothing to
         continue (validation then rejects ``work_commit: true``).
     """
+    # Local: core.tasking imports this module on its way in.
+    from core.tasking.dependencies import is_released
+
     active = get_active_work_activity(agent_id)
     if active and active.task_id:
         task = db.get_task(active.task_id)
-        if is_live_work_task(task):
+        if is_live_work_task(task) and is_released(task):
             return task
 
     task_id = (trigger or {}).get("task_id")
     if isinstance(task_id, str) and task_id.strip():
         task = db.get_task(task_id)
-        if task is not None and task.assigned_to == agent_id and is_live_work_task(task):
+        if (
+            task is not None
+            and task.assigned_to == agent_id
+            and is_live_work_task(task)
+            and is_released(task)
+        ):
             return task
 
     return resolve_live_wake_task(agent_id)
@@ -272,7 +290,18 @@ def refresh_agent_status(agent_id: str, *, clear_soft_block: bool = True) -> Age
         if task is not None and task.status == "waiting":
             return db.update_agent_state(agent_id, status="waiting")
     if not active:
-        if db.list_tasks(assigned_to=agent_id, status="blocked") or db.list_tasks(assigned_to=agent_id, status="stalled"):
+        # Local: core.tasking imports this module on its way in.
+        from core.tasking.dependencies import is_released
+
+        # Lazy, so stalled is read only when no blocked task counts. Work
+        # blocked because a prerequisite failed waits on the boss, not on
+        # this agent, so it leaves an idle agent idle.
+        stuck = (
+            task
+            for status in ("blocked", "stalled")
+            for task in db.list_tasks(assigned_to=agent_id, status=status)
+        )
+        if any(is_released(task) for task in stuck):
             return db.update_agent_state(agent_id, status="blocked")
         if db.list_tasks(assigned_to=agent_id, status="waiting"):
             return db.update_agent_state(agent_id, status="waiting")

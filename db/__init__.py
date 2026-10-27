@@ -323,6 +323,13 @@ from db.tasks import (
     list_tasks_by_statuses,
     update_task,
 )
+from db.task_dependencies import (
+    PrerequisiteClosed,
+    add_task_dependencies,
+    count_unfinished_prerequisites,
+    delete_unfinished_prerequisites,
+    list_held_dependents,
+)
 from db.task_events import create_task_event, list_recent_task_events, list_task_events
 from db.task_steps import create_task_step, finish_task_step, get_task_step, list_task_steps
 from db.task_notification_policies import get_task_notification_settings, set_task_notification_settings
@@ -681,6 +688,11 @@ __all__ = [
     "get_task_step",
     "list_task_steps",
     "update_task",
+    "PrerequisiteClosed",
+    "add_task_dependencies",
+    "count_unfinished_prerequisites",
+    "delete_unfinished_prerequisites",
+    "list_held_dependents",
     "get_task_notification_settings",
     "set_task_notification_settings",
     "delete_task_notification_target",

@@ -47,7 +47,7 @@ For reply:
 
 For accept:
 ```json
-{"act":"accept","intent":"work | meeting | break | move | other","msg":"string","commit":"work | meeting | break | conversation","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":{"id":"string (one of your open task ids, to revise that task)","title":"string","desc":"string","outs":[{"type":"file","path":"string","desc":"string | null"}]},"plan":{"mode":"self | delegate | mixed","children":[{"who":"string | null","aid":"string | null","task":"child task object with title/desc/optional outs"}]}},"th":"string"}
+{"act":"accept","intent":"work | meeting | break | move | other","msg":"string","commit":"work | meeting | break | conversation","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":{"id":"string (one of your open task ids, to revise that task)","title":"string","desc":"string","outs":[{"type":"file","path":"string","desc":"string | null"}]},"plan":{"mode":"self | delegate | mixed","children":[{"key":"string | null (short name other children use in after)","who":"string | null","aid":"string | null","after":["string (an earlier child's key, or the title of one of your open tasks)"],"task":"child task object with title/desc/optional outs"}]}},"th":"string"}
 ```
 
 For clarify or decline:
@@ -388,6 +388,7 @@ FIELD NOTES
 - `mode="mixed"` means you will both own parent work and create child delegated tasks.
 - Use `who` when you know the teammate by name; use `aid` when you know the exact agent id.
 - If another teammate will do the deliverable you are promising, include that child task in `data.plan.children` on the same accept decision.
+- `data.plan.children[].key` is an optional short name for a child. `after` (optional) lists what a child waits on: an earlier child's key, or the title of one of your open tasks. A child with `after` starts by itself when those finish; list it after the children it waits on.
 - For a pure coordination handoff, keep the parent task focused on coordination and put the file deliverable on the delegated child task instead of the parent task.
 - `status` belongs in `intent`, never in `act`.
 - Do not invent keys that are not listed here.
@@ -585,6 +586,6 @@ EXAMPLES
 ```
 
 ```json
-{"act":"accept","intent":"work","msg":"I’ll get Taylor started on it and keep the delivery moving.","commit":"work","data":{"task":{"title":"Coordinate edge-device whitepaper","desc":"Own delivery of the edge-device whitepaper and report back to the requester."},"plan":{"mode":"delegate","children":[{"who":"Taylor","task":{"title":"Write edge-device whitepaper","desc":"Write a 3-paragraph whitepaper on the benefits of SLMs on edge devices for social media outreach.","outs":[{"type":"file","path":"/me/slm-edge-whitepaper.md"}]}}]}},"th":"accept coordination and create Taylor's child task now"}
+{"act":"accept","intent":"work","msg":"I’ll get Taylor researching first, and Sam will write the whitepaper from that research.","commit":"work","data":{"task":{"title":"Coordinate edge-device whitepaper","desc":"Own delivery of the edge-device whitepaper and report back to the requester."},"plan":{"mode":"delegate","children":[{"key":"research","who":"Taylor","task":{"title":"Research SLMs on edge devices","desc":"Collect the main benefits of SLMs on edge devices for social media outreach, with sources.","outs":[{"type":"file","path":"/me/slm-edge-research.md"}]}},{"key":"draft","who":"Sam","after":["research"],"task":{"title":"Write edge-device whitepaper","desc":"Write a 3-paragraph whitepaper on the benefits of SLMs on edge devices for social media outreach, from Taylor's research.","outs":[{"type":"file","path":"/me/slm-edge-whitepaper.md"}]}}]}},"th":"accept coordination and create the research and writing tasks in order"}
 ```
 {{end}}

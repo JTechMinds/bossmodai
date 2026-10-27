@@ -45,6 +45,7 @@ HARNESS_MODULES = [
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
     TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js",
+    TASKS / "tasks-hold.js", TASKS / "tasks-release.js",
     TASKS / "task-actions.js", TASKS / "task-layers.js", TASKS / "tasks-menu.js",
     TASKS / "tasks-archive.js", TASKS / "tasks-toolbar.js", TASKS / "tasks-place.js",
 ]
@@ -77,8 +78,10 @@ DETAIL_MODULES = [
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
     TASKS / "task-detail.js",
     # The operator's actions the detail's Edit mode asks for, built for real
-    # so the harness drives its saves, status actions and the completer too.
-    TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js", TASKS / "task-actions.js",
+    # so the harness drives its saves, status actions, the completer, the
+    # hold layer and the release confirm too.
+    TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js",
+    TASKS / "tasks-hold.js", TASKS / "tasks-release.js", TASKS / "task-actions.js",
 ]
 
 SEVERITY_HARNESS = Path(__file__).resolve().parent / "js_task_severity_harness.cjs"
@@ -125,18 +128,19 @@ def _frozen_object(source: str, name: str) -> str:
 
 
 def _engine_statuses() -> set[str]:
-    """The members of the engine's TaskStatus literal, which must be eleven."""
+    """The members of the engine's TaskStatus literal, which must be twelve."""
     model = (ROOT / "core" / "models" / "task.py").read_text(encoding="utf-8")
     literal = model.split("TaskStatus = Literal[", 1)[1].split("]", 1)[0]
     engine = set(re.findall(r'"([a-z]+)"', literal))
-    assert len(engine) == 11, f"TaskStatus changed: {sorted(engine)}"
+    assert len(engine) == 12, f"TaskStatus changed: {sorted(engine)}"
     return engine
 
 
 def test_column_map_is_total_over_task_status() -> None:
     """Every engine status maps to exactly one column or the closed list.
 
-    TaskStatus has eleven members. An earlier draft of the spec listed ten;
+    TaskStatus has twelve members (`held` is the newest: queued work waiting
+    on a prerequisite or the boss, so Backlog). An earlier draft of the spec listed ten;
     `delegated` mapped to no column, so a delegated task would have been in the
     database and invisible in the list. This test is the reason that cannot
     happen again — and it must fail if the engine adds a status.
@@ -344,8 +348,9 @@ def test_tasks_harness() -> None:
     """The four behavioural promises, plus the two engine facts they rest on.
 
     The harness mounts the real place against the real modules: a card shows
-    its subtasks' and its checklist's progress, every one of the
-    eleven statuses renders, Done counts only `complete`, and a task event
+    its subtasks' and its checklist's progress, a held card reads "On hold"
+    and what it waits on, every one of the twelve statuses renders, Done
+    counts only `complete`, and a task event
     arriving mid-typing repaints the columns without replacing the search input
     or forgetting the selection.
 
@@ -369,6 +374,7 @@ def test_tasks_harness() -> None:
         "sortFollowsFinishTime": True,
         "unknownWindowThrows": True,
         "cardShowsChecklistProgress": True,
+        "heldCardSaysWhatItWaitsOn": True,
         "everyStatusLands": True,
         "doneExcludesClosed": True,
         "closedCardsAreMarked": True,
@@ -521,11 +527,20 @@ def test_task_detail_harness() -> None:
     its path button re-picks, and an unassigned draft refuses to browse and
     says why.
 
-    The status row gains Resume, Mark complete… and Cancel task… in Edit mode
-    only, as the server's flags allow, disabled with a hint while the draft
-    differs. Each repaints the same layer from the stored row (a finished
-    task with no tools, focus on the frame's ✕), re-reads Activity, and a
-    refusal stays in Edit mode with the error shown; Keep it stays editing.
+    The status row gains Resume, Hold…, Release, Mark complete… and Cancel
+    task… in Edit mode only, as the server's flags allow, disabled with a hint
+    while the draft differs. Each repaints the same layer from the stored row
+    (a finished task with no tools, focus on the frame's ✕), re-reads
+    Activity, and a refusal stays in Edit mode with the error shown; Keep it
+    stays editing.
+
+    A task with prerequisites has a Waiting on section: one row per
+    prerequisite in edge order (title, assignee, status pill), counted
+    "n of m finished" by `complete` alone, each opening its task as a layer
+    while the list holds it. Hold… asks "Why? (optional)" in its own layer,
+    Cancel sends nothing, and a blank why is sent as none. Release posts at
+    once when nothing it waits on is unfinished; otherwise "Start it now?"
+    names what is unfinished, and only Start now posts.
     """
     args = ["node", str(DETAIL_HARNESS)] + [str(path) for path in DETAIL_MODULES]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
@@ -570,6 +585,13 @@ def test_task_detail_harness() -> None:
         "completeRepaintsFinished": True,
         "completeNeedsSummary": True,
         "summaryUncapped": True,
+        # Waiting on (task-detail-sections.js), Hold… (tasks-hold.js) and
+        # Release (tasks-release.js).
+        "waitingOnListsPrerequisites": True,
+        "releaseStartsAtOnce": True,
+        "releaseConfirmsWhileWaiting": True,
+        "holdAsksThenRepaints": True,
+        "holdRefusalStaysInEditMode": True,
         "contractIsCollapsible": True,
         "activityReadsAsSentences": True,
         "deliverablesCounted": True,

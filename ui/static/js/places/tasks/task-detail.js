@@ -2,12 +2,13 @@
  * BossMod AI — the task detail dialog.
  *
  * A panel modal whose body is one centred column: the status line, the facts,
- * the one callout the state calls for, the task itself, its references, the
- * deliverables, the assignee's checklist, its recent steps, the subtasks,
- * what counts as done, and the activity. The title is the modal's own head
- * and is not repeated below it. The sections are pure builders in
- * task-detail-sections.js; this file composes them, owns the modal, and owns
- * the head's tools: the pencil that enters Edit mode, and its ✓ and ✕.
+ * the one callout the state calls for, what it waits on, the task itself,
+ * its references, the deliverables, the assignee's checklist, its recent
+ * steps, the subtasks, what counts as done, and the activity. The title is
+ * the modal's own head and is not repeated below it. The sections are pure
+ * builders in task-detail-sections.js; this file composes them, owns the
+ * modal, and owns the head's tools: the pencil that enters Edit mode, and
+ * its ✓ and ✕.
  *
  * Recent steps (task-steps.js) is the one live part: built once, it follows
  * the `task_step` topic for as long as the detail is open, and its "See all
@@ -16,12 +17,13 @@
  * Edit mode (task-edit-mode.js) makes the same panel editable in place; one
  * renderColumn() paints the view, the edit and every repaint after a change.
  * In Edit mode the status line also carries the status actions — Resume,
- * Mark complete…, Cancel task… — disabled while the draft holds unsaved
- * edits, so a status change never drops or saves typed text. Every change
- * resolves with the stored row: the detail repaints from it in place and
- * re-reads its Activity. The detail still calls no task route itself: it is
- * handed `actions` (BossModTaskActions) at construction, so each change a
- * task can take has exactly one place in Tasks that performs it.
+ * Hold…, Release, Mark complete…, Cancel task… — disabled while the draft
+ * holds unsaved edits, so a status change never drops or saves typed text.
+ * Every change resolves with the stored row: the detail repaints from it in
+ * place and re-reads its Activity. The detail still calls no task route
+ * itself: it is handed `actions` (BossModTaskActions) at construction, so
+ * each change a task can take has exactly one place in Tasks that performs
+ * it.
  */
 const BossModTaskDetail = (() => {
     const { h } = BossModDom;
@@ -47,11 +49,12 @@ const BossModTaskDetail = (() => {
      *   colours for the avatars in the facts and the activity.
      * @param {(taskId: string) => void} deps.onNavigate  Opens a related task
      *   as a layer over this one.
-     * @param {{cancel: Function, complete: Function, resume: Function,
-     *   update: Function, roster: Function}} deps.actions  The caller owns
-     *   completing, cancelling, resuming and updating (the Tasks place, or
-     *   the desk that opened this over itself); this panel only asks, and
-     *   repaints from the row each one resolves with.
+     * @param {{cancel: Function, complete: Function, hold: Function,
+     *   release: Function, resume: Function, update: Function,
+     *   roster: Function}} deps.actions  The caller owns completing,
+     *   cancelling, holding, releasing, resuming and updating (the Tasks
+     *   place, or the desk that opened this over itself); this panel only
+     *   asks, and repaints from the row each one resolves with.
      * @param {(task: object) => void} deps.onOpenChat  Leaves for the task's
      *   conversation.
      * @param {() => void} [deps.onClose]
@@ -69,6 +72,7 @@ const BossModTaskDetail = (() => {
         if (typeof colorOf !== 'function') throw new Error('[task-detail] deps.colorOf is required');
         if (typeof onNavigate !== 'function') throw new Error('[task-detail] deps.onNavigate is required');
         if (!actions || typeof actions.cancel !== 'function' || typeof actions.complete !== 'function'
+            || typeof actions.hold !== 'function' || typeof actions.release !== 'function'
             || typeof actions.resume !== 'function' || typeof actions.update !== 'function'
             || typeof actions.roster !== 'function') {
             throw new Error('[task-detail] deps.actions must be a BossModTaskActions');
@@ -113,6 +117,9 @@ const BossModTaskDetail = (() => {
                 editing ? editMode.errorSlot : null,
                 SECTIONS.facts(current, { tasks, colorOf, onNavigate, assigneeValue, severityValue }),
                 SECTIONS.callout(current, { onOpenChat }),
+                // What it waits on, or waited on before it started, right
+                // under its state.
+                SECTIONS.waitingOn(current, tasks, onNavigate),
                 editing ? editMode.descriptionSection : (instructions && instructions.element),
                 // What to read first comes before what to produce.
                 SECTIONS.references(current, api),
@@ -136,9 +143,10 @@ const BossModTaskDetail = (() => {
         }
 
         /**
-         * The status line's actions for one render of Edit mode: Resume and
-         * Mark complete where the server flags them, Cancel for any open
-         * task, and the hint that says why they are disabled.
+         * The status line's actions for one render of Edit mode: Resume,
+         * Hold…, Release and Mark complete where the server flags them,
+         * Cancel for any open task, and the hint that says why they are
+         * disabled.
          * @param {object} current
          * @returns {{element: HTMLElement, sync: (busy: boolean) => void,
          *   resync: () => void}} `sync` disables every button while `busy`
@@ -153,6 +161,9 @@ const BossModTaskDetail = (() => {
             }, label);
             const buttons = [
                 current.operator_can_resume ? button('ct-resume-task-btn', 'Resume', actions.resume) : null,
+                current.operator_can_hold ? button('ct-hold-task-btn', 'Hold…', actions.hold) : null,
+                current.operator_can_release
+                    ? button('ct-release-task-btn', 'Release', actions.release) : null,
                 current.operator_can_complete
                     ? button('ct-complete-task-btn', 'Mark complete…', actions.complete) : null,
                 button('ct-cancel-task-btn', 'Cancel task…', actions.cancel, true),
@@ -219,8 +230,9 @@ const BossModTaskDetail = (() => {
             body,
             size: 'panel',
             tools: openedOpen ? [saveButton, discardButton, pencilButton] : [],
-            // Mark complete and Cancel each open their own layer; the one
-            // thing an outside click could lose is an Edit mode draft.
+            // Hold, Mark complete and Cancel each open their own layer (and
+            // Release, while it still waits on something); the one thing an
+            // outside click could lose is an Edit mode draft.
             actions: [],
             closeOnBackdrop: () => !(editMode && editMode.isEditing()),
             onClose: () => {

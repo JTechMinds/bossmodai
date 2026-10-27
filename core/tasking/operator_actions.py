@@ -1,4 +1,4 @@
-"""BossMod AI — Operator task actions: edit, reassign, requirements, resume and mark complete.
+"""BossMod AI — Operator task actions: edit, reassign, requirements, resume, hold, release and mark complete.
 
 The operator is the final judge of a task. These are the domain-layer verbs
 behind the task detail's Edit mode (routes stay thin). Every status change
@@ -7,7 +7,11 @@ goes through ``transition_task``; nothing here widens the state machine.
 Re-present: reassigning a task, or changing what it asks for, means the
 assignee must look at it again. That is one step: stop live work, drop queued
 wakes, move the task to ``pending`` and enqueue ``task_assigned`` — the only
-trigger whose decision contract lets an agent (re)accept work.
+trigger whose decision contract lets an agent (re)accept work. A ``held``
+task is the exception: editing it must not start it, so it stays held. Any
+other re-present first drops the task's unfinished prerequisites
+(``core.tasking.dependencies``), so a task the boss restarts never waits on
+work it was told to skip.
 """
 
 from __future__ import annotations
@@ -29,6 +33,7 @@ from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import append_task_event, list_open_child_tasks, rewrite_shared_work_contract
 from core.tasking.transitions import (
     IllegalTaskTransition,
+    TaskStatusChanged,
     assert_valid_task_transition,
     is_terminal_task_status,
     transition_task,
@@ -272,6 +277,131 @@ def resume_task_as_operator(task_id: str, *, note: str | None = None) -> Operato
     return OperatorTaskResult(task=stored, trigger_requests=trigger_requests)
 
 
+def hold_task_as_operator(task_id: str, *, note: str | None) -> OperatorTaskResult:
+    """Put a pending, assigned task on hold before its assignee starts it.
+
+    The task moves to ``held``, where nobody is woken for it and its
+    assignee does not see it; then its live and paused activities are
+    cancelled (a paused work activity from an earlier defer could otherwise
+    resume it) and its queued wakes are dropped. The move is a
+    compare-and-set from ``pending`` and comes first, in one transaction
+    with the rest: when the assignee accepts in the same instant, the hold
+    loses and none of their work is cancelled. A task held this way has no
+    prerequisites, so only the operator's Release starts it again.
+    In-flight work keeps using the agent's own ``waiting``.
+
+    Args:
+        task_id: The task to hold.
+        note: Why, in the operator's words (already stripped; ``None`` for
+            none). It becomes the status note and a ``comment`` event.
+
+    Returns:
+        The stored task (now ``held``). No wakes, no origin lines.
+
+    Raises:
+        ValueError: No such task, the task is not ``pending`` with an
+            assignee, or it changed in the meantime (the hold lost).
+        IllegalTaskTransition: The task is closed.
+    """
+    task = db.get_task(task_id)
+    if task is None:
+        raise ValueError("Task not found")
+    if is_terminal_task_status(task.status):
+        raise IllegalTaskTransition(task.status, "held")
+    if not task.assigned_to or task.status != "pending":
+        raise ValueError("Only a pending task with an assignee can be put on hold")
+
+    reason = note or "Put on hold by the boss"
+    try:
+        with db.transaction():
+            transition_task(
+                task.id,
+                "held",
+                expected_from="pending",
+                reason=reason,
+                status_note=reason,
+                actor=boss_label(),
+                actor_type="human",
+            )
+            for activity in db.list_activities(task_id=task.id, limit=200):
+                if activity.status in {"active", "paused"}:
+                    activity_runtime.cancel_activity(activity.id, detail="The boss put the task on hold")
+            db.delete_queued_triggers_for_task(task.id)
+            append_task_event(
+                task_id=task.id,
+                author_type="human",
+                author_name=boss_label(),
+                event_type="system",
+                content="The boss put the task on hold.",
+            )
+            if note:
+                append_task_event(
+                    task_id=task.id,
+                    author_type="human",
+                    author_name=boss_label(),
+                    event_type="comment",
+                    content=note,
+                )
+    except TaskStatusChanged as exc:
+        raise ValueError("This task just changed. Refresh and try again.") from exc
+    stored = db.get_task(task.id)
+    if stored is None:
+        raise RuntimeError(f"Failed to reload task {task.id} after operator hold")
+    return OperatorTaskResult(task=stored)
+
+
+def release_task_as_operator(task_id: str) -> OperatorTaskResult:
+    """Start a held task now, whatever it still waits on.
+
+    Its unfinished prerequisites are dropped (recorded as a human ``system``
+    event naming them), it moves to ``pending`` with no status note (the
+    hold's note does not outlive it) and its assignee's ``task_assigned``
+    wake is returned for the caller to enqueue. The drop and the move are
+    one transaction: when another release or settle moves the task first,
+    the dropped edges and their event roll back with the lost
+    compare-and-set.
+
+    Args:
+        task_id: The task to release.
+
+    Returns:
+        The stored task (now ``pending``) and the wake to enqueue; no wake
+        when the assignee has left the task's floor. No origin lines.
+
+    Raises:
+        ValueError: No such task, the task is not ``held``, or it was
+            released or changed by someone else in the meantime.
+        IllegalTaskTransition: The task is closed.
+    """
+    task = db.get_task(task_id)
+    if task is None:
+        raise ValueError("Task not found")
+    if is_terminal_task_status(task.status):
+        raise IllegalTaskTransition(task.status, "pending")
+    if task.status != "held":
+        raise ValueError("Only a task on hold can be released")
+
+    try:
+        with db.transaction():
+            _drop_unfinished_prerequisites(task, verb="released")
+            transition_task(
+                task.id,
+                "pending",
+                expected_from="held",
+                reason="Released by the boss",
+                actor=boss_label(),
+                actor_type="human",
+                status_note=None,
+            )
+    except TaskStatusChanged as exc:
+        raise ValueError("This task was just released or changed. Refresh and try again.") from exc
+    stored = db.get_task(task.id)
+    if stored is None:
+        raise RuntimeError(f"Failed to reload task {task.id} after operator release")
+    wake = assignment_wake_trigger(stored)
+    return OperatorTaskResult(task=stored, trigger_requests=[wake] if wake is not None else [])
+
+
 def complete_task_as_operator(task_id: str, *, summary: str) -> OperatorTaskResult:
     """Mark a task complete on the operator's behalf.
 
@@ -415,7 +545,15 @@ def _re_present(task: Task, *, reason: str) -> None:
 
     A pending task only loses its queued wakes: its stale ``task_assigned``
     (possibly for the old assignee) is replaced by the caller's fresh one.
+
+    A ``held`` task is left exactly as it is: editing its assignee, title or
+    requirements must not start it. Any other task first stops waiting on
+    its unfinished prerequisites, so restarting it keeps the invariant that
+    nothing released waits on unfinished work.
     """
+    if task.status == "held":
+        return
+    _drop_unfinished_prerequisites(task, verb="restarted")
     if task.status != "pending":
         for activity in db.list_activities(task_id=task.id, limit=200):
             if activity.status in {"active", "paused"}:
@@ -431,6 +569,27 @@ def _re_present(task: Task, *, reason: str) -> None:
             status_note=reason,
             watchdog_pinged_at=None,
         )
+
+
+def _drop_unfinished_prerequisites(task: Task, *, verb: str) -> None:
+    """Make ``task`` stop waiting on prerequisites that are not complete, and say so.
+
+    Args:
+        task: The task the operator is starting by override.
+        verb: What the operator did, for the event: ``released`` or ``restarted``.
+    """
+    removed = db.delete_unfinished_prerequisites(task.id)
+    if not removed:
+        return
+    by_id = db.get_tasks_by_ids(removed)
+    titles = ", ".join(f'"{by_id[prerequisite_id].title}"' for prerequisite_id in removed)
+    append_task_event(
+        task_id=task.id,
+        author_type="human",
+        author_name=boss_label(),
+        event_type="system",
+        content=f"The boss {verb} the task without waiting for: {titles}.",
+    )
 
 
 def _agent_label(agent: Agent | None) -> str:

@@ -8,7 +8,9 @@
  *
  * No status pill: the column says what state the task is in. What the card
  * adds is how serious it is (the severity pill, P0–P3), who, how long, and
- * what it carries.
+ * what it carries. The one exception is On hold, which Backlog shares with
+ * pending work: a held card says so in a pill, and, while it waits on a
+ * prerequisite, what that is on the line under its title.
  */
 const BossModTaskCard = (() => {
     const { h } = BossModDom;
@@ -28,6 +30,23 @@ const BossModTaskCard = (() => {
             h('i', { 'data-lucide': icon, 'aria-hidden': 'true' }),
             visible,
             h('span', { class: 'visually-hidden' }, spoken));
+    }
+
+    /**
+     * What a held task waits on, under its title: the first unfinished
+     * prerequisite and its assignee, then how many more.
+     *
+     * @param {object} task
+     * @returns {HTMLElement|null} null when nothing it waits on is unfinished
+     *   — a hold by the boss, or a release the board has not caught up with.
+     */
+    function afterLine(task) {
+        const unfinished = BossModTasksData.unfinishedPrerequisites(task);
+        if (unfinished.length === 0) return null;
+        const [first] = unfinished;
+        const who = first.assigned_to_name ? ` (${first.assigned_to_name})` : '';
+        const more = unfinished.length > 1 ? ` +${unfinished.length - 1} more` : '';
+        return h('span', { class: 'task-card-after' }, `After: ${first.title}${who}${more}`);
     }
 
     /** The task's severity, said as "Severity P1" to a screen reader. */
@@ -111,6 +130,7 @@ const BossModTaskCard = (() => {
         const age = BossModFormat.formatRelativeTime(
             COLUMNS.isTerminal(task.status) ? task.closed_at : task.last_activity);
         const marker = MARKERS[task.status];
+        const held = task.status === 'held';
 
         // Whether this task is waiting on the operator, asked of the one file
         // that knows — tasks-columns.js, whose map test_ui_tasks.py proves
@@ -120,6 +140,9 @@ const BossModTaskCard = (() => {
         const needsYou = BossModTasksColumns.columnFor(task.status) === 'needs';
 
         const meta = h('span', { class: 'task-card-meta' },
+            // Words, not a tint: the pill reads "On hold" in any colour.
+            held ? h('span', { class: 'status-pill', 'data-status': task.status },
+                COLUMNS.STATUS_LABELS[task.status]) : null,
             task.severity ? severityPill(task.severity) : null,
             // An unassigned task has no colour, which tintFor() renders as the
             // neutral pair rather than as a missing circle.
@@ -141,6 +164,7 @@ const BossModTaskCard = (() => {
             onclick: () => onOpen(task.id),
         },
             h('span', { class: 'task-card-title' }, title),
+            held ? afterLine(task) : null,
             needsYou
                 ? h('span', { class: 'task-card-note' }, `${COLUMNS.STATUS_LABELS[task.status]}${note}`)
                 : null,

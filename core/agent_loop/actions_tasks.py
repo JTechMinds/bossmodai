@@ -36,7 +36,15 @@ from core.agent_loop.task_roles import (
 )
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.models.message import HUMAN_SENDER_ID
-from core.models import Agent, AgentState
+from core.models import Agent, AgentState, Task
+from core.tasking.dependencies import (
+    PrerequisiteUnavailable,
+    assignee_label,
+    is_released,
+    resolve_prerequisites,
+    unfinished_prerequisites,
+    waiting_phrase,
+)
 from core.tasking.service import (
     append_task_event,
     create_or_bind_subtask,
@@ -51,7 +59,13 @@ async def _handle_task_message(
     action: dict[str, Any],
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Append a task-thread event and only wake the other side when needed."""
+    """Append a task-thread event and only wake the other side when needed.
+
+    A message for the assignee of work not yet released (held, or blocked on
+    a failed prerequisite) is only saved on the thread: no notification and
+    no wake, because the assignee has not been given the task. It reads the
+    message in the task's history when the task starts.
+    """
     task_id = str(action.get("taskId") or "").strip()
     content = str(action.get("content") or "").strip()
     message_kind = str(action.get("messageKind") or "note").strip().lower()
@@ -115,6 +129,12 @@ async def _handle_task_message(
             "detail": "The task-thread recipient no longer exists.",
             "agent_name": agent.name,
         }
+    if target_agent.id == task.assigned_to and not is_released(task):
+        return {
+            "event": "message_sent",
+            "detail": f'Saved on "{task.title}". {target_agent.name} sees it when the task starts.',
+            "agent_name": agent.name,
+        }
 
     db.create_notification(
         agent_id=target_agent_id,
@@ -159,7 +179,15 @@ async def _handle_delegate_task(
     action: dict[str, Any],
     trigger: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Create an explicit task assignment for another agent."""
+    """Create an explicit task assignment for another agent.
+
+    ``action["after"]`` (optional) names the delegating agent's own tasks the
+    new one waits on, by title or id (``resolve_prerequisites``). Any entry
+    that cannot be used refuses the whole assign with nothing created. A task
+    that waits on unfinished work is born ``held`` and wakes nobody; the
+    result ``detail``, which the execution loop hands back as the next
+    step's instruction, says what it waits on.
+    """
     target = _resolve_agent_by_id(action.get("agentId"))
     if target is None:
         return {"event": "agent_error", "detail": "No valid delegate target specified", "agent_name": agent.name}
@@ -201,6 +229,17 @@ async def _handle_delegate_task(
             "detail": str(exc),
             "agent_name": agent.name,
         }
+    after = [str(item).strip() for item in (action.get("after") or [])]
+    prerequisites: tuple[Task, ...] = ()
+    if after:
+        resolution = resolve_prerequisites(
+            agent=agent,
+            references=after,
+            parent_task_id=parent_task.id if parent_task is not None else None,
+        )
+        if resolution.errors:
+            return {"event": "world_feedback", "detail": " ".join(resolution.errors), "agent_name": agent.name}
+        prerequisites = resolution.tasks
     source_channel = task_source_channel_for_trigger(trigger or {}) or (parent_task.source_channel if parent_task else None)
     notification_policy = task_notification_policy_for_trigger(trigger or {}) or (parent_task.notification_policy if parent_task else None)
     notification_channel_id = (
@@ -230,6 +269,7 @@ async def _handle_delegate_task(
                 audit_author_type="agent",
                 audit_author_agent_id=agent.id,
                 audit_source_trigger_id=(trigger or {}).get("trigger_id"),
+                prerequisite_ids=[item.id for item in prerequisites],
             )
         else:
             creation = create_or_bind_task(
@@ -249,9 +289,12 @@ async def _handle_delegate_task(
                 audit_author_type="agent",
                 audit_author_agent_id=agent.id,
                 audit_source_trigger_id=(trigger or {}).get("trigger_id"),
+                prerequisite_ids=[item.id for item in prerequisites],
             )
     except FloorDenied:
         return {"event": "world_feedback", "detail": CROSS_FLOOR_DENY, "agent_name": agent.name}
+    except PrerequisiteUnavailable as exc:
+        return {"event": "world_feedback", "detail": str(exc), "agent_name": agent.name}
     task = creation.task
 
     if creation.outcome == "clarify_ambiguous_match" or task is None:
@@ -267,20 +310,24 @@ async def _handle_delegate_task(
         }
 
     if creation.outcome != "create_new_task":
+        detail = (
+            f'There is already an open task thread with {target.name} on "{task.title}" ({task.id}). '
+            'Use "taskmsg" with that task id instead of delegating a duplicate assignment.'
+        )
+        if after:
+            detail += ' The "after" was not applied to the existing task.'
         return {
             "event": "world_feedback",
-            "detail": (
-                f'There is already an open task thread with {target.name} on "{task.title}" ({task.id}). '
-                'Use "taskmsg" with that task id instead of delegating a duplicate assignment.'
-            ),
+            "detail": detail,
             "agent_name": agent.name,
             "task_id": task.id,
             "expected_action": "taskMessage",
         }
 
+    hold = _hold_sentence(task, prerequisites)
     result = {
         "event": "status_changed",
-        "detail": f'{agent.name} assigned "{task.title}" to {target.name}',
+        "detail": _with_hold(f'{agent.name} assigned "{task.title}" to {target.name}.', hold),
         "agent_name": agent.name,
         "trigger_requests": [build_task_assigned_trigger(task)] if task.status == "pending" else [],
         "chat_notification": {
@@ -294,12 +341,14 @@ async def _handle_delegate_task(
             "human_visible": _task_is_human_visible(task),
         },
     }
+    if hold:
+        result["chat_notification"]["reason"] = hold
     _append_task_stakeholder_reports(
         result=result,
         actor=agent,
         state=state,
         task=task,
-        content=f'Assigned subtask "{task.title}" to {target.name}.',
+        content=_with_hold(f'Assigned subtask "{task.title}" to {target.name}.', hold),
     )
     append_task_event(
         task_id=task.id,
@@ -307,7 +356,36 @@ async def _handle_delegate_task(
         author_agent_id=agent.id,
         author_name=agent.name,
         event_type="assignment",
-        content=f'Assigned "{task.title}" to {target.name}.',
+        content=_with_hold(f'Assigned "{task.title}" to {target.name}.', hold),
         source_trigger_id=(trigger or {}).get("trigger_id"),
     )
     return result
+
+
+def _hold_sentence(task: Task, prerequisites: tuple[Task, ...]) -> str:
+    """What a new task waits on, in the words the delegating agent reads back.
+
+    ``It starts when "Research" (Taylor) finishes.`` for a held task, naming
+    the prerequisites still unfinished; ``"Research" is already complete, so
+    it starts now.`` when every prerequisite was already done; ``""`` when
+    the assign named none.
+    """
+    if not prerequisites:
+        return ""
+    if task.status == "held":
+        waiting = unfinished_prerequisites(task)
+        # Empty only when the last one finished since the insert: the task
+        # has been released already, so it does start now.
+        if waiting:
+            agents = db.get_agents_by_ids([item.assigned_to for item in waiting if item.assigned_to])
+            labels = [f'"{item.title}" ({assignee_label(item, agents)})' for item in waiting]
+            return f"It starts when {waiting_phrase(labels)}."
+    titles = [f'"{item.title}"' for item in prerequisites]
+    verb = "is" if len(titles) == 1 else "are"
+    joined = titles[0] if len(titles) == 1 else f"{', '.join(titles[:-1])} and {titles[-1]}"
+    return f"{joined} {verb} already complete, so it starts now."
+
+
+def _with_hold(sentence: str, hold: str) -> str:
+    """``sentence`` followed by the hold sentence, when there is one."""
+    return f"{sentence} {hold}" if hold else sentence

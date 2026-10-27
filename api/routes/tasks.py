@@ -1,4 +1,4 @@
-"""Task list, create/bind, board, events, steps, and operator cancel/edit/complete."""
+"""Task list, create/bind, board, events, steps, and operator cancel/edit/complete/resume/hold/release."""
 
 import logging
 from typing import Any, Literal
@@ -28,6 +28,7 @@ from core.models import (
     TaskCompleteRequest,
     TaskCreate,
     TaskCreateResponse,
+    TaskHoldRequest,
     TaskResumeRequest,
     TaskUpdateRequest,
 )
@@ -39,6 +40,8 @@ from core.tasking.operator_actions import (
     OpenChildTasks,
     OperatorTaskResult,
     complete_task_as_operator,
+    hold_task_as_operator,
+    release_task_as_operator,
     resume_task_as_operator,
     update_task_as_operator,
 )
@@ -72,10 +75,13 @@ async def list_tasks(
         parent_task_id=parent_task_id,
         status=status,
     )
+    # Every prerequisite once, in one read; their assignees are named below too.
+    prerequisites_by_id = db.get_tasks_by_ids([pid for t in tasks for pid in t.prerequisites])
     # Resolve agent UUIDs to human-readable names
     agent_ids = {t.assigned_to for t in tasks if t.assigned_to}
     agent_ids |= {t.requester_id for t in tasks if t.requester_id}
     agent_ids |= {t.owner_id for t in tasks if t.owner_id}
+    agent_ids |= {p.assigned_to for p in prerequisites_by_id.values() if p.assigned_to}
     agents_by_id: dict[str, object] = {}
     for aid in agent_ids:
         agent = db.get_agent(aid)
@@ -83,7 +89,7 @@ async def list_tasks(
             agents_by_id[aid] = agent
     recent_events = db.list_recent_task_events([task.id for task in tasks], limit_per_task=1)
     return [
-        _serialize_listed_task(t, agents_by_id, recent_events.get(t.id))
+        _serialize_listed_task(t, agents_by_id, recent_events.get(t.id), prerequisites_by_id)
         for t in tasks
     ]
 
@@ -95,8 +101,22 @@ def _listed_task_floor(task, _agents_by_id: dict) -> str | None:
     return task_floor_id(task)
 
 
-def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None) -> dict:
-    """Serialize one task row with assignee contract and done-claim status."""
+def _serialize_listed_task(
+    task, agents_by_id: dict, recent_events: list | None, prerequisites_by_id: dict[str, Task],
+) -> dict:
+    """Serialize one task row with assignee contract, done-claim status and prerequisites.
+
+    Args:
+        task: The task.
+        agents_by_id: Agents the row names: assignee, requester, owner, and
+            each prerequisite's assignee.
+        recent_events: The task's newest events (the last one is shown).
+        prerequisites_by_id: Every task ``task.prerequisites`` names, by id.
+
+    Raises:
+        KeyError: A prerequisite id is missing from ``prerequisites_by_id``
+            (tasks are never deleted, so the caller did not resolve it).
+    """
     assignee = agents_by_id.get(task.assigned_to) if task.assigned_to else None
     latest = recent_events[-1] if recent_events else None
     has_files = bool(task.work_contract and task.work_contract.deliverables)
@@ -125,6 +145,13 @@ def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None)
             is_allowed_task_transition(task.status, "complete") and not is_terminal_task_status(task.status)
         ),
         "operator_can_resume": bool(task.assigned_to) and task.status in OPERATOR_RESUMABLE_STATUSES,
+        "operator_can_hold": bool(task.assigned_to) and task.status == "pending",
+        "operator_can_release": task.status == "held",
+        # In edge order: what this task waits on, or waited on before it started.
+        "prerequisite_rows": [
+            _prerequisite_row(prerequisites_by_id[prerequisite_id], agents_by_id)
+            for prerequisite_id in task.prerequisites
+        ],
         "latest_event": latest.model_dump(mode="json") if latest is not None else None,
         "done_claim": done_claim,
         "done_claim_guidance": operator_done_claim_guidance(
@@ -132,6 +159,17 @@ def _serialize_listed_task(task, agents_by_id: dict, recent_events: list | None)
             done_fail_bar=assignee.done_fail_bar if assignee is not None else None,
             has_file_deliverables=has_files,
         ),
+    }
+
+
+def _prerequisite_row(prerequisite: Task, agents_by_id: dict) -> dict:
+    """One row of a task's Waiting-on list: the prerequisite's id, title, status and assignee name."""
+    assignee = agents_by_id.get(prerequisite.assigned_to) if prerequisite.assigned_to else None
+    return {
+        "id": prerequisite.id,
+        "title": prerequisite.title,
+        "status": prerequisite.status,
+        "assigned_to_name": assignee.name if assignee is not None else None,
     }
 
 
@@ -396,6 +434,55 @@ async def resume_task(task_id: str, body: TaskResumeRequest | None = None):
     return _serialize_task_row(result.task)
 
 
+@router.post("/tasks/{task_id}/hold")
+async def hold_task(task_id: str, body: TaskHoldRequest | None = None):
+    """Put a pending, assigned task on hold before its assignee starts it.
+
+    The body is optional: ``{"note": ...}`` says why.
+
+    Returns:
+        The serialized task row (as ``GET /tasks`` lists it), now ``held``.
+
+    Raises:
+        HTTPException: 404 unknown task, 400 when the task is not pending
+            with an assignee or changed in the meantime, 409 closed task.
+            FastAPI answers 422 for an unknown body field.
+    """
+    try:
+        result = hold_task_as_operator(task_id, note=body.note if body else None)
+    except IllegalTaskTransition as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400, str(exc)) from exc
+    await _deliver_operator_result(result, event="task_held", detail=f'Task "{result.task.title}" put on hold')
+    return _serialize_task_row(result.task)
+
+
+@router.post("/tasks/{task_id}/release")
+async def release_task(task_id: str):
+    """Start a held task now: drop what it still waits on and wake its assignee.
+
+    Returns:
+        The serialized task row (as ``GET /tasks`` lists it), now ``pending``.
+
+    Raises:
+        HTTPException: 404 unknown task, 400 when the task is not held (or
+            was just released by someone else), 409 closed task.
+    """
+    try:
+        result = release_task_as_operator(task_id)
+    except IllegalTaskTransition as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except ValueError as exc:
+        if "not found" in str(exc).lower():
+            raise HTTPException(404, str(exc)) from exc
+        raise HTTPException(400, str(exc)) from exc
+    await _deliver_operator_result(result, event="task_released", detail=f'Task "{result.task.title}" released')
+    return _serialize_task_row(result.task)
+
+
 @router.get("/tasks/{task_id}/events")
 async def get_task_events(task_id: str, limit: int = 100):
     task = db.get_task(task_id)
@@ -507,11 +594,16 @@ async def get_task_steps(task_id: str, before: str | None = None) -> dict[str, A
 
 
 @router.get("/tasks/{task_id}")
-async def get_task(task_id: str) -> Task:
+async def get_task(task_id: str) -> dict:
+    """Return one task the way ``GET /tasks`` lists it, prerequisites resolved.
+
+    Raises:
+        HTTPException: 404 unknown task.
+    """
     task = db.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
-    return task
+    return _serialize_task_row(task)
 
 
 def _serialize_cancelled_task(task: Task) -> dict:
@@ -534,14 +626,16 @@ async def _broadcast_operator_cancels(tasks: list[Task], posted_lines: list[dict
 
 def _serialize_task_row(task: Task) -> dict:
     """Serialize one task the way ``GET /tasks`` lists it, so the UI can swap it in."""
+    prerequisites_by_id = db.get_tasks_by_ids(task.prerequisites)
     ids = {item for item in (task.assigned_to, task.requester_id, task.owner_id) if item}
+    ids |= {item.assigned_to for item in prerequisites_by_id.values() if item.assigned_to}
     agents_by_id: dict[str, object] = {}
     for agent_id in ids:
         agent = db.get_agent(agent_id)
         if agent:
             agents_by_id[agent_id] = agent
     recent = db.list_recent_task_events([task.id], limit_per_task=1)
-    return _serialize_listed_task(task, agents_by_id, recent.get(task.id))
+    return _serialize_listed_task(task, agents_by_id, recent.get(task.id), prerequisites_by_id)
 
 
 async def _deliver_operator_result(result: OperatorTaskResult, *, event: str, detail: str) -> None:

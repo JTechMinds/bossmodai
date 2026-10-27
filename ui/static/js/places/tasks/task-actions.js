@@ -1,8 +1,9 @@
 /**
  * BossMod AI — the operator's task actions, composed once.
  *
- * Cancel (tasks-cancel.js), Mark complete (tasks-complete.js), Resume and
- * Update (the task detail's Edit mode, task-edit-mode.js) share one pair of
+ * Cancel (tasks-cancel.js), Mark complete (tasks-complete.js), Hold
+ * (tasks-hold.js), Release (tasks-release.js), Resume and Update (the task
+ * detail's Edit mode, task-edit-mode.js) share one pair of
  * outcomes: the server accepted, so the caller refreshes; or it did not, so
  * someone says why. Every one-task action resolves with the stored row, so
  * the detail that asked repaints in place; only a bulk cancel reports its
@@ -19,8 +20,9 @@ const BossModTaskActions = (() => {
      * @param {object} deps.store  Application store; `roster()` reads who can
      *   be assigned from it.
      * @param {(ids: string[]) => void} deps.onChanged  The server accepted a
-     *   cancel, a completion or a resume of these tasks. Only for refreshing
-     *   a list: the detail that asked repaints itself in place.
+     *   cancel, a completion, a hold, a release or a resume of these tasks.
+     *   Only for refreshing a list: the detail that asked repaints itself in
+     *   place.
      * @param {(row: object) => void} deps.onUpdated  The server accepted an
      *   update and returned this row. Only for refreshing a list: the detail
      *   that asked re-renders itself in place, so nothing is closed here.
@@ -30,10 +32,12 @@ const BossModTaskActions = (() => {
      * @returns {{cancelMany: (tasks: object[]) => void,
      *   cancel: (task: object) => Promise<object|null>,
      *   complete: (task: object) => Promise<object|null>,
+     *   hold: (task: object) => Promise<object|null>,
+     *   release: (task: object) => Promise<object|null>,
      *   resume: (task: object) => Promise<object>,
      *   update: (taskId: string, payload: object) => Promise<object>,
-     *   roster: () => object[]}} `cancel` and `complete` resolve null when
-     *   the operator backed out of their confirmation.
+     *   roster: () => object[]}} `cancel`, `complete`, `hold` and `release`
+     *   resolve null when the operator backed out of their confirmation.
      * @throws {Error} When a dependency is missing.
      */
     function create(deps) {
@@ -46,6 +50,8 @@ const BossModTaskActions = (() => {
 
         const canceller = BossModTasksCancel.createCanceller({ api, onCancelled: onChanged, onError });
         const completer = BossModTasksComplete.createCompleter({ api, onCompleted: onChanged });
+        const holder = BossModTasksHold.createHolder({ api, onHeld: onChanged });
+        const releaser = BossModTasksRelease.createReleaser({ api, onReleased: onChanged });
 
         /**
          * Hand a blocked or stalled task back to its assignee. Nothing is
@@ -119,6 +125,8 @@ const BossModTaskActions = (() => {
             cancelMany: canceller.cancelMany,
             cancel: canceller.cancelOne,
             complete: completer.completeOne,
+            hold: holder.holdOne,
+            release: releaser.releaseOne,
             resume,
             update,
             /**

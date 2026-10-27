@@ -9,6 +9,7 @@ from core.tasking.checklist import (
     open_checklist_items,
     resolve_checklist_item,
 )
+from core.tasking.dependencies import board_status_cells
 from core.tasking.service import (
     TaskCreateOrBindResult,
     append_task_event,
@@ -37,6 +38,7 @@ __all__ = [
     "TaskCreateOrBindResult",
     "add_checklist_items",
     "assert_valid_task_transition",
+    "board_status_cells",
     "build_project_summary",
     "append_task_event",
     "build_task_board",

@@ -23,11 +23,31 @@ class IllegalTaskTransition(ValueError):
         super().__init__(f"Illegal task status transition: {from_status} → {to_status}")
 
 
+class TaskStatusChanged(Exception):
+    """The task was no longer in the status the caller expected (``expected_from``).
+
+    Raised by a compare-and-set ``transition_task`` before anything is
+    written or logged: someone else moved the task first.
+
+    Attributes:
+        task_id: The task.
+        expected: The status the caller required.
+        actual: The status the task had instead (``None`` if it vanished).
+    """
+
+    def __init__(self, task_id: str, *, expected: str, actual: str | None) -> None:
+        self.task_id = task_id
+        self.expected = expected
+        self.actual = actual
+        super().__init__(f"Task {task_id} is {actual}, not {expected}")
+
+
 # Identity (from == to) is always allowed and is not listed here.
 TERMINAL_TASK_STATUSES = frozenset({"complete", "abandoned", "declined", "cancelled"})
 
 ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
     # New / deferred assignment. Must accept or otherwise resolve — not jump to complete.
+    # ``held`` is the operator parking it before the assignee starts.
     "pending": frozenset(
         {
             "accepted",
@@ -39,8 +59,12 @@ ALLOWED_TASK_TRANSITIONS: dict[str, frozenset[str]] = {
             "active",
             "waiting",
             "delegated",
+            "held",
         }
     ),
+    # Created but not ready: waits on prerequisites or the operator. No edge to
+    # accepted, active or complete, so it cannot be started without release.
+    "held": frozenset({"pending", "blocked", "cancelled", "abandoned"}),
     "accepted": frozenset(
         {
             "active",
@@ -159,6 +183,7 @@ def transition_task(
     actor_type: str = "system",
     actor_agent_id: str | None = None,
     source_trigger_id: str | None = None,
+    expected_from: str | None = None,
     **fields: Any,
 ) -> Task:
     """Move a task to ``to`` if the allow-map permits it, and log a task event.
@@ -173,9 +198,19 @@ def transition_task(
     completion_summary, watchdog_pinged_at, …). The status column is always
     taken from ``to``, not from ``fields``.
 
+    ``expected_from`` makes the status write a compare-and-set: it applies
+    only while the task is still in that status, so of two callers racing to
+    move the same task exactly one wins. Omitted, the write is unconditional.
+
+    Entering a terminal status settles the tasks held on this one
+    (``core.tasking.dependencies.settle_dependents``), after this task's own
+    write and event: the only place that happens.
+
     Raises ``ValueError`` for an empty target or unknown task,
-    ``IllegalTaskTransition`` for a jump off the allow-map, and
-    ``RuntimeError`` when the task cannot be reloaded after the update.
+    ``TaskStatusChanged`` when ``expected_from`` is given and the task is no
+    longer in it (nothing written or logged), ``IllegalTaskTransition`` for a
+    jump off the allow-map, and ``RuntimeError`` when the task cannot be
+    reloaded after the update.
     """
     import db
     from core.tasking.service import append_task_event
@@ -190,11 +225,20 @@ def transition_task(
 
     from_status = task.status
     previous_note = task.status_note
+    # Before the allow-map: a task someone else already moved on is a lost
+    # race, not an illegal request.
+    if expected_from is not None and from_status != expected_from:
+        raise TaskStatusChanged(task_id, expected=expected_from, actual=from_status)
     assert_valid_task_transition(from_status, target)
 
     extra = {key: value for key, value in fields.items() if key != "status"}
-    updated = db.update_task(task_id, status=target, **extra)
+    updated = db.update_task(task_id, status=target, expected_status=expected_from, **extra)
     if updated is None:
+        if expected_from is not None:
+            current = db.get_task(task_id)
+            raise TaskStatusChanged(
+                task_id, expected=expected_from, actual=current.status if current is not None else None,
+            )
         raise RuntimeError(f"Failed to reload task {task_id} after transition")
 
     if from_status != target:
@@ -222,4 +266,10 @@ def transition_task(
                 content=new_note,
                 source_trigger_id=source_trigger_id,
             )
-    return db.get_task(task_id) or updated
+    stored = db.get_task(task_id) or updated
+    if from_status != target and is_terminal_task_status(target):
+        # Local: dependencies imports this module.
+        from core.tasking.dependencies import settle_dependents
+
+        settle_dependents(stored)
+    return stored

@@ -220,6 +220,26 @@ const BossModTaskDetailSections = (() => {
     }
 
     /**
+     * What the task waits on, in edge order — title, assignee, status — a row
+     * opening as a layer while `tasks` (facts()'s list) holds it; null without any.
+     */
+    function waitingOn(task, tasks, onNavigate) {
+        const rows = task.prerequisite_rows || [];
+        if (rows.length === 0) return null;
+        const finished = rows.length - BossModTasksData.unfinishedPrerequisites(task).length;
+        return headed('Waiting on', `${finished} of ${rows.length} finished`, ...rows.map((row) => {
+            const listed = tasks.some((item) => item.id === row.id);
+            return h(listed ? 'button' : 'div', {
+                class: 'task-detail-check task-detail-prerequisite',
+                type: listed ? 'button' : null, onclick: listed ? () => onNavigate(row.id) : null,
+            }, h('span', { class: 'task-detail-check-title' }, row.title),
+                row.assigned_to_name ? h('span', { class: 'task-detail-meta' }, row.assigned_to_name) : null,
+                h('span', { class: 'status-pill', 'data-status': row.status },
+                    COLUMNS.STATUS_LABELS[row.status] || row.status));
+        }));
+    }
+
+    /**
      * What the task asks for, rendered as markdown and clamped to six lines
      * until the returned `measure()` has seen whether it actually overflows.
      * The clamp itself is core/clamped-markdown.js's, which the agent desk's
@@ -372,7 +392,7 @@ const BossModTaskDetailSections = (() => {
     }
 
     return {
-        statusLine, facts, callout, instructions,
+        statusLine, facts, callout, waitingOn, instructions,
         references, deliverables, childDeliverableGroups, checklist, subtasks, doneContract,
     };
 })();

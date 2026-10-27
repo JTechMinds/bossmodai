@@ -12,6 +12,7 @@ from core.bm_cli.filesystem import slugify_name
 from core.boss import boss_label
 from core.models import Agent, Task, TaskEvent
 from core.models.message import HUMAN_SENDER_ID
+from core.tasking.dependencies import is_released
 from core.tasking.resolution import OPEN_TASK_STATUSES
 
 
@@ -63,7 +64,14 @@ def serialize_task_board(board: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_project_summary(agent_id: str, *, current_task_id: str | None = None) -> list[dict[str, Any]]:
-    """Return a compact project-level rollup for the given agent."""
+    """Return a compact project-level rollup for the given agent.
+
+    Unreleased work assigned to the agent (held, or blocked because a
+    prerequisite failed) is left out, whichever list it came from: a
+    top-level task owns itself (``default_task_owner_id``), so the
+    owner-side lists would otherwise show it to its assignee. Other agents'
+    unreleased work stays, since the owner may see held work.
+    """
     relevant = _open_tasks(assigned_to=agent_id)
     owned_statuses = ("complete", "blocked", "delegated", "abandoned")
     owned = db.list_tasks_by_statuses(owned_statuses, owner_id=agent_id)
@@ -76,6 +84,7 @@ def build_project_summary(agent_id: str, *, current_task_id: str | None = None) 
     for task in _open_tasks(owner_id=agent_id):
         if all(existing.id != task.id for existing in relevant):
             relevant.append(task)
+    relevant = [task for task in relevant if task.assigned_to != agent_id or is_released(task)]
     agents = _agents_named_by(relevant)
 
     grouped: dict[str, dict[str, Any]] = {}
@@ -120,7 +129,9 @@ def build_project_summary(agent_id: str, *, current_task_id: str | None = None) 
 
 def _build_self_board(agent_id: str) -> dict[str, Any]:
     current_task = _current_task(agent_id)
-    open_tasks = _open_tasks(assigned_to=agent_id)
+    # Work that has not been released is not the assignee's to see: held, or
+    # blocked because a prerequisite failed.
+    open_tasks = [task for task in _open_tasks(assigned_to=agent_id) if is_released(task)]
     blocked = [task for task in open_tasks if task.status in {"blocked", "stalled"}]
     waiting = [task for task in open_tasks if task.status == "waiting"]
     pending_decisions = [task for task in open_tasks if task.status in {"pending", "accepted"}]
@@ -143,7 +154,17 @@ def _build_self_board(agent_id: str) -> dict[str, Any]:
 
 def _build_owned_board(agent_id: str) -> dict[str, Any]:
     owned = _open_tasks(owner_id=agent_id)
-    delegated = [task for task in owned if task.assigned_to and task.assigned_to != agent_id]
+    # By requester, not owner: a top-level assign owns itself, and the
+    # requester is the agent that wrote its ``after``.
+    held_requested = db.list_tasks_by_statuses(("held",), requester_id=agent_id)
+    held_requested.sort(key=lambda item: (item.last_activity, item.created_at), reverse=True)
+    held_ids = {task.id for task in held_requested}
+    # Shown once, under ON HOLD, not again as delegated work.
+    delegated = [
+        task
+        for task in owned
+        if task.assigned_to and task.assigned_to != agent_id and task.id not in held_ids
+    ]
     blocked = [task for task in delegated if task.status in {"blocked", "stalled"}]
     waiting = [task for task in delegated if task.status == "waiting"]
     waiting_on_owner = [task for task in delegated if task.status in {"pending", "blocked", "stalled"}]
@@ -162,6 +183,7 @@ def _build_owned_board(agent_id: str) -> dict[str, Any]:
             "waiting_child_tasks": waiting,
             "blocked_or_stalled_child_tasks": blocked,
             "tasks_waiting_on_me": waiting_on_owner,
+            "held_tasks_i_requested": held_requested,
         },
         "assignee_rollup": _assignee_rollup(delegated),
         "child_tasks_by_parent": _group_children_by_parent(delegated),
@@ -248,7 +270,11 @@ def _later_open_card(
     parent_task_id: str | None = None,
     notification_channel_id: str | None = None,
 ) -> Task | None:
-    """First open card strictly after ``task`` in this pool, skipping the author."""
+    """First open card strictly after ``task`` in this pool, skipping the author.
+
+    Unreleased cards (held, or blocked because a prerequisite failed) are
+    skipped too: their assignee is not the next owner of anything yet.
+    """
     rows = db.list_tasks_by_statuses(
         OPEN_TASK_STATUSES,
         parent_task_id=parent_task_id,
@@ -257,6 +283,8 @@ def _later_open_card(
     rows.sort(key=lambda item: (item.created_at, item.id))
     for item in rows:
         if item.id == task.id or item.created_at < task.created_at:
+            continue
+        if not is_released(item):
             continue
         owner = str(item.assigned_to or "").strip() or str(item.owner_id or "").strip()
         if not owner or owner == author_id or owner == HUMAN_SENDER_ID:

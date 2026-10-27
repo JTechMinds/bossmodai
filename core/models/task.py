@@ -21,6 +21,7 @@ from core.models.work_contract import WorkContract
 
 TaskStatus = Literal[
     "pending",
+    "held",
     "accepted",
     "active",
     "waiting",
@@ -52,6 +53,11 @@ DEFAULT_TASK_SEVERITY: TaskSeverity = "P3"
 TASK_TRIGGER_FIELDS: tuple[tuple[str, str], ...] = (
     ("task_severity", "Assigned task severity (P0 critical … P3 low)"),
     ("task_references", "Assigned task reference documents, one '- path — description' line each, when present"),
+    (
+        "task_prerequisites",
+        "Tasks that finished before this one could start, one '- title (assignee): summary; files: paths' "
+        "line each, when present",
+    ),
 )
 
 
@@ -158,6 +164,9 @@ class Task(BaseModel):
     references: list[TaskReference] = Field(default_factory=list)
     # The assignee's checklist, in item order (task_checklists side table).
     checklist: list[TaskChecklistItem] = Field(default_factory=list)
+    # Ids of the tasks this one waits on, in insertion order (task_dependencies
+    # side table). Met or not: every edge written at creation is listed.
+    prerequisites: list[str] = Field(default_factory=list)
     source_channel: NotificationSourceChannel | None = None
     notification_policy: TaskNotificationPolicy | None = None
     notification_channel_id: str | None = None
@@ -313,6 +322,28 @@ class TaskResumeRequest(BaseModel):
     ``note`` is an optional hint for the assignee, in the operator's words.
     It is stripped, and a blank note becomes ``None`` (nothing to say). A
     missing body is valid too: the route treats it as no note.
+
+    Raises:
+        pydantic.ValidationError: An unknown field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    note: str | None = None
+
+    @field_validator("note")
+    @classmethod
+    def _strip_note(cls, value: str | None) -> str | None:
+        text = (value or "").strip()
+        return text or None
+
+
+class TaskHoldRequest(BaseModel):
+    """Payload accepted by POST /api/tasks/{id}/hold: the operator parks unstarted work.
+
+    ``note`` is why, in the operator's words. It is stripped, and a blank
+    note becomes ``None``. A missing body is valid too: the route treats it
+    as no note.
 
     Raises:
         pydantic.ValidationError: An unknown field is sent.

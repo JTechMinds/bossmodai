@@ -395,6 +395,7 @@
    shell.css, for the same reason. */
 .task-card.is-selected .task-card-age,
 .task-card.is-selected .task-card-parent,
+.task-card.is-selected .task-card-after,
 .task-card.is-selected .task-card-glyphs { color: var(--muted); }
 
 /* The checkbox is always in the tab order. It is revealed on hover, on focus
@@ -408,7 +409,8 @@
 .task-card-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   padding-right: 20px; font-size: 13px; font-weight: 500; }            /* clear of the checkbox */
 .task-card-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--alert-ink); }
-.task-card-parent { font-size: 11px; color: var(--hint); }
+/* A held card's "After: …" line is the same quiet subline as "in <parent>". */
+.task-card-parent, .task-card-after { font-size: 11px; color: var(--hint); }
 /* On a narrow card the glyphs drop to their own line, right-aligned, rather
    than squeezing the owner and age into a broken wrap. */
 .task-card-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 6px; }
@@ -477,6 +479,11 @@
 .task-detail-check[data-state="done"] .task-detail-check-title,
 .task-detail-check[data-state="closed"] .task-detail-check-title,
 .task-detail-check[data-state="skipped"] .task-detail-check-title { text-decoration: line-through; color: var(--muted); }
+/* A Waiting-on row (task-detail-sections.js): the prerequisite's title and
+   assignee on one line, its status pill at the row's end. */
+.task-detail-prerequisite { align-items: baseline; }
+.task-detail-prerequisite > .task-detail-check-title { min-width: 0; overflow-wrap: anywhere; }
+.task-detail-prerequisite > .status-pill { flex: none; margin-left: auto; }
 .task-detail-contract { padding-top: 10px; border-top: 1px solid var(--line); }
 .task-detail-contract > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
 .task-detail-contract[open] > summary { margin-bottom: 8px; }

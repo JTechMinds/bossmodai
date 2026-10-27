@@ -369,7 +369,13 @@ def delete_human_chat_from(agent_id: str, from_message_id: str) -> list[str]:
 
 
 def get_recent_completed_tasks(agent_id: str, limit: int = 5) -> list[dict[str, Any]]:
-    """Return recent archived task summaries for recall context."""
+    """Return recent archived task summaries for recall context.
+
+    Work never released to the assignee is left out: a task with an edge to
+    a prerequisite that is not ``complete`` is held, or blocked because that
+    prerequisite failed (``core.tasking.dependencies`` invariant), and was
+    never this agent's to recall.
+    """
     from db.crud import query
 
     return query(
@@ -380,6 +386,12 @@ def get_recent_completed_tasks(agent_id: str, limit: int = 5) -> list[dict[str, 
         FROM tasks
         WHERE assigned_to = $1
           AND status IN ('complete', 'blocked', 'abandoned', 'stalled', 'delegated', 'declined')
+          AND NOT EXISTS (
+              SELECT 1
+              FROM task_dependencies td
+              JOIN tasks p ON p.id = td.prerequisite_id
+              WHERE td.task_id = tasks.id AND p.status <> 'complete'
+          )
         ORDER BY last_activity DESC, created_at DESC
         LIMIT $2
         """,

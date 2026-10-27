@@ -84,5 +84,5 @@ def test_migration_adds_the_column_to_an_old_table() -> None:
 def test_the_list_route_serializes_closed_at() -> None:
     task = _task()
     db.update_task(task.id, status="cancelled")
-    row = _serialize_listed_task(db.get_task(task.id), {}, None)
+    row = _serialize_listed_task(db.get_task(task.id), {}, None, {})
     assert row["closed_at"] is not None

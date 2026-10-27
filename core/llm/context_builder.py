@@ -31,7 +31,7 @@ from core.llm.attachment_parts import history_manifests, mark_trigger_attachment
 from core.llm.live_processes_block import live_processes_messages
 from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
-from core.tasking import build_task_board
+from core.tasking import board_status_cells, build_task_board
 from core.tasking.checklist import format_checklist_for_context
 from core.tasking.references import format_references_for_context
 from core.time import ensure_utc, now_local
@@ -637,6 +637,7 @@ def _task_board_context(agent_id: str, current_task: dict[str, Any] | None, *, w
     blocked_rows = _tasks_from_board_section(self_board, "my_blocked_tasks", current_task_id=current_task_id)
     waiting_rows = _tasks_from_board_section(owned_board, "tasks_waiting_on_me")
     delegated_rows = _tasks_from_board_section(owned_board, "tasks_i_delegated")
+    held_rows = _tasks_from_board_section(owned_board, "held_tasks_i_requested")
     recent_completed_delegated_rows = _tasks_from_board_section(owned_board, "recent_completed_delegated_tasks")
     waiting_child_rows = _tasks_from_board_section(owned_board, "waiting_child_tasks")
     blocked_child_rows = _tasks_from_board_section(owned_board, "blocked_or_stalled_child_tasks")
@@ -654,6 +655,8 @@ def _task_board_context(agent_id: str, current_task: dict[str, Any] | None, *, w
         sections.append(("TASKS WAITING ON ME", _task_board_lines(waiting_rows, limit=3)))
     if delegated_rows:
         sections.append(("TASKS I DELEGATED", _task_board_lines(delegated_rows, limit=3)))
+    if held_rows:
+        sections.append(("ON HOLD", _task_board_lines(held_rows, limit=3)))
     if recent_completed_delegated_rows:
         sections.append(("RECENT COMPLETED DELEGATIONS", _task_board_lines(recent_completed_delegated_rows, limit=3)))
     if waiting_child_rows:
@@ -721,7 +724,8 @@ def _tasks_from_board_section(
 
 
 def _task_board_lines(rows: list[Any], *, limit: int) -> list[str]:
-    """Render compact task-board rows for prompt use."""
+    """Render compact task-board rows for prompt use; a held or blocked row says what it waits on."""
+    status_cells = board_status_cells(rows[:limit])
     lines = ["task id | datetime | status | assignee | task name | description"]
     for task in rows[:limit]:
         assignee_name = _task_assignee_name(task)
@@ -730,7 +734,7 @@ def _task_board_lines(rows: list[Any], *, limit: int) -> list[str]:
                 [
                     str(getattr(task, "id", "")),
                     _format_datetime(getattr(task, "last_activity", None) or getattr(task, "created_at", None)),
-                    str(getattr(task, "status", "unknown")),
+                    status_cells[task.id],
                     assignee_name or "-",
                     str(getattr(task, "title", "Untitled")),
                     _summarize_text(str(getattr(task, "description", None) or getattr(task, "status_note", None) or ""), limit=120),

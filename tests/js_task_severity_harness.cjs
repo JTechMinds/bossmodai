@@ -32,7 +32,8 @@ const NAMES = [
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
-    "BossModTasksCancel", "BossModTasksComplete", "BossModTaskActions",
+    "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",
+    "BossModTaskActions",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);

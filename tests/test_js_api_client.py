@@ -132,6 +132,8 @@ API_BY_INJECTION = {
     "places/tasks/assign-form.js",
     "places/tasks/tasks-cancel.js",
     "places/tasks/tasks-complete.js",
+    "places/tasks/tasks-hold.js",
+    "places/tasks/tasks-release.js",
     "places/tasks/task-actions.js",
     # Edit mode's file picker lists the assignee's desk through the api the
     # task detail hands it.
@@ -244,6 +246,8 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "places/tasks/assign-form.js",
                  "places/tasks/tasks-cancel.js",
                  "places/tasks/tasks-complete.js",
+                 "places/tasks/tasks-hold.js",
+                 "places/tasks/tasks-release.js",
                  "places/tasks/task-actions.js",
                  "places/tasks/task-file-picker.js",
                  "context/desk-schedules.js",

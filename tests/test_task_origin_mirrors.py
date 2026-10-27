@@ -854,6 +854,9 @@ def test_locked_operator_copy() -> None:
     agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
     task = type("T", (), {"title": "Share review findings"})()
     assert format_origin_status_line(kind="created", agent=agent, task=task) == _named(agent, "Created: Share review findings")
+    assert format_origin_status_line(
+        kind="created", agent=agent, task=task, reason='on hold until "Research" finishes'
+    ) == _named(agent, 'Created: Share review findings — on hold until "Research" finishes')
     assert format_origin_status_line(kind="accepted", agent=agent, task=task) == _named(agent, "Accepted: Share review findings")
     assert format_origin_status_line(kind="progress", agent=agent, task=task, path="/me/review.md") == _named(agent, "Writing /me/review.md")
     assert format_origin_status_line(kind="waiting", agent=agent, task=task, reason="Need the transcript") == _named(agent, "Waiting — Need the transcript")

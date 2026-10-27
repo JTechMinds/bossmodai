@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 from core.models import Task, TaskNotificationSettings, WorkContract
 from core.models.task import DEFAULT_TASK_SEVERITY, TaskReference, TaskSeverity
-from db.crud import build_update, insert_returning_dict, query
+from db.crud import build_conditional_update, build_update, execute, insert_returning_dict, query
 from db.task_checklists import set_task_checklist
+from db.task_dependencies import PrerequisiteClosed, add_task_dependencies
 from db.task_notification_policies import delete_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import delete_task_notification_target, set_task_notification_target_channel_id
 from db.task_references import delete_task_references, set_task_references
@@ -23,7 +24,10 @@ _TASK_COLUMNS = (
     "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.schedule_id, t.cost_ceiling, t.completion_summary, "
     "t.status_note, t.watchdog_pinged_at, t.last_progress_at, t.last_heartbeat_at, "
-    "t.last_activity, t.closed_at, t.origin_attachment_ids, t.created_at"
+    "t.last_activity, t.closed_at, t.origin_attachment_ids, t.created_at, "
+    # Edge order (insertion), not the primary key's order, which would sort by id.
+    "(SELECT json_group_array(td.prerequisite_id ORDER BY td.rowid) "
+    "FROM task_dependencies td WHERE td.task_id = t.id) AS prerequisites"
 )
 
 _TASK_VALID_COLUMNS = {
@@ -76,8 +80,11 @@ def create_task(
     severity: TaskSeverity = DEFAULT_TASK_SEVERITY,
     references: list[TaskReference] | None = None,
     origin_attachment_ids: list[str] | None = None,
+    prerequisite_ids: Sequence[str] = (),
+    met_statuses: Collection[str] = (),
+    dead_statuses: Collection[str] = (),
 ) -> Task:
-    """Insert a new task.
+    """Insert a new task, ``held`` when it waits on an unfinished prerequisite.
 
     ``owner_id`` is stored as given: who owns a task is decided in
     ``core/agent_loop/task_roles.py`` ``default_task_owner_id``, never here.
@@ -88,6 +95,29 @@ def create_task(
     ``severity`` is P0–P3 (P3 unless given). ``references`` are the
     documents the assignee reads first; they are stored as given, so the
     caller checks them (``core/tasking/references.py``).
+
+    ``prerequisite_ids`` are the tasks this one waits on. The caller passes
+    what meets a prerequisite (``met_statuses``) and what can never meet one
+    (``dead_statuses``): this layer never defines either. The task is born
+    ``held`` when any prerequisite is not met, ``pending`` otherwise, and an
+    edge is stored for every prerequisite, met or not.
+
+    Everything runs in one savepoint, so it nests inside a caller's open
+    transaction and the row, its edges and its side tables are written
+    together or not at all. The task INSERT is the savepoint's first
+    statement: it takes the write lock, so the prerequisite statuses read
+    after it cannot change before the savepoint is released. A prerequisite
+    finishing concurrently either committed first (it reads as finished
+    here) or commits after (its settle sees this task held).
+
+    Raises:
+        ValueError: ``source_channel``/``notification_policy`` given alone,
+            ``prerequisite_ids`` without ``met_statuses``, or a prerequisite
+            id that names no task.
+        PrerequisiteClosed: A prerequisite is in ``dead_statuses``; nothing
+            was written.
+        pydantic.ValidationError: ``work_contract`` or the notification
+            settings are invalid.
     """
     validated_work_contract = None
     if work_contract is not None:
@@ -97,47 +127,79 @@ def create_task(
         if source_channel is None or notification_policy is None:
             raise ValueError("source_channel and notification_policy must be provided together")
         validated_notification_settings = _validate_notification_settings(source_channel, notification_policy)
+    wanted_prerequisites = list(dict.fromkeys(prerequisite_ids))
+    if wanted_prerequisites and not met_statuses:
+        # With nothing that meets a prerequisite the task would be held forever.
+        raise ValueError("prerequisite_ids need met_statuses")
 
     resolved_requester_id = requester_id if requester_id is not None else created_by
 
-    row = insert_returning_dict(
-        f"""
-        INSERT INTO tasks (
-            title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id,
-            schedule_id, severity, origin_attachment_ids
+    execute("SAVEPOINT create_task")
+    try:
+        row = insert_returning_dict(
+            f"""
+            INSERT INTO tasks (
+                title, description, project, assigned_to, requester_id, owner_id, created_by, parent_task_id,
+                schedule_id, severity, origin_attachment_ids
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            RETURNING id
+            """,
+            [
+                title, description, project, assigned_to, resolved_requester_id, owner_id, created_by,
+                parent_task_id, schedule_id, severity,
+                json.dumps(origin_attachment_ids) if origin_attachment_ids else None,
+            ],
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-        RETURNING id
-        """,
-        [
-            title, description, project, assigned_to, resolved_requester_id, owner_id, created_by,
-            parent_task_id, schedule_id, severity,
-            json.dumps(origin_attachment_ids) if origin_attachment_ids else None,
-        ],
-    )
-    task_id = row["id"]
-    if validated_work_contract is not None:
-        set_task_work_contract(task_id, validated_work_contract)
-    if references:
-        set_task_references(task_id, references)
-    if validated_notification_settings is not None:
-        set_task_notification_settings(
-            task_id,
-            source_channel=validated_notification_settings.source_channel,
-            policy=validated_notification_settings.policy,
-        )
-        set_task_notification_target_channel_id(task_id, notification_channel_id)
-    task = get_task(task_id)
-    if task is None:
-        raise RuntimeError(f"Failed to reload created task {task_id}")
+        task_id = row["id"]
+        if wanted_prerequisites:
+            placeholders = ", ".join(f"${index + 1}" for index in range(len(wanted_prerequisites)))
+            statuses = {
+                str(item["id"]): str(item["status"])
+                for item in query(
+                    f"SELECT id, status FROM tasks WHERE id IN ({placeholders})",
+                    wanted_prerequisites,
+                )
+            }
+            missing = [item for item in wanted_prerequisites if item not in statuses]
+            if missing:
+                raise ValueError(f"Prerequisite task not found: {', '.join(missing)}")
+            for prerequisite_id in wanted_prerequisites:
+                if statuses[prerequisite_id] in dead_statuses:
+                    raise PrerequisiteClosed(prerequisite_id, statuses[prerequisite_id])
+            if any(statuses[item] not in met_statuses for item in wanted_prerequisites):
+                # Born held: creation is the only way in besides the operator's hold,
+                # so this bypasses transition_task on purpose.
+                execute("UPDATE tasks SET status = 'held' WHERE id = $1", [task_id])
+            add_task_dependencies(task_id, wanted_prerequisites)
+        if validated_work_contract is not None:
+            set_task_work_contract(task_id, validated_work_contract)
+        if references:
+            set_task_references(task_id, references)
+        if validated_notification_settings is not None:
+            set_task_notification_settings(
+                task_id,
+                source_channel=validated_notification_settings.source_channel,
+                policy=validated_notification_settings.policy,
+            )
+            set_task_notification_target_channel_id(task_id, notification_channel_id)
+        task = get_task(task_id)
+        if task is None:
+            raise RuntimeError(f"Failed to reload created task {task_id}")
+    except BaseException:
+        execute("ROLLBACK TO SAVEPOINT create_task")
+        execute("RELEASE SAVEPOINT create_task")
+        raise
+    execute("RELEASE SAVEPOINT create_task")
     return task
 
 
 def _task_from_row(row: dict[str, Any]) -> Task:
-    """Hydrate a task row, its optional work contract, its references and its checklist.
+    """Hydrate a task row, its optional work contract, references, checklist and prerequisites.
 
-    A task with no ``task_references`` row has no references (``[]``), and
-    one with no ``task_checklists`` row has no checklist (``[]``).
+    A task with no ``task_references`` row has no references (``[]``), one
+    with no ``task_checklists`` row has no checklist (``[]``), and one with
+    no ``task_dependencies`` edge has no prerequisites (``[]``).
     """
     data = dict(row)
     raw_contract = data.get("work_contract")
@@ -149,6 +211,8 @@ def _task_from_row(row: dict[str, Any]) -> Task:
     data["references"] = json.loads(raw_references) if raw_references else []
     raw_checklist = data.get("checklist")
     data["checklist"] = json.loads(raw_checklist) if raw_checklist else []
+    raw_prerequisites = data.get("prerequisites")
+    data["prerequisites"] = json.loads(raw_prerequisites) if raw_prerequisites else []
     raw_origin_atts = data.get("origin_attachment_ids")
     data["origin_attachment_ids"] = json.loads(raw_origin_atts) if raw_origin_atts else None
     return Task.model_validate(data)
@@ -463,12 +527,16 @@ def list_recent_tasks(
     return [_task_from_row(row) for row in rows]
 
 
-def update_task(task_id: str, **fields: Any) -> Task | None:
+def update_task(task_id: str, *, expected_status: str | None = None, **fields: Any) -> Task | None:
     """Update task fields. Auto-updates last_activity on status change.
 
     Status changes go through the shared allow-map in
     ``core.tasking.transitions``. Illegal jumps raise
     ``IllegalTaskTransition`` and leave the row unchanged.
+
+    ``expected_status`` makes the ``tasks`` row write a compare-and-set: it
+    applies only while the row still has that status. When it does not,
+    nothing is written (no side table either) and ``None`` is returned.
 
     ``references`` (a list of ``TaskReference``) replaces the task's
     references; an empty list removes them all.
@@ -488,6 +556,10 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
         from core.tasking.transitions import TERMINAL_TASK_STATUSES, assert_valid_task_transition
 
         current = get_task(task_id)
+        if expected_status is not None and (current is None or current.status != expected_status):
+            # The conditional write below could not match; a stale caller is
+            # told so, not handed an allow-map error for a status it never asked about.
+            return None
         if current is not None:
             target = str(fields["status"])
             assert_valid_task_transition(current.status, target)
@@ -533,7 +605,14 @@ def update_task(task_id: str, **fields: Any) -> Task | None:
         }:
             fields.setdefault("last_progress_at", now)
 
-    build_update("tasks", "id", task_id, fields, _TASK_VALID_COLUMNS)
+    if expected_status is not None:
+        matched = build_conditional_update(
+            "tasks", "id", task_id, fields, _TASK_VALID_COLUMNS, expected={"status": expected_status},
+        )
+        if not matched:
+            return None
+    else:
+        build_update("tasks", "id", task_id, fields, _TASK_VALID_COLUMNS)
     if validated_work_contract is not ...:
         if validated_work_contract is None:
             delete_task_work_contract(task_id)

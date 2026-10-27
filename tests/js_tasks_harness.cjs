@@ -33,6 +33,7 @@ const NAMES = [
     "BossModTaskDetail",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksCancel", "BossModTasksComplete",
+    "BossModTasksHold", "BossModTasksRelease",
     "BossModTaskActions", "BossModTaskLayers",
     "BossModTasksMenu", "BossModTasksArchive", "BossModTasksToolbar", "BossModTasksPlace",
 ];
@@ -60,12 +61,13 @@ const fiveDaysIso = new Date(Y, M, D - 5, 12).toISOString();
 const thirtyDaysIso = new Date(Y, M, D - 30, 12).toISOString();
 const FINISHED = new Set(["complete", "abandoned", "declined", "cancelled"]);
 
-// One task per TaskStatus member. Eleven of them: if the column map ever loses
+// One task per TaskStatus member. Twelve of them: if the column map ever loses
 // one, it stops rendering here and everyStatusLands goes false. Every finished
-// one ended today, so it is inside any Done window.
+// one ended today, so it is inside any Done window. `held` is last, so the
+// dates the others were given by position are unchanged.
 const STATUSES = [
     "pending", "accepted", "active", "waiting", "blocked", "complete",
-    "stalled", "abandoned", "delegated", "declined", "cancelled",
+    "stalled", "abandoned", "delegated", "declined", "cancelled", "held",
 ];
 const TASKS = STATUSES.map((status, index) => ({
     id: `t-${status}`,
@@ -262,6 +264,48 @@ function cardGlyphChecks() {
     return { cardShowsChecklistProgress };
 }
 
+/**
+ * A held card says so in words, and says what it waits on: the first
+ * unfinished prerequisite with its assignee, then how many more. A hold by
+ * the boss (no prerequisites) has the pill alone; a pending card has neither.
+ *
+ * @returns {{heldCardSaysWhatItWaitsOn: boolean}}
+ */
+function heldCardChecks() {
+    const CARD = global.BossModTaskCard;
+    const options = { onOpen: () => {}, onToggleSelect: () => {}, colorOf: () => undefined };
+    const base = { ...person, id: "t-draft", title: "Draft the post", status: "held",
+        last_activity: todayIso, closed_at: null };
+    const read = (card) => {
+        const pill = card.querySelector(".status-pill");
+        const after = card.querySelector(".task-card-after");
+        return {
+            pill: pill ? `${pill.getAttribute("data-status")}:${pill.textContent}` : null,
+            after: after ? after.textContent : null,
+        };
+    };
+    const chained = read(CARD.renderCard({ ...base, prerequisite_rows: [
+        { id: "p1", title: "Research", status: "complete", assigned_to_name: "Taylor" },
+        { id: "p2", title: "Outline", status: "active", assigned_to_name: "Jo" },
+        { id: "p3", title: "Brand check", status: "pending", assigned_to_name: null },
+    ] }, options));
+    const single = read(CARD.renderCard({ ...base, prerequisite_rows: [
+        { id: "p3", title: "Brand check", status: "pending", assigned_to_name: null },
+    ] }, options));
+    const byHand = read(CARD.renderCard({ ...base, prerequisite_rows: [] }, options));
+    const pending = read(CARD.renderCard({ ...base, status: "pending", prerequisite_rows: [] }, options));
+    const heldCardSaysWhatItWaitsOn = JSON.stringify([chained, single, byHand, pending]) === JSON.stringify([
+        { pill: "held:On hold", after: "After: Outline (Jo) +1 more" },
+        { pill: "held:On hold", after: "After: Brand check" },
+        { pill: "held:On hold", after: null },
+        { pill: null, after: null },
+    ]);
+    if (!heldCardSaysWhatItWaitsOn) {
+        fail(`held cards read ${JSON.stringify([chained, single, byHand, pending])}`);
+    }
+    return { heldCardSaysWhatItWaitsOn };
+}
+
 /** Click the way the browser does: every listener, awaited, then settle. */
 async function click(el, what) {
     if (!el) fail(`nothing to click: ${what}`);
@@ -299,6 +343,7 @@ function storeFor(placeParams) {
 async function main() {
     const pure = pureChecks();
     const cardGlyphs = cardGlyphChecks();
+    const heldCards = heldCardChecks();
     const store = storeFor({});
     const bus = global.BossModBus.createBus(global.BossModBus.KNOWN_TOPICS);
     const container = document.createElement("div");
@@ -351,7 +396,7 @@ async function main() {
 
     // ── summaryCountsTheWindow ──────────────────────────────────────────
     const summaryEl = container.querySelector(".place-summary");
-    const summaryCountsTheWindow = summaryEl.textContent === "8 active · 3 done this week";
+    const summaryCountsTheWindow = summaryEl.textContent === "9 active · 3 done this week";
     if (!summaryCountsTheWindow) fail(`summary read "${summaryEl.textContent}"`);
 
     // ── needsColumnMatchesQueue ─────────────────────────────────────────
@@ -424,8 +469,8 @@ async function main() {
         fail(`the sort action read "${sortButton && sortButton.textContent}"`);
     }
     await click(sortButton, "#tasks-sort");
-    const sortReverses = newestFirst === "t-pending,t-pending-older"
-        && backlogIds() === "t-pending-older,t-pending"
+    const sortReverses = newestFirst === "t-held,t-pending,t-pending-older"
+        && backlogIds() === "t-pending-older,t-pending,t-held"
         && container.querySelector("#tasks-sort").textContent === "Sort: oldest first";
     if (!sortReverses) fail(`backlog went from [${newestFirst}] to [${backlogIds()}]`);
     // Put the menu away through its own toggle, as the operator would.
@@ -589,6 +634,7 @@ async function main() {
         ok: true,
         ...pure,
         ...cardGlyphs,
+        ...heldCards,
         everyStatusLands,
         doneExcludesClosed,
         closedCardsAreMarked,

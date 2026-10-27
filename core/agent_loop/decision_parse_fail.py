@@ -18,6 +18,7 @@ from core.agent_loop.activity_scheduler import (
 )
 from core.agent_loop.task_origin_mirrors import persist_unbound_status_line
 from core.models import Agent, Task
+from core.tasking.dependencies import is_released
 from core.tasking.service import append_task_event
 
 DECISION_REPAIR_ATTEMPTS_SETTING = "decision_repair_attempts"
@@ -113,21 +114,26 @@ def surface_commitment_recovery(
 
 
 def _task_for_note(agent: Agent, trigger: dict[str, Any] | None) -> Task | None:
-    """Prefer the trigger's task, then live work, then a stranded commitment."""
+    """Prefer the trigger's task, then live work, then a stranded commitment.
+
+    Unreleased work (held, or blocked because a prerequisite failed) is
+    never chosen: it is not the agent's commitment, and requeueing it would
+    start it.
+    """
     triggered = _open_task(agent.id, _trigger_task_id(trigger), statuses=_NOTE_STATUSES)
-    if triggered is not None:
+    if triggered is not None and is_released(triggered):
         return triggered
     active = activity_runtime.get_active_work_activity(agent.id)
     if active is not None:
         bound = _open_task(agent.id, active.task_id, statuses=_NOTE_STATUSES)
-        if bound is not None:
+        if bound is not None and is_released(bound):
             return bound
     for status in ("blocked", "stalled", "waiting", "active", "accepted", "pending"):
         for task in db.list_tasks(assigned_to=agent.id, status=status):
-            if db.get_resumable_work_activity(agent.id, task.id) is not None:
+            if db.get_resumable_work_activity(agent.id, task.id) is not None and is_released(task):
                 return task
     for status in ("blocked", "stalled", "active", "waiting", "accepted"):
-        rows = db.list_tasks(assigned_to=agent.id, status=status)
+        rows = [task for task in db.list_tasks(assigned_to=agent.id, status=status) if is_released(task)]
         if rows:
             return rows[0]
     return None

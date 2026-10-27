@@ -66,6 +66,7 @@ from core.models.task import (
     TaskCreate,
     TaskCreateOutcome,
     TaskCreateResponse,
+    TaskHoldRequest,
     TaskResumeRequest,
     TaskUpdateRequest,
 )
@@ -113,6 +114,7 @@ __all__ = [
     "TaskCandidateSummary",
     "TaskCancelRequest",
     "TaskCompleteRequest",
+    "TaskHoldRequest",
     "TaskResumeRequest",
     "TaskUpdateRequest",
     "TaskCreate",

@@ -13,6 +13,7 @@ from core.models.message import HUMAN_SENDER_ID
 from core.tasking.transitions import (
     ALLOWED_TASK_TRANSITIONS,
     IllegalTaskTransition,
+    TaskStatusChanged,
     is_allowed_task_transition,
     transition_task,
 )
@@ -20,6 +21,7 @@ from core.tasking.transitions import (
 
 ALL_STATUSES = (
     "pending",
+    "held",
     "accepted",
     "active",
     "waiting",
@@ -35,6 +37,7 @@ ALL_STATUSES = (
 # Shortest legal walk from the default ``pending`` insert.
 _SETUP_PATHS: dict[str, tuple[str, ...]] = {
     "pending": (),
+    "held": ("held",),
     "accepted": ("accepted",),
     "active": ("accepted", "active"),
     "waiting": ("accepted", "active", "waiting"),
@@ -216,3 +219,63 @@ def test_status_change_with_new_note_logs_exactly_one_event() -> None:
     after = _status_update_contents(task.id)
     assert len(after) == len(before) + 1
     assert after[-1] == "Status accepted → active: started drafting"
+
+
+# ─── held and compare-and-set ───
+
+
+def test_held_moves_only_to_pending_blocked_cancelled_or_abandoned() -> None:
+    assert ALLOWED_TASK_TRANSITIONS["held"] == frozenset({"pending", "blocked", "cancelled", "abandoned"})
+    for target in ("accepted", "active", "complete", "waiting", "stalled", "delegated", "declined"):
+        assert not is_allowed_task_transition("held", target), target
+
+
+def test_only_pending_moves_into_held() -> None:
+    sources = {source for source, dests in ALLOWED_TASK_TRANSITIONS.items() if "held" in dests}
+    assert sources == {"pending"}
+
+
+def test_expected_from_applies_while_the_status_matches() -> None:
+    task = _new_task()
+    _reach_status(task.id, "held")
+
+    released = transition_task(task.id, "pending", reason="released", actor="pytest", expected_from="held")
+
+    assert released.status == "pending"
+    assert any("held → pending" in item for item in _status_update_contents(task.id))
+
+
+def test_expected_from_refuses_a_task_someone_else_moved_and_logs_nothing() -> None:
+    task = _new_task()
+    _reach_status(task.id, "held")
+    transition_task(task.id, "pending", reason="first release", actor="pytest", expected_from="held")
+    event_count = len(db.list_task_events(task.id))
+
+    with pytest.raises(TaskStatusChanged) as exc:
+        transition_task(task.id, "blocked", reason="second settle", actor="pytest", expected_from="held")
+
+    assert (exc.value.expected, exc.value.actual) == ("held", "pending")
+    stored = db.get_task(task.id)
+    assert stored is not None and stored.status == "pending"
+    assert len(db.list_task_events(task.id)) == event_count
+
+
+def test_expected_from_loses_a_race_inside_the_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The row moves between transition_task's read and its write: the write matches nothing."""
+    task = _new_task()
+    _reach_status(task.id, "held")
+    original = db.update_task
+
+    def racing_update(task_id: str, **fields):
+        if fields.get("expected_status") == "held":
+            original(task_id, status="pending")
+        return original(task_id, **fields)
+
+    monkeypatch.setattr(db, "update_task", racing_update)
+    event_count = len(db.list_task_events(task.id))
+
+    with pytest.raises(TaskStatusChanged) as exc:
+        transition_task(task.id, "blocked", reason="lost race", actor="pytest", expected_from="held")
+
+    assert exc.value.actual == "pending"
+    assert len(db.list_task_events(task.id)) == event_count

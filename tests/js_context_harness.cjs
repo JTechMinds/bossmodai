@@ -141,6 +141,7 @@ const NAMES = [
     "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksComplete",
+    "BossModTasksHold", "BossModTasksRelease",
     "BossModTaskActions", "BossModTaskLayers",
     "BossModDeskTaskOpener", "BossModAgentRoutes", "BossModDeskDialog",
     // The chat place hands agent conversations their live-view screens.

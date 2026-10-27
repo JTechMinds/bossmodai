@@ -1899,57 +1899,82 @@ def _ensure_agent_state_status_values(con: SQLiteCompatConnection) -> None:
         con.execute("PRAGMA foreign_keys = ON")
 
 
-def _ensure_task_status_values(con: SQLiteCompatConnection) -> None:
-    """Rebuild tasks if it is missing waiting or cancelled."""
-    sql = _table_sql(con, "tasks")
-    if "'waiting'" in sql and "'cancelled'" in sql:
-        return
+_TASKS_DDL_HEAD = "CREATE TABLE IF NOT EXISTS tasks ("
 
+
+def _schema_tasks_ddl() -> str:
+    """Return the ``tasks`` CREATE TABLE statement exactly as schema.sql writes it.
+
+    The statement runs from its ``CREATE TABLE IF NOT EXISTS tasks (`` line to
+    the first ``);`` that starts a line (a ``;`` inside a column comment does
+    not end it).
+
+    Raises:
+        RuntimeError: schema.sql does not define ``tasks`` exactly once, or
+            the statement has no end.
+    """
+    sql = _SCHEMA_PATH.read_text(encoding="utf-8")
+    if sql.count(_TASKS_DDL_HEAD) != 1:
+        raise RuntimeError(f"{_SCHEMA_PATH} must define the tasks table exactly once")
+    start = sql.index(_TASKS_DDL_HEAD)
+    end = sql.find("\n);", start)
+    if end < 0:
+        raise RuntimeError(f"{_SCHEMA_PATH}: the tasks table definition has no end")
+    return sql[start:end + len("\n);")]
+
+
+def _ensure_task_status_values(con: SQLiteCompatConnection) -> None:
+    """Rebuild tasks when its status CHECK lacks the newest status, ``held``.
+
+    SQLite cannot alter a CHECK in place, so the table is rebuilt: a
+    ``tasks__new`` from the ``tasks`` statement in schema.sql (one
+    definition of the table, never a second copy that can drift), every
+    column the old and new tables share copied by name, the old table
+    dropped, the new one renamed. A column an older database lacks takes the
+    new table's default, and the later ``_add_column_if_missing`` calls for
+    it are no-ops. The old table is dropped, not renamed away: SQLite
+    rewrites other tables' ``REFERENCES tasks(id)`` when ``tasks`` is renamed.
+
+    Idempotent: a table whose DDL already names ``'held'`` (every fresh
+    database, and any database this has run on) is left alone. Preserves
+    every row and every shared column's value, and never deletes the
+    database.
+
+    As in :func:`_ensure_agent_template_local_source`, it runs in one
+    transaction, so a failure between the drop and the rename rolls back to
+    the old table, and ``tasks__new`` is created without ``IF NOT EXISTS``:
+    a stray one is a state this migration cannot have produced. The indexes
+    the drop takes with the old table are recreated by
+    :func:`_create_hot_path_indexes`, which runs after every rebuild.
+
+    Raises ``sqlite3.Error`` from whichever statement failed, after rolling
+    the transaction back, and ``RuntimeError`` when schema.sql has no
+    readable ``tasks`` statement.
+    """
+    if "'held'" in _table_sql(con, "tasks"):
+        return
+    ddl = _schema_tasks_ddl().replace(_TASKS_DDL_HEAD, "CREATE TABLE tasks__new (", 1)
+    # A no-op inside a transaction, so it is switched off before BEGIN.
     con.execute("PRAGMA foreign_keys = OFF")
     try:
-        con.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks__new (
-                id             VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
-                title          VARCHAR NOT NULL,
-                description    TEXT,
-                project        VARCHAR,
-                assigned_to    VARCHAR,
-                requester_id   VARCHAR,
-                owner_id       VARCHAR,
-                created_by     VARCHAR,
-                status         VARCHAR DEFAULT 'pending'
-                                   CHECK (status IN ('pending', 'accepted', 'active', 'waiting', 'blocked', 'complete',
-                                                     'stalled', 'abandoned', 'delegated', 'declined', 'cancelled')),
-                parent_task_id VARCHAR,
-                cost_ceiling   DECIMAL,
-                completion_summary TEXT,
-                status_note    TEXT,
-                watchdog_pinged_at TIMESTAMP,
-                last_progress_at TIMESTAMP DEFAULT current_timestamp,
-                last_heartbeat_at TIMESTAMP DEFAULT current_timestamp,
-                last_activity  TIMESTAMP DEFAULT current_timestamp,
-                created_at     TIMESTAMP DEFAULT current_timestamp
-            )
-            """
-        )
-        con.execute(
-            """
-            INSERT INTO tasks__new (
-                id, title, description, project, assigned_to, requester_id, owner_id, created_by,
-                status, parent_task_id, cost_ceiling, completion_summary, status_note,
-                watchdog_pinged_at, last_progress_at, last_heartbeat_at, last_activity, created_at
-            )
-            SELECT
-                id, title, description, project, assigned_to, requester_id, owner_id, created_by,
-                status, parent_task_id, cost_ceiling, completion_summary, status_note,
-                watchdog_pinged_at, last_progress_at, last_heartbeat_at, last_activity, created_at
-            FROM tasks
-            """
-        )
-        con.execute("DROP TABLE tasks")
-        con.execute("ALTER TABLE tasks__new RENAME TO tasks")
-        logger.info("Migration: rebuilt tasks to add waiting/cancelled statuses")
+        con.execute("BEGIN IMMEDIATE")
+        try:
+            con.execute(ddl)
+            old_columns = {str(row[1]) for row in con.execute("PRAGMA table_info(tasks)").fetchall()}
+            shared = [
+                str(row[1])
+                for row in con.execute("PRAGMA table_info(tasks__new)").fetchall()
+                if str(row[1]) in old_columns
+            ]
+            column_list = ", ".join(f'"{name}"' for name in shared)
+            con.execute(f"INSERT INTO tasks__new ({column_list}) SELECT {column_list} FROM tasks")
+            con.execute("DROP TABLE tasks")
+            con.execute("ALTER TABLE tasks__new RENAME TO tasks")
+            con.execute("COMMIT")
+        except BaseException:
+            con.execute("ROLLBACK")
+            raise
+        logger.info("Migration: rebuilt tasks to add the held status")
     finally:
         con.execute("PRAGMA foreign_keys = ON")
 

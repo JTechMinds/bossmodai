@@ -14,8 +14,9 @@ from core.agent_loop.task_roles import task_assignment_sender
 from core.agent_loop.work_binding import is_detached
 from core.models import Activity, AgentState, Task
 from core.scheduling.recurrence import describe, format_local_run, next_occurrence
+from core.tasking.dependencies import assignee_label
 from core.tasking.references import format_references_for_context
-from core.tasking.resolution import OPEN_TASK_STATUSES
+from core.tasking.resolution import ACTIONABLE_TASK_STATUSES
 
 logger = logging.getLogger(__name__)
 
@@ -204,10 +205,11 @@ def assignment_wake_trigger(task: Task) -> dict[str, Any] | None:
     """Return a task_assigned spec when an open assigned task should wake the assignee.
 
     Used for both fresh creates and bind/reuse so a duplicate assign is not silent.
+    A ``held`` task is open but not actionable, so it never wakes anyone.
     """
     if not task.assigned_to:
         return None
-    if task.status not in OPEN_TASK_STATUSES:
+    if task.status not in ACTIONABLE_TASK_STATUSES:
         return None
     from core.floors import assignment_stays_on_floor
 
@@ -225,10 +227,11 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
     on every presentation, first or re-presented: see
     ``_schedule_payload``.
 
-    The payload also carries the task's ``task_severity`` and its
+    The payload also carries the task's ``task_severity``, its
     ``task_references`` (one ``- <path> — <description>`` line each, empty
-    when it has none), so the assignee sees how serious the work is and what
-    to read first.
+    when it has none) and its ``task_prerequisites`` (see
+    ``_prerequisites_payload``), so the assignee sees how serious the work
+    is, what to read first and what finished before it.
     """
     sender = task_assignment_sender(task)
 
@@ -242,6 +245,7 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
             "task_description": task.description or "",
             "task_severity": task.severity,
             "task_references": "\n".join(format_references_for_context(task.references)),
+            "task_prerequisites": _prerequisites_payload(task),
             "project": task.project,
             "from_agent": sender["from_agent"],
             "from_name": sender["from_name"],
@@ -255,6 +259,40 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
     stamp_origin_channel_payload(spec["payload"], task)
     spec["payload"].update(_schedule_payload(task))
     return spec
+
+
+def _prerequisites_payload(task: Task) -> str:
+    """The ``task_prerequisites`` field of a ``task_assigned`` payload.
+
+    One line per prerequisite, in edge order:
+    ``- <title> (<assignee name>): <completion summary, or "done">; files:
+    <file deliverable paths, or "none">``. This is how a released task learns
+    what came before it and where that output is, so its requester does not
+    have to relay it. Two reads at most, whatever the count.
+
+    Returns:
+        The lines joined by newlines, or ``""`` when the task waits on nothing.
+    """
+    if not task.prerequisites:
+        return ""
+    prerequisites = db.get_tasks_by_ids(task.prerequisites)
+    agents = db.get_agents_by_ids([
+        item.assigned_to for item in prerequisites.values() if item.assigned_to
+    ])
+    lines: list[str] = []
+    for prerequisite_id in task.prerequisites:
+        prerequisite = prerequisites[prerequisite_id]
+        summary = (prerequisite.completion_summary or "").strip() or "done"
+        paths = [
+            item.path
+            for item in (prerequisite.work_contract.deliverables if prerequisite.work_contract else [])
+            if item.type == "file"
+        ]
+        lines.append(
+            f"- {prerequisite.title} ({assignee_label(prerequisite, agents)}): {summary}; "
+            f"files: {', '.join(paths) or 'none'}"
+        )
+    return "\n".join(lines)
 
 
 def _schedule_payload(task: Task) -> dict[str, str]:

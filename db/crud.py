@@ -8,6 +8,7 @@ model validation in one place.
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
@@ -186,6 +187,67 @@ def build_update(
         values,
     )
     return True
+
+
+def build_conditional_update(
+    table: str,
+    id_column: str,
+    id_value: str,
+    fields: dict[str, Any],
+    valid_columns: set[str],
+    expected: Mapping[str, Any],
+) -> bool:
+    """Hardened compare-and-set UPDATE: ``build_update`` that applies only while ``expected`` holds.
+
+    The row is updated only when, besides ``id_column = id_value``, every
+    ``expected`` column still equals its value, in the same statement, so of
+    two writers racing on one row exactly one matches.
+
+    Args:
+        table: The table (a plain identifier).
+        id_column: The key column (a plain identifier).
+        id_value: The row's key.
+        fields: Columns to set; those not in ``valid_columns`` are dropped,
+            as in ``build_update``.
+        valid_columns: The whitelist for both ``fields`` and ``expected``.
+        expected: Columns the row must still hold, e.g. ``{"status": "held"}``.
+
+    Returns:
+        Whether a row matched and was updated.
+
+    Raises:
+        ValueError: An ``expected`` column is not in ``valid_columns``, or no
+            field survives the whitelist (there would be nothing to set, so
+            "no row matched" could not be told apart from "nothing to do").
+    """
+    assert _IDENTIFIER_RE.match(table), f"Invalid table name: {table!r}"
+    assert _IDENTIFIER_RE.match(id_column), f"Invalid id_column name: {id_column!r}"
+
+    unknown = [column for column in expected if column not in valid_columns]
+    if unknown:
+        raise ValueError(f"Unknown expected column(s) for {table}: {', '.join(sorted(unknown))}")
+    filtered = {k: v for k, v in fields.items() if k in valid_columns}
+    if not filtered:
+        raise ValueError(f"A conditional update of {table} needs at least one column to set")
+
+    parts: list[str] = []
+    values: list[Any] = []
+    for key, value in filtered.items():
+        values.append(value)
+        parts.append(f"{key} = ${len(values)}")
+
+    values.append(id_value)
+    conditions = [f"{id_column} = ${len(values)}"]
+    for column, value in expected.items():
+        values.append(value)
+        conditions.append(f"{column} = ${len(values)}")
+
+    rows = query(
+        f"UPDATE {table} SET {', '.join(parts)} "
+        f"WHERE {' AND '.join(conditions)} RETURNING {id_column}",
+        values,
+    )
+    return bool(rows)
 
 
 def build_update_returning(

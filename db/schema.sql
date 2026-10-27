@@ -338,7 +338,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     owner_id       VARCHAR,
     created_by     VARCHAR,
     status         VARCHAR DEFAULT 'pending'
-                       CHECK (status IN ('pending', 'accepted', 'active', 'waiting', 'blocked', 'complete',
+                       CHECK (status IN ('pending', 'held', 'accepted', 'active', 'waiting', 'blocked', 'complete',
                                          'stalled', 'abandoned', 'delegated', 'declined', 'cancelled')),
     parent_task_id VARCHAR,
     cost_ceiling   DECIMAL,
@@ -381,6 +381,20 @@ CREATE TABLE IF NOT EXISTS task_checklists (
     created_at     TIMESTAMP DEFAULT current_timestamp,
     updated_at     TIMESTAMP DEFAULT current_timestamp
 );
+
+-- task_id does not start until prerequisite_id is complete (db/task_dependencies.py).
+-- Written at creation only and never edited, so the graph has no cycle.
+CREATE TABLE IF NOT EXISTS task_dependencies (
+    task_id         VARCHAR NOT NULL REFERENCES tasks(id),
+    prerequisite_id VARCHAR NOT NULL REFERENCES tasks(id),
+    created_at      TIMESTAMP DEFAULT current_timestamp,
+    PRIMARY KEY (task_id, prerequisite_id),
+    CHECK (task_id <> prerequisite_id)
+);
+
+-- Who waits on a task that just finished (core/tasking/dependencies.py settle).
+CREATE INDEX IF NOT EXISTS idx_task_dependencies_prerequisite
+    ON task_dependencies (prerequisite_id);
 
 CREATE TABLE IF NOT EXISTS task_notification_policies (
     task_id         VARCHAR PRIMARY KEY REFERENCES tasks(id),

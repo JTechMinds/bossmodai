@@ -13,9 +13,34 @@ from core.agent_loop.task_origins import (
     task_source_channel_for_trigger,
 )
 from core.agent_loop.task_roles import default_task_owner_id, task_requester_id_for_trigger
-from core.models import Agent
+from core.models import Agent, Task
 from core.models.message import HUMAN_SENDER_ID
+from core.tasking.dependencies import is_released
 from core.tasking.service import append_task_event, create_or_bind_subtask, create_or_bind_task
+
+
+def _unreleased_task_feedback(task: Task, *, agent_name: str) -> dict[str, Any] | None:
+    """Refuse a decision on work its assignee has not been given; ``None`` when ``task`` is released.
+
+    The boss can hold a pending task while its assignee is mid-decision, and
+    a bind by title can land on an open held task. Acting on it would break
+    the hold: ``held → accepted`` and ``held → declined`` are off the map,
+    and a defer's move to ``pending`` would silently release it. The turn
+    changes nothing and is told to leave the task.
+
+    Returns:
+        ``{"error_result": <world_feedback>}``, the shape the runtime returns
+        as the turn result, or ``None`` when the task is the agent's to act on.
+    """
+    if is_released(task):
+        return None
+    return {
+        "error_result": {
+            "event": "world_feedback",
+            "detail": f'"{task.title}" is not ready to start yet, so leave it for now.',
+            "agent_name": agent_name,
+        }
+    }
 
 
 def _ambiguous_match_feedback(
@@ -37,7 +62,12 @@ def _ambiguous_match_feedback(
     }
 
 def _task_from_creation(creation, *, agent_name: str) -> dict[str, Any]:
-    """Unwrap a create-or-bind result into a task or honest clarify feedback."""
+    """Unwrap a create-or-bind result into a task, honest clarify feedback, or on-hold feedback.
+
+    A bind by title can land on an open held task (``held`` is an open
+    status); that is refused. A task created here has no prerequisites, so
+    it is never held.
+    """
     if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
         title = (
             creation.resolution.candidates[0].title
@@ -52,7 +82,7 @@ def _task_from_creation(creation, *, agent_name: str) -> dict[str, Any]:
                 context="Clarify which existing task to use instead of creating a duplicate.",
             )
         }
-    return {"task": creation.task}
+    return _unreleased_task_feedback(creation.task, agent_name=agent_name) or {"task": creation.task}
 
 def _follow_up_parent_task_for_trigger(agent: Agent, trigger: dict[str, Any]):
     """Return the completed task that a revision-style follow-up should attach to."""
@@ -99,12 +129,15 @@ def _resolve_or_create_work_task(
     A task wake binds its own task. An accept that names one of the agent's
     open tasks (``data.task.id``) binds that task instead of creating one;
     see :func:`_bind_named_task`. Anything else creates or binds by title.
+    Whichever task that is, work not yet released to the agent (held, or
+    blocked on a failed prerequisite) comes back as on-hold feedback
+    instead (:func:`_unreleased_task_feedback`).
     """
     if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
         if task is None:
             raise ValueError("Assigned task no longer exists")
-        return {"task": task}
+        return _unreleased_task_feedback(task, agent_name=agent.name) or {"task": task}
     if decision.taskId:
         return _bind_named_task(agent, trigger, decision)
 
@@ -189,6 +222,9 @@ def _bind_named_task(
     as a revision. The accept path then activates the task: it resumes
     paused work, or pauses a different current task.
 
+    A task the boss held since validation is refused before the revision is
+    written, so nothing on it changes.
+
     Raises:
         ValueError: The task vanished after validation.
     """
@@ -196,6 +232,9 @@ def _bind_named_task(
     task = db.get_task(task_id)
     if task is None:
         raise ValueError(f"Named task {task_id} no longer exists")
+    unreleased = _unreleased_task_feedback(task, agent_name=agent.name)
+    if unreleased is not None:
+        return unreleased
     description = (decision.taskDescription or "").strip()
     if description and description != (task.description or "").strip():
         task = db.update_task(task.id, description=description) or task
@@ -215,12 +254,17 @@ def _ensure_deferred_task(
     trigger: dict[str, Any],
     decision: ConversationDecision,
 ):
-    """Return the durable task that should remain pending after a defer decision."""
+    """Return the durable task that should remain pending after a defer decision.
+
+    Work not yet released to the agent comes back as on-hold feedback
+    instead: deferring it would move a held task to ``pending`` and so
+    release it (:func:`_unreleased_task_feedback`).
+    """
     if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
         if task is None:
             raise ValueError("Assigned task no longer exists")
-        return {"task": task}
+        return _unreleased_task_feedback(task, agent_name=agent.name) or {"task": task}
 
     if trigger.get("type") == "human_chat":
         created_by = HUMAN_SENDER_ID

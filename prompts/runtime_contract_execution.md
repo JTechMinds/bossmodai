@@ -33,6 +33,7 @@ RULES:
   - socialmsg: require data.to and data.msg; require data.aid only when data.to="agent"
   - taskmsg: require data.tid and data.msg; include data.kind so the runtime knows whether this is a passive update or a response request
   - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional, file deliverables only: [{"type":"file","path":"/projects/...","desc":"optional"}]; omit outs when the result is not a file
+  - assign + after: optional data.after lists the titles of your open tasks this one waits on (part of a title is enough); it starts by itself when they finish
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
   - mtg + mode="remote": require data.aids (list of exactly one teammate); NEVER use data.aid
@@ -44,6 +45,7 @@ RULES:
   - deleg: require data.aid; include data.msg when you should report the handoff back now
   - use socialmsg for ordinary coworker chat that does not create or continue task work
   - use assign to create new delegated work
+  - If a task needs another task's output, add `after`. Never message a teammate to wait, and do not assign work that cannot start yet without `after`.
   - use taskmsg to continue an existing task thread
   - work with several distinct parts: list the parts first with cli `checklist add` (body: one item per line), then work one part at a time. When a part is finished, mark it with `checklist done <n>` (body: what you found or where the result is), or `checklist skip <n>` (body: why it is not needed)
   - a part a teammate should own is a child task (assign), not a checklist item
@@ -113,6 +115,7 @@ EXAMPLES:
   {"act":"request_host_access","data":{"path":"/home/you/app.py","why":"Need to review the named host file"},"th":"open host-path consent"}
   {"act":"socialmsg","data":{"to":"human","msg":"Got it. I'll take a look and report back soon."},"th":"send a non-task social message"}
   {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
+  {"act":"assign","data":{"aid":"agent-456","after":["Review API logs"],"task":{"title":"Fix the failing endpoint","desc":"Fix the root cause the log review finds."}},"th":"delegate the fix to start after the review"}
   {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
   {"act":"cli","data":{"cmd":"checklist add","body":"Audit core/tasking\nAudit db/tasks.py\nWrite the findings summary"},"th":"plan the audit in parts"}
   {"act":"cli","data":{"cmd":"checklist done 1","body":"3 issues, written to /projects/app/audit.md under Tasking"},"th":"check off part 1"}

@@ -11,6 +11,7 @@ from core.agent_loop.decision_task_bind import _ambiguous_match_feedback
 from core.agent_loop.deliverables import build_work_contract
 from core.bm_cli.host_roots import PathOutsideRootsError
 from core.models import Agent, AgentState
+from core.tasking.dependencies import PrerequisiteUnavailable, resolve_prerequisites
 from core.tasking.service import create_or_bind_subtask
 from core.world.tilemap import get_room_at
 
@@ -155,6 +156,8 @@ def _resolve_work_execution_plan(agent: Agent, decision: ConversationDecision) -
                 "taskTitle": delegation.taskTitle.strip(),
                 "taskDescription": (delegation.taskDescription or "").strip() or None,
                 "deliverables": delegation.deliverables,
+                "key": delegation.key,
+                "after": list(delegation.after),
             }
         )
     return {"mode": plan.mode, "delegations": resolved}
@@ -170,8 +173,9 @@ def _materialize_work_execution_plan(
     """Persist delegated child tasks from an accepted work plan and queue assignee triggers.
 
     Child inserts run in one transaction. If a later child hits
-    ``clarify_ambiguous_match``, earlier new rows roll back so the failed
-    plan does not leave orphan assignments (PR #9 follow-up).
+    ``clarify_ambiguous_match``, or its ``after`` cannot be resolved, earlier
+    new rows roll back so the failed plan does not leave orphan assignments
+    (PR #9 follow-up).
     """
     try:
         with db.transaction():
@@ -194,9 +198,16 @@ def _persist_work_execution_children(
     trigger: dict[str, Any],
     plan_resolution: dict[str, Any],
 ) -> tuple[list[Any], list[dict[str, Any]]]:
-    """Insert/bind each planned child. Raises to roll back the whole batch."""
+    """Insert/bind each planned child, in list order. Raises to roll back the whole batch.
+
+    A child's ``after`` is resolved against the children before it (by
+    ``key``; a bound child counts as well as a created one) and the agent's
+    own open tasks. A child that waits on unfinished work is born ``held``
+    and queues no wake.
+    """
     delegated_children: list[Any] = []
     pending_triggers: list[dict[str, Any]] = []
+    sibling_ids: dict[str, str] = {}
     for delegation in plan_resolution.get("delegations") or []:
         target = delegation["agent"]
         child_cli_state = db.ensure_agent_cli_state(target.id)
@@ -214,24 +225,52 @@ def _persist_work_execution_children(
                     "agent_name": agent.name,
                 }
             ) from exc
-        creation = create_or_bind_subtask(
-            parent_task=parent_task,
-            title=delegation["taskTitle"],
-            description=delegation.get("taskDescription"),
-            project=parent_task.project,
-            assigned_to=target.id,
-            requester_id=agent.id,
-            owner_id=agent.id,
-            created_by=agent.id,
-            work_contract=work_contract,
-            source_channel=parent_task.source_channel,
-            notification_policy=parent_task.notification_policy,
-            notification_channel_id=parent_task.notification_channel_id,
-            audit_author_name=agent.name,
-            audit_author_type="agent",
-            audit_author_agent_id=agent.id,
-            audit_source_trigger_id=trigger.get("trigger_id"),
-        )
+        prerequisite_ids: list[str] = []
+        after = delegation.get("after") or []
+        if after:
+            prerequisites = resolve_prerequisites(
+                agent=agent,
+                references=after,
+                sibling_ids=sibling_ids,
+                parent_task_id=parent_task.id,
+            )
+            if prerequisites.errors:
+                raise _WorkPlanMaterializeAborted(
+                    {
+                        "event": "world_feedback",
+                        "detail": " ".join(prerequisites.errors),
+                        "agent_name": agent.name,
+                    }
+                )
+            prerequisite_ids = [task.id for task in prerequisites.tasks]
+        try:
+            creation = create_or_bind_subtask(
+                parent_task=parent_task,
+                title=delegation["taskTitle"],
+                description=delegation.get("taskDescription"),
+                project=parent_task.project,
+                assigned_to=target.id,
+                requester_id=agent.id,
+                owner_id=agent.id,
+                created_by=agent.id,
+                work_contract=work_contract,
+                source_channel=parent_task.source_channel,
+                notification_policy=parent_task.notification_policy,
+                notification_channel_id=parent_task.notification_channel_id,
+                audit_author_name=agent.name,
+                audit_author_type="agent",
+                audit_author_agent_id=agent.id,
+                audit_source_trigger_id=trigger.get("trigger_id"),
+                prerequisite_ids=prerequisite_ids,
+            )
+        except PrerequisiteUnavailable as exc:
+            raise _WorkPlanMaterializeAborted(
+                {
+                    "event": "world_feedback",
+                    "detail": str(exc),
+                    "agent_name": agent.name,
+                }
+            ) from exc
         if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
             raise _WorkPlanMaterializeAborted(
                 _ambiguous_match_feedback(
@@ -246,6 +285,8 @@ def _persist_work_execution_children(
             )
         child = creation.task
         delegated_children.append(child)
+        if delegation.get("key"):
+            sibling_ids[delegation["key"]] = child.id
         if child.status == "pending":
             pending_triggers.append(build_task_assigned_trigger(child))
     return delegated_children, pending_triggers

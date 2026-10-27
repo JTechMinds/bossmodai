@@ -8,7 +8,15 @@ from dataclasses import dataclass
 import db
 from core.models import Task
 
-OPEN_TASK_STATUSES = ("pending", "accepted", "active", "waiting", "blocked", "stalled")
+OPEN_TASK_STATUSES = ("pending", "held", "accepted", "active", "waiting", "blocked", "stalled")
+
+ACTIONABLE_TASK_STATUSES = tuple(status for status in OPEN_TASK_STATUSES if status != "held")
+"""Statuses an assignee may act on.
+
+Held work is open (it dedupes, keeps its parent open, moves with a floor)
+but not actionable: nobody is woken for it and its assignee cannot cite it
+until it is released.
+"""
 
 _WORD_RE = re.compile(r"[a-z0-9]+")
 

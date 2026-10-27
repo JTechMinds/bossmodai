@@ -33,6 +33,10 @@ const BossModTasksData = (() => {
         'task_updated',
         'task_completed',
         'task_resumed',
+        // The boss held or released a task (api/routes/tasks.py). A release
+        // by a finishing prerequisite rides on that task's status_changed.
+        'task_held',
+        'task_released',
         'task_clarify',
         // A schedule ran (core/scheduling/watch.py): a fired run is a new task.
         'schedule_ran',
@@ -236,6 +240,22 @@ const BossModTasksData = (() => {
     }
 
     /**
+     * The prerequisites a task still waits on, in edge order. Only
+     * `complete` meets one (MET_PREREQUISITE_STATUSES in
+     * core/tasking/dependencies.py); one that closed any other way is
+     * unfinished for good, which is why its dependent is blocked.
+     *
+     * @param {object} task  Every row the server sends carries
+     *   `prerequisite_rows` (`[]` when it waits on nothing); like
+     *   `references`, a row built without it has none.
+     * @returns {Array<{id: string, title: string, status: string,
+     *   assigned_to_name: (string|null)}>}
+     */
+    function unfinishedPrerequisites(task) {
+        return (task.prerequisite_rows || []).filter((row) => row.status !== 'complete');
+    }
+
+    /**
      * Where "Open chat" leads for a task.
      *
      * A task that came from a thread goes back to that thread; anything else
@@ -256,6 +276,6 @@ const BossModTasksData = (() => {
     return {
         TASK_ACTIVITY_EVENTS, DONE_WINDOWS, DEFAULT_WINDOW_DAYS,
         loadTasks, uniqueAgents, subtaskProgress, windowFor,
-        filterTasks, sortTasks, groupIntoColumns, counts, chatTargetFor,
+        filterTasks, sortTasks, groupIntoColumns, counts, unfinishedPrerequisites, chatTargetFor,
     };
 })();

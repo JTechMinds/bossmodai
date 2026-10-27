@@ -128,7 +128,7 @@ def format_origin_status_line(
     title = str(getattr(task, "title", None) or "the task").strip() or "the task"
     note = short_reason(reason)
     if kind == "created":
-        line = f"Created: {title}"
+        line = f"Created: {title} — {note}" if note else f"Created: {title}"
     elif kind == "accepted":
         line = f"Accepted: {title}"
     elif kind == "waiting":
@@ -431,13 +431,27 @@ def _origin_author_agent(task: Any) -> Agent | None:
 
 
 def mirror_task_created(task: Any) -> dict[str, Any]:
-    """Post {Name} Created: {task} on the origin thread when this thread spawned the work."""
+    """Post {Name} Created: {task} on the origin thread when this thread spawned the work.
+
+    A task born ``held`` says so: ``Created: <task> — on hold until "<title>"
+    finishes``, naming its unfinished prerequisites. Its release posts no
+    line of its own; the assignee's Accepted line follows it.
+    """
     if task is None or origin_thread_target(task) is None:
         return {}
     agent = _origin_author_agent(task)
     if agent is None:
         return {}
-    return mirror_origin_status(task=task, agent=agent, kind="created")
+    reason = None
+    if getattr(task, "status", None) == "held":
+        # Local: core.tasking imports this module's package on its way in.
+        from core.tasking.dependencies import unfinished_prerequisites, waiting_phrase
+
+        waiting_on = [f'"{item.title}"' for item in unfinished_prerequisites(task)]
+        # Empty only when the last one finished since the insert: already released.
+        if waiting_on:
+            reason = f"on hold until {waiting_phrase(waiting_on)}"
+    return mirror_origin_status(task=task, agent=agent, kind="created", reason=reason)
 
 
 def mirror_task_cancelled_by_operator(task: Any, *, reason: str) -> dict[str, Any]:

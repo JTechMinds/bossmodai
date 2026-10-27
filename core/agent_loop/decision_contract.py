@@ -98,7 +98,13 @@ TASK_ID_NOT_OPEN = "data.task.id must be one of your open tasks (see MY OPEN TAS
 WORK_COMMIT_CANNOT_START = "you cannot start work from this turn; set work_commit false."
 
 class DelegatedWorkItem(BaseModel):
-    """One delegated child-task request embedded in an accepted work decision."""
+    """One delegated child-task request embedded in an accepted work decision.
+
+    ``key`` is a short plan-local name other children use in their
+    ``after``; ``after`` lists what this child waits on: an earlier child's
+    key, or the title (or id) of one of the delegating agent's open tasks,
+    resolved by ``core.tasking.dependencies.resolve_prerequisites``.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -107,6 +113,8 @@ class DelegatedWorkItem(BaseModel):
     taskTitle: str
     taskDescription: str | None = None
     deliverables: list[DeliverableSpec] | None = None
+    key: str | None = None
+    after: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _validate_target(self) -> "DelegatedWorkItem":
@@ -131,7 +139,34 @@ class WorkExecutionPlan(BaseModel):
             raise ValueError('work plan mode "self" must not include delegated work')
         if self.mode in {"delegate", "mixed"} and not self.delegations:
             raise ValueError(f'work plan mode "{self.mode}" requires at least one delegated child task')
+        self._validate_child_keys()
         return self
+
+    def _validate_child_keys(self) -> None:
+        """Keys are unique names; ``after`` may only name a key that comes earlier.
+
+        Children are created in list order, so a key listed after the child
+        that waits on it would not exist yet. Other ``after`` entries (titles,
+        ids) are left to ``resolve_prerequisites``.
+        """
+        position_by_key: dict[str, int] = {}
+        for index, child in enumerate(self.delegations):
+            if child.key is None:
+                continue
+            key = child.key.strip().lower()
+            if not key:
+                raise ValueError('a plan child "key" must not be blank')
+            if key in position_by_key:
+                raise ValueError(f'plan child keys must be unique: "{child.key.strip()}" is used twice')
+            position_by_key[key] = index
+        for index, child in enumerate(self.delegations):
+            own_key = (child.key or "").strip().lower()
+            for entry in child.after:
+                wanted = entry.strip().lower()
+                if own_key and wanted == own_key:
+                    raise ValueError(f'"{entry.strip()}" cannot wait on itself')
+                if position_by_key.get(wanted, -1) > index:
+                    raise ValueError(f'"{entry.strip()}" is listed after the task that waits on it. Put it first.')
 
 
 class ConversationDecision(BaseModel):
@@ -464,7 +499,7 @@ def _normalize_work_plan(value: Any) -> Any:
     for item in children:
         if not isinstance(item, dict):
             raise ValueError('each item in "data.plan.children" must be an object')
-        extra_item = set(item) - {"aid", "who", "task"}
+        extra_item = set(item) - {"aid", "who", "task", "key", "after"}
         if extra_item:
             raise ValueError(f'unexpected delegated child keys: {", ".join(sorted(extra_item))}')
         child_task = item.get("task") or {}
@@ -480,6 +515,9 @@ def _normalize_work_plan(value: Any) -> Any:
                 "taskTitle": child_task.get("title"),
                 "taskDescription": child_task.get("desc"),
                 "deliverables": parse_wire_outs(child_task.get("outs")),
+                "key": item.get("key"),
+                # Absent means the child waits on nothing.
+                "after": item.get("after") if item.get("after") is not None else [],
             }
         )
 
@@ -703,26 +741,46 @@ def _accept_allowed(trigger_type: str, trigger: dict[str, Any] | None) -> bool:
 
 
 def _trigger_task_is_open_for(trigger: dict[str, Any] | None, agent_id: str) -> bool:
-    """Return whether the trigger's task is open and assigned to ``agent_id``."""
+    """Return whether the trigger's task is open, released and assigned to ``agent_id``.
+
+    Held work, and work blocked because a prerequisite failed, is not the
+    assignee's to cite.
+    """
     # Local: db and tasking import this module on their way in.
     import db
-    from core.tasking.resolution import OPEN_TASK_STATUSES
+    from core.tasking.dependencies import is_released
+    from core.tasking.resolution import ACTIONABLE_TASK_STATUSES
 
     task_id = (trigger or {}).get("task_id")
     if not isinstance(task_id, str) or not task_id.strip():
         return False
     task = db.get_task(task_id)
-    return task is not None and task.assigned_to == agent_id and task.status in OPEN_TASK_STATUSES
+    return (
+        task is not None
+        and task.assigned_to == agent_id
+        and task.status in ACTIONABLE_TASK_STATUSES
+        and is_released(task)
+    )
 
 
 def _task_is_open_for(task_id: str, agent_id: str) -> bool:
-    """Return whether ``task_id`` names an open task assigned to ``agent_id``."""
+    """Return whether ``task_id`` names an open, released task assigned to ``agent_id``.
+
+    Held work, and work blocked because a prerequisite failed, is not the
+    assignee's to cite.
+    """
     # Local: db and tasking import this module on their way in.
     import db
-    from core.tasking.resolution import OPEN_TASK_STATUSES
+    from core.tasking.dependencies import is_released
+    from core.tasking.resolution import ACTIONABLE_TASK_STATUSES
 
     token = (task_id or "").strip()
     if not token:
         return False
     task = db.get_task(token)
-    return task is not None and task.assigned_to == agent_id and task.status in OPEN_TASK_STATUSES
+    return (
+        task is not None
+        and task.assigned_to == agent_id
+        and task.status in ACTIONABLE_TASK_STATUSES
+        and is_released(task)
+    )
