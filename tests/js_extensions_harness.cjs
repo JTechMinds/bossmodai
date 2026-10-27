@@ -1118,9 +1118,9 @@ const verdict = {};
     const factInput = (label) => netLayer.body.querySelector(`#ext-panel-network-fact-${label}`);
     const codeField = factInput(1);
     verdict.panelShowsMessageFactsAndAction = text().includes('Use this only on a network you trust')
-        && factInput(0).value === 'http://192.168.1.20:38472' && codeField.value === 'ABCD2345'
+        && factInput(0).textContent === 'http://192.168.1.20:38472' && codeField.value === 'ABCD2345'
         && !factInput(0).classList.contains('bm-secret-masked') && codeField.classList.contains('bm-secret-masked')
-        && codeField.getAttribute('readonly') !== null
+        && codeField.getAttribute('readonly') !== null && factInput(0).getAttribute('role') === 'textbox'
         && netLayer.body.querySelector('label[for="ext-panel-network-fact-1"]').textContent === 'Access code'
         && Boolean(netButton('Generate new code')) && [...netLayer.body.querySelectorAll('button')].filter(b => b.classList.contains('btn')).length >= 5;
     verdict.panelHasNoCommandLineAndShowsTheServiceSwitch = !netLayer.body.querySelector('.market-card-specialty')

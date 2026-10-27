@@ -120,8 +120,10 @@ span.ext-live-url { text-decoration: none; }
 
 .ext-fact-tools { display: flex; gap: 6px; }
 
-/* An address is the one thing here that must not be cut off. */
+/* An address or command is the one thing here that must not be cut off: a
+   value wraps, and one click selects all of it. */
 .ext-fact .field-input { font-size: 12px; text-overflow: ellipsis; }
+.ext-fact-value { height: auto; overflow-wrap: anywhere; user-select: all; }
 
 .ext-panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 

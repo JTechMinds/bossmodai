@@ -6,9 +6,9 @@
  * The server describes what to show and this knows nothing about any one
  * extension: a plain sentence, an error as an alert, labelled facts (each may
  * be copied, or masked until revealed) and action buttons. Every control is a
- * `btn btn-sm`; a fact's value sits in a read-only field, the same field a
- * secret uses in the settings form, so Show / Hide is BossModSecretField's, with
- * its buttons on the label's line so a long address keeps the field's full width.
+ * `btn btn-sm`; a fact's value sits in a read-only box (wrapping text; a secret in the
+ * masked field the settings form uses, so Show / Hide is BossModSecretField's),
+ * with its buttons on the label's line so a long value keeps the full width.
  *
  * States the caller shows around it: loading (the dialog's own), load failed
  * (the card's retry button and error line) and — because a status always
@@ -74,11 +74,19 @@ const BossModExtensionPanel = (() => {
      * @returns {HTMLElement}
      */
     function factRow(fact, id) {
-        const input = h('input', {
-            class: fact.secret ? 'field-input field-mono bm-secret-masked' : 'field-input field-mono',
-            id, type: 'text', readonly: true, autocomplete: 'off', spellcheck: 'false',
-        });
-        input.value = fact.value;
+        // A secret stays in a masked field (BossModSecretField). Any other
+        // value is text that wraps, so a long command is fully visible and
+        // selectable instead of clipped in a one-line field.
+        const input = fact.secret
+            ? h('input', {
+                class: 'field-input field-mono bm-secret-masked',
+                id, type: 'text', readonly: true, autocomplete: 'off', spellcheck: 'false',
+            })
+            : h('div', {
+                class: 'field-input field-mono ext-fact-value', id, role: 'textbox', 'aria-readonly': 'true',
+                'aria-labelledby': `${id}-label`, tabindex: '0',
+            }, fact.value);
+        if (fact.secret) input.value = fact.value;
         const tools = [];
         if (fact.secret) {
             const reveal = h('button', {
@@ -96,7 +104,7 @@ const BossModExtensionPanel = (() => {
         }
         return h('div', { class: 'ext-fact' },
             h('div', { class: 'ext-fact-head' },
-                h('label', { class: 'field-label-sm', for: id }, fact.label),
+                h('label', { class: 'field-label-sm', id: `${id}-label`, for: fact.secret ? id : null }, fact.label),
                 tools.length ? h('div', { class: 'ext-fact-tools' }, tools) : null),
             input);
     }

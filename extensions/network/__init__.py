@@ -31,6 +31,23 @@ logger = logging.getLogger(__name__)
 _CODE_FILE = "access_code"
 _NEW_CODE_ACTION = "new_code"
 
+# Copy-ready firewall commands shown while the service runs, by label; each is
+# formatted with the running port when the panel is built.
+_FIREWALL_COMMANDS = {
+    "Linux (ufw)": "sudo ufw allow {port}/tcp",
+    "Windows (Command Prompt as administrator)": (
+        'netsh advfirewall firewall add rule name="BossMod" dir=in action=allow protocol=TCP localport={port}'
+    ),
+}
+_TRUST_SENTENCE = (
+    "Other devices can open BossMod at the address below. Use this only on a network you trust: "
+    "the connection isn’t encrypted."
+)
+_FIREWALL_SENTENCES = (
+    "If other devices can’t connect, your firewall may be blocking port {port}. Allow it with one of these.",
+    "On a Mac, choose Allow if it asks about incoming connections.",
+)
+
 
 class NetworkDefaults(BaseModel):
     """The manifest's ``defaults`` block, validated when the extension is created."""
@@ -117,18 +134,20 @@ class NetworkExtension:
     # ─── panel ───
 
     def panel(self) -> PanelStatus:
-        """Return the card's status: address, access code and the new-code action while running."""
+        """Return the card's status while running: address, access code, firewall commands and the new-code action."""
         if self._server is None or self._port is None:
             return PanelStatus(message="Network access isn’t running.")
         urls = lan_urls(self._port, self._defaults.route_probe_address)
         facts = [PanelFact(label="Address", value=url, copyable=True) for url in urls]
         facts.append(PanelFact(label="Access code", value=self._current_code(), copyable=True, secret=True))
-        message = (
-            "Other devices can open BossMod at the address below. Use this only on a network you trust: "
-            "the connection isn’t encrypted."
-            if urls else
-            "No network connection found. Connect this computer to a network to share BossMod."
-        )
+        if urls:
+            facts.extend(
+                PanelFact(label=label, value=template.format(port=self._port), copyable=True)
+                for label, template in _FIREWALL_COMMANDS.items()
+            )
+            message = " ".join([_TRUST_SENTENCE, *(sentence.format(port=self._port) for sentence in _FIREWALL_SENTENCES)])
+        else:
+            message = "No network connection found. Connect this computer to a network to share BossMod."
         return PanelStatus(
             message=message,
             facts=facts,

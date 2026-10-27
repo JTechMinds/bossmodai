@@ -420,6 +420,10 @@ def test_the_panel_of_a_stopped_extension_says_so_and_offers_nothing(tmp_path: P
     assert status.message == "Network access isn’t running." and status.facts == [] and status.actions == []
 
 
+def _code_of(status) -> str:
+    return next(fact.value for fact in status.facts if fact.label == "Access code")
+
+
 def test_an_unknown_panel_action_is_refused(tmp_path: Path) -> None:
     extension, _holder = _extension(tmp_path, _free_port())
     with pytest.raises(PanelError):
@@ -451,7 +455,7 @@ async def test_a_listener_serves_the_login_page_rejects_strangers_and_admits_the
                     pass
             assert refused.value.response.status_code == 403
 
-            code = extension.panel().facts[-1].value
+            code = _code_of(extension.panel())
             wrong = await http.post(f"{base}/lan-login", data={"code": "WRONG999"})
             assert wrong.status_code == 401
             ok = await http.post(f"{base}/lan-login", data={"code": code})
@@ -464,13 +468,12 @@ async def test_a_listener_serves_the_login_page_rejects_strangers_and_admits_the
             # The panel shows both addresses, the code (masked, copyable) and the action.
             status = extension.panel()
             assert [fact.value for fact in status.facts[:1]] == [f"http://192.168.1.20:{port}"]
-            assert len(status.facts) == 2
-            secret = status.facts[-1]
+            secret = status.facts[1]
             assert (secret.label, secret.copyable, secret.secret) == ("Access code", True, True)
             assert [action.key for action in status.actions] == ["new_code"]
 
             extension.panel_action("new_code", {})
-            assert extension.panel().facts[-1].value != code
+            assert _code_of(extension.panel()) != code
             stale = await http.get(f"{base}/", headers={"Cookie": f"bossmod_lan={cookie}"})
             assert stale.status_code == 303, "the old session ends with the old code"
     finally:
@@ -499,17 +502,17 @@ async def test_the_code_survives_a_restart_of_the_listener(tmp_path: Path) -> No
     port = _free_port()
     extension, _holder = _extension(tmp_path, port)
     await extension.start_service(_inner_app())
-    code = extension.panel().facts[-1].value
+    code = _code_of(extension.panel())
     await extension.stop_service()
     await extension.start_service(_inner_app())
     try:
-        assert extension.panel().facts[-1].value == code
+        assert _code_of(extension.panel()) == code
     finally:
         await extension.stop_service()
     again, _ = _extension(tmp_path, port)
     await again.start_service(_inner_app())
     try:
-        assert again.panel().facts[-1].value == code, "a new instance reads the stored code"
+        assert _code_of(again.panel()) == code, "a new instance reads the stored code"
     finally:
         await again.stop_service()
 
@@ -593,7 +596,7 @@ async def test_the_real_app_behind_the_gate_hands_out_nothing_before_the_code(tm
                 "even a caller who knows the API token needs the access code first"
             )
 
-            code = extension.panel().facts[-1].value
+            code = _code_of(extension.panel())
             assert (await http.post(f"{base}/lan-login", data={"code": code})).status_code == 303
             page = await http.get(f"{base}/")
             assert page.status_code == 200 and token in page.text
@@ -606,3 +609,25 @@ async def test_the_real_app_behind_the_gate_hands_out_nothing_before_the_code(tm
             assert own.status_code == 403, "a network session cannot switch the feature off"
     finally:
         await extension.stop_service()
+
+
+async def test_the_panel_offers_firewall_commands_for_the_running_port(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_PACKAGE, "lan_urls", lambda port, probe_address: [f"http://192.168.1.20:{port}"])
+    port = _free_port()
+    extension, _ = _extension(tmp_path, port)
+    await extension.start_service(_inner_app())
+    try:
+        status = extension.panel()
+    finally:
+        await extension.stop_service()
+    assert [fact.label for fact in status.facts] == [
+        "Address", "Access code", "Linux (ufw)", "Windows (Command Prompt as administrator)",
+    ]
+    linux, windows = status.facts[2], status.facts[3]
+    assert linux.value == f"sudo ufw allow {port}/tcp"
+    assert windows.value.count(str(port)) == 1 and windows.value.endswith(f"localport={port}")
+    assert 'name="BossMod"' in windows.value
+    assert all(fact.copyable and not fact.secret for fact in (linux, windows))
+    assert f"your firewall may be blocking port {port}" in status.message
+    assert "On a Mac, choose Allow if it asks about incoming connections." in status.message
+    assert "Use this only on a network you trust" in status.message
