@@ -1,5 +1,7 @@
 """Settings, AI connections, and connection test."""
 
+import asyncio
+
 import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel

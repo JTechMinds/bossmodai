@@ -942,7 +942,7 @@ _CALLS_DELETE_AGENT_ROWS = re.compile(r"(?<!def )\bdelete_agent_rows\s*\(")
 
 def test_nothing_outside_the_repository_calls_delete_agent_rows() -> None:
     # A call, not a mention: docstrings and the db package export may name it.
-    skipped = {"tests", ".venv", ".kilo", ".git", "node_modules", "artifacts"}
+    skipped = {"tests", ".venv", ".kilo", ".claude", ".git", "node_modules", "artifacts"}
     callers = sorted(
         str(path.relative_to(_REPO_ROOT))
         for path in _REPO_ROOT.rglob("*.py")

@@ -13,6 +13,7 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
+from core.extensions.model_provider import ProviderStatus
 from core.llm.connection_url import ConnectionUrlError, validate_connection_test_url
 
 
@@ -98,3 +99,27 @@ def test_api_rejects_loopback_discard_port_without_hanging() -> None:
     body = res.json()
     assert body["ok"] is False
     assert body.get("error")
+
+
+def test_api_tests_an_extension_connection_through_its_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An extension:// connection reports its provider's status instead of failing with a 500."""
+    resolved: list[str] = []
+
+    class _Provider:
+        def provider_status(self) -> ProviderStatus:
+            return ProviderStatus(connected=True, message="ok")
+
+    def _resolve(ext_id: str) -> _Provider:
+        resolved.append(ext_id)
+        return _Provider()
+
+    monkeypatch.setattr("core.extensions.model_provider.resolve_provider", _resolve)
+    client = _client()
+    res = client.post(
+        "/api/connections/test",
+        headers=_auth_headers(),
+        json={"api_base_url": "extension://demo-provider"},
+    )
+    assert res.status_code == 200
+    assert res.json() == {"ok": True, "error": None}
+    assert resolved == ["demo-provider"]
