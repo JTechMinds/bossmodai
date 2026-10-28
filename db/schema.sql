@@ -28,8 +28,8 @@ CREATE TABLE IF NOT EXISTS agents (
     -- The one AI connection, read live each turn. No FK: the 409 delete
     -- guard keeps it valid and names the agents that use it.
     connection_id                 VARCHAR,
-    thinking_social               VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','minimal','low','medium','high','xhigh')),
-    thinking_work                 VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','minimal','low','medium','high','xhigh')),
+    thinking_social               VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','minimal','low','medium','high','xhigh','max')),
+    thinking_work                 VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','minimal','low','medium','high','xhigh','max')),
     desk_x                        INTEGER,
     desk_y                        INTEGER,
     guardian_token_limit           INTEGER DEFAULT 30000,
@@ -1028,8 +1028,8 @@ CREATE TABLE IF NOT EXISTS agent_snapshots (
     communication         TEXT,                      -- same JSON text as agents.communication
     color                 VARCHAR,
     connection_id         VARCHAR,
-    thinking_social       VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','minimal','low','medium','high','xhigh')),
-    thinking_work         VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','minimal','low','medium','high','xhigh')),
+    thinking_social       VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_social IN ('default','off','minimal','low','medium','high','xhigh','max')),
+    thinking_work         VARCHAR NOT NULL DEFAULT 'default' CHECK (thinking_work IN ('default','off','minimal','low','medium','high','xhigh','max')),
     desk_x                INTEGER,
     desk_y                INTEGER,
     prompt_history_policy TEXT,                      -- JSON: the 4 policy fields, or NULL

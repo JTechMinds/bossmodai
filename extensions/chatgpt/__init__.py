@@ -5,10 +5,61 @@ import asyncio
 from core.bm_cli.types import BossModCliResult
 from core.extensions.contract import SetupError, SetupStatus
 from core.extensions.model_provider import ProviderStatus
-from .auth import ChatGPTSession
+from core.models.thinking import THINKING_LEVELS
+from .auth import CATALOG_VERSION, ChatGPTSession, catalog_entry
+from .capabilities import Capability, host_key
 from .config import ChatGPTConfig, ChatGPTError
 from .provider import ResponsesAdapter
 from .store import CredentialStore
+
+_IMAGE_LABELS = {
+    "supported": "Image input (Auto: on)",
+    "unsupported": "Image input (Auto: off; this model doesn't accept images)",
+    "unknown": "Image input (Auto: off; support unknown)",
+}
+
+
+def _capability_status(account: dict) -> tuple[list[str], str]:
+    """Plain-language capability sentences and the image-choice label for the selected model.
+
+    Pure: reads only the stored catalog in ``account_status()``, so status
+    polling never fetches. Tiers are host keys in host vocabulary order, so
+    the extension needs no label table.
+
+    Args:
+        account: ``ChatGPTSession.account_status()`` for a connected account
+            with at least one model.
+
+    Returns:
+        ``(sentences, image_label)``. Sentences cover the selected model's
+        thinking tiers, names BossMod can't offer yet, how many models listed
+        thinking options, a refresh hint for a pre-upgrade catalog, and one
+        sentence per image conflict.
+    """
+    models = account["models"]
+    entry = catalog_entry(account, account["model"] or models[0]["slug"])
+    capability = Capability.from_entry(entry) if entry is not None else None
+    if account["catalog_version"] != CATALOG_VERSION:
+        sentences = ["Thinking: Server default only.", "Refresh models to load thinking options."]
+    else:
+        if capability is None:
+            sentences = ["The selected model is no longer offered by your account; choose another."]
+        else:
+            levels = capability.thinking_levels()
+            tiers = [key for key in THINKING_LEVELS if key in levels]
+            uses = (f" (ChatGPT uses {host_key(capability.default_effort)})"
+                    if capability.default_effort else "")
+            sentences = [f"Thinking: Server default{uses}, {', '.join(tiers)}." if tiers
+                         else f"Thinking: Server default only{uses}."]
+            if not capability.listed:
+                sentences.append("ChatGPT didn't list thinking options for this model.")
+            if capability.omitted:
+                sentences.append("Not available in BossMod yet: " + ", ".join(capability.omitted) + ".")
+        loaded = sum(Capability.from_entry(m).listed for m in models)
+        sentences.append(f"Thinking options loaded for {loaded} of {len(models)} models.")
+    sentences.extend(f"ChatGPT says {name} doesn't accept images, so image input stays off "
+                     "although it's set to Enabled." for name in account["image_conflicts"])
+    return sentences, _IMAGE_LABELS[capability.images if capability is not None else "unknown"]
 
 
 def create(ctx):
@@ -119,14 +170,13 @@ class ChatGPTExtension:
                         ],
                     }
                 )
-                from .capabilities import for_model
-                capability = for_model(account["model"] or account["models"][0]["slug"])
-                choices.append({"label": "Image input (Auto: " + ("on" if capability.images == "supported" else "off; support unknown") + ")",
+                sentences, image_label = _capability_status(account)
+                choices.append({"label": image_label,
                                 "value": account["image_policy"], "action": "images", "parameter": "policy",
                                 "options": [{"value": p, "label": p.title()} for p in ("auto", "enabled", "disabled")]})
                 actions.append({"key": "refresh", "label": "Refresh models"})
                 actions.append({"key": "logout", "label": "Sign out"})
-                message += " Thinking: Server default" + (", " + ", ".join(capability.thinking_levels()) if capability.efforts else " only (capabilities unverified)") + ". Last catalog refresh: " + str(account["refreshed_at"] or "unknown")
+                message += " " + " ".join(sentences) + " Last catalog refresh: " + str(account["refreshed_at"] or "unknown")
         return ProviderStatus(
             connected=connected,
             pending=pending,

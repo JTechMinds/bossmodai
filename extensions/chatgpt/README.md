@@ -64,8 +64,44 @@ extension supplies model responses instead of introducing another agent runtime.
 It uses the official public Responses endpoint with `store=false` and `stream=true`.
 Unsupported ChatGPT plan parameters (including temperature and output-token caps)
 are omitted by this adapter; generic provider requests still carry them for providers
-that support them. Extra body settings accept only `reasoning` and `text`. Browser
-Vision continues to use BossMod's existing per-model image-capability flag.
+that support them. Extra body settings accept only `reasoning` and `text`. Image
+input (attachments and Browser Vision) follows each model's catalog-reported support
+and its per-model policy; see Model capabilities.
+
+## Model capabilities
+
+Models, thinking tiers and image support all come from the signed-in account's own
+catalog (`GET /v1/models`), fetched at sign-in and on **Refresh models**. Nothing in
+this folder names a model. SIWC documents only `slug`, `display_name` and `visibility`;
+the response follows OpenAI Codex's `ModelInfo` schema, and three more of its fields
+are read:
+
+- `supported_reasoning_levels[].effort`: the model's thinking tiers. `none` publishes
+  as BossMod's Off; other names keep their name when BossMod's thinking vocabulary has
+  them. Names BossMod doesn't know (for example `ultra`) are left out and listed in the
+  status as "Not available in BossMod yet".
+- `default_reasoning_level`: shown as what ChatGPT uses for Server default.
+- `input_modalities`: a list containing `image` means images are supported; a list
+  without it means unsupported; a missing or malformed list means unknown, so Auto
+  sends no images. (Codex's own text+image default for a missing list is not copied.)
+
+Effort names are stored as the catalog sends them and filtered when read, so adding a
+level to BossMod's vocabulary applies without a re-fetch. A malformed field is left
+out and logged at WARNING; it never rejects the catalog or the model.
+
+If the catalog stops carrying these fields, every model drops to Server default only
+with image support unknown, and the status says "ChatGPT didn't list thinking options
+for this model" and "Thinking options loaded for 0 of N models". A catalog stored
+before this version shows "Refresh models to load thinking options." until the next
+refresh. Capabilities never expire on a timer.
+
+If a model's image input is set to Enabled and a later refresh reports that the model
+doesn't accept images, the model is published with images off, the stored choice is
+kept, and the status names the conflict. Enabled can't be chosen for such a model.
+Under Auto, a model whose catalog lists image input receives attachments and Browser
+Vision images, which uses plan usage; set the model to Disabled to stop that.
+
+Schema reference: https://github.com/openai/codex/blob/d556e68ff0a2d64cd2aaa6e00748cb977f511981/codex-rs/protocol/src/openai_models.rs
 
 ## Install
 

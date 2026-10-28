@@ -60,6 +60,7 @@ const BossModAgentFields = (() => {
         { value: 'medium', label: 'Medium' },
         { value: 'high', label: 'High' },
         { value: 'xhigh', label: 'Extra high' },
+        { value: 'max', label: 'Max' },
     ];
 
     const DEFAULT_PROMPT_HISTORY_POLICY = {

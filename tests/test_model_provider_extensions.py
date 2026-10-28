@@ -208,6 +208,34 @@ def test_vendor_code_is_confined_to_its_extension():
                 ), path
 
 
+def test_managed_model_refuses_a_level_key_the_host_does_not_know():
+    from pydantic import ValidationError
+    from core.extensions.model_provider import ManagedModel
+    with pytest.raises(ValidationError, match="unknown level 'ultra'"):
+        ManagedModel(key="k", name="K", model="k", thinking_levels={"ultra": {"effort": "ultra"}})
+    with pytest.raises(ValidationError, match="non-empty JSON object"):
+        ManagedModel(key="k", name="K", model="k", thinking_levels={"high": {}})
+    assert ManagedModel(key="k", name="K", model="k", thinking_levels=None).thinking_levels == {}
+    assert ManagedModel(key="k", name="K", model="k").thinking_levels == {}
+
+
+def test_unrelated_providers_reconcile_a_valid_level_map(providers):
+    from core.extensions.model_provider import ManagedModel, services_for
+    levels = {"off": {"think": False}, "high": {"think": True, "budget": 8}}
+    published = {}
+    for ext_id in ("alpha-model", "beta-model"):
+        services = services_for(registry.get_discovery().get(ext_id))
+        ids = services.reconcile_connections(
+            [ManagedModel(key="demo", name="Demo", model="demo-model", thinking_levels=levels)]
+        )
+        published[ext_id] = ids["demo"]
+    assert len(set(published.values())) == 2
+    for ext_id, connection_id in published.items():
+        connection = db.get_connection_by_id(connection_id)
+        assert connection.api_base_url == f"extension://{ext_id}"
+        assert connection.thinking_levels == levels
+
+
 def test_unrelated_legacy_provider_keeps_global_images(providers):
     from db.managed_connections import image_capability, routed_images, agent_images
     from db.model_capabilities import set_supports_images

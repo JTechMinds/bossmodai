@@ -25,6 +25,7 @@ const BossModConnectionForm = (() => {
         { key: 'medium', label: 'Medium' },
         { key: 'high', label: 'High' },
         { key: 'xhigh', label: 'Extra high' },
+        { key: 'max', label: 'Max' },
     ]);
 
     /**

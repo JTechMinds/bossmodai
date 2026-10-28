@@ -12,12 +12,32 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlencode, urlsplit
 import httpx
 import jwt
+from .capabilities import Capability
 from .config import ChatGPTConfig, ChatGPTError
 from .store import CredentialStore
 from core.extensions.model_provider import ProviderServices
 from typing import Callable
 
 PLAN_SCOPE = "chatgpt.tokens.use.direct"
+# Stored catalogs carry per-model capability fields from this version on; an
+# older stored catalog has slugs and names only until the next refresh.
+CATALOG_VERSION = 2
+
+
+def catalog_entry(account: dict, slug: str | None) -> dict | None:
+    """The stored catalog entry for ``slug`` in ``account``, or None when it isn't listed."""
+    return next((m for m in account.get("models", []) if m["slug"] == slug), None)
+
+
+def image_conflicts(account: dict) -> list[str]:
+    """Display names whose stored image policy is Enabled but whose catalog says no image input.
+
+    Pure. Publication sends such a model as ``disabled``; status lists these so
+    the operator sees the conflict instead of it being resolved silently.
+    """
+    policies = account.get("image_policies", {})
+    return [m["display_name"] for m in account.get("models", [])
+            if Capability.from_entry(m).image_conflict(policies.get(m["slug"], "auto"))]
 
 
 class ChatGPTSession:
@@ -82,6 +102,8 @@ class ChatGPTSession:
             model = data.get("model")
             policy = active.get("image_policies", {}).get(model, "auto")
             refreshed = active.get("refreshed_at")
+            catalog_version = active.get("catalog_version")
+            conflicts = image_conflicts(active)
             email = active.get("email")
             active_id = data["active"]
         with self._lock:
@@ -99,6 +121,8 @@ class ChatGPTSession:
             "model": model,
             "image_policy": policy,
             "refreshed_at": refreshed,
+            "catalog_version": catalog_version,
+            "image_conflicts": conflicts,
         }
 
     def _validate_identity(
@@ -233,21 +257,24 @@ class ChatGPTSession:
 
     def _ensure_connection(self, data, model):
         from core.extensions.model_provider import ManagedModel
-        from .capabilities import for_model
         data["model"] = model
         account = data["accounts"][data["active"]]
         # Durable catalog precedes publication; load/status repairs interrupted publication.
-        account["catalog_version"] = 1
         self.store.save(data)
         if self.services.reconcile_connections is None:
             data["connection_id"] = self.services.publish_connection(model)
             return
         policies = account.get("image_policies", {})
-        entries = [ManagedModel(key=m["slug"], model=m["slug"], name=m["display_name"],
-                                image_policy=policies.get(m["slug"], "auto"),
-                                thinking_levels=for_model(m["slug"]).thinking_levels(),
-                                images=for_model(m["slug"]).images)
-                   for m in account.get("models", [])]
+        entries = []
+        for m in account.get("models", []):
+            capability = Capability.from_entry(m)
+            # A conflicting Enabled is published as disabled: the host refuses
+            # Enabled on an unsupported model for the whole batch.
+            entries.append(ManagedModel(
+                key=m["slug"], model=m["slug"], name=m["display_name"],
+                image_policy=capability.published_image_policy(policies.get(m["slug"], "auto")),
+                thinking_levels=capability.thinking_levels(),
+                images=capability.images))
         data["connection_ids"] = self.services.reconcile_connections(entries)
         data["connection_id"] = data["connection_ids"].get(model)
 
@@ -260,6 +287,7 @@ class ChatGPTSession:
                 with self.store.locked() as data:
                     account = data["accounts"][data["active"]]
                     account["models"] = models
+                    account["catalog_version"] = CATALOG_VERSION
                     account["refreshed_at"] = self.clock()
                     self._ensure_connection(data, data.get("model") or models[0]["slug"])
                     self.store.save(data)
@@ -275,8 +303,11 @@ class ChatGPTSession:
         with self.store.locked() as data:
             account = data["accounts"].get(data["active"], {})
             model = data.get("model")
-            if not account.get("access_token") or model not in {m["slug"] for m in account.get("models", [])}:
+            entry = catalog_entry(account, model)
+            if not account.get("access_token") or entry is None:
                 raise ChatGPTError("Sign in and choose an available model first.")
+            if Capability.from_entry(entry).image_conflict(policy):
+                raise ChatGPTError("ChatGPT reports this model doesn't accept images.")
             account.setdefault("image_policies", {})[model] = policy
             self._ensure_connection(data, model)
             self.store.save(data)
@@ -289,7 +320,8 @@ class ChatGPTSession:
             raise ChatGPTError("Model publication needs repair. Retry Refresh models.")
         with self.store.locked() as data:
             account = data["accounts"].get(data["active"], {})
-            if request.model not in {m["slug"] for m in account.get("models", [])}:
+            entry = catalog_entry(account, request.model)
+            if entry is None:
                 raise ChatGPTError("This model is unavailable in the active ChatGPT account. Refresh models in Extensions.")
             try:
                 extra = json.loads(request.extra_body or "{}")
@@ -297,10 +329,9 @@ class ChatGPTSession:
                     raise ValueError
             except (ValueError, TypeError):
                 raise ChatGPTError("ChatGPT connection options must be a JSON object with valid reasoning options.") from None
-            from .capabilities import for_model
-            capability = for_model(request.model)
+            capability = Capability.from_entry(entry)
             reasoning = extra.get("reasoning", {})
-            if "effort" in reasoning and reasoning["effort"] not in capability.efforts:
+            if "effort" in reasoning and reasoning["effort"] not in capability.offered:
                 raise ChatGPTError("Explicit thinking effort is not verified for this model. Choose a supported level or Server default.")
             images = capability.images_enabled(account.get("image_policies", {}).get(request.model, "auto"))
             for message in request.messages:
@@ -380,6 +411,7 @@ class ChatGPTSession:
         )
         self.probe(account["access_token"], model)
         account["models"] = models
+        account["catalog_version"] = CATALOG_VERSION
         account["refreshed_at"] = self.clock()
         self.require_enabled()
         with self.store.locked() as data:

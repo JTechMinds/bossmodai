@@ -964,21 +964,162 @@ def test_per_model_identity_removal_reappearance_and_policy(monkeypatch):
     assert image_capability(db.get_connection_by_id(initial['second']))
 
 
-def test_catalog_normalization_unknown_fields_not_capabilities():
+_OMIT = object()
+
+
+def codex_model(slug, display_name=None, *, efforts=('low', 'medium', 'high'), default='medium',
+                modalities=('text', 'image'), visibility='list'):
+    """One account-catalog entry in OpenAI Codex ``ModelInfo`` shape.
+
+    The account's ``GET /v1/models`` answers ``{"models": [ModelInfo, ...]}``.
+    Field names and value shapes follow Codex's ``ModelInfo`` at a pinned commit:
+    https://github.com/openai/codex/blob/d556e68ff0a2d64cd2aaa6e00748cb977f511981/codex-rs/protocol/src/openai_models.rs
+    ``supported_reasoning_levels`` is a list of ``{effort, description}``,
+    ``default_reasoning_level`` an effort or null, ``input_modalities`` a list
+    of ``"text"``/``"image"``, and ``visibility`` ``list``/``hide``/``none``.
+    Only the fields the extension reads are modelled. Pass ``_OMIT`` to leave a
+    field out. Slugs are fixtures and must never be real model names.
+    """
+    entry = {'slug': slug, 'display_name': display_name or slug, 'visibility': visibility}
+    if efforts is not _OMIT:
+        entry['supported_reasoning_levels'] = [{'effort': e, 'description': f'{e} fixture effort'} for e in efforts]
+    if default is not _OMIT:
+        entry['default_reasoning_level'] = default
+    if modalities is not _OMIT:
+        entry['input_modalities'] = list(modalities)
+    return entry
+
+
+def fixture_catalog(**overrides):
+    """A Codex-shaped catalog: A lists every tier name, B is text-only, C lists nothing."""
+    models = {
+        'a': codex_model('fixture-model-a', 'Fixture A', default='low',
+                         efforts=('none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra')),
+        'b': codex_model('fixture-model-b', 'Fixture B', efforts=('low', 'high'), default=None,
+                         modalities=('text',)),
+        'hidden': codex_model('fixture-model-hidden', visibility='hide'),
+        'none': codex_model('fixture-model-none', visibility='none'),
+        'c': codex_model('fixture-model-c', 'Fixture C', efforts=_OMIT, default=_OMIT, modalities=_OMIT),
+        **overrides,
+    }
+    return {'models': [m for m in models.values() if m is not None]}
+
+
+def catalog_module(name):
     from importlib import import_module
-    normalize = import_module(package.__name__ + '.catalog').normalize
-    assert normalize({'models': [None, {'visibility': 'list', 'slug': ''}, {'visibility': 'list', 'slug': 'new', 'display_name': 2, 'supports_images': True}, {'visibility': 'list', 'slug': 'new'}, {'visibility': 'hidden', 'slug': 'hidden'}]}) == [{'slug': 'new', 'display_name': 'new'}]
-    for payload in ([], {}, {'models': []}, {'models': None}):
+    return import_module(package.__name__ + '.' + name)
+
+
+def serve_catalog(monkeypatch, payload):
+    """Answer the account's ``GET /models`` with ``payload`` through a mock transport (no network)."""
+    real_client = httpx.Client
+
+    def respond(request):
+        assert request.method == 'GET' and str(request.url) == auth.config.resource + '/models'
+        return httpx.Response(200, json=payload)
+
+    monkeypatch.setattr(auth, 'http_client_factory',
+                        lambda **kwargs: real_client(transport=httpx.MockTransport(respond), **kwargs))
+
+
+def published(slug):
+    """The published connection for ``slug`` and its managed-connection metadata."""
+    from db.managed_connections import metadata
+    connection = next(c for c in db.list_connections() if c.model == slug)
+    return connection, metadata(connection.id)
+
+
+def test_catalog_normalize_reads_codex_capability_fields():
+    normalize = catalog_module('catalog').normalize
+    duplicate = codex_model('fixture-model-a', 'Shadow', efforts=('high',), modalities=('text',))
+    payload = fixture_catalog()
+    payload['models'].insert(1, duplicate)
+    payload['models'][0]['x_fixture_unread'] = {'supports_images': False}
+    assert normalize(payload) == [
+        {'slug': 'fixture-model-a', 'display_name': 'Fixture A', 'default_effort': 'low', 'images': 'supported',
+         'efforts': ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']},
+        {'slug': 'fixture-model-b', 'display_name': 'Fixture B', 'default_effort': None, 'images': 'unsupported',
+         'efforts': ['low', 'high']},
+        {'slug': 'fixture-model-c', 'display_name': 'Fixture C', 'default_effort': None, 'images': 'unknown',
+         'efforts': None},
+    ]
+    assert normalize({'models': [None, {'visibility': 'list', 'slug': ''}, {'visibility': 'list', 'slug': 'fixture-new', 'display_name': 2}, {'visibility': 'hidden', 'slug': 'fixture-hidden'}]}) == [
+        {'slug': 'fixture-new', 'display_name': 'fixture-new', 'efforts': None, 'default_effort': None, 'images': 'unknown'}]
+    for payload in ([], {}, {'models': []}, {'models': None}, {'models': [codex_model('fixture-model-x', visibility='hide')]}):
         with pytest.raises(ChatGPTError):
             normalize(payload)
 
 
+@pytest.mark.parametrize('field, value, expected, warnings', [
+    ('supported_reasoning_levels', 'high', {'efforts': None}, 1),
+    ('supported_reasoning_levels', {'effort': 'high'}, {'efforts': None}, 1),
+    ('supported_reasoning_levels', [], {'efforts': []}, 0),
+    ('supported_reasoning_levels',
+     [{'effort': 'High'}, {'effort': 3}, 'low', {'description': 'no effort'}, {'effort': 'x' * 33},
+      {'effort': 'medium'}, {'effort': 'medium'}, {'effort': 'fixture_new-tier2'}],
+     {'efforts': ['medium', 'fixture_new-tier2']}, 5),
+    ('default_reasoning_level', 7, {'default_effort': None}, 1),
+    ('default_reasoning_level', 'Very High', {'default_effort': None}, 1),
+    ('default_reasoning_level', None, {'default_effort': None}, 0),
+    ('input_modalities', 'image', {'images': 'unknown'}, 1),
+    ('input_modalities', [1, 'image'], {'images': 'unknown'}, 1),
+    ('input_modalities', {'image': True}, {'images': 'unknown'}, 1),
+    ('input_modalities', [], {'images': 'unsupported'}, 0),
+    ('input_modalities', ['text'], {'images': 'unsupported'}, 0),
+    ('input_modalities', ['image'], {'images': 'supported'}, 0),
+])
+def test_malformed_capability_fields_are_omitted_and_logged_never_fatal(caplog, field, value, expected, warnings):
+    normalize = catalog_module('catalog').normalize
+    entry = codex_model('fixture-model-a', 'Fixture A')
+    entry[field] = value
+    with caplog.at_level('WARNING', logger=package.__name__ + '.catalog'):
+        [result] = normalize({'models': [entry, codex_model('fixture-model-b')]})[:1]
+    assert result['slug'] == 'fixture-model-a'
+    assert {key: result[key] for key in expected} == expected
+    logged = [r for r in caplog.records if r.name == package.__name__ + '.catalog']
+    assert len(logged) == warnings and all(r.levelname == 'WARNING' and 'fixture-model-a' in r.getMessage() for r in logged)
+
+
+def test_capability_filters_catalog_tokens_through_the_host_vocabulary():
+    Capability = catalog_module('capabilities').Capability
+    capability = Capability.from_entry({'slug': 'fixture-model-a', 'display_name': 'A', 'default_effort': 'none',
+                                        'images': 'supported',
+                                        'efforts': ['ultra', 'none', 'off', 'minimal', 'low', 'max', 'xhigh']})
+    assert capability.offered == ('none', 'minimal', 'low', 'max', 'xhigh')
+    assert capability.omitted == ('ultra', 'off')
+    assert capability.listed and capability.default_effort == 'none'
+    assert capability.thinking_levels() == {'off': {'reasoning': {'effort': 'none'}},
+                                            'minimal': {'reasoning': {'effort': 'minimal'}},
+                                            'low': {'reasoning': {'effort': 'low'}},
+                                            'max': {'reasoning': {'effort': 'max'}},
+                                            'xhigh': {'reasoning': {'effort': 'xhigh'}}}
+    legacy = Capability.from_entry({'slug': 'fixture-model-a', 'display_name': 'A'})
+    assert (legacy.listed, legacy.offered, legacy.omitted, legacy.images, legacy.thinking_levels()) == (False, (), (), 'unknown', {})
+    empty = Capability.from_entry({'slug': 'fixture-model-a', 'display_name': 'A', 'efforts': [], 'images': 'unknown'})
+    assert empty.listed and empty.thinking_levels() == {}
+    for images, policy, enabled, publish in [
+        ('supported', 'auto', True, 'auto'), ('supported', 'enabled', True, 'enabled'),
+        ('supported', 'disabled', False, 'disabled'), ('unknown', 'auto', False, 'auto'),
+        ('unknown', 'enabled', True, 'enabled'), ('unsupported', 'auto', False, 'auto'),
+        ('unsupported', 'enabled', False, 'disabled'), ('unsupported', 'disabled', False, 'disabled'),
+    ]:
+        capability = Capability(images=images)
+        assert capability.images_enabled(policy) is enabled, (images, policy)
+        assert capability.published_image_policy(policy) == publish, (images, policy)
+        assert capability.image_conflict(policy) is (images == 'unsupported' and policy == 'enabled')
+
+
 def test_unknown_effort_and_direct_images_fail_closed():
     from core.extensions.model_provider import ProviderRequest
-    saved_account()
-    for request in (ProviderRequest('missing', []), ProviderRequest('test-model', [], '{"reasoning":{"effort":"high"}}'), ProviderRequest('test-model', [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,secret'}}]}])):
+    normalize = catalog_module('catalog').normalize
+    saved_account(models=normalize({'models': [codex_model('test-model', 'Test', efforts=('low', 'ultra'), modalities=_OMIT)]}),
+                  catalog_version=2)
+    for request in (ProviderRequest('missing', []), ProviderRequest('test-model', [], '{"reasoning":{"effort":"high"}}'),
+                    ProviderRequest('test-model', [], '{"reasoning":{"effort":"ultra"}}'),
+                    ProviderRequest('test-model', [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,secret'}}]}])):
         with pytest.raises(ChatGPTError):
             auth.validate_request(request)
+    assert auth.validate_request(ProviderRequest('test-model', [], '{"reasoning":{"effort":"low"}}')) == 'secret-access'
     auth.set_image_policy('enabled')
     assert auth.validate_request(ProviderRequest('test-model', [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'https://example.com/image'}}]}])) == 'secret-access'
     auth.set_image_policy('disabled')
@@ -1062,56 +1203,110 @@ def test_reconciliation_concurrent_stable_ids():
     assert len(db.list_connections()) == 2
 
 
-@pytest.mark.parametrize('slug,efforts', [
-    ('gpt-5', ('minimal', 'low', 'medium', 'high')),
-    ('gpt-5-2025-08-07', ('minimal', 'low', 'medium', 'high')),
-    ('gpt-5.1', ('none', 'low', 'medium', 'high')),
-    ('gpt-5.1-2025-11-13', ('none', 'low', 'medium', 'high')),
-])
-def test_evidenced_exact_model_publication_and_validation(slug, efforts):
+def extension():
+    from core.extensions import loader
+    return loader._loaded['chatgpt']
+
+
+# Host level key → the effort fixture-model-a's connection sends for it.
+_FIXTURE_A_WIRE = {'off': 'none', 'minimal': 'minimal', 'low': 'low', 'medium': 'medium', 'high': 'high',
+                   'xhigh': 'xhigh', 'max': 'max'}
+
+
+def test_refresh_publishes_each_models_catalog_capabilities(monkeypatch):
+    saved_account()
+    serve_catalog(monkeypatch, fixture_catalog())
+    auth.refresh_models()
+    a, a_meta = published('fixture-model-a')
+    assert a.thinking_levels == {key: {'reasoning': {'effort': wire}} for key, wire in _FIXTURE_A_WIRE.items()}
+    assert (a_meta['images'], a_meta['image_policy'], bool(a_meta['available'])) == ('supported', 'auto', True)
+    b, b_meta = published('fixture-model-b')
+    assert b.thinking_levels == {'low': {'reasoning': {'effort': 'low'}}, 'high': {'reasoning': {'effort': 'high'}}}
+    assert b_meta['images'] == 'unsupported'
+    c, c_meta = published('fixture-model-c')
+    assert c.thinking_levels is None and c_meta['images'] == 'unknown'
+    assert not [conn for conn in db.list_connections() if conn.model in {'fixture-model-hidden', 'fixture-model-none'}]
+    with store.locked() as data:
+        stored = data['accounts']['oaiapp_test']
+        assert stored['catalog_version'] == 2
+        # Stored raw: a later host vocabulary change applies without a re-fetch.
+        assert stored['models'][0]['efforts'] == ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
+
+
+def test_status_reports_tiers_omissions_and_coverage_for_the_selected_model(monkeypatch):
+    saved_account()
+    serve_catalog(monkeypatch, fixture_catalog())
+    auth.refresh_models()
+
+    def status():
+        result = extension().provider_status()
+        return result.message, next(c for c in result.choices if c.action == 'images').label
+
+    message, _ = status()
+    assert 'The selected model is no longer offered by your account; choose another.' in message
+    assert 'Thinking options loaded for 2 of 3 models.' in message
+    auth.select_model('fixture-model-a')
+    message, label = status()
+    assert 'Thinking: Server default (ChatGPT uses low), off, minimal, low, medium, high, xhigh, max.' in message
+    assert 'Not available in BossMod yet: ultra.' in message
+    assert 'Thinking options loaded for 2 of 3 models.' in message
+    assert 'Refresh models to load' not in message and "didn't list" not in message
+    assert label == 'Image input (Auto: on)'
+    auth.select_model('fixture-model-b')
+    message, label = status()
+    assert 'Thinking: Server default, low, high.' in message and 'Not available' not in message
+    assert label == "Image input (Auto: off; this model doesn't accept images)"
+    auth.select_model('fixture-model-c')
+    message, label = status()
+    assert "Thinking: Server default only. ChatGPT didn't list thinking options for this model." in message
+    assert label == 'Image input (Auto: off; support unknown)'
+
+
+def test_same_connection_gains_and_loses_tiers_across_refreshes_without_restart(monkeypatch):
     from core.extensions.model_provider import ProviderRequest
-    from importlib import import_module
-    capabilities = import_module(package.__name__ + '.capabilities')
-    saved_account(models=[{'slug': slug, 'display_name': 'Verified'}])
-    connection_id = db.query("SELECT id FROM ai_connections WHERE model = ?", [slug])[0]["id"]
-    row = db.query('SELECT thinking_levels FROM ai_connections WHERE id = ?', [connection_id])[0]
-    levels = json.loads(row['thinking_levels'])
-    expected = {('off' if e == 'none' else e): {'reasoning': {'effort': e}} for e in efforts}
-    assert levels == expected
-    assert capabilities.for_model(slug).images == 'supported'
-    for effort in efforts:
-        assert auth.validate_request(ProviderRequest(slug, [], json.dumps({'reasoning': {'effort': effort}}))) == 'secret-access'
-    assert auth.validate_request(ProviderRequest(slug, [])) == 'secret-access'
-    for effort in ('off', 'xhigh', 'bogus', None):
-        with pytest.raises(ChatGPTError, match='not verified'):
-            auth.validate_request(ProviderRequest(slug, [], json.dumps({'reasoning': {'effort': effort}})))
-    image = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
-    assert auth.validate_request(ProviderRequest(slug, image)) == 'secret-access'
-    auth.select_model(slug)
-    auth.set_image_policy('disabled')
-    with pytest.raises(ChatGPTError, match='Image input is disabled'):
-        auth.validate_request(ProviderRequest(slug, image))
+    saved_account()
 
+    def catalog(**fields):
+        return {'models': [codex_model('fixture-model-a', 'Fixture A', **fields)]}
 
-def test_capability_table_does_not_guess_names_or_trust_catalog_fields():
-    from importlib import import_module
-    capabilities = import_module(package.__name__ + '.capabilities')
-    catalog = import_module(package.__name__ + '.catalog')
-    for slug in ('gpt-5-custom', 'GPT-5', 'gpt-5.1-preview', 'unknown'):
-        assert capabilities.for_model(slug).thinking_levels() == {}
-        assert capabilities.for_model(slug).images == 'unknown'
-    assert catalog.normalize({'models': [{'visibility': 'list', 'slug': 'unknown',
-        'reasoning_efforts': ['high'], 'supports_images': True}]}) == [{'slug': 'unknown', 'display_name': 'unknown'}]
+    def effort(name):
+        return ProviderRequest('fixture-model-a', [], json.dumps({'reasoning': {'effort': name}}))
+
+    serve_catalog(monkeypatch, catalog(efforts=('low', 'high')))
+    auth.refresh_models()
+    first, _ = published('fixture-model-a')
+    assert first.thinking_levels == {'low': {'reasoning': {'effort': 'low'}}, 'high': {'reasoning': {'effort': 'high'}}}
+    with pytest.raises(ChatGPTError, match='not verified'):
+        auth.validate_request(effort('medium'))
+    serve_catalog(monkeypatch, catalog(efforts=('none', 'low', 'medium', 'high', 'xhigh')))
+    auth.refresh_models()
+    gained, _ = published('fixture-model-a')
+    assert gained.id == first.id
+    assert gained.thinking_levels == {key: {'reasoning': {'effort': _FIXTURE_A_WIRE[key]}}
+                                      for key in ('off', 'low', 'medium', 'high', 'xhigh')}
+    assert auth.validate_request(effort('medium')) == 'secret-access'
+    serve_catalog(monkeypatch, catalog(efforts=('high',), modalities=_OMIT))
+    auth.refresh_models()
+    lost, meta = published('fixture-model-a')
+    assert lost.id == first.id and lost.thinking_levels == {'high': {'reasoning': {'effort': 'high'}}}
+    assert meta['images'] == 'unknown'
+    with pytest.raises(ChatGPTError, match='not verified'):
+        auth.validate_request(effort('medium'))
+    serve_catalog(monkeypatch, catalog(efforts=_OMIT))
+    auth.refresh_models()
+    gone, _ = published('fixture-model-a')
+    assert gone.id == first.id and gone.thinking_levels is None
+    assert len(db.list_connections()) == 2  # fixture-model-a and the retired test-model
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('slug', ['gpt-5', 'gpt-5.1'])
-async def test_evidenced_choices_exact_wire_sync_and_async(monkeypatch, slug):
-    from importlib import import_module
+async def test_catalog_choices_send_the_exact_effort_sync_and_async(monkeypatch):
     from core.extensions.model_provider import ProviderRequest
     from core.llm.thinking import effective_extra_body
-    capabilities = import_module(package.__name__ + '.capabilities')
-    saved_account(models=[{'slug': slug, 'display_name': slug}])
+    slug = 'fixture-model-a'
+    saved_account()
+    serve_catalog(monkeypatch, fixture_catalog())
+    auth.refresh_models()
     captured = []
     event = NS(type='response.completed', response=NS(model=slug, usage=None,
         output=[NS(type='message', content=[NS(type='output_text', text='Done')])]))
@@ -1143,16 +1338,86 @@ async def test_evidenced_choices_exact_wire_sync_and_async(monkeypatch, slug):
 
     monkeypatch.setattr(provider, 'sync_client_factory', SyncClient)
     monkeypatch.setattr(provider, 'async_client_factory', AsyncClient)
-    instance = __import__('core.extensions.loader', fromlist=['_loaded'])._loaded['chatgpt']
-    levels = capabilities.for_model(slug).thinking_levels()
+    connection, _ = published(slug)
+    levels = connection.thinking_levels
+    assert set(levels) == set(_FIXTURE_A_WIRE)
     for choice in ('default', *levels):
         request = ProviderRequest(slug, [{'role': 'user', 'content': 'Hello'}],
-                                  effective_extra_body(None, levels, choice))
-        assert instance.provider_complete_sync(request).content == 'Done'
-        assert (await instance.provider_complete(request)).content == 'Done'
+                                  effective_extra_body(connection.extra_body, levels, choice))
+        assert extension().provider_complete_sync(request).content == 'Done'
+        assert (await extension().provider_complete(request)).content == 'Done'
         for body in captured[-2:]:
             assert body['model'] == slug
             if choice == 'default':
                 assert 'reasoning' not in body
             else:
-                assert body['reasoning'] == levels[choice]['reasoning']
+                assert body['reasoning'] == {'effort': _FIXTURE_A_WIRE[choice]}
+    for unoffered in ('ultra', 'off', 'bogus', None, ['high']):
+        with pytest.raises(ChatGPTError, match='not verified'):
+            auth.validate_request(ProviderRequest(slug, [], json.dumps({'reasoning': {'effort': unoffered}})))
+    for unoffered in ('medium', 'max'):
+        with pytest.raises(ChatGPTError, match='not verified'):
+            auth.validate_request(ProviderRequest('fixture-model-b', [], json.dumps({'reasoning': {'effort': unoffered}})))
+
+
+def test_image_conflict_publishes_disabled_without_breaking_publication(monkeypatch):
+    from core.extensions.model_provider import ProviderRequest
+    from db.managed_connections import image_capability
+    saved_account()
+    serve_catalog(monkeypatch, fixture_catalog())
+    auth.refresh_models()
+    auth.select_model('fixture-model-a')
+    auth.set_image_policy('enabled')
+    a, meta = published('fixture-model-a')
+    assert meta['image_policy'] == 'enabled' and image_capability(a)
+    text_only = codex_model('fixture-model-a', 'Fixture A', modalities=('text',))
+    serve_catalog(monkeypatch, fixture_catalog(a=text_only))
+    auth.refresh_models()
+    status = auth.account_status()
+    assert status['connected'] and status['error'] is None
+    assert status['image_policy'] == 'enabled' and status['image_conflicts'] == ['Fixture A']
+    a, meta = published('fixture-model-a')
+    assert (meta['images'], meta['image_policy']) == ('unsupported', 'disabled')
+    assert not image_capability(a)
+    assert published('fixture-model-b')[1]['available'] and published('fixture-model-c')[1]['available']
+    provider_status = extension().provider_status()
+    assert ("ChatGPT says Fixture A doesn't accept images, so image input stays off although it's set to Enabled."
+            in provider_status.message)
+    image = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
+    with pytest.raises(ChatGPTError, match='Image input is disabled'):
+        auth.validate_request(ProviderRequest('fixture-model-a', image))
+    with pytest.raises(ChatGPTError, match="doesn't accept images"):
+        auth.set_image_policy('enabled')
+    auth.set_image_policy('auto')
+    assert auth.account_status()['image_conflicts'] == []
+    assert published('fixture-model-a')[1]['image_policy'] == 'auto'
+    assert 'ChatGPT says' not in extension().provider_status().message
+
+
+@pytest.mark.parametrize('version', [{}, {'catalog_version': 1}])
+def test_pre_upgrade_catalog_offers_server_default_and_asks_for_refresh(monkeypatch, version):
+    # A pre-upgrade stored entry has only slug and display name.
+    connection_id = saved_account(**version)
+    monkeypatch.setattr(auth, 'model_catalog', lambda _: pytest.fail('status polling fetched the catalog'))
+    monkeypatch.setattr(auth, 'http_client_factory', lambda **_: pytest.fail('status polling used the network'))
+    status = extension().provider_status()
+    assert status.connected
+    assert 'Thinking: Server default only. Refresh models to load thinking options.' in status.message
+    assert 'loaded for' not in status.message and "didn't list" not in status.message
+    assert next(c for c in status.choices if c.action == 'images').label == 'Image input (Auto: off; support unknown)'
+    from db.managed_connections import metadata
+    assert db.get_connection_by_id(connection_id).thinking_levels is None
+    assert metadata(connection_id)['images'] == 'unknown'
+    with store.locked() as data:
+        assert data['accounts']['oaiapp_test'].get('catalog_version') == version.get('catalog_version')
+
+
+def test_extension_names_no_models():
+    import re
+    folder = Path(package.__file__).resolve().parent
+    files = [*folder.glob('*.py'), folder / 'manifest.json']
+    assert len(files) > 2
+    for path in files:
+        text = path.read_text(encoding='utf-8')
+        for forbidden in (r'gpt-', r'_EXACT', r'for_model'):
+            assert not re.search(forbidden, text, re.IGNORECASE), (path.name, forbidden)

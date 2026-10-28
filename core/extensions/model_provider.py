@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Literal, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from core.models.thinking import ThinkingLevels, parse_thinking_levels
 
 
 class ProviderError(Exception):
@@ -92,14 +94,29 @@ class ProviderCompletion:
 
 
 class ManagedModel(_Strict):
+    """One model a provider publishes as a host connection.
+
+    ``thinking_levels`` uses the host vocabulary only. Connection reads
+    re-validate the stored map, so an unknown level key is refused here, at
+    the contract boundary, rather than stored where it would break every
+    read of that provider's connections.
+    """
+
     key: str = Field(min_length=1)
     name: str = Field(min_length=1)
     model: str = Field(min_length=1)
-    thinking_levels: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    thinking_levels: ThinkingLevels = Field(default_factory=dict)
     images: Literal["unknown", "supported", "unsupported"] = "unknown"
     image_policy: Literal["auto", "enabled", "disabled"] = "auto"
     available: bool = True
     reason: str | None = None
+
+    @field_validator("thinking_levels", mode="before")
+    @classmethod
+    def _host_levels(cls, value: Any) -> ThinkingLevels:
+        # None and {} both mean "no levels offered"; the parser raises on
+        # unknown keys and empty fragments.
+        return parse_thinking_levels(value) or {}
 
 
 @dataclass(frozen=True)

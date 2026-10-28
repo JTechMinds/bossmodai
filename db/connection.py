@@ -17,6 +17,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Generator
 
+from core.models.thinking import THINKING_CHOICES
+
 logger = logging.getLogger(__name__)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -461,7 +463,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _create_model_capabilities_table_if_missing(con)
     _raise_default_no_progress_threshold(con)
     _link_agents_to_connections(con)
-    _ensure_minimal_thinking_choice(con)
+    _ensure_thinking_choices(con)
     _add_column_if_missing(
         con, "tasks", "origin_attachment_ids", "TEXT",
     )
@@ -677,9 +679,11 @@ def _raise_default_no_progress_threshold(con: SQLiteCompatConnection) -> None:
     )
 
 
+# The CHECK value list for an agent thinking column, from the one vocabulary.
+_THINKING_CHECK_VALUES = ",".join(f"'{choice}'" for choice in THINKING_CHOICES)
 _THINKING_COLUMN = (
     "VARCHAR NOT NULL DEFAULT 'default' CHECK ({col} IN "
-    "('default','off','minimal','low','medium','high','xhigh'))"
+    "(" + _THINKING_CHECK_VALUES + "))"
 )
 # Columns retired when an agent moved to one live AI connection.
 _RETIRED_AGENT_MODEL_COLUMNS = (
@@ -2154,24 +2158,92 @@ def reset_database() -> None:
     init_db()
 
 
-def _ensure_minimal_thinking_choice(con: SQLiteCompatConnection) -> None:
-    """Widen existing agent/snapshot CHECKs without changing stored choices.
+_THINKING_CHOICE_TABLES = ("agents", "agent_snapshots")
+_THINKING_CHOICE_COLUMNS = ("thinking_social", "thinking_work")
+# One quoted value, or the commas and whitespace between values.
+_CHECK_LIST_TOKEN_RE = re.compile(r"'[^']*'|[\s,]")
 
-    Preserve the actual table definition, every column, index and trigger.
-    Rebuild both tables atomically with foreign keys temporarily disabled,
-    following the other SQLite table migrations in this module.
+
+def _thinking_check_re(column: str) -> re.Pattern[str]:
+    """Match ``CHECK (<column> IN (...))``; group 2 is the quoted value list."""
+    return re.compile(
+        r"(CHECK\s*\(\s*[\"`\[]?" + re.escape(column) + r"[\"`\]]?\s+IN\s*\()([^()]*)(\)\s*\))",
+        re.IGNORECASE,
+    )
+
+
+def _thinking_check_lists(sql: str, table: str) -> dict[str, tuple[str, ...]]:
+    """Read each thinking column's CHECK value list from a table's stored SQL.
+
+    Raises:
+        RuntimeError: A column's ``CHECK (<col> IN (...))`` is not found
+            exactly once, or its list holds anything but quoted values.
     """
-    tables = [(table, _table_sql(con, table)) for table in ("agents", "agent_snapshots")]
-    tables = [(table, sql) for table, sql in tables if sql and "'minimal'" not in sql]
-    if not tables:
+    lists: dict[str, tuple[str, ...]] = {}
+    for column in _THINKING_CHOICE_COLUMNS:
+        matches = _thinking_check_re(column).findall(sql)
+        if len(matches) != 1:
+            raise RuntimeError(
+                f"Cannot read the thinking choices of {table}.{column}: "
+                f"expected one CHECK ({column} IN (...)), found {len(matches)}"
+            )
+        values = matches[0][1]
+        if _CHECK_LIST_TOKEN_RE.sub("", values):
+            raise RuntimeError(f"Cannot read the thinking choices of {table}.{column}: {values!r}")
+        lists[column] = tuple(re.findall(r"'([^']*)'", values))
+    return lists
+
+
+def _ensure_thinking_choices(con: SQLiteCompatConnection) -> None:
+    """Make the agent and snapshot thinking CHECKs list exactly ``THINKING_CHOICES``.
+
+    For ``agents`` and ``agent_snapshots``, each thinking column's
+    ``CHECK (<col> IN (...))`` list is read from the table's actual stored
+    SQL. A table whose lists already equal ``THINKING_CHOICES`` is left
+    alone. Otherwise the table is rebuilt from that stored SQL with only the
+    lists replaced: foreign keys off, one transaction, every column, row,
+    index and trigger preserved. Adding a level to core/models/thinking.py is
+    then the whole migration. Idempotent.
+
+    Raises:
+        RuntimeError: Before any change, when a table is missing, a column's
+            CHECK cannot be read, a stored list holds a value that is not in
+            ``THINKING_CHOICES`` (this only widens: narrowing a stored enum
+            at boot could strand rows and stop the app from starting), or a
+            list replacement did not apply. During the rebuild, when the
+            stored CREATE TABLE cannot be renamed, after rolling it back.
+        sqlite3.Error: From the rebuild, after rolling it back.
+    """
+    rebuilds: list[tuple[str, str]] = []
+    for table in _THINKING_CHOICE_TABLES:
+        sql = _table_sql(con, table)
+        if not sql:
+            raise RuntimeError(f"Cannot check thinking choices: table {table} is missing")
+        lists = _thinking_check_lists(sql, table)
+        for column, values in lists.items():
+            unknown = [value for value in values if value not in THINKING_CHOICES]
+            if unknown:
+                raise RuntimeError(
+                    f"{table}.{column} allows {', '.join(unknown)}, which the thinking "
+                    "vocabulary does not have; refusing to narrow it"
+                )
+        if all(values == THINKING_CHOICES for values in lists.values()):
+            continue
+        widened = sql
+        for column in _THINKING_CHOICE_COLUMNS:
+            # A function replacement, so the values are never read as escapes.
+            widened = _thinking_check_re(column).sub(
+                lambda match: match.group(1) + _THINKING_CHECK_VALUES + match.group(3), widened
+            )
+        if any(values != THINKING_CHOICES for values in _thinking_check_lists(widened, table).values()):
+            raise RuntimeError(f"Cannot widen thinking constraints on {table}")
+        rebuilds.append((table, widened))
+    if not rebuilds:
         return
     con.execute("PRAGMA foreign_keys = OFF")
     try:
         con.execute("BEGIN TRANSACTION")
-        for table, sql in tables:
-            widened = re.sub(r"('off'\s*,\s*)'low'", r"\1'minimal','low'", sql)
-            if widened == sql:
-                raise RuntimeError(f"Cannot widen thinking constraints on {table}")
+        for table, widened in rebuilds:
             objects = con.execute(
                 "SELECT sql FROM sqlite_master WHERE tbl_name = ? "
                 "AND type IN ('index', 'trigger') AND sql IS NOT NULL", [table]
@@ -2179,6 +2251,8 @@ def _ensure_minimal_thinking_choice(con: SQLiteCompatConnection) -> None:
             temporary = table + "__thinking_new"
             create = re.sub(r'^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?[\w\"`\[\]]+',
                             'CREATE TABLE ' + temporary, widened, count=1, flags=re.I)
+            if create == widened:
+                raise RuntimeError(f"Cannot rename the stored definition of {table}")
             con.execute(create)
             columns = ', '.join('"' + row[1] + '"' for row in con.execute(
                 f'PRAGMA table_info({table})').fetchall())

@@ -23,7 +23,7 @@ _ZAI = {"off": {"thinking": {"type": "disabled"}}, "high": {"thinking": {"type":
 
 
 def test_the_vocabulary_is_default_plus_five_levels() -> None:
-    assert THINKING_LEVELS == ("off", "minimal", "low", "medium", "high", "xhigh")
+    assert THINKING_LEVELS == ("off", "minimal", "low", "medium", "high", "xhigh", "max")
     assert THINKING_CHOICES == ("default", *THINKING_LEVELS)
 
 
@@ -57,9 +57,9 @@ def test_a_malformed_map_is_refused(value: object, message: str) -> None:
 
 def test_the_connection_models_reject_a_malformed_map_as_a_validation_error() -> None:
     with pytest.raises(ValidationError, match="unknown level"):
-        AIConnectionCreate(name="x", api_base_url="http://h/v1", thinking_levels={"max": {"a": 1}})
+        AIConnectionCreate(name="x", api_base_url="http://h/v1", thinking_levels={"ultra": {"a": 1}})
     with pytest.raises(ValidationError, match="unknown level"):
-        AIConnectionUpdate(thinking_levels={"max": {"a": 1}})
+        AIConnectionUpdate(thinking_levels={"ultra": {"a": 1}})
 
 
 def test_an_update_keeps_an_empty_map_so_it_can_clear_the_column() -> None:
