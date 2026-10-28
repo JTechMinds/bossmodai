@@ -393,6 +393,12 @@ from db.ai_connections import (
     restore_connections,
     update_connection,
 )
+from db.ai_connection_health import (
+    delete_connection_health,
+    get_connection_health,
+    list_suspended_connection_health,
+    save_connection_health,
+)
 
 # Model capabilities (operator-set, keyed by raw model name)
 from db.model_capabilities import set_supports_images, supports_images
@@ -739,6 +745,10 @@ __all__ = [
     "list_connections",
     "restore_connections",
     "update_connection",
+    "delete_connection_health",
+    "get_connection_health",
+    "list_suspended_connection_health",
+    "save_connection_health",
     "set_supports_images",
     "supports_images",
     # Per-agent extension settings

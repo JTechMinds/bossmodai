@@ -24,6 +24,7 @@ from core.models.agent import (
 )
 from core.models.agent_process import AgentProcess
 from core.models.agent_snapshot import AgentSnapshot
+from core.models.connection_health import ConnectionFailureKind, ConnectionHealth
 from core.models.artifact import Artifact
 from core.models.channel import (
     Channel,
@@ -156,4 +157,6 @@ __all__ = [
     "AIConnection",
     "AIConnectionCreate",
     "AIConnectionUpdate",
+    "ConnectionFailureKind",
+    "ConnectionHealth",
 ]

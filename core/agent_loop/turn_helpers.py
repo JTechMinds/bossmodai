@@ -599,8 +599,8 @@ async def summarize_before_restore(
         mode: The activation mode.
         model: The model this turn runs on; it writes the summary.
         model_source: Where the model came from, for diagnostics.
-        api_config: The turn's connection: ``api_base``, ``api_key`` and
-            ``extra_body``.
+        api_config: The turn's connection: ``connection_id``, ``api_base``,
+            ``api_key`` and ``extra_body``.
         work_activity: The live work activity being resumed.
         context: The freshly built context, recorded as the turn's initial
             context when the turn ends here.

@@ -337,6 +337,7 @@ async def test_provider_sessions_close_on_call_end(monkeypatch: pytest.MonkeyPat
         model="test/mock",
         messages=[{"role": "user", "content": "hi"}],
         extra_body='{"stream": false}',
+        connection_id="test-connection",
     )
     assert response.content == "ok"
     assert closed.is_set()

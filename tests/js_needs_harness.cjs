@@ -122,6 +122,26 @@ function nestGitRow(id) {
     };
 }
 
+/** One paused AI connection, exactly as api/routes/needs.py emits it. */
+function connectionRow(connectionId) {
+    return {
+        id: `connection:${connectionId}`,
+        kind: "connection",
+        card_kind: "connection",
+        agent_id: null,
+        agent_name: null,
+        title: "AI connection “Proxy key” is paused",
+        sub: "Jim will wait until you fix it in Settings → AI Connections or retry. "
+            + "The provider said: No active task for this API key's project",
+        created_at: "2026-09-07T11:00:00Z",
+        conversation_id: null,
+        actions: [
+            { label: "Retry now", method: "POST", tone: "primary",
+              href: `/api/connections/${connectionId}/retry` },
+        ],
+    };
+}
+
 /** One pending host-path consent, exactly as api/routes/needs.py emits it. */
 function consentRow(id, conversationId) {
     return {
@@ -1133,6 +1153,63 @@ async function main() {
     offBus3Invalidate();
     const nestGitGroupIsLabeled = true;
 
+    // ─── 13i. A paused AI connection: first group, Retry now, no "Show me" ───
+    const connectionStore = BossModStore.createStore({ needs: [] });
+    const connectionBus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    const offConnectionInvalidate = BossModOperatorInvalidate.attach({ bus: connectionBus });
+    const connectionCalls = [];
+    const connectionApi = (url, init) => {
+        connectionCalls.push({ url, method: (init && init.method) || "GET" });
+        if (url.startsWith("/api/needs")) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve([
+                // Newest first on the wire; the connection is the oldest, and
+                // still renders first because its group does.
+                approvalRow("ap-c", "a1"), blockedRow("t-c", "a1"), connectionRow("c1"),
+            ]) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve("") });
+    };
+    const connectionNeeds = BossModNeeds.createNeedsStore({
+        store: connectionStore, bus: connectionBus, api: connectionApi,
+    });
+    await drain();
+    const connectionNeed = connectionStore.getState().needs.find((item) => item.id === "connection:c1");
+    if (!connectionNeed) throw new Error("a connection need must reach the queue");
+    if (connectionNeed.target !== null) {
+        throw new Error(`a connection need has nowhere to show, got ${JSON.stringify(connectionNeed.target)}`);
+    }
+    const connectionBell = documentStub.createElement("button");
+    documentStub.body.append(connectionBell);
+    const connectionPopover = BossModNeedsPopover.openPopover({
+        store: connectionStore, needs: connectionNeeds, anchor: connectionBell, navigate: () => {},
+    });
+    await drain();
+    const connectionGroups = connectionPopover.element.querySelectorAll(".popover-group-title")
+        .map((node) => node.textContent);
+    if (connectionGroups[0] !== "AI connections (1)") {
+        throw new Error(`the AI connections group must come first, got ${JSON.stringify(connectionGroups)}`);
+    }
+    const connectionEntry = connectionPopover.element.querySelector('[data-need-id="connection:c1"]');
+    if (!connectionEntry) throw new Error("the popover must list the paused connection");
+    const connectionButtons = connectionEntry.querySelectorAll(".popover-action");
+    if (connectionButtons.map((node) => node.textContent).join(",") !== "Retry now") {
+        throw new Error(`a connection need offers only Retry now, got ${connectionButtons.map((n) => n.textContent)}`);
+    }
+    if (connectionEntry.querySelector(".popover-show-me")) {
+        throw new Error("a connection need must not offer Show me");
+    }
+    connectionCalls.length = 0;
+    await connectionButtons[0].dispatchClick();
+    await drain();
+    const retryCall = connectionCalls.find((item) => item.url === "/api/connections/c1/retry");
+    if (!retryCall || retryCall.method !== "POST") {
+        throw new Error(`Retry now must POST its server href, got ${JSON.stringify(connectionCalls)}`);
+    }
+    connectionPopover.close();
+    connectionNeeds.destroy();
+    offConnectionInvalidate();
+    const connectionNeedRendersFirst = true;
+
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
     queue2 = [blockedRow("s1", "a1")];
@@ -1308,6 +1385,7 @@ async function main() {
         nestGitPostsBody,
         nestGitSchemaMismatchDismisses,
         nestGitGroupIsLabeled,
+        connectionNeedRendersFirst,
         targetsNavigate,
         openFocusNeedTableHolds,
         barWithoutNeedActionsUnchanged,

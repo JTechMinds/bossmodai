@@ -362,6 +362,7 @@ async def _run_execution_turn(
                 api_base=api_config.get("api_base"),
                 api_key=api_config.get("api_key"),
                 extra_body=api_config.get("extra_body"),
+                connection_id=api_config["connection_id"],
             )
         except client.LLMError as exc:
             logger.error("LLM call failed for %s: %s", agent.name, exc)

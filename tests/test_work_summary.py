@@ -38,7 +38,12 @@ from core.prompting.runtime_prompt_registry import runtime_prompt_surface_map
 from core.tasking import create_or_bind_task
 from db.settings import get_seed_setting_default
 
-_API_CONFIG = {"api_base": "http://127.0.0.1:9/v1", "api_key": "test-key", "extra_body": None}
+_API_CONFIG = {
+    "connection_id": "test-connection",
+    "api_base": "http://127.0.0.1:9/v1",
+    "api_key": "test-key",
+    "extra_body": None,
+}
 _MODEL = "test/mock"
 
 

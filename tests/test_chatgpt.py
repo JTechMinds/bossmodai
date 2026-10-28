@@ -35,7 +35,7 @@ ChatGPTError = package.ChatGPTError
 async def call_provider(model, messages):
     from core.llm.client import completion
 
-    return await completion(model, messages, api_base=API_BASE)
+    return await completion(model, messages, api_base=API_BASE, connection_id="test-connection")
 
 
 from core.extensions.registry import set_enabled
@@ -470,6 +470,7 @@ async def test_runtime_uses_responses_and_requires_completed_event(monkeypatch):
         api_base=API_BASE,
         temperature=0.5,
         max_tokens=100,
+        connection_id="test-connection",
     )
     assert result.content == '{"action":"done"}' and result.total_tokens == 14
     assert requests[0]["store"] is False and requests[0]["stream"] is True

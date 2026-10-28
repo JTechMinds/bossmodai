@@ -473,6 +473,20 @@ CREATE TABLE IF NOT EXISTS ai_connections (
     created_at   TIMESTAMP DEFAULT current_timestamp
 );
 
+-- One row per connection whose recent model calls failed at the provider
+-- (core/llm/connection_health.py). No row means healthy. Shared by the app
+-- and the runtime worker; a deleted connection takes its row with it.
+CREATE TABLE IF NOT EXISTS ai_connection_health (
+    connection_id   VARCHAR PRIMARY KEY REFERENCES ai_connections(id) ON DELETE CASCADE,
+    failure_count   INTEGER NOT NULL,
+    failure_kind    VARCHAR NOT NULL CHECK (failure_kind IN ('transient', 'rejected')),
+    last_error      TEXT NOT NULL,
+    suspended_at    TIMESTAMP,   -- NULL while still counting; set on every pause and every failed test call
+    retry_at        TIMESTAMP,   -- next allowed test call; NULL = waiting for the operator
+    backoff_seconds INTEGER,     -- current wait for a transient pause; NULL otherwise
+    updated_at      TIMESTAMP NOT NULL DEFAULT current_timestamp
+);
+
 -- ───────────────────────────────────────────────────────────────────────────
 -- Activity log — persistent event history for the UI activity feed
 -- ───────────────────────────────────────────────────────────────────────────

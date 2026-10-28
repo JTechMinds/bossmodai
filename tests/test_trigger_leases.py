@@ -218,7 +218,7 @@ def test_stale_generation_cannot_retry_a_reclaimed_trigger() -> None:
     row, first, second = _reclaim_after_force(agent.id)
 
     assert db.retry_agent_trigger(
-        row.id, "stale retry", claim_generation=first.claim_generation
+        row.id, "stale retry", claim_generation=first.claim_generation, count_retry=True
     ) is None
     still = db.get_agent_trigger(row.id)
     assert still is not None
@@ -228,7 +228,7 @@ def test_stale_generation_cannot_retry_a_reclaimed_trigger() -> None:
     assert still.failure_reason is None
 
     retried = db.retry_agent_trigger(
-        row.id, "live retry", claim_generation=second.claim_generation
+        row.id, "live retry", claim_generation=second.claim_generation, count_retry=True
     )
     assert retried is not None
     assert retried.status == "queued"
@@ -265,6 +265,8 @@ async def test_stale_supervise_retry_does_not_wreck_reclaimed_claim() -> None:
         trigger=stale,
         failure_detail="stale boom",
         not_retried_reason=None,
+        cause=None,
+        replay_safe=True,
     )
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
@@ -289,6 +291,8 @@ async def test_stale_supervise_exhaust_does_not_fail_reclaimed_claim() -> None:
         trigger=stale,
         failure_detail="stale exhaust",
         not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
+        cause=None,
+        replay_safe=False,
     )
     refreshed = db.get_agent_trigger(row.id)
     assert refreshed is not None
@@ -616,7 +620,7 @@ async def test_launch_failure_at_the_retry_limit_fails_and_frees_the_channel_sea
     claimed = dispatcher._claim_available_trigger()
     assert claimed is not None
     assert claimed.agent_id == peer
-    dispatcher._release_turn_lane(peer)
+    dispatcher._release_turn_reservations(peer)
 
 
 def test_raising_claim_releases_the_lane_and_propagates(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -13,10 +13,13 @@ from dataclasses import dataclass
 from typing import Any
 
 import litellm
+import openai
 
 from core import config
+from core.llm import connection_health
 from core.llm.attachment_parts import expand_attachment_messages
 from core.llm.call_budget import budget, current_turn_lane
+from core.models import ConnectionFailureKind
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +150,85 @@ def _is_transient_provider_error(exc: BaseException) -> bool:
     if isinstance(exc, LLMEmptyResponseError):
         return True
     return isinstance(exc, _TRANSIENT_PROVIDER_ERRORS)
+
+
+def classify_connection_failure(exc: BaseException) -> ConnectionFailureKind | None:
+    """Say what a failed model call's exception means for its AI connection.
+
+    Classified by exception class, never by message text, reusing the same
+    transient/permanent split as the in-call retry:
+
+    - ``"transient"``: could not connect, 5xx, 429, or an extension
+      provider's plain ``ProviderError``.
+    - ``"rejected"``: the provider refused the request: any other
+      ``openai.APIError`` (400, 401, 403, 404, 422, and so on) or
+      ``ProviderUsageLimitError``.
+    - ``None``: a timeout or stall, an empty reply,
+      ``ContextWindowExceededError`` or ``ContentPolicyViolationError``.
+      These are about one request, and existing repair paths own them.
+    - ``None``: anything that is not a provider answer (a BossMod bug, a
+      local config error).
+
+    Both counted kinds count toward pausing the connection
+    (``core.llm.connection_health.record_failure``); ``None`` is not counted.
+
+    Args:
+        exc: The provider's own exception (not the ``LLMError`` that wraps it).
+
+    Returns:
+        ``"transient"``, ``"rejected"``, or ``None`` when the failure says
+        nothing about the connection.
+    """
+    from core.extensions.model_provider import ProviderError, ProviderTimeout, ProviderUsageLimitError
+
+    if (
+        _is_provider_timeout(exc)
+        or isinstance(exc, (LLMTimeoutError, LLMEmptyResponseError, ProviderTimeout))
+    ):
+        return None
+    # Both subclass BadRequestError (litellm 1.82.5), so they must be checked
+    # before the openai.APIError rule below.
+    if isinstance(
+        exc,
+        (litellm.exceptions.ContextWindowExceededError, litellm.exceptions.ContentPolicyViolationError),
+    ):
+        return None
+    if isinstance(exc, ProviderUsageLimitError):
+        return "rejected"
+    if isinstance(exc, ProviderError):
+        return "transient"
+    if isinstance(exc, _TRANSIENT_PROVIDER_ERRORS):
+        return "transient"
+    # Every litellm provider exception subclasses openai.APIError.
+    if isinstance(exc, openai.APIError):
+        return "rejected"
+    return None
+
+
+def _settle_failed_call(
+    connection_id: str,
+    admission: connection_health.Admission,
+    failure: BaseException | None,
+    kind: ConnectionFailureKind | None,
+) -> None:
+    """Record a failed call's verdict on its connection, or end an undecided test call.
+
+    Args:
+        connection_id: The connection the call was for.
+        admission: The admission the call was given.
+        failure: The provider's own exception when the call ended on one;
+            ``None`` when it ended on a timeout or a cancellation.
+        kind: ``classify_connection_failure(failure)``, computed once by the
+            caller, which also sets it as the raised
+            ``LLMError.connection_failure``: what is recorded here and what
+            the dispatcher parks on cannot disagree. ``None`` when the
+            failure says nothing about the connection; a test call that
+            ends that way re-arms the wait (``end_undecided_test``).
+    """
+    if kind is not None:
+        connection_health.record_failure(connection_id, kind=kind, error=str(failure))
+    elif admission.probe:
+        connection_health.end_undecided_test(connection_id, lease_until=admission.lease_until)
 
 
 def _transient_retry_policy() -> tuple[int, float]:
@@ -440,6 +522,8 @@ async def completion(
     api_base: str | None = None,
     api_key: str | None = None,
     extra_body: str | None = None,
+    *,
+    connection_id: str,
 ) -> LLMResponse:
     """Call an LLM via litellm and return a structured response.
 
@@ -455,6 +539,14 @@ async def completion(
     first wait is ``llm_transient_retry_backoff_seconds`` and doubles on each
     retry. The call-budget slot is held across retries: a retry is the same
     logical call. Timeouts and permanent errors are not retried here.
+
+    A paused AI connection is never contacted. Immediately before the
+    provider call, ``connection_health.admit`` decides whether this call may
+    go ahead; afterwards the outcome is recorded once, after the transient
+    retries, so a short blip a retry absorbed never counts: a success
+    resets the connection's failure count, and a failure the provider owns
+    (``classify_connection_failure``) counts toward pausing it. That same
+    kind is set as the raised ``LLMError.connection_failure``.
 
     Parameters
     ----------
@@ -475,9 +567,15 @@ async def completion(
     extra_body : str | None
         JSON string of extra fields to merge into the request body.
         Used for provider-specific params like ``{"stream": false}``.
+    connection_id : str
+        The AI connection this call belongs to: the key of its pause state.
+        Required, because a call no pause can stop is the bug this guards.
 
     Raises
     ------
+    LLMConnectionSuspendedError
+        If ``connection_id`` is paused after repeated provider errors and
+        this call is not its test call. Raised before any provider contact.
     LLMError
         If the LLM call fails with a permanent error, or every transient retry
         failed. The message names the number of attempts.
@@ -509,21 +607,42 @@ async def completion(
         ProviderError, ProviderRequest, ProviderTimeout, ProviderUsageLimitError,
         complete as complete_provider, provider_id, resolve_provider,
     )
+    # The kind of the provider's failure, computed once: recorded on the
+    # connection and carried on the LLMError converted below. It stays None
+    # for a local error raised before the provider was contacted (an invalid
+    # endpoint, a missing or disabled extension), which records nothing.
+    failure_kind: ConnectionFailureKind | None = None
     try:
         ext_id = provider_id(api_base)
         if ext_id is not None:
+            # Resolved before admission: an unknown or disabled extension is a
+            # local error that contacted no provider, so it is not recorded.
+            provider = resolve_provider(ext_id)
             request = ProviderRequest(model, messages, extra_body,
                                       config.require_float("llm_request_timeout_seconds"),
                                       config.require_float("llm_stall_timeout_seconds"),
                                       temperature, max_tokens)
-            result = await complete_provider(resolve_provider(ext_id), request)
+            admission = connection_health.admit(connection_id, lease_seconds=request.timeout_seconds)
+            if not admission.allowed:
+                raise LLMConnectionSuspendedError(connection_id, last_error=admission.health.last_error)
+            try:
+                result = await complete_provider(provider, request)
+            except BaseException as exc:
+                failure_kind = classify_connection_failure(exc)
+                _settle_failed_call(connection_id, admission, exc, failure_kind)
+                raise
+            connection_health.record_success(connection_id)
             return LLMResponse(**asdict(result))
     except ProviderTimeout as exc:
         raise LLMTimeoutError(exc.seconds, kind=exc.kind) from None
     except ProviderUsageLimitError as exc:
-        raise LLMUsageLimitError(str(exc)) from None
+        usage_error = LLMUsageLimitError(str(exc))
+        usage_error.connection_failure = failure_kind
+        raise usage_error from None
     except ProviderError as exc:
-        raise LLMError(str(exc)) from None
+        provider_error = LLMError(str(exc))
+        provider_error.connection_failure = failure_kind
+        raise provider_error from None
 
     kwargs: dict[str, Any] = {
         "model": canonicalize_openai_compatible_model(model, api_base=api_base),
@@ -577,45 +696,73 @@ async def completion(
     if held is None:
         owned = await budget.acquire(kind="call", owner=str(model or "llm-call"))
     try:
-        # The backstop bounds each model attempt, not the wait for a free slot
-        # or the backoff between attempts.
-        attempt = 1
-        while True:
-            try:
-                return await _attempt_completion(
-                    kwargs,
-                    messages=messages,
-                    model=model,
-                    backstop_seconds=backstop_seconds,
-                    stall_seconds=stall_seconds,
-                    stream_for_progress=stream_for_progress,
-                )
-            except LLMTimeoutError:
-                raise
-            except Exception as exc:
-                if _is_provider_timeout(exc):
-                    logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
-                    raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
-                if attempt < max_attempts and _is_transient_provider_error(exc):
-                    delay = retry_backoff_seconds * 2 ** (attempt - 1)
-                    logger.warning(
-                        "LLM call failed transiently (model=%s, attempt %d/%d); retrying in %.1fs: %s",
-                        model,
-                        attempt,
-                        max_attempts,
-                        delay,
-                        exc,
+        # The in-call transient retries, and the backoff between them, are
+        # part of the same test call: a lease of one backstop would expire
+        # while this call is still retrying, and a second caller could then
+        # test the paused connection in parallel. So the lease covers every
+        # attempt plus every wait.
+        lease_seconds = max_attempts * backstop_seconds + retry_backoff_seconds * (2 ** transient_retries - 1)
+        # Checked with the lane held, immediately before the first attempt;
+        # the finally below still releases the lane when it is refused.
+        admission = connection_health.admit(connection_id, lease_seconds=lease_seconds)
+        if not admission.allowed:
+            raise LLMConnectionSuspendedError(connection_id, last_error=admission.health.last_error)
+        # The provider's own exception when the attempts end on one; it stays
+        # None for a timeout or a cancellation, which say nothing about the
+        # connection. Its kind is computed once, for both the recording and
+        # the raised LLMError's connection_failure.
+        provider_failure: BaseException | None = None
+        failure_kind = None
+        try:
+            # The backstop bounds each model attempt, not the wait for a free slot
+            # or the backoff between attempts.
+            attempt = 1
+            while True:
+                try:
+                    response = await _attempt_completion(
+                        kwargs,
+                        messages=messages,
+                        model=model,
+                        backstop_seconds=backstop_seconds,
+                        stall_seconds=stall_seconds,
+                        stream_for_progress=stream_for_progress,
                     )
-                    # Drop the broken connection so the retry opens a fresh one.
-                    await close_provider_sessions(allow_inflight=1)
-                    await asyncio.sleep(delay)
-                    attempt += 1
-                    continue
-                logger.error("LLM call failed (model=%s): %s", model, exc)
-                # Keep the empty-completion type so callers can tell it apart;
-                # it is still an LLMError, never a reply.
-                error_type = LLMEmptyResponseError if isinstance(exc, LLMEmptyResponseError) else LLMError
-                raise error_type(f"LLM call failed after {attempt} attempt(s): {exc}") from exc
+                    break
+                except LLMTimeoutError:
+                    raise
+                except Exception as exc:
+                    if _is_provider_timeout(exc):
+                        logger.error("LLM call timed out (model=%s) after %ss", model, backstop_seconds)
+                        raise LLMTimeoutError(backstop_seconds, kind="backstop") from exc
+                    if attempt < max_attempts and _is_transient_provider_error(exc):
+                        delay = retry_backoff_seconds * 2 ** (attempt - 1)
+                        logger.warning(
+                            "LLM call failed transiently (model=%s, attempt %d/%d); retrying in %.1fs: %s",
+                            model,
+                            attempt,
+                            max_attempts,
+                            delay,
+                            exc,
+                        )
+                        # Drop the broken connection so the retry opens a fresh one.
+                        await close_provider_sessions(allow_inflight=1)
+                        await asyncio.sleep(delay)
+                        attempt += 1
+                        continue
+                    logger.error("LLM call failed (model=%s): %s", model, exc)
+                    provider_failure = exc
+                    failure_kind = classify_connection_failure(exc)
+                    # Keep the empty-completion type so callers can tell it apart;
+                    # it is still an LLMError, never a reply.
+                    error_type = LLMEmptyResponseError if isinstance(exc, LLMEmptyResponseError) else LLMError
+                    error = error_type(f"LLM call failed after {attempt} attempt(s): {exc}")
+                    error.connection_failure = failure_kind
+                    raise error from exc
+        except BaseException:
+            _settle_failed_call(connection_id, admission, provider_failure, failure_kind)
+            raise
+        connection_health.record_success(connection_id)
+        return response
     finally:
         if owned is not None:
             budget.release(owned)
@@ -684,7 +831,23 @@ def count_history_tokens(text: str) -> int:
 
 
 class LLMError(Exception):
-    """Raised when an LLM call fails."""
+    """Raised when an LLM call fails.
+
+    Attributes:
+        connection_failure: What the failure said about the call's AI
+            connection. ``"transient"`` or ``"rejected"`` when
+            ``completion()`` raised this for a provider exception that counts
+            toward pausing the connection (``classify_connection_failure``),
+            the same kind it recorded. ``None`` for every other failure: a
+            timeout, an empty reply, a refusal of that one request (a
+            context-window or content-policy error), a local error before
+            the provider was contacted, or a paused connection
+            (``LLMConnectionSuspendedError``, which the dispatcher recognises
+            by its type). The dispatcher parks a failed turn on a paused
+            connection only when the connection caused the failure.
+    """
+
+    connection_failure: ConnectionFailureKind | None = None
 
 
 class LLMUsageLimitError(LLMError):
@@ -696,6 +859,33 @@ class LLMUsageLimitError(LLMError):
     never retried: the dispatcher stops the work and tells the operator. It is
     an ``LLMError``, so every turn that catches model failures still catches it.
     """
+
+
+class LLMConnectionSuspendedError(LLMError):
+    """Raised when the call's AI connection is paused after repeated provider errors.
+
+    ``completion()`` raises it before any provider contact: a paused
+    connection is never called, except for its one test call. The dispatcher
+    holds new work for the connection and parks a turn that failed with it,
+    without using up a retry, until the connection resumes. It is an
+    ``LLMError``, so every turn handler that catches model failures catches
+    it unchanged.
+
+    Attributes:
+        connection_id: The paused connection.
+    """
+
+    def __init__(self, connection_id: str, *, last_error: str) -> None:
+        """Name the paused connection and what the provider last said.
+
+        Args:
+            connection_id: The paused connection.
+            last_error: The provider's last error, from its health row.
+        """
+        self.connection_id = connection_id
+        super().__init__(
+            f"AI connection is paused after repeated provider errors. Last error: {last_error}"
+        )
 
 
 class LLMEmptyResponseError(LLMError):

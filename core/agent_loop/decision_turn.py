@@ -137,6 +137,7 @@ async def _run_decision_turn(
                 api_base=api_config.get("api_base"),
                 api_key=api_config.get("api_key"),
                 extra_body=api_config.get("extra_body"),
+                connection_id=api_config["connection_id"],
             )
         except client.LLMTimeoutError as exc:
             if parse_failure_should_repair(

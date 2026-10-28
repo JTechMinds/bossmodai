@@ -210,8 +210,8 @@ async def summarize_saved_work(
         agent: The agent whose work is resumed; its model writes the summary.
         activity: The live work activity being resumed.
         model: The model this turn runs on.
-        api_config: The turn's connection: ``api_base``, ``api_key`` and
-            ``extra_body``.
+        api_config: The turn's connection: ``connection_id``, ``api_base``,
+            ``api_key`` and ``extra_body``.
 
     Returns:
         The fold, or ``None`` when there was nothing to fold: no snapshot,
@@ -340,6 +340,7 @@ async def _complete(
             api_base=api_config.get("api_base"),
             api_key=api_config.get("api_key"),
             extra_body=api_config.get("extra_body"),
+            connection_id=api_config["connection_id"],
         )
     except client.LLMError as exc:
         raise spent.error(f"The step summary call failed: {exc}") from exc

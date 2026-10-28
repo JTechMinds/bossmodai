@@ -99,7 +99,12 @@ async def _run_bound_turn(
 
     model = route.model
     model_source = "connection"
-    api_config = {"api_base": route.api_base, "api_key": route.api_key, "extra_body": route.extra_body}
+    api_config = {
+        "connection_id": route.connection_id,
+        "api_base": route.api_base,
+        "api_key": route.api_key,
+        "extra_body": route.extra_body,
+    }
 
     # 3. Build initial context
     is_decision_turn = _is_decision_turn(trigger)

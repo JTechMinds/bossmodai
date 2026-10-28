@@ -263,6 +263,7 @@ async def test_completion_expands_with_the_raw_model_before_the_provider_prefix(
     result = await completion(
         model="llama3", messages=messages,
         api_base="http://127.0.0.1:9/v1", extra_body='{"stream": false}',
+        connection_id="test-connection",
     )
 
     assert result.content == "a red pixel"
@@ -306,7 +307,7 @@ async def test_a_missing_attachment_fails_the_turn_without_retry(monkeypatch):
         recorded.append(str(exc))
         await real_record(self, agent=agent, trigger=trigger, exc=exc)
 
-    async def _supervise(self, *, agent, trigger, failure_detail, not_retried_reason):
+    async def _supervise(self, *, agent, trigger, failure_detail, not_retried_reason, cause, replay_safe):
         supervised.append(not_retried_reason)
 
     monkeypatch.setattr("core.agent_loop.dispatcher.run_turn", _boom)

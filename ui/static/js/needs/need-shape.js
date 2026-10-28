@@ -34,7 +34,7 @@ const BossModNeedShape = (() => {
     /**
      * @typedef {object} Need
      * @property {string} id
-     * @property {'consent'|'approval'|'blocked'|'error'|'process_checkin'} kind
+     * @property {'consent'|'approval'|'blocked'|'error'|'process_checkin'|'connection'} kind
      * @property {string|null} agentId
      * @property {string} agentName
      * @property {string} title
@@ -197,6 +197,13 @@ const BossModNeedShape = (() => {
      * being asked (core/agent_loop/watchdog.py) and its rows changing, which
      * is how an answered or ended check-in leaves (api/routes/agent_processes.py).
      *
+     * The two `ai_connection_*` names are an AI connection being paused (or
+     * failing its test call) and working again, announced by the dispatcher
+     * (core/agent_loop/dispatcher.py). A `connection` need has no entry in
+     * KIND_TARGETS on purpose: it belongs to no conversation, Settings is a
+     * takeover rather than a place, and the card's own copy says where to
+     * fix it, so it gets no "Show me".
+     *
      * An unrecognised name is ignored on purpose; the boot fetch and `resync`
      * bound how stale the queue can become if the engine adds one.
      */
@@ -232,6 +239,8 @@ const BossModNeedShape = (() => {
         'task_clarify',
         'agent_process_checkin',
         'agent_process_changed',
+        'ai_connection_suspended',
+        'ai_connection_resumed',
     ]);
 
     /**

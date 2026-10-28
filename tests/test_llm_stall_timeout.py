@@ -170,7 +170,7 @@ async def test_streaming_progress_is_not_killed_before_absolute_backstop(
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake_acompletion)
     started = time.monotonic()
-    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
     elapsed = time.monotonic() - started
 
     assert seen["stream"] is True
@@ -192,7 +192,7 @@ async def test_idle_stream_raises_stall_timeout(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake_acompletion)
     with pytest.raises(LLMTimeoutError) as raised:
-        await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+        await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
     assert raised.value.kind == "stall"
     assert raised.value.timeout_seconds == 0.15
     assert isinstance(raised.value, LLMError)
@@ -211,7 +211,7 @@ async def test_streaming_progress_still_hits_the_absolute_backstop(
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake_acompletion)
     with pytest.raises(LLMTimeoutError) as raised:
-        await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+        await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
     assert raised.value.kind == "backstop"
     assert raised.value.timeout_seconds == 0.3
     assert stream.closed is True
@@ -235,6 +235,7 @@ async def test_non_streaming_path_uses_the_backstop_not_the_stall_window(
         model="test/mock",
         messages=[{"role": "user", "content": "hi"}],
         extra_body='{"stream": false}',
+        connection_id="test-connection",
     )
     assert seen["stream"] is not True
     assert seen["timeout"] == 2.0
@@ -255,7 +256,7 @@ async def test_opening_a_stream_uses_the_backstop_not_the_stall_window(
         return ScriptedStream([(0.0, _chunk("ok", role="assistant", finish="stop"))])
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake_acompletion)
-    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
     assert result.content == "ok"
 
 
@@ -270,7 +271,7 @@ async def test_finished_completion_without_a_stream_keeps_the_backstop(
         return _Finished("buffered")
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake_acompletion)
-    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
     assert result.content == "buffered"
 
 
@@ -288,6 +289,7 @@ async def test_non_streaming_backstop_still_cancels(monkeypatch: pytest.MonkeyPa
             model="test/mock",
             messages=[{"role": "user", "content": "hi"}],
             extra_body='{"stream": false}',
+            connection_id="test-connection",
         )
     assert raised.value.kind == "backstop"
     assert raised.value.timeout_seconds == 0.15
@@ -304,7 +306,7 @@ async def test_provider_timeout_is_a_backstop_timeout(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake_acompletion)
     with pytest.raises(LLMTimeoutError) as raised:
-        await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+        await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
     assert raised.value.kind == "backstop"
     assert raised.value.timeout_seconds == 9
 
@@ -320,7 +322,7 @@ async def test_non_positive_stall_does_not_cancel_an_idle_stream(
         return stream
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake_acompletion)
-    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+    result = await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
     assert result.content == "later"
 
 

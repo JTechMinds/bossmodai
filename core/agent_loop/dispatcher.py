@@ -29,8 +29,14 @@ from core.llm.call_budget import (
     max_concurrent_model_calls,
     reset_turn_lane,
 )
+from core.llm import connection_health
 from core.llm.attachment_parts import AttachmentUnavailableError
-from core.llm.client import LLMUsageLimitError, close_provider_sessions
+from core.llm.client import (
+    LLMConnectionSuspendedError,
+    LLMError,
+    LLMUsageLimitError,
+    close_provider_sessions,
+)
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
@@ -114,6 +120,15 @@ class TurnDispatcher:
         # Claimed orphans whose turn already ran a no-retry command, found by
         # start() and failed once by _loop (start() is sync; failing is async).
         self._blocked_orphans: list[Any] = []
+        # Paused AI connection id -> the agent whose claimed turn was let
+        # through to make its test call. Covers the gap between the claim and
+        # that turn's first model call, so one turn per connection tests it.
+        # Only this process runs turns, so the map is authoritative, like
+        # _active_turns.
+        self._probe_turns: dict[str, str] = {}
+        # Paused AI connection id -> the suspended_at last announced, so each
+        # pause, failed test call and resume is broadcast once.
+        self._announced_pauses: dict[str, datetime] = {}
 
     def start(self) -> None:
         if self._running:
@@ -472,8 +487,10 @@ class TurnDispatcher:
         trigger: dict[str, Any],
         failure_detail: str,
         not_retried_reason: str | None,
+        cause: BaseException | None,
+        replay_safe: bool,
     ) -> None:
-        """Route every failed turn through one retry-or-exhaust decision path.
+        """Route every failed turn through one park, retry-or-exhaust decision path.
 
         Args:
             agent: The trigger's agent.
@@ -486,13 +503,54 @@ class TurnDispatcher:
                 row's ``retry_blocked``): ``NOT_RETRIED_NO_REPEAT_REASON``,
                 ``NOT_RETRIED_ATTACHMENT_REASON`` or
                 ``NOT_RETRIED_USAGE_LIMIT_REASON``.
+            cause: The exception that failed the turn, or ``None`` when no
+                model call ran or the failure had no exception behind it.
+            replay_safe: Whether running the trigger again cannot replay a
+                command that must not repeat.
 
-        A retryable failure under the retry limit is requeued. Otherwise the
-        trigger is failed through ``_exhaust_failed_trigger`` with
-        ``not_retried_reason`` as the stall reason, or
-        ``RETRIES_EXHAUSTED_STALL_REASON`` when retries ran out.
+        A failure the AI connection caused (``_connection_caused``: the call
+        was refused because the connection is paused, or the provider's
+        failure counted against it) on a connection that is now paused is
+        parked first, when replaying it is safe: the trigger is re-queued
+        without using up a retry, and the claim gate holds it until the
+        connection resumes. The failure belonged to the connection, not the
+        trigger. Every other failure, on a paused connection too (a timeout,
+        an empty reply, a refusal of that one request), takes the path
+        below and uses a retry: a retryable failure under the retry limit is
+        requeued, and anything else is failed through
+        ``_exhaust_failed_trigger`` with ``not_retried_reason`` as the stall
+        reason, or ``RETRIES_EXHAUSTED_STALL_REASON`` when retries ran out.
+        A stale claim generation is logged and changes nothing.
         """
         normalized_detail = self._short_error_detail(failure_detail)
+        # replay_safe keeps a turn that ran a no-retry command from replaying;
+        # _connection_caused keeps a failure the connection did not cause from
+        # being parked, where it would loop as the connection's test turn.
+        if (
+            replay_safe
+            and _connection_caused(cause)
+            and connection_health.is_suspended(agent.connection_id)
+        ):
+            parked = db.retry_agent_trigger(
+                trigger["trigger_id"],
+                normalized_detail,
+                claim_generation=self._claim_generation_for(trigger),
+                count_retry=False,
+            )
+            if parked is None:
+                logger.warning(
+                    "Skipped stale retry for trigger %s generation %s",
+                    trigger.get("trigger_id"),
+                    trigger.get("claim_generation"),
+                )
+                return
+            logger.info(
+                "Holding %s's trigger %s until AI connection %s resumes",
+                agent.name,
+                trigger["trigger_id"],
+                agent.connection_id,
+            )
+            return
         trigger_record = db.get_agent_trigger(trigger["trigger_id"])
         retry_limit = self._retry_limit()
         if (
@@ -504,6 +562,7 @@ class TurnDispatcher:
                 trigger["trigger_id"],
                 normalized_detail,
                 claim_generation=self._claim_generation_for(trigger),
+                count_retry=True,
             )
             if retried is None:
                 logger.warning(
@@ -698,7 +757,7 @@ class TurnDispatcher:
                 the row may then still be claimed and is retried by the
                 next sweep.
         """
-        self._release_turn_lane(row.agent_id)
+        self._release_turn_reservations(row.agent_id)
         try:
             trigger = turn_trigger(row)
         except json.JSONDecodeError:
@@ -741,6 +800,9 @@ class TurnDispatcher:
             trigger=trigger,
             failure_detail=detail,
             not_retried_reason=None,
+            # No model call ran in this claim.
+            cause=None,
+            replay_safe=True,
         )
 
     async def _abandon_claim(self, candidate: Any, exc: Exception) -> None:
@@ -821,6 +883,56 @@ class TurnDispatcher:
             except Exception:
                 logger.exception("Dispatcher loop error")
 
+    async def _announce_connection_health(self) -> None:
+        """Broadcast each AI connection pause, failed test call and resume once.
+
+        Broadcasts reach the UI only from this process (the app's runtime
+        event sink is a null sink), so the dispatcher compares the paused set
+        on every pass, as it does for painted Queued rows. A pause is
+        announced when it is new or its ``suspended_at`` moved (a failed
+        test call); a connection that is no longer paused is announced as
+        working again, or as deleted when its row is gone. Both events also
+        make the Needs queue re-read.
+
+        Raises:
+            Exception: A DB or broadcast error; the dispatcher loop logs it
+                and the next pass compares again.
+        """
+        paused = connection_health.suspended_connections()
+        announced: dict[str, datetime] = {}
+        for connection_id, health in paused.items():
+            connection = db.get_connection_by_id(connection_id)
+            if connection is None:
+                # Deleted after the read; its health row went with it, so
+                # there is no pause left to announce.
+                continue
+            announced[connection_id] = health.suspended_at
+            if self._announced_pauses.get(connection_id) == health.suspended_at:
+                continue
+            await manager.broadcast_activity(
+                event="ai_connection_suspended",
+                detail=f'AI connection "{connection.name}" is paused: {health.last_error}',
+                extra={
+                    "connection_id": connection_id,
+                    "failure_kind": health.failure_kind,
+                    "retry_at": health.retry_at.isoformat() if health.retry_at is not None else None,
+                },
+            )
+        for connection_id in self._announced_pauses:
+            if connection_id in announced:
+                continue
+            connection = db.get_connection_by_id(connection_id)
+            await manager.broadcast_activity(
+                event="ai_connection_resumed",
+                detail=(
+                    f'AI connection "{connection.name}" is working again'
+                    if connection is not None
+                    else "A paused AI connection was deleted"
+                ),
+                extra={"connection_id": connection_id},
+            )
+        self._announced_pauses = announced
+
     async def _drain_queue(self) -> None:
         """Recover stranded claims, then claim and launch turns until none can start.
 
@@ -834,6 +946,7 @@ class TurnDispatcher:
         so once it returns True nothing in the block can raise.
         """
         await self._recover_live_orphans()
+        await self._announce_connection_health()
         while self._running:
             candidate = self._claim_available_trigger()
             if not candidate:
@@ -848,7 +961,7 @@ class TurnDispatcher:
                 await self._abandon_claim(candidate, exc)
                 return
             if not started:
-                self._release_turn_lane(candidate.agent_id)
+                self._release_turn_reservations(candidate.agent_id)
 
     async def _launch_claimed_trigger(self, candidate: Any) -> bool:
         """Start one claimed trigger. False means the lane should be released."""
@@ -957,11 +1070,22 @@ class TurnDispatcher:
         stay, and it does not replace an empty speak on a settled no-op.
         Repair wakes are ordered behind a live channel lead and use a lane
         from the same budget once claimed.
+
+        A wake for an agent whose AI connection is paused is held: it stays
+        queued, is not painted Queued, and is not claimed. When the paused
+        connection's test call is due and no test turn for it is in flight,
+        its first eligible wake is claimed as that test and recorded in
+        ``_probe_turns``; the rest wait for the result.
         """
         self._queue_notices = []
         if _runtime_is_paused():
             self._queue_notices = None
             return None
+        # Normally empty, and then no trigger is resolved to its connection.
+        paused = connection_health.suspended_connections()
+        now = datetime.now(timezone.utc)
+        # Trigger id -> the paused connection it was let through to test.
+        probe_for: dict[str, str] = {}
         eligible = []
         for trigger in db.list_queued_triggers(limit=100):
             if trigger.agent_id in self._active_turns:
@@ -974,6 +1098,22 @@ class TurnDispatcher:
                 active_activity=active_activity,
             ):
                 continue
+            if paused:
+                # A missing agent is not held here: the launch path fails it.
+                agent = db.get_agent(trigger.agent_id)
+                connection_id = agent.connection_id if agent is not None else None
+                health = paused.get(connection_id) if connection_id is not None else None
+                if health is not None:
+                    # Held: neither eligible nor painted Queued. Only the
+                    # first trigger of a connection whose test call is due,
+                    # with no test turn already in flight, goes through.
+                    if (
+                        not connection_health.is_probe_ready(health, now)
+                        or connection_id in self._probe_turns
+                        or connection_id in probe_for.values()
+                    ):
+                        continue
+                    probe_for[trigger.id] = connection_id
             eligible.append(trigger)
 
         limit = max_concurrent_model_calls()
@@ -1006,6 +1146,9 @@ class TurnDispatcher:
                 budget.release(lane)
                 continue
             self._turn_lanes[claimed.agent_id] = lane
+            probe_connection = probe_for.get(claimed.id)
+            if probe_connection is not None:
+                self._probe_turns[probe_connection] = claimed.agent_id
             return claimed
         return None
 
@@ -1053,10 +1196,19 @@ class TurnDispatcher:
             "ahead": ahead,
         }
 
-    def _release_turn_lane(self, agent_id: str) -> None:
+    def _release_turn_reservations(self, agent_id: str) -> None:
+        """Release what a claim reserved for ``agent_id``: its lane and any test-call slot.
+
+        The model-call lane and the ``_probe_turns`` entry share one
+        lifecycle (claim, then turn end or an abandoned claim), so one
+        release means no release site can miss either. Safe to call when
+        the agent holds neither.
+        """
         lane = self._turn_lanes.pop(agent_id, None)
         if lane is not None:
             budget.release(lane)
+        for connection_id in [cid for cid, holder in self._probe_turns.items() if holder == agent_id]:
+            del self._probe_turns[connection_id]
 
     async def _emit_queue_notices(self) -> None:
         """Retract Queued rows that no longer wait, then paint the current ones.
@@ -1215,6 +1367,8 @@ class TurnDispatcher:
                     # a no-retry command (retry_blocked).
                     not_retried_reason=_cause_not_retried_reason(outcome.cause)
                     or (None if outcome.retryable else NOT_RETRIED_NO_REPEAT_REASON),
+                    cause=outcome.cause,
+                    replay_safe=outcome.retryable,
                 )
 
         except Exception as exc:
@@ -1233,6 +1387,8 @@ class TurnDispatcher:
                         trigger=trigger,
                         failure_detail=str(exc),
                         not_retried_reason=_escaped_not_retried_reason(trigger, exc),
+                        cause=exc,
+                        replay_safe=not _retry_blocked(trigger),
                     )
             except Exception:
                 logger.exception("Failed to clean up agent after trigger failure")
@@ -1250,7 +1406,7 @@ class TurnDispatcher:
                 # still has in another channel stays painted, so the next
                 # emit retracts it.
                 self._painted_queued.pop((agent.id, channel_id), None)
-            self._release_turn_lane(agent.id)
+            self._release_turn_reservations(agent.id)
             try:
                 await close_provider_sessions(allow_inflight=0)
             except Exception:
@@ -1443,6 +1599,33 @@ def _cause_not_retried_reason(exc: BaseException | None) -> str | None:
     if isinstance(exc, LLMUsageLimitError):
         return NOT_RETRIED_USAGE_LIMIT_REASON
     return None
+
+
+def _connection_caused(cause: BaseException | None) -> bool:
+    """Return whether a failed turn's ``cause`` was its AI connection's failure.
+
+    Only such a failure may park a trigger on a paused connection without
+    using up a retry. A failure that says nothing about the connection (a
+    timeout, an empty reply, a refusal of that one request such as a
+    context-window error) must not park: when the paused connection's test
+    turn failed that way, parking re-queued it for free, the connection was
+    due again, and the same trigger was claimed as the next test at once,
+    calling the provider in a loop with no bound. It takes the
+    retry-or-exhaust path instead, which bounds it by the retry limit.
+
+    Args:
+        cause: The exception that failed the turn; ``None`` when the failure
+            had no exception behind it.
+
+    Returns:
+        ``True`` for an ``LLMConnectionSuspendedError`` (the call was refused
+        because the connection is paused) or an ``LLMError`` whose
+        ``connection_failure`` is set (the provider's failure counted
+        against the connection); ``False`` otherwise.
+    """
+    if isinstance(cause, LLMConnectionSuspendedError):
+        return True
+    return isinstance(cause, LLMError) and cause.connection_failure is not None
 
 
 def _escaped_not_retried_reason(trigger: dict[str, Any], exc: Exception) -> str | None:

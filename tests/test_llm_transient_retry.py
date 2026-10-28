@@ -167,7 +167,7 @@ async def test_mid_stream_failure_retries_once_then_succeeds(monkeypatch: pytest
         closes.append(allow_inflight)
 
     monkeypatch.setattr("core.llm.client.close_provider_sessions", _fake_close)
-    result = await completion(model="test/mock", messages=_MESSAGES)
+    result = await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert isinstance(result, LLMResponse)
     assert result.content == "ok"
     assert len(calls) == 2
@@ -187,7 +187,7 @@ async def test_transient_failure_on_every_attempt_raises_after_backoff(
     calls = _script(monkeypatch, errors)
     sleeps = _record_sleeps(monkeypatch)
     with pytest.raises(LLMError) as raised:
-        await completion(model="test/mock", messages=_MESSAGES)
+        await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert "after 3 attempt(s)" in str(raised.value)
     assert not isinstance(raised.value, LLMTimeoutError)
     assert len(calls) == 3
@@ -209,7 +209,7 @@ async def test_permanent_errors_are_not_retried(
     calls = _script(monkeypatch, [error])
     sleeps = _record_sleeps(monkeypatch)
     with pytest.raises(LLMError) as raised:
-        await completion(model="test/mock", messages=_MESSAGES)
+        await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert "after 1 attempt(s)" in str(raised.value)
     assert len(calls) == 1
     assert sleeps == []
@@ -221,7 +221,7 @@ async def test_provider_timeout_is_not_retried_here(monkeypatch: pytest.MonkeyPa
     calls = _script(monkeypatch, [error])
     sleeps = _record_sleeps(monkeypatch)
     with pytest.raises(LLMTimeoutError):
-        await completion(model="test/mock", messages=_MESSAGES)
+        await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert len(calls) == 1
     assert sleeps == []
 
@@ -232,7 +232,7 @@ async def test_zero_retries_makes_a_single_attempt(monkeypatch: pytest.MonkeyPat
     calls = _script(monkeypatch, [_mid_stream()])
     sleeps = _record_sleeps(monkeypatch)
     with pytest.raises(LLMError) as raised:
-        await completion(model="test/mock", messages=_MESSAGES)
+        await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert "after 1 attempt(s)" in str(raised.value)
     assert len(calls) == 1
     assert sleeps == []
@@ -246,7 +246,7 @@ async def test_negative_retry_settings_are_a_config_error(
     _set(key, "-1")
     calls = _script(monkeypatch, [_ok_stream()])
     with pytest.raises(config.ConfigError):
-        await completion(model="test/mock", messages=_MESSAGES)
+        await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert calls == []
 
 
@@ -270,7 +270,7 @@ async def test_call_budget_is_held_once_across_retries(monkeypatch: pytest.Monke
 
     monkeypatch.setattr(budget, "acquire", _acquire)
     monkeypatch.setattr(budget, "release", _release)
-    result = await completion(model="test/mock", messages=_MESSAGES)
+    result = await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert result.content == "ok"
     assert len(acquired) == 1
     assert released == acquired
@@ -280,7 +280,7 @@ async def test_call_budget_is_held_once_across_retries(monkeypatch: pytest.Monke
 async def test_empty_stream_retries_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _script(monkeypatch, [_empty_stream(), _ok_stream()])
     sleeps = _record_sleeps(monkeypatch)
-    result = await completion(model="test/mock", messages=_MESSAGES)
+    result = await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert result.content == "ok"
     assert len(calls) == 2
     assert sleeps == [2.0]
@@ -293,7 +293,7 @@ async def test_empty_on_every_attempt_raises_empty_response_error(
     calls = _script(monkeypatch, [_empty_stream(), _empty_stream(), _empty_stream()])
     sleeps = _record_sleeps(monkeypatch)
     with pytest.raises(LLMEmptyResponseError) as raised:
-        await completion(model="test/mock", messages=_MESSAGES)
+        await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     message = str(raised.value)
     assert "after 3 attempt(s)" in message
     assert "finish_reason=length" in message
@@ -309,7 +309,7 @@ async def test_whitespace_only_content_counts_as_empty(monkeypatch: pytest.Monke
     _set("llm_transient_retries", "0")
     calls = _script(monkeypatch, [_Finished("  \n\t ")])
     with pytest.raises(LLMEmptyResponseError) as raised:
-        await completion(model="test/mock", messages=_MESSAGES)
+        await completion(model="test/mock", messages=_MESSAGES, connection_id="test-connection")
     assert "finish_reason=stop" in str(raised.value)
     assert len(calls) == 1
 

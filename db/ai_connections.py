@@ -8,6 +8,7 @@ from typing import Any
 
 from core.models import AIConnection
 from core.models.thinking import ThinkingLevels
+from db.ai_connection_health import delete_connection_health
 from db.crud import build_update, execute, fetch_all, fetch_one, insert_returning
 from db.secret_store import decrypt_secret, encrypt_secret
 
@@ -20,6 +21,12 @@ _COLUMNS = "id, name, api_base_url, api_key, model, extra_body, thinking_levels,
 _COLUMN_NAMES = tuple(column.strip() for column in _COLUMNS.split(","))
 
 _VALID_COLUMNS = {"name", "api_base_url", "api_key", "model", "extra_body", "thinking_levels"}
+
+# The fields that decide what a model call sends. Changing the value of any of
+# them gives a paused connection a fresh start (its health row is deleted); a
+# rename, or re-sending the same values, changes nothing the provider sees, so
+# it keeps the pause.
+_CALL_FIELDS = frozenset({"api_base_url", "api_key", "model", "extra_body", "thinking_levels"})
 
 
 def _dump_levels(levels: ThinkingLevels | None) -> str | None:
@@ -139,13 +146,43 @@ def update_connection(connection_id: str, **fields: Any) -> AIConnection | None:
     """Update an AI connection's fields.
 
     ``thinking_levels`` is a map; an empty map clears the column.
+
+    A save that changes what a model call sends (the value of any call
+    field: ``api_base_url``, ``api_key``, ``model``, ``extra_body``,
+    ``thinking_levels``) gives a paused connection a fresh start: its health
+    row is deleted, so it resumes and its held work runs on the new
+    settings. Re-sending the same values keeps the pause, and so does a
+    rename. The Settings form re-sends unchanged fields on every save, and
+    an extension reconciles its connections on every status read; neither
+    changes what the provider sees, so neither may resume a connection the
+    provider refused. The row is read before and after the update and
+    compared by value (the key decrypted, the levels parsed into a map), not
+    by stored text or ciphertext, which differs on every write. Every writer
+    passes through here (the Settings PATCH, and an extension's publish and
+    reconcile), so this is the one place that rule lives.
+
+    Args:
+        connection_id: The connection to update.
+        **fields: Column values to set; names outside the editable columns
+            are ignored.
+
+    Returns:
+        The updated connection, or ``None`` when ``connection_id`` matches no row.
     """
+    before = get_connection_by_id(connection_id)
     if "api_key" in fields:
         fields = {**fields, "api_key": encrypt_secret(fields["api_key"])}
     if "thinking_levels" in fields:
         fields = {**fields, "thinking_levels": _dump_levels(fields["thinking_levels"])}
     build_update("ai_connections", "id", connection_id, fields, _VALID_COLUMNS)
-    return get_connection_by_id(connection_id)
+    after = get_connection_by_id(connection_id)
+    if (
+        before is not None
+        and after is not None
+        and any(getattr(before, field) != getattr(after, field) for field in _CALL_FIELDS)
+    ):
+        delete_connection_health(connection_id)
+    return after
 
 
 def delete_connection(connection_id: str) -> bool:

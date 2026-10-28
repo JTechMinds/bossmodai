@@ -93,6 +93,14 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("llm_transient_retries", "2", "llm"),
     # First wait before a transient retry, doubled on each retry (2s, then 4s).
     ("llm_transient_retry_backoff_seconds", "2", "llm"),
+    # Failed model calls in a row on one AI connection before it is paused
+    # (core/llm/connection_health.py). A success resets the count.
+    ("llm_connection_failure_threshold", "3", "llm"),
+    # Wait before the first automatic test call on a connection paused by
+    # temporary errors. It doubles after each failed test call.
+    ("llm_connection_backoff_seconds", "60", "llm"),
+    # The longest wait between automatic test calls.
+    ("llm_connection_backoff_max_seconds", "1800", "llm"),
     ("decision_repair_attempts", "6", "llm"),
     # One budget for inflight model calls: agent turns, System AI routes,
     # and repairs. Default 2. One agent still runs at most one turn.

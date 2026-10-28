@@ -14,6 +14,7 @@ from api.websocket import manager
 from core import boss, config
 from core.agent_loop.standing_prefs import WARM_PREFIX_MAX_CHARS, WARM_SECTION_HEADER
 from core.bm_cli.approval_gate import GLOBAL_AUTO_APPROVE_SETTING
+from core.llm import connection_health
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
 from core.llm.connection_url import ConnectionUrlError, is_loopback_base, validate_connection_test_url
 from core.llm.template_engine import TemplateError
@@ -26,6 +27,7 @@ from core.models import (
     AIConnectionUpdate,
 )
 from core.runtime import runtime_services
+from core.runtime.services import request_dispatcher_wake
 from integrations.telegram.auth import parse_allowed_user_ids
 import db
 
@@ -185,6 +187,11 @@ POSITIVE_INT_SETTINGS = frozenset({
     # and every decision turn's paused-work view (the chat-view limit).
     "work_snapshot_max_chars",
     "work_snapshot_chat_view_max_chars",
+    # Read with require_positive_int on every counted provider failure
+    # (core/llm/connection_health.py).
+    "llm_connection_failure_threshold",
+    "llm_connection_backoff_seconds",
+    "llm_connection_backoff_max_seconds",
 })
 _POSITIVE_INT_SETTING_LABELS = {
     "system_ai_max_tokens": "System AI max output tokens",
@@ -205,6 +212,9 @@ _POSITIVE_INT_SETTING_LABELS = {
     "cli_max_read_chars": "CLI Read Limit",
     "work_snapshot_max_chars": "Work budget",
     "work_snapshot_chat_view_max_chars": "Work shown when you ask",
+    "llm_connection_failure_threshold": "Failures before pausing a connection",
+    "llm_connection_backoff_seconds": "Paused connection first retry wait",
+    "llm_connection_backoff_max_seconds": "Paused connection longest retry wait",
 }
 _NON_NEGATIVE_INT_SETTING_LABELS = {
     "channel_router_transcript_messages": "Router transcript lines",
@@ -736,6 +746,31 @@ async def delete_connection(connection_id: str):
     if not db.delete_connection(connection_id):
         raise HTTPException(404, "Connection not found")
     await _broadcast_operator_surfaces(["connections"])
+
+
+@router.post("/connections/{connection_id}/retry")
+async def retry_connection(connection_id: str):
+    """Let a paused AI connection make one test call now: the Needs card's "Retry now".
+
+    The next model call on the connection becomes its test call; the
+    dispatcher is woken so held work is tried now rather than on its next
+    poll. A success resumes the connection; a failure keeps it paused.
+    Not limited to unmanaged connections: retrying edits nothing, and an
+    extension-managed connection (after a usage limit resets) needs it too.
+
+    Returns:
+        ``{"ok": True}`` when the test call is now due.
+
+    Raises:
+        HTTPException: 404 when the connection is unknown; 409 when it is
+            not paused.
+    """
+    if db.get_connection_by_id(connection_id) is None:
+        raise HTTPException(404, "Connection not found")
+    if not connection_health.retry_now(connection_id):
+        raise HTTPException(409, "This connection is not paused.")
+    request_dispatcher_wake()
+    return {"ok": True}
 
 
 class TestConnectionBody(BaseModel):

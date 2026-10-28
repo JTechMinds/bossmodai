@@ -187,8 +187,8 @@ async def test_repair_reuses_the_turn_lane(monkeypatch: pytest.MonkeyPatch) -> N
     assert turn is not None and other is not None
     token = bind_turn_lane(turn)
     try:
-        first = await completion(model="mock", messages=[{"role": "user", "content": "hi"}])
-        second = await completion(model="mock", messages=[{"role": "user", "content": "repair"}])
+        first = await completion(model="mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
+        second = await completion(model="mock", messages=[{"role": "user", "content": "repair"}], connection_id="test-connection")
     finally:
         reset_turn_lane(token)
     assert first.content == "ok"
@@ -218,7 +218,7 @@ async def test_completion_never_opens_a_fifth_call_when_n_is_2(monkeypatch: pyte
 
     monkeypatch.setattr("core.llm.client.litellm.acompletion", _fake)
     tasks = [
-        asyncio.create_task(completion(model="mock", messages=[{"role": "user", "content": "hi"}]))
+        asyncio.create_task(completion(model="mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection"))
         for _ in range(5)
     ]
     await asyncio.wait_for(gate.wait(), timeout=2)
@@ -292,7 +292,7 @@ async def test_third_agent_turn_stays_queued_until_a_lane_frees(
     assert ("channel", "queued", 2) in phases
     assert "thinking" not in {item[1] for item in phases}
 
-    dispatcher._release_turn_lane(ada.id)
+    dispatcher._release_turn_reservations(ada.id)
     opened = dispatcher._claim_available_trigger()
     assert opened is not None
     assert opened.agent_id == cy.id
@@ -348,7 +348,7 @@ def test_same_snapshot_peers_do_not_draft_in_parallel() -> None:
     assert db.get_agent_trigger(bea_row.id).status == "queued"
 
     db.complete_agent_trigger(first.id, claim_generation=first.claim_generation)
-    dispatcher._release_turn_lane(ada.id)
+    dispatcher._release_turn_reservations(ada.id)
     opened = dispatcher._claim_available_trigger()
     assert opened is not None and opened.agent_id == bea.id
     assert budget.inflight() == 2
@@ -422,7 +422,7 @@ async def test_same_channel_waiter_stays_queued_while_lanes_remain(
     assert db.get_agent_trigger(bea_row.id).status == "queued"
 
     db.complete_agent_trigger(first.id, claim_generation=first.claim_generation)
-    dispatcher._release_turn_lane(ada.id)
+    dispatcher._release_turn_reservations(ada.id)
     opened = dispatcher._claim_available_trigger()
     assert opened is not None and opened.agent_id == bea.id
     assert db.get_agent_trigger(cy_row.id).status == "queued"
@@ -529,7 +529,7 @@ async def test_waiter_claimed_next_gets_thinking_and_no_retraction(
     await dispatcher._emit_queue_notices()
 
     db.complete_agent_trigger(first.id, claim_generation=first.claim_generation)
-    dispatcher._release_turn_lane(ada.id)
+    dispatcher._release_turn_reservations(ada.id)
     opened = dispatcher._claim_available_trigger()
     assert opened is not None and opened.agent_id == bea.id
     await dispatcher._emit_queue_notices()
@@ -606,7 +606,7 @@ async def test_row_in_another_thread_is_retracted_after_the_agents_turn(
 
     # Cy posts in Y; Bea's Y wake is claimed while X is still held behind Ada.
     db.complete_agent_trigger(cy_claim.id, claim_generation=cy_claim.claim_generation)
-    dispatcher._release_turn_lane(cy.id)
+    dispatcher._release_turn_reservations(cy.id)
     opened = dispatcher._claim_available_trigger()
     assert opened is not None and opened.agent_id == bea.id
     # X's round closes during Bea's turn, deleting her X wake.

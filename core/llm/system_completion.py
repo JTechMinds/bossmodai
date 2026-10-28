@@ -28,8 +28,13 @@ import db
 # System AI calls make one attempt; their callers fall back or retry.
 litellm.num_retries = 0
 from core import config
+from core.llm import connection_health
 from core.llm.call_budget import budget
-from core.llm.client import canonicalize_openai_compatible_model, validate_api_base
+from core.llm.client import (
+    canonicalize_openai_compatible_model,
+    classify_connection_failure,
+    validate_api_base,
+)
 from core.llm.thinking import ThinkingConfigError, effective_extra_body
 from core.models import AIConnection
 
@@ -83,9 +88,13 @@ def complete_text(
     Returns:
         The completion text, or ``None`` when there is no usable connection,
         the connection cannot apply the ``system_ai_thinking`` choice (logged
-        as a WARNING), the call-budget lane is full, the call fails, or the text is empty.
+        as a WARNING), the call-budget lane is full, the connection is paused
+        after repeated provider errors (logged at INFO; the provider is not
+        contacted), the call fails, or the text is empty.
         A ``finish_reason`` of ``length`` is logged as a truncation warning;
         the (possibly partial) text is still returned for the caller to judge.
+        A provider failure counts toward pausing the connection, and a
+        success resets it (``core.llm.connection_health``).
 
     Raises:
         ConfigError: ``system_ai_thinking`` is missing; ``max_tokens`` is
@@ -142,13 +151,32 @@ def complete_text(
         try:
             from core.extensions.model_provider import ProviderRequest, provider_id, resolve_provider
             ext_id = provider_id(api_base)
-            if ext_id is not None:
-                request = ProviderRequest(model, messages, body, kwargs["timeout"], temperature=0, max_tokens=cap)
-                return resolve_provider(ext_id).provider_complete_sync(request).content
-            response = litellm.completion(**kwargs)
+            provider = resolve_provider(ext_id) if ext_id is not None else None
         except Exception as exc:
+            # No provider was contacted, so nothing is recorded.
             logger.warning("system completion failed: %s", type(exc).__name__)
             return None
+        admission = connection_health.admit(connection.id, lease_seconds=kwargs["timeout"])
+        if not admission.allowed:
+            logger.info("system completion skipped: AI connection %r is paused", connection.name)
+            return None
+        try:
+            if provider is not None:
+                request = ProviderRequest(model, messages, body, kwargs["timeout"], temperature=0, max_tokens=cap)
+                content = provider.provider_complete_sync(request).content
+            else:
+                response = litellm.completion(**kwargs)
+        except Exception as exc:
+            kind = classify_connection_failure(exc)
+            if kind is not None:
+                connection_health.record_failure(connection.id, kind=kind, error=str(exc))
+            elif admission.probe:
+                connection_health.end_undecided_test(connection.id, lease_until=admission.lease_until)
+            logger.warning("system completion failed: %s", type(exc).__name__)
+            return None
+        connection_health.record_success(connection.id)
+        if provider is not None:
+            return content
     finally:
         budget.release(lane)
     if _finish_reason(response) == "length":

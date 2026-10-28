@@ -61,6 +61,7 @@ async def test_completion_sends_a_slashed_id_through_the_openai_transport(monkey
         messages=[{"role": "user", "content": "hi"}],
         api_base=TEST_BASE_URL,
         extra_body='{"stream": false}',
+        connection_id="test-connection",
     )
 
     assert result.content == "ok"

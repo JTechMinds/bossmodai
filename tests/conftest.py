@@ -57,3 +57,30 @@ def _reset_model_call_budget():
     yield
     budget.reset()
 
+
+def _clear_connection_health() -> None:
+    """Delete every AI connection health row, when this worker's schema has the table.
+
+    A test that never ran ``init_db`` has no table yet; that is checked, not
+    caught, so a real database error still fails the test.
+    """
+    import db
+
+    present = db.query_one(
+        "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'ai_connection_health'"
+    )
+    if present is not None:
+        db.execute("DELETE FROM ai_connection_health")
+
+
+@pytest.fixture(autouse=True)
+def _reset_connection_health():
+    """Keep one test's paused AI connection from holding the next test's work.
+
+    The test database is shared per worker (``_ensure_test_db_path``), so a
+    pause recorded by one test would otherwise deny the next test's calls.
+    """
+    _clear_connection_health()
+    yield
+    _clear_connection_health()
+

@@ -155,6 +155,7 @@ async def _generate_direct_file(
         api_base=api_config.get("api_base"),
         api_key=api_config.get("api_key"),
         extra_body=api_config.get("extra_body"),
+        connection_id=api_config["connection_id"],
     )
     text = _normalize_generated_text(response.content)
     prompt_tokens = response.prompt_tokens
@@ -295,6 +296,7 @@ async def _generate_sectioned_file(
         api_base=api_config.get("api_base"),
         api_key=api_config.get("api_key"),
         extra_body=api_config.get("extra_body"),
+        connection_id=api_config["connection_id"],
     )
     prompt_tokens += plan_response.prompt_tokens
     completion_tokens += plan_response.completion_tokens
@@ -379,6 +381,7 @@ async def _generate_sectioned_file(
             api_base=api_config.get("api_base"),
             api_key=api_config.get("api_key"),
             extra_body=api_config.get("extra_body"),
+            connection_id=api_config["connection_id"],
         )
         prompt_tokens += response.prompt_tokens
         completion_tokens += response.completion_tokens

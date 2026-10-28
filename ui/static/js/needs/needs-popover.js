@@ -17,9 +17,15 @@ const BossModNeedsPopover = (() => {
     const BAR_TOGGLE_HINT = 'The bell always lists everything, whatever this is set to.';
     const FOCUSABLE = 'button, input';
 
-    /** Rendering order. Decisions the operator owes come before reports. */
-    const KIND_ORDER = Object.freeze(['consent', 'nest_git', 'approval', 'process_checkin', 'blocked', 'error']);
+    /**
+     * Rendering order. A paused AI connection comes first, because it is why
+     * other work is waiting; then decisions the operator owes, before reports.
+     */
+    const KIND_ORDER = Object.freeze([
+        'connection', 'consent', 'nest_git', 'approval', 'process_checkin', 'blocked', 'error',
+    ]);
     const KIND_LABELS = Object.freeze({
+        connection: 'AI connections',
         consent: 'Folder access',
         nest_git: 'Nest git',
         approval: 'Command approval',

@@ -860,7 +860,7 @@ async def test_r4_detached_retry_exhaustion_leaves_the_live_work_and_tells_the_o
 
     await TurnDispatcher()._supervise_failed_turn(
         agent=agent, trigger=trigger, failure_detail="Graph outage",
-        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
+        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON, cause=None, replay_safe=False,
     )
 
     assert db.get_agent_trigger(trigger["trigger_id"]).status == "failed"
@@ -880,7 +880,7 @@ async def test_r4_attached_retry_exhaustion_still_stalls_the_live_task() -> None
 
     await TurnDispatcher()._supervise_failed_turn(
         agent=agent, trigger=trigger, failure_detail="model error",
-        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
+        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON, cause=None, replay_safe=False,
     )
 
     assert db.get_task(task.id).status == "stalled"
@@ -895,7 +895,7 @@ async def test_a_non_retryable_stall_says_not_retried() -> None:
 
     await TurnDispatcher()._supervise_failed_turn(
         agent=agent, trigger=trigger, failure_detail="model error",
-        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON,
+        not_retried_reason=NOT_RETRIED_NO_REPEAT_REASON, cause=None, replay_safe=False,
     )
 
     stalled = db.get_task(task.id)
@@ -911,6 +911,7 @@ async def test_retry_exhaustion_keeps_the_exhausted_wording() -> None:
 
     await TurnDispatcher()._supervise_failed_turn(
         agent=agent, trigger=trigger, failure_detail="model error", not_retried_reason=None,
+        cause=None, replay_safe=True,
     )
 
     stalled = db.get_task(task.id)

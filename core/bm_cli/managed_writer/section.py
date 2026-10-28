@@ -259,6 +259,7 @@ async def run_managed_section_rewrite(
         api_base=api_config.get("api_base"),
         api_key=api_config.get("api_key"),
         extra_body=api_config.get("extra_body"),
+        connection_id=api_config["connection_id"],
     )
 
     prompt_tokens = response.prompt_tokens

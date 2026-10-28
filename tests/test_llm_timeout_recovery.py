@@ -172,7 +172,7 @@ async def test_llm_request_timeout_seconds_still_bounds_the_call(
 
     async def _call() -> None:
         with pytest.raises(LLMTimeoutError) as raised:
-            await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}])
+            await completion(model="test/mock", messages=[{"role": "user", "content": "hi"}], connection_id="test-connection")
         assert isinstance(raised.value, LLMError)
         assert raised.value.timeout_seconds == seen[-1]
         assert f"{seen[-1]:g}s" in str(raised.value)

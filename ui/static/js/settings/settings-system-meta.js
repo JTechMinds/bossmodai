@@ -314,6 +314,21 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Cooldown (minutes)',
             description: 'Minimum minutes between task sticky-slot fills. A fill queues in the background and never blocks the agent turn.',
         },
+        llm_connection_failure_threshold: {
+            order: 43,
+            label: 'Failures before pausing a connection',
+            description: 'How many model calls in a row may fail on one AI connection before its agents pause and you are told. Default 3.',
+        },
+        llm_connection_backoff_seconds: {
+            order: 44,
+            label: 'Paused connection first retry wait',
+            description: 'After temporary errors, how long a paused connection waits before one test call. The wait doubles after each failed test. Default 60.',
+        },
+        llm_connection_backoff_max_seconds: {
+            order: 45,
+            label: 'Paused connection longest retry wait',
+            description: 'The longest wait between test calls on a paused connection. Default 1800.',
+        },
         managed_writer_max_batch_files: {
             order: 50,
             label: 'Batch Writer Max Files',

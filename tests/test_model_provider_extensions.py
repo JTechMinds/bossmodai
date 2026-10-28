@@ -116,6 +116,7 @@ async def test_any_declared_provider_drives_agent_and_system_calls(providers):
         api_base="extension://beta-model",
         temperature=0.25,
         max_tokens=123,
+        connection_id="test-connection",
     )
     assert result.content == "demo:task"
     assert (

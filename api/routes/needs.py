@@ -18,6 +18,8 @@ router = APIRouter()
 
 MAX_LIMIT = 200
 BLOCKED_STATUSES = ("blocked", "stalled")
+# How many waiting agents a paused-connection card names before "and N more".
+_CONNECTION_NAMED_AGENTS = 3
 
 
 def _agent_name(agent_id: str | None, cache: dict[str, str]) -> str:
@@ -28,6 +30,82 @@ def _agent_name(agent_id: str | None, cache: dict[str, str]) -> str:
         agent = db.get_agent(agent_id)
         cache[agent_id] = agent.name if agent else "Unknown"
     return cache[agent_id]
+
+
+def _who_waits(agent_names: list[str], *, system_ai: bool) -> str | None:
+    """Name what waits on a paused connection: up to three agents, then "N more", then System AI.
+
+    Returns:
+        The names joined for a sentence ("Ada, Bo and System AI"), or
+        ``None`` when nothing waits on the connection.
+    """
+    parts = agent_names[:_CONNECTION_NAMED_AGENTS]
+    hidden = len(agent_names) - len(parts)
+    if hidden > 0:
+        parts.append(f"{hidden} more")
+    if system_ai:
+        parts.append("System AI")
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return parts[0]
+    return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+def _connection_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
+    """One item per paused AI connection: what waits on it, what the provider said, and Retry now.
+
+    A paused connection is why other work is waiting, so it belongs to no
+    agent and no conversation (``agent_id`` and ``conversation_id`` are
+    ``None``). The waiting sentence depends on the pause: a ``rejected``
+    connection waits for the operator; a ``transient`` one tries again on
+    its own. The provider's message is shown in full.
+
+    Args:
+        cache: Agent id → name memo shared with the other aggregators; the
+            linked agents read here are added to it.
+
+    Returns:
+        The items, oldest pause first. A row whose connection was deleted
+        after the read is skipped: its health row went with it.
+    """
+    from core.llm.system_completion import resolve_system_connection
+
+    system = resolve_system_connection()
+    items = []
+    for health in db.list_suspended_connection_health():
+        connection = db.get_connection_by_id(health.connection_id)
+        if connection is None:
+            continue
+        agents = db.list_agents_by_connection(connection.id)
+        for agent in agents:
+            cache[agent.id] = agent.name
+        who = _who_waits(
+            [agent.name for agent in agents],
+            system_ai=system is not None and system.id == connection.id,
+        )
+        if who is None:
+            waiting = "Nothing is waiting on it."
+        elif health.failure_kind == "rejected":
+            waiting = f"{who} will wait until you fix it in Settings → AI Connections or retry."
+        else:
+            waiting = f"{who} will try again automatically."
+        items.append({
+            "id": f"connection:{connection.id}",
+            "kind": "connection",
+            "card_kind": "connection",
+            "agent_id": None,
+            "agent_name": None,
+            "title": f"AI connection “{connection.name}” is paused",
+            "sub": f"{waiting} The provider said: {health.last_error}",
+            "created_at": health.suspended_at.isoformat(),
+            "conversation_id": None,
+            "actions": [
+                {"label": "Retry now", "method": "POST", "tone": "primary",
+                 "href": f"/api/connections/{connection.id}/retry"},
+            ],
+        })
+    return items
 
 
 def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
@@ -274,7 +352,8 @@ def _process_checkin_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
 async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     """Everything currently waiting on an operator decision, newest first.
 
-    Aggregates pending consents (host path, shell executor, Nest git,
+    Aggregates paused AI connections (first: they are why other work is
+    waiting), pending consents (host path, shell executor, Nest git,
     workspace preference), pending CLI approvals, blocked/stalled tasks,
     and background-process check-ins.
     Error needs are client-held (the ``diagnostic`` topic) and never listed
@@ -287,7 +366,8 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     """
     cache: dict[str, str] = {}
     needs = (
-        _consent_needs(cache)
+        _connection_needs(cache)
+        + _consent_needs(cache)
         + _approval_needs(cache)
         + _blocked_needs(cache)
         + _process_checkin_needs(cache)

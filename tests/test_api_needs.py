@@ -19,7 +19,7 @@ REQUIRED_KEYS = {
     "id", "kind", "agent_id", "agent_name", "title", "sub",
     "created_at", "conversation_id", "actions",
 }
-VALID_KINDS = {"consent", "approval", "blocked", "error"}
+VALID_KINDS = {"consent", "approval", "blocked", "error", "connection"}
 
 
 def setup_function() -> None:
@@ -113,6 +113,108 @@ def test_unassigned_blocked_task_has_no_action(client: TestClient) -> None:
     assert blocked[0]["agent_id"] is None
     assert blocked[0]["sub"] == "Write the recap"
     assert blocked[0]["actions"] == []
+
+
+def _paused_connection(name: str = "Proxy key", *, kind: str = "rejected") -> str:
+    """Create a connection and record enough provider failures to pause it."""
+    from core.llm import connection_health
+
+    connection_id = db.create_connection(
+        name=name, api_base_url="http://127.0.0.1:9/v1", model="test-model",
+    ).id
+    for _ in range(config.require_int("llm_connection_failure_threshold")):
+        connection_health.record_failure(
+            connection_id, kind=kind, error="LlmProxy::Error: No active task for this API key's project",
+        )
+    return connection_id
+
+
+def test_paused_connection_surfaces_first_with_retry_now(client: TestClient) -> None:
+    """A paused AI connection is one need: what waits on it, the provider's words, Retry now."""
+    connection_id = _paused_connection()
+    db.create_agent(name="Jim", role="Engineer", connection_id=connection_id)
+    agent = db.create_agent(name="Pam", role="Engineer")
+    task = db.create_task(title="Ship it", assigned_to=agent.id, requester_id=agent.id)
+    db.update_task(task.id, status="blocked")
+
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    connection_needs = [n for n in res.json() if n["kind"] == "connection"]
+    assert len(connection_needs) == 1, f"expected one connection need, got {res.json()}"
+    item = connection_needs[0]
+    assert REQUIRED_KEYS <= set(item), f"missing keys: {REQUIRED_KEYS - set(item)}"
+    assert item["kind"] in VALID_KINDS
+    assert item["id"] == f"connection:{connection_id}"
+    assert item["card_kind"] == "connection"
+    assert item["agent_id"] is None and item["agent_name"] is None
+    assert item["conversation_id"] is None
+    assert item["title"] == "AI connection “Proxy key” is paused"
+    # The only connection is also System AI's (an unset System AI uses the first).
+    assert item["sub"] == (
+        "Jim and System AI will wait until you fix it in Settings → AI Connections or retry. "
+        "The provider said: LlmProxy::Error: No active task for this API key's project"
+    )
+    assert item["created_at"] == db.get_connection_health(connection_id).suspended_at.isoformat()
+    assert item["actions"] == [{
+        "label": "Retry now",
+        "method": "POST",
+        "tone": "primary",
+        "href": f"/api/connections/{connection_id}/retry",
+    }]
+
+
+def test_transient_pause_says_it_tries_again_and_names_at_most_three(client: TestClient) -> None:
+    db.create_connection(name="Another", api_base_url="http://127.0.0.1:9/v1", model="m")
+    connection_id = _paused_connection("Zeta", kind="transient")
+    for name in ("Ann", "Bob", "Cat", "Dan", "Eve"):
+        db.create_agent(name=name, role="Engineer", connection_id=connection_id)
+
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    item = next(n for n in res.json() if n["kind"] == "connection")
+    assert item["sub"].startswith("Ann, Bob, Cat and 2 more will try again automatically. ")
+
+
+def test_paused_connection_with_nothing_waiting_says_so(client: TestClient) -> None:
+    db.create_connection(name="Another", api_base_url="http://127.0.0.1:9/v1", model="m")
+    _paused_connection("Zeta")
+
+    res = client.get("/api/needs", headers=_auth())
+    item = next(n for n in res.json() if n["kind"] == "connection")
+    assert item["sub"].startswith("Nothing is waiting on it. The provider said: ")
+
+
+def test_retry_route_404_for_an_unknown_connection(client: TestClient) -> None:
+    res = client.post("/api/connections/no-such-connection/retry", headers=_auth())
+    assert res.status_code == 404, res.text
+
+
+def test_retry_route_409_when_the_connection_is_not_paused(client: TestClient) -> None:
+    connection_id = db.create_connection(
+        name="Healthy", api_base_url="http://127.0.0.1:9/v1", model="m",
+    ).id
+    res = client.post(f"/api/connections/{connection_id}/retry", headers=_auth())
+    assert res.status_code == 409, res.text
+    assert res.json()["detail"] == "This connection is not paused."
+
+
+def test_retry_route_makes_the_test_call_due(client: TestClient) -> None:
+    from datetime import datetime, timezone
+
+    from core.llm import connection_health
+
+    connection_id = _paused_connection()
+    assert db.get_connection_health(connection_id).retry_at is None
+    assert not connection_health.admit(connection_id, lease_seconds=60).allowed
+
+    res = client.post(f"/api/connections/{connection_id}/retry", headers=_auth())
+    assert res.status_code == 200, res.text
+    assert res.json() == {"ok": True}
+    health = db.get_connection_health(connection_id)
+    assert health.is_suspended
+    assert health.retry_at is not None and health.retry_at <= datetime.now(timezone.utc)
+    admission = connection_health.admit(connection_id, lease_seconds=60)
+    assert admission.allowed and admission.probe
 
 
 def test_needs_respects_limit(client: TestClient) -> None:

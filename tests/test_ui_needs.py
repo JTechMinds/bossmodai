@@ -111,6 +111,9 @@ def test_needs_harness() -> None:
         "nestGitPostsBody": True,
         "nestGitSchemaMismatchDismisses": True,
         "nestGitGroupIsLabeled": True,
+        # A paused AI connection renders first, under "AI connections", with
+        # Retry now and no "Show me".
+        "connectionNeedRendersFirst": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
         # The agent DM's Rewind rides on the error card through needActions;

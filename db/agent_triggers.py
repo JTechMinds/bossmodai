@@ -449,18 +449,35 @@ def retry_agent_trigger(
     reason: str,
     *,
     claim_generation: int | None = None,
+    count_retry: bool,
 ) -> AgentTrigger | None:
-    """Return a claimed trigger to the queue and increment its retry count.
+    """Return a claimed trigger to the queue, counting the retry when asked.
 
     When ``claim_generation`` is set, a stale turn cannot bounce a newer
     claim back to ``queued``.
+
+    Args:
+        trigger_id: The trigger to re-queue.
+        reason: The failure text stored on the row.
+        claim_generation: The claim being given up; ``None`` re-queues a
+            claimed or queued row whatever its generation.
+        count_retry: ``True`` for a failure of the trigger itself: its
+            ``retry_count`` goes up by one, toward the retry limit.
+            ``False`` re-queues a trigger whose failure belonged to a paused
+            AI connection, not to the trigger ("parked"), so waiting for
+            the connection never uses up its retries.
+
+    Returns:
+        The re-queued row, or ``None`` when no row matched (a stale
+        generation, or a row that is no longer open).
     """
+    increment = 1 if count_retry else 0
     if claim_generation is None:
         return fetch_one(
             f"""
             UPDATE agent_triggers
             SET status = 'queued',
-                retry_count = retry_count + 1,
+                retry_count = retry_count + $3,
                 failure_reason = $1,
                 claimed_at = NULL,
                 claim_lease = NULL,
@@ -468,14 +485,14 @@ def retry_agent_trigger(
             WHERE id = $2 AND status IN ('claimed', 'queued')
             RETURNING {_TRIGGER_COLUMNS}
             """,
-            [reason, trigger_id],
+            [reason, trigger_id, increment],
             AgentTrigger,
         )
     return fetch_one(
         f"""
         UPDATE agent_triggers
         SET status = 'queued',
-            retry_count = retry_count + 1,
+            retry_count = retry_count + $4,
             failure_reason = $1,
             claimed_at = NULL,
             claim_lease = NULL,
@@ -483,7 +500,7 @@ def retry_agent_trigger(
         WHERE id = $2 AND status = 'claimed' AND claim_generation = $3
         RETURNING {_TRIGGER_COLUMNS}
         """,
-        [reason, trigger_id, claim_generation],
+        [reason, trigger_id, claim_generation, increment],
         AgentTrigger,
     )
 
