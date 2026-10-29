@@ -44,6 +44,7 @@ def _entry(tmp_path: Path, *, wake: dict[str, Any] | None = None) -> ExtensionEn
     """The fake extension's entry; ``wake`` replaces the ms365-style per-agent interval field."""
     manifest = ExtensionManifest.model_validate({
         "id": EXT, "name": "Fake Wake", "version": "1", "description": "d",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": "fakewake", "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False},
         "agent_config": {"label": "Fake", "help": "h", "fields": [

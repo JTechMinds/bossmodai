@@ -1,15 +1,17 @@
 /**
- * Node harness: the Extensions dialog, the live-view status reader, the
- * single-agent live viewer, the Configure agents layer, and the per-agent
- * surfaces — the data table's wrapper contract (over an injected table
- * factory: Tabulator needs real layout, so its rendering is checked in the
- * real app), the desk's Extensions section and the per-agent settings dialog.
+ * Node harness: the Extensions view (browse grid, detail and its Status,
+ * Connection, Settings, Agents and About sections), the live-view status
+ * reader, the single-agent live viewer, and the per-agent surfaces — the data
+ * table's wrapper contract (over an injected table factory: Tabulator needs
+ * real layout, so its rendering is checked in the real app), the desk's
+ * Extensions section and the per-agent settings dialog.
  *
  * Invoked by tests/test_extensions_ui.py with the module paths in load order.
- * The modal frame, the confirm strip, the clock and the network are stubbed;
- * the bus, the dialog, the status module, the viewer, the agents layer, the
- * switch, the avatar and the DOM helpers are the real modules. Prints one
- * JSON object of named verdicts.
+ * The modal frame (its trail steps recorded), the confirm strip, the dropdown,
+ * the clock and the network are stubbed; the bus, the Extensions view and its
+ * controller, the marketplace's pack card, filter rail and section reader, the
+ * status module, the viewer, the agents table, the switch, the avatar and the
+ * DOM helpers are the real modules. Prints one JSON object of named verdicts.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -18,10 +20,15 @@ installDom();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModAvatar", "BossModExtensionsApi",
-    "BossModLiveStatus", "BossModExtensionsLive", "BossModExtensionPanel", "BossModExtensionsDialog",
+    "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModAvatar",
+    // The browse and detail builders the Extensions view shares with the
+    // marketplace, in index.html order: the view's correctness depends on them.
+    "BossModMarketplaceWithheld", "BossModMarketplaceItems", "BossModPackCard", "BossModFilterRail",
+    "BossModSectionReader",
+    "BossModExtensionsApi", "BossModLiveStatus", "BossModExtensionsLive",
     "BossModGates", "BossModSecretField", "BossModDataTable", "BossModConfigForm", "BossModAgentConfigDialog",
-    "BossModExtensionSettingsDialog", "BossModExtensionAgentsLayer", "BossModDeskExtensions",
+    "BossModExtensionAgents", "BossModExtensionPanel", "BossModExtensionItems", "BossModExtensionDetail",
+    "BossModExtensionsView", "BossModExtensionsDialog", "BossModDeskExtensions",
     "BossModTabs", "BossModFactList", "BossModAgentViewDialog", "BossModExternalOpen", "BossModDeskOpener",
 ];
 if (paths.length !== NAMES.length) {
@@ -41,7 +48,9 @@ const layers = [];
 global.BossModOverlays = {
     createModal: (options) => {
         const actionsEl = h("div", { class: "actions" });
-        const layer = { options, body: h("div", { class: "layer" }, options.body, actionsEl), actions: [] };
+        // `steps` is what the dialog last reported through setSteps, as the
+        // frame's trail would read it.
+        const layer = { options, body: h("div", { class: "layer" }, options.body, actionsEl), actions: [], steps: [] };
         const setActions = (actions) => {
             layer.actions = actions || [];
             actionsEl.replaceChildren();
@@ -63,6 +72,7 @@ global.BossModOverlays = {
             close: () => closeLayer(layer),
             element: layer.body,
             setActions,
+            setSteps: (steps) => { layer.steps = steps.slice(); },
             setTitle: (title) => { layer.options.title = title; },
         };
     },
@@ -124,16 +134,21 @@ console.error = (...args) => { errors.push(args.map(String).join(" ")); };
 // successfully; file-ops.js would drag in the whole file-form stack.
 global.BossModFileOps = { readApiError: async () => "" };
 
+// Shaped as api/routes/extensions.py `_item()` answers.
 const bv = {
-    id: "browser-vision", name: "Browser Vision", version: "1.0.0", description: "d",
+    id: "browser-vision", name: "Browser Vision", version: "1.0.0",
+    description: "Lets agents browse websites through screenshots with an adjustable click grid.",
+    summary: "Agents browse websites by looking at screenshots.", author: "JTechMinds LLC", category: "web-browsing",
     command: { name: "bv", summary: "s" }, enabled: true, valid: true, invalid_reason: null,
     requires_image_model: true, live_view: { label: "Browser view", icon: "globe" }, setup: { state: "ready", detail: null },
-    setup_label: "Download browser (~120 MB)", excluded_agents: [], agent_config: null,
+    setup_label: "Download browser (~120 MB)", excluded_agents: [], agent_config: null, agent_view: null,
+    panel: false, settings: null, service_error: null, model_provider: null,
 };
 // A second live-view extension, with per-agent settings: the desktop has no
 // URL, only the active window's title.
 const vd = {
     ...bv, id: "virtual-desktop", name: "Virtual Desktop", command: { name: "vm", summary: "s" },
+    summary: "Gives each agent its own Linux desktop.", category: "computer-use",
     live_view: { label: "Desktop view", icon: "monitor" }, setup_label: "Build the desktop",
     agent_config: { label: "Virtual desktop" },
 };
@@ -195,24 +210,38 @@ const networkStatus = (code) => ({
 let networkCode = 'ABCD2345';
 let networkPanel = () => ({ ok: true, body: networkStatus(networkCode) });
 let networkEnabled = (enabled) => ({ ok: true, body: { ...networkItem(), enabled } });
-let networkSettingsPut = () => ({ ok: true, body: { label: 'Network access', help: 'h', configured: true, verified: null, fields: [] } });
 const networkSettings = {
     label: 'Network access', help: 'Choose the port other devices use.\n\nPick another if it is taken.', configured: false,
     fields: [{ key: 'port', label: 'Port', kind: 'number', required: false, min: 1024, max: 65535, default: '38472', value: '38472' }],
 };
+// A stored save answers the GET shape with the saved values, plus `verified`.
+const networkSaved = (body, verified) => ({ ok: true, body: {
+    ...JSON.parse(JSON.stringify(networkSettings)), configured: true, verified,
+    fields: [{ ...networkSettings.fields[0], value: body.values.port }],
+} });
+let networkSettingsPut = (body) => networkSaved(body, null);
 const networkItem = () => ({
     ...bv, id: 'network', name: 'Local Network Access', command: null, live_view: null, requires_image_model: false,
     setup: { state: 'not_required', detail: null }, setup_label: null, enabled: true, panel: true,
     settings: { label: 'Network access' }, service_error: null, description: 'Lets other devices open BossMod.',
+    summary: 'Open BossMod from other devices on your network.', category: 'networking',
 });
+// The real menu-select's shape: a span holding the trigger, which carries the
+// id it was given. Every id is recorded, so a visible label can be paired
+// with its trigger; a click picks the last option.
+const menuSelectIds = [];
 global.BossModMenuSelect = {
-    create: ({label, options, value, onChange}) => ({ element: h('button', { 'aria-label': label,
-        onclick: () => onChange(options[options.length - 1].value) }, label + ': ' + value) }),
+    create: ({ label, options, value, id, onChange }) => {
+        menuSelectIds.push(id);
+        return { element: h('span', { class: 'menu-select' }, h('button', { id, 'aria-label': label,
+            onclick: () => onChange(options[options.length - 1].value) }, label + ': ' + value)) };
+    },
 };
 let deskReads = 0;
 const viewCalls = [];
 const mailItem = {
     ...bv, id: "mail", name: "Microsoft 365 Mailbox", command: { name: "mail", summary: "s" }, live_view: null,
+    summary: "Agents send and read email from a Microsoft 365 mailbox.", category: "email",
     requires_image_model: false, setup: { state: "not_required", detail: null }, setup_label: null,
     agent_config: { label: "Microsoft 365 mailbox" },
     agent_view: { label: "Open inbox", views: [{ key: "inbox", label: "Inbox" }, { key: "sent", label: "Sent" }] },
@@ -249,9 +278,24 @@ let agentsReply = "ok";
 let agentsReads = 0;
 let configReply = null;
 const layerCalls = [];
+// The list read's refusal message while set; the setup POST's reply and its
+// calls; a refusal every generic PUT …/enabled answers while set.
+let listFailure = null;
+let setupReply = null;
+const setupCalls = [];
+let enableRefusal = null;
 global.apiFetch = async (url, init) => {
     const ok = (body) => ({ ok: true, status: 200, json: async () => body });
-    if (url === "/api/extensions") { listCalls += 1; return ok(listReply); }
+    if (url === "/api/extensions") {
+        listCalls += 1;
+        if (listFailure) return { ok: false, status: 500, json: async () => ({ detail: { error: "BOOM", message: listFailure } }) };
+        return ok(listReply);
+    }
+    const setupMatch = url.match(/^\/api\/extensions\/([\w-]+)\/setup$/);
+    if (setupMatch) {
+        setupCalls.push({ id: setupMatch[1], body: JSON.parse(init.body) });
+        return ok(setupReply);
+    }
     if (url.startsWith('/api/extensions/demo-provider/provider')) {
         if (init && init.method === 'POST') demoConnected = JSON.parse(init.body).action === 'start-demo';
         return ok({ connected: demoConnected, pending: false, message: demoConnected ? 'Demo ready' : 'Connect demo provider',
@@ -327,7 +371,10 @@ global.apiFetch = async (url, init) => {
         }
         return ok(reply.body);
     }
-    if (url.endsWith("/enabled")) return ok({ ...bv, enabled: JSON.parse(init.body).enabled });
+    if (url.endsWith("/enabled")) {
+        if (enableRefusal) return { ok: false, status: 409, json: async () => ({ detail: enableRefusal }) };
+        return ok({ ...bv, enabled: JSON.parse(init.body).enabled });
+    }
     if (url === "/api/agents/a1/extensions") { deskReads += 1; return ok(deskReply); }
     if (url === "/api/extensions/mail/agents/a1/config") {
         configCalls.push({ method: (init && init.method) || "GET", body: init && init.body ? JSON.parse(init.body) : null });
@@ -352,13 +399,36 @@ const throwsError = (fn) => { try { fn(); return false; } catch (_err) { return 
 const sameJson = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const verdict = {};
 
-(async () => {
-    // 1. The card has no Watch button, even enabled with a live view.
-    global.BossModExtensionsDialog.open();
+// The Extensions view, read the way the operator reads it: the open layer's
+// cards by title, the detail's tabs by name, and the one section panel.
+const cardsOf = (layer) => layer.body.querySelectorAll(".market-card");
+const titleOf = (card) => card.querySelector(".market-card-title").textContent;
+const cardNamed = (layer, name) => cardsOf(layer).find((card) => titleOf(card) === name);
+const tabsOf = (layer) => layer.body.querySelectorAll(".market-section-tab");
+const tabName = (tab) => tab.querySelector(".market-section-name").textContent;
+const tabNames = (layer) => tabsOf(layer).map(tabName);
+const tabNamed = (layer, label) => tabsOf(layer).find((tab) => tabName(tab) === label);
+const panelOf = (layer) => layer.body.querySelector("#ext-section-panel");
+const openExtensions = async (options) => {
+    global.BossModExtensionsDialog.open(options);
     await drain();
-    verdict.cardHasNoWatchButton = Boolean(byId("ext-switch-browser-vision"))
+    return layers[layers.length - 1];
+};
+const openCard = async (layer, name) => { await cardNamed(layer, name).dispatchClick(); await drain(); };
+const openTab = async (layer, label) => { await tabNamed(layer, label).dispatchClick(); await drain(); };
+// The frame's ‹, Esc or crumb (core/overlays.js backOne): pop the layer's
+// last step, then call its onBack.
+const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack(); await drain(); };
+
+(async () => {
+    // 1. Neither the card nor the detail has a Watch button, even enabled
+    //    with a live view: that is each agent's chat header's.
+    const firstLayer = await openExtensions();
+    const browseHasNoWatch = Boolean(cardNamed(firstLayer, "Browser Vision")) && !text().includes("Watch");
+    await openCard(firstLayer, "Browser Vision");
+    verdict.detailHasNoWatchButton = browseHasNoWatch && Boolean(byId("ext-enabled"))
         && !text().includes("Watch") && !byId("ext-watch-browser-vision");
-    closeLayer(layers[layers.length - 1]);
+    closeLayer(firstLayer);
 
     // 2. Nothing is read while no one is subscribed, whatever arrives.
     await drain();
@@ -437,14 +507,15 @@ const verdict = {};
     const again = Status.subscribe(() => {});
     await drain();
     liveReply = { kind: "ok", body: { items: [liveItem("2026-09-28T10:00:00Z")] } };
-    global.BossModExtensionsDialog.open();
-    await drain();
+    const toggleLayer = await openExtensions();
+    await openCard(toggleLayer, "Browser Vision");
     before = liveCalls;
     listBefore = listCalls;
-    byId("ext-switch-browser-vision").click();  // turn off
+    byId("ext-enabled").click();  // turn off
     await drain();
-    verdict.toggleRefreshesTheStatus = liveCalls === before + 1 && listCalls === listBefore + 1;
-    closeLayer(layers[layers.length - 1]);
+    verdict.toggleRefreshesTheStatus = liveCalls === before + 1 && listCalls === listBefore + 1
+        && byId("ext-enabled").getAttribute("aria-checked") === "false";
+    closeLayer(toggleLayer);
     again();
 
     // 6b. Two live-view extensions: both are read, in list order; an event
@@ -885,43 +956,335 @@ const verdict = {};
         && tabulators.length === 3;
     closeLayer(single);
 
-    // 13. Configure agents: a button only on an enabled card with per-agent
-    //     settings, right under its switch; the "set up per agent" note it
-    //     replaced is gone.
-    listReply = [bv, vd, mailItem, { ...mailItem, id: "mail-off", name: "Mail off", enabled: false }];
-    global.BossModExtensionsDialog.open();
+    // ── 13. The browse view: a rail of filters beside a grid of read-only cards.
+    const invalidItem = {
+        id: "broken", name: "broken", version: null, description: null, summary: null, author: null, category: null,
+        command: null, enabled: false, valid: false, invalid_reason: "manifest.json is invalid: category: Field required",
+        requires_image_model: false, live_view: null, agent_config: null, agent_view: null, panel: false, settings: null,
+        service_error: null, setup: null, setup_label: null, excluded_agents: [], model_provider: null,
+    };
+    const vdOff = { ...vd, enabled: false, setup: { state: "missing", detail: null } };
+    const vdInstalling = { ...vd, id: "desk-installing", name: "Desk Installing", enabled: false, setup: { state: "installing", detail: null } };
+    const vdFailed = { ...vd, id: "desk-failed", name: "Desk Failed", enabled: false, setup: { state: "failed", detail: "Docker isn’t running." } };
+    const chatgptItem = () => ({
+        ...bv, id: "chatgpt", name: "ChatGPT", enabled: true, model_provider: { connection_name: "Chat GPT" },
+        requires_image_model: false, live_view: null, command: { name: "chatgpt", summary: "s" },
+        setup: { state: "not_required", detail: null }, setup_label: null,
+        description: "Commercial use requires permission from JtechMinds LLC.",
+        summary: "Use your ChatGPT plan as an AI connection for agents.", category: "model-providers",
+    });
+    listReply = [bv, vdOff, { ...networkItem(), service_error: "Port 38472 is already in use." }, vdInstalling, vdFailed, invalidItem];
+    const browseLayer = await openExtensions();
+    const bvCard = cardNamed(browseLayer, "Browser Vision");
+    verdict.browseCardsShowNameVersionCategorySummaryAuthor = Boolean(bvCard)
+        && sameJson(cardsOf(browseLayer).map(titleOf),
+            ["Browser Vision", "Virtual Desktop", "Local Network Access", "Desk Installing", "Desk Failed", "broken"])
+        && Boolean(bvCard.querySelector(".avatar"))
+        && bvCard.querySelector(".market-card-category").textContent === "Web Browsing"
+        && sameJson(bvCard.querySelectorAll(".market-card-tag").map((tag) => tag.textContent), ["v1.0.0"])
+        && bvCard.querySelector(".market-card-desc").textContent === bv.summary
+        && bvCard.querySelector(".market-card-author").textContent === "JTechMinds LLC"
+        // The card says what it is in one line: not the description, not the command.
+        && !bvCard.textContent.includes(bv.description) && !bvCard.textContent.includes("bv —");
+    verdict.cardsAreButtonsWithNoControls = cardsOf(browseLayer).length === 6
+        && cardsOf(browseLayer).every((card) => card.tagName === "BUTTON" && card.getAttribute("type") === "button"
+            && card.querySelectorAll("button").length === 0 && card.querySelectorAll('[role="switch"]').length === 0)
+        && browseLayer.body.querySelectorAll('[role="switch"]').length === 0;
+    const chipOf = (name) => {
+        const card = cardNamed(browseLayer, name);
+        const chip = card.querySelector(".market-card-state");
+        return [chip ? chip.textContent : null, card.getAttribute("data-chip-tone")];
+    };
+    verdict.chipTonesFollowState = sameJson(chipOf("Browser Vision"), ["On", "ok"])
+        && sameJson(chipOf("Virtual Desktop"), [null, null])
+        && sameJson(chipOf("Local Network Access"), ["Couldn’t start", "attention"])
+        && sameJson(chipOf("Desk Installing"), ["Downloading…", null])
+        && sameJson(chipOf("Desk Failed"), ["Setup failed", "attention"])
+        && sameJson(chipOf("broken"), ["Unavailable", "attention"]);
+    const railRows = (layer) => layer.body.querySelectorAll(".market-rail-item").map((row) => [
+        row.getAttribute("data-rail-id"), row.querySelector(".market-rail-label").textContent,
+        row.querySelector(".market-rail-count").textContent,
+    ]);
+    const railNav = browseLayer.body.querySelector(".market-rail");
+    verdict.railHasShowAndCategoriesWithCounts = Boolean(railNav) && railNav.getAttribute("aria-label") === "Extension groups"
+        && sameJson(browseLayer.body.querySelectorAll(".market-rail-title").map((title) => title.textContent), ["Show", "Categories"])
+        // Categories from the valid items only, in first-seen order; the
+        // invalid one counts under All and nowhere else.
+        && sameJson(railRows(browseLayer), [
+            ["all", "All", "6"], ["on", "On", "2"],
+            ["category:web-browsing", "Web Browsing", "1"], ["category:computer-use", "Computer Use", "3"],
+            ["category:networking", "Networking", "1"],
+        ])
+        && byId("ext-rail-0").getAttribute("aria-current") === "true";
+    await byId("ext-rail-1").dispatchClick();
     await drain();
-    const extDialog = layers[layers.length - 1];
-    const agentsButton = byId("ext-agents-virtual-desktop");
-    verdict.configureAgentsOnlyWhenOnWithAgentConfig = Boolean(agentsButton) && Boolean(byId("ext-agents-mail"))
-        && !byId("ext-agents-browser-vision") && !byId("ext-agents-mail-off")
-        && agentsButton.textContent === "Configure agents"
-        && agentsButton.getAttribute("class") === "btn btn-sm ext-card-agents"
-        && agentsButton.parentNode.children.indexOf(agentsButton)
-            === agentsButton.parentNode.children.indexOf(byId("ext-switch-virtual-desktop")) + 1
-        && !extDialog.body.textContent.includes("Set up per agent");
+    const onTitles = cardsOf(browseLayer).map(titleOf);
+    const onRowKept = document.activeElement === byId("ext-rail-1") && byId("ext-rail-1").getAttribute("aria-current") === "true";
+    await byId("ext-rail-3").dispatchClick();
+    await drain();
+    verdict.railFiltersToOnAndToACategory = sameJson(onTitles, ["Browser Vision", "Local Network Access"]) && onRowKept
+        && sameJson(cardsOf(browseLayer).map(titleOf), ["Virtual Desktop", "Desk Installing", "Desk Failed"])
+        && document.activeElement === byId("ext-rail-3");
+    closeLayer(browseLayer);
 
-    // 14. The agents layer: loading, a failed read with Try again, then the table.
-    agentsReply = "broken";
-    agentsButton.click();
-    const agentsLayer = layers[layers.length - 1];
-    const statusLine = () => agentsLayer.body.querySelector('[role="status"]');
-    verdict.agentsLayerShowsLoading = agentsLayer.options.title === "Virtual Desktop — agents"
-        && agentsLayer.options.size === "panel" && Boolean(statusLine()) && statusLine().textContent === "Loading agents…";
+    // A failed read says why and offers Try again — never an empty grid.
+    listFailure = "The extension list could not be read.";
+    const failLayer = await openExtensions();
+    const failLine = failLayer.body.querySelector('[role="alert"]');
+    const failedShown = Boolean(failLine) && failLine.textContent === "The extension list could not be read."
+        && Boolean(byId("ext-retry")) && cardsOf(failLayer).length === 0;
+    listFailure = null;
+    listReply = [bv];
+    await byId("ext-retry").dispatchClick();
     await drain();
-    const failedLine = agentsLayer.body.querySelector('[role="alert"]');
-    verdict.agentsLayerFailedOffersRetry = Boolean(failedLine) && failedLine.textContent === "The agents could not be read."
-        && Boolean(agentsLayer.body.querySelector("#ext-agents-retry")) && !agentsLayer.body.querySelector("table");
+    verdict.listLoadFailureOffersRetry = failedShown && cardsOf(failLayer).length === 1 && !byId("ext-retry")
+        && document.activeElement === byId("ext-rail-0");
+    closeLayer(failLayer);
+
+    // Nothing installed, and nothing on, are each said in words.
+    listReply = [];
+    const emptyLayer = await openExtensions();
+    const emptyLine = emptyLayer.body.querySelector('[role="status"]');
+    const emptyShown = Boolean(emptyLine) && cardsOf(emptyLayer).length === 0
+        && emptyLine.textContent === "No extensions installed. Drop an extension folder into extensions/ and restart BossMod to load it.";
+    closeLayer(emptyLayer);
+    listReply = [vdOff];
+    const noneOnLayer = await openExtensions();
+    await byId("ext-rail-1").dispatchClick();
+    await drain();
+    verdict.emptySaysSo = emptyShown && cardsOf(noneOnLayer).length === 0
+        && noneOnLayer.body.querySelector('[role="status"]').textContent === "No extension is on yet.";
+    closeLayer(noneOnLayer);
+
+    // ── 14. The detail: picked from the grid, a trail step back to it.
+    listReply = [bv, vd, mailItem, networkItem(), chatgptItem(), invalidItem];
+    const detailLayer = await openExtensions();
+    await openCard(detailLayer, "Browser Vision");
+    verdict.selectOpensDetailWithTrailStep = detailLayer.options.size === "takeover"
+        && Boolean(byId("ext-detail")) && !detailLayer.body.querySelector(".market-body")
+        && sameJson(detailLayer.steps.map((step) => step.title), ["Browser Vision"])
+        && document.activeElement === byId("ext-detail");
+    const enabledSwitch = byId("ext-enabled");
+    verdict.heroShowsSummaryAndByline = detailLayer.body.querySelector(".market-detail-title").textContent === "Browser Vision"
+        && detailLayer.body.querySelector(".market-detail-specialty").textContent === bv.summary
+        && detailLayer.body.querySelector(".market-detail-by").textContent === "Web Browsing · By JTechMinds LLC · v1.0.0"
+        && detailLayer.body.querySelector(".market-detail-lead").textContent === bv.description
+        && Boolean(detailLayer.body.querySelector(".market-detail-ident").querySelector(".avatar"))
+        && enabledSwitch.getAttribute("role") === "switch" && enabledSwitch.getAttribute("aria-checked") === "true"
+        && enabledSwitch.querySelector(".switch-label").textContent === "Enabled"
+        && enabledSwitch.parentNode.classList.contains("market-detail-actions");
+    await openTab(detailLayer, "About");
+    const aboutPairs = panelOf(detailLayer).querySelectorAll("dt").map((dt) => [dt.textContent, dt.parentNode.children[
+        dt.parentNode.children.indexOf(dt) + 1].textContent]);
+    const bvAbout = sameJson(aboutPairs, [
+        ["Agent command", "bv — s"], ["Live view", "Browser view, from each agent’s chat header"],
+        ["Needs", "A model that can see images"], ["Setup", "Download browser (~120 MB)"], ["Extension ID", "browser-vision"],
+    ]);
+    await goBack(detailLayer);
+    verdict.backReturnsToTheGridAndTheCard = !byId("ext-detail") && Boolean(detailLayer.body.querySelector(".market-body"))
+        && detailLayer.steps.length === 0
+        && document.activeElement === cardNamed(detailLayer, "Browser Vision")
+        && cardNamed(detailLayer, "Browser Vision").getAttribute("aria-current") === "true";
+    // The tabs come from the manifest alone; an invalid extension has none,
+    // no rule over nothing, no switch, and its reason instead.
+    const shapeOf = async (name) => {
+        await openCard(detailLayer, name);
+        const shape = {
+            names: tabNames(detailLayer),
+            subs: tabsOf(detailLayer).map((tab) => tab.querySelector(".market-section-sub").textContent),
+            rule: Boolean(detailLayer.body.querySelector(".market-detail-rule")),
+            toggle: Boolean(byId("ext-enabled")),
+            note: detailLayer.body.querySelector(".market-detail-note"),
+        };
+        await goBack(detailLayer);
+        return shape;
+    };
+    const shapes = {};
+    for (const name of ["Browser Vision", "Virtual Desktop", "Microsoft 365 Mailbox", "Local Network Access", "ChatGPT", "broken"]) {
+        shapes[name] = await shapeOf(name);
+    }
+    verdict.sectionsFollowTheManifest = bvAbout
+        && sameJson(shapes["Browser Vision"].names, ["Agents", "About"])
+        && sameJson(shapes["Virtual Desktop"].names, ["Agents", "About"])
+        && sameJson(shapes["Microsoft 365 Mailbox"].names, ["Agents", "About"])
+        && sameJson(shapes["Local Network Access"].names, ["Status", "Settings", "About"])
+        && sameJson(shapes["Local Network Access"].subs, ["What it’s doing now", "How it runs", "What it adds"])
+        && sameJson(shapes.ChatGPT.names, ["Connection", "About"])
+        && sameJson(shapes.ChatGPT.subs, ["Sign-in and models", "What it adds"])
+        && shapes["Local Network Access"].rule && shapes["Local Network Access"].toggle
+        && sameJson(shapes.broken.names, []) && !shapes.broken.rule && !shapes.broken.toggle
+        && Boolean(shapes.broken.note) && shapes.broken.note.textContent === invalidItem.invalid_reason;
+    closeLayer(detailLayer);
+
+    // Off, a section whose content needs it on says how; the tabs are the same.
+    listReply = [{ ...networkItem(), enabled: false }, { ...chatgptItem(), enabled: false }, { ...vd, enabled: false }];
+    const offLayer = await openExtensions();
+    await openCard(offLayer, "Local Network Access");
+    const statusOff = panelOf(offLayer).textContent;
+    const netOffTabs = tabNames(offLayer);
+    await goBack(offLayer);
+    await openCard(offLayer, "ChatGPT");
+    const connectionOff = panelOf(offLayer).textContent;
+    const chatOffTabs = tabNames(offLayer);
+    await goBack(offLayer);
+    await openCard(offLayer, "Virtual Desktop");
+    verdict.offSectionsSayTurnItOn = statusOff === "Turn it on to see its status."
+        && connectionOff === "Turn it on to sign in."
+        && panelOf(offLayer).textContent === "Turn it on to set it up for each agent."
+        && !offLayer.body.querySelector(".ext-agents")
+        && sameJson(netOffTabs, shapes["Local Network Access"].names) && sameJson(chatOffTabs, shapes.ChatGPT.names)
+        && sameJson(tabNames(offLayer), shapes["Virtual Desktop"].names);
+    closeLayer(offLayer);
+
+    // A refused toggle: the reason as an alert, the switch where the server has it.
+    listReply = [bv];
+    const refuseLayer = await openExtensions();
+    await openCard(refuseLayer, "Browser Vision");
+    enableRefusal = { error: "SETUP_REQUIRED", message: "Download the browser first." };
+    await byId("ext-enabled").dispatchClick();
+    await drain();
+    const refusalLine = refuseLayer.body.querySelector(".market-error");
+    verdict.toggleRefusalRevertsWithTheReason = Boolean(refusalLine) && refusalLine.getAttribute("role") === "alert"
+        && refusalLine.textContent === "Download the browser first."
+        && byId("ext-enabled").getAttribute("aria-checked") === "true" && !byId("ext-enabled").disabled
+        && document.activeElement === byId("ext-enabled");
+    enableRefusal = null;
+    closeLayer(refuseLayer);
+
+    // Setup missing: turning it on asks first; Cancel puts it back; Set up
+    // starts the download with enable-on-success.
+    const vdMissing = { ...vd, enabled: false, setup: { state: "missing", detail: null }, setup_label: "Build the desktop" };
+    const vdDownloading = { ...vdMissing, setup: { state: "installing", detail: null } };
+    listReply = [vdMissing];
+    setupReply = vdDownloading;
+    const setupLayer = await openExtensions();
+    await openCard(setupLayer, "Virtual Desktop");
+    const offFirst = byId("ext-enabled").getAttribute("aria-checked") === "false" && !byId("ext-enabled").disabled;
+    await byId("ext-enabled").dispatchClick();
+    await drain();
+    const strip = byId("ext-setup-confirm");
+    const asked = Boolean(strip) && strip.textContent === "Set up" && strip.parentNode.textContent.includes("Build the desktop?")
+        && byId("ext-enabled").disabled && document.activeElement === strip && setupCalls.length === 0;
+    await setupLayer.body.querySelector(".cancel").dispatchClick();
+    await drain();
+    const cancelled = !byId("ext-setup-confirm") && byId("ext-enabled").getAttribute("aria-checked") === "false"
+        && !byId("ext-enabled").disabled && document.activeElement === byId("ext-enabled");
+    await byId("ext-enabled").dispatchClick();
+    await drain();
+    await byId("ext-setup-confirm").dispatchClick();
+    await drain();
+    const downloadingLine = () => setupLayer.body.querySelectorAll(".market-status")
+        .find((line) => line.getAttribute("aria-live") === "polite" && line.textContent === "Downloading…");
+    verdict.setupMissingAsksThenStarts = offFirst && asked && cancelled
+        && sameJson(setupCalls, [{ id: "virtual-desktop", body: { enable_on_success: true } }])
+        && !byId("ext-setup-confirm") && Boolean(downloadingLine()) && byId("ext-enabled").disabled;
+    // Installing: the list is re-read every 2 s until it is ready (and on).
+    listReply = [vdDownloading];
+    const listAtInstall = listCalls;
+    await advance(2000);
+    const stillDownloading = listCalls === listAtInstall + 1 && Boolean(downloadingLine()) && byId("ext-enabled").disabled;
+    listReply = [{ ...vd, enabled: true, setup: { state: "ready", detail: null } }];
+    const agentReadsAtReady = agentsReads;
+    await advance(2000);
+    const listAtReady = listCalls;
+    await advance(6000);
+    verdict.setupInstallingPollsUntilReady = stillDownloading && listAtReady === listAtInstall + 2 && listCalls === listAtReady
+        && !downloadingLine() && byId("ext-enabled").getAttribute("aria-checked") === "true" && !byId("ext-enabled").disabled
+        && agentsReads === agentReadsAtReady + 1 && Boolean(setupLayer.body.querySelector(".ext-agents"));
+    closeLayer(setupLayer);
+
+    // Setup failed: the reason as an alert, and Retry starts it again.
+    const vdBroken = { ...vd, enabled: false, setup: { state: "failed", detail: "Docker isn’t running." } };
+    listReply = [vdBroken];
+    setupCalls.length = 0;
+    setupReply = { ...vdBroken, setup: { state: "installing", detail: null } };
+    const failedSetupLayer = await openExtensions();
+    await openCard(failedSetupLayer, "Virtual Desktop");
+    const setupAlert = failedSetupLayer.body.querySelectorAll('[role="alert"]').find((el) => el.textContent === "Docker isn’t running.");
+    const retryOffered = Boolean(setupAlert) && setupAlert.classList.contains("market-failed")
+        && Boolean(byId("ext-setup-retry")) && byId("ext-setup-retry").textContent === "Retry" && byId("ext-enabled").disabled;
+    await byId("ext-setup-retry").dispatchClick();
+    await drain();
+    verdict.setupFailedOffersRetry = retryOffered
+        && sameJson(setupCalls, [{ id: "virtual-desktop", body: { enable_on_success: true } }])
+        && !byId("ext-setup-retry") && text().includes("Downloading…");
+    closeLayer(failedSetupLayer);
+
+    // Opened with an id (Settings → Connections' Manage extension): straight
+    // onto that extension's detail, its first section — a provider's Connection.
+    listReply = [bv, chatgptItem()];
+    const deepLayer = await openExtensions({ extensionId: "chatgpt" });
+    const selectedTab = tabsOf(deepLayer).find((tab) => tab.getAttribute("aria-selected") === "true");
+    const landed = Boolean(byId("ext-detail")) && deepLayer.body.querySelector(".market-detail-title").textContent === "ChatGPT"
+        && sameJson(deepLayer.steps.map((step) => step.title), ["ChatGPT"])
+        && Boolean(selectedTab) && tabName(selectedTab) === "Connection"
+        && document.activeElement === byId("ext-detail");
+    await goBack(deepLayer);
+    verdict.openWithAnIdLandsOnItsDetail = landed && Boolean(deepLayer.body.querySelector(".market-body"))
+        && document.activeElement === byId("ext-rail-0");
+    closeLayer(deepLayer);
+    const unknownLayer = await openExtensions({ extensionId: "nope" });
+    const unknownLine = unknownLayer.body.querySelector(".market-error");
+    verdict.openWithAnUnknownIdSaysSo = Boolean(unknownLine) && unknownLine.getAttribute("role") === "alert"
+        && unknownLine.textContent === "That extension isn’t installed."
+        && !byId("ext-detail") && cardsOf(unknownLayer).length === 2 && unknownLayer.steps.length === 0
+        && throwsError(() => global.BossModExtensionsDialog.open({ extensionId: "" }));
+    closeLayer(unknownLayer);
+
+    // Closing disposes the live parts and stops the poll: a read still in
+    // flight lands nowhere and nothing is read again.
+    let releaseAgents = null;
+    agentsReply = new Promise((resolve) => { releaseAgents = resolve; });
+    listReply = [vd, vdInstalling];
+    const closingLayer = await openExtensions();
+    await openCard(closingLayer, "Virtual Desktop");
+    const heldAgents = closingLayer.body.querySelector(".ext-agents");
+    const heldLoading = Boolean(heldAgents) && heldAgents.textContent === "Loading agents…";
+    const listAtClose = listCalls;
+    closeLayer(closingLayer);
+    releaseAgents();
+    await drain();
+    await advance(10000);
+    verdict.closeDisposesAndStopsPolling = heldLoading && !layers.includes(closingLayer) && listCalls === listAtClose
+        && !heldAgents.querySelector("table") && heldAgents.textContent === "Loading agents…" && timers.size === 0;
+    agentsReply = "ok";
+
+    // ── 15. The Agents section: the table only while on with per-agent
+    //     settings; an image-only extension says who cannot use it.
+    listReply = [bv, vd, mailItem, { ...mailItem, id: "mail-off", name: "Mail off", enabled: false }];
+    const extDialog = await openExtensions();
+    await openCard(extDialog, "Browser Vision");
+    const imageOnlyLine = !extDialog.body.querySelector(".ext-agents")
+        && panelOf(extDialog).textContent === "Every agent’s model can see images, so all of them can use it.";
+    await goBack(extDialog);
+    await openCard(extDialog, "Mail off");
+    const mailOffLine = !extDialog.body.querySelector(".ext-agents")
+        && panelOf(extDialog).textContent === "Turn it on to set it up for each agent.";
+    await goBack(extDialog);
+    const agentsHost = () => extDialog.body.querySelector(".ext-agents");
+    agentsReply = "broken";
+    cardNamed(extDialog, "Virtual Desktop").click();
+    const statusLine = () => agentsHost().querySelector('[role="status"]');
+    verdict.agentsSectionShowsLoading = Boolean(agentsHost()) && panelOf(extDialog).contains(agentsHost())
+        && tabNamed(extDialog, "Agents").getAttribute("aria-selected") === "true"
+        && Boolean(statusLine()) && statusLine().textContent === "Loading agents…";
+    await drain();
+    const failedLine = agentsHost().querySelector('[role="alert"]');
+    verdict.agentsSectionFailedOffersRetry = Boolean(failedLine) && failedLine.textContent === "The agents could not be read."
+        && Boolean(agentsHost().querySelector("#ext-agents-retry")) && !agentsHost().querySelector("table");
     agentsReply = "ok";
     const readsBeforeRetry = agentsReads;
-    agentsLayer.body.querySelector("#ext-agents-retry").click();
+    agentsHost().querySelector("#ext-agents-retry").click();
     const reloading = Boolean(statusLine()) && statusLine().textContent === "Loading agents…";
     await drain();
-    verdict.agentsLayerRetryLoadsTheTable = reloading && agentsReads === readsBeforeRetry + 1
-        && Boolean(agentsLayer.body.querySelector("table")) && !agentsLayer.body.querySelector("#ext-agents-retry");
+    verdict.agentsSectionRetryLoadsTheTable = reloading && agentsReads === readsBeforeRetry + 1
+        && Boolean(agentsHost().querySelector("table")) && !agentsHost().querySelector("#ext-agents-retry");
+    verdict.agentsSectionOnlyWhenOnWithAgentConfig = imageOnlyLine && mailOffLine && Boolean(agentsHost())
+        && !extDialog.body.textContent.includes("Set up per agent");
 
-    // 15. The table: a caption, column heads, one row per agent headed by its
+    // 16. The table: a caption, column heads, one row per agent headed by its
     //     face and name; the switch is named for the extension and the agent.
+    const agentsLayer = extDialog;
     const rowOf = (layer, agentId) => layer.body.querySelector(`#ext-agents-name-${agentId}`).closest("tr");
     const switchOf = (layer, agentId) => rowOf(layer, agentId).querySelector('[role="switch"]');
     const settingsOf = (layer, agentId) => rowOf(layer, agentId).querySelector(".btn");
@@ -957,7 +1320,7 @@ const verdict = {};
         // Already on: still switchable, so it can be turned off.
         && !switchOf(agentsLayer, "a4").disabled && !agentsLayer.body.querySelector("#ext-agents-note-a4");
 
-    // 16. Quick enable: the switch saves `{}` (the defaults) at once, holding
+    // 17. Quick enable: the switch saves `{}` (the defaults) at once, holding
     //     "on" and disabled while it runs; the table is re-read and focus is
     //     back on that row's switch.
     const callsBeforeOn = layerCalls.length;
@@ -974,7 +1337,7 @@ const verdict = {};
         && Boolean(settingsOf(agentsLayer, "a2"))
         && document.activeElement === switchOf(agentsLayer, "a2");
 
-    // 17. Turning off asks first; Cancel keeps it; Turn off removes the settings.
+    // 18. Turning off asks first; Cancel keeps it; Turn off removes the settings.
     const callsBeforeOff = layerCalls.length;
     switchOf(agentsLayer, "a1").click();
     const confirmOff = layers[layers.length - 1];
@@ -999,7 +1362,7 @@ const verdict = {};
         && !settingsOf(agentsLayer, "a1")
         && document.activeElement === switchOf(agentsLayer, "a1");
 
-    // 18. A refusal is shown under its row and the switch goes back; nothing
+    // 19. A refusal is shown under its row and the switch goes back; nothing
     //     changed, so nothing is re-read. The next try clears it.
     configReply = { error: "CONFIG_VERIFY_FAILED", message: "Docker isn’t running or BossMod can’t reach it." };
     const readsBeforeRefusal = agentsReads;
@@ -1021,38 +1384,36 @@ const verdict = {};
     verdict.agentsRowErrorClearsOnTheNextTry = agentsLayer.body.querySelectorAll(".ext-agents-error-row").length === 0
         && statusOf(agentsLayer, "a1") === "On";
 
-    // 19. Settings opens the settings dialog as a layer; closing it re-reads
-    //     the table and puts focus back on that row's Settings.
+    // 20. Settings opens the settings dialog as a layer over the Extensions
+    //     view; closing it re-reads the table and puts focus back on that
+    //     row's Settings.
     const readsBeforeSettings = agentsReads;
     settingsOf(agentsLayer, "a4").click();
     await drain();
     const settingsDialog = layers[layers.length - 1];
-    verdict.agentsSettingsOpensTheDialog = settingsDialog.options.title === "Settings for Laura"
+    verdict.agentsSettingsOpensTheDialog = settingsDialog !== agentsLayer && settingsDialog.options.title === "Settings for Laura"
         && layerCalls.some((call) => call.method === "GET" && call.agent === "a4");
     closeLayer(settingsDialog);
     await drain();
     verdict.agentsSettingsCloseRereadsAndRefocuses = agentsReads === readsBeforeSettings + 1
         && document.activeElement === settingsOf(agentsLayer, "a4");
-    closeLayer(agentsLayer);
+    await goBack(extDialog);
 
-    // 20. No agents: the help, then a plain line saying so.
+    // 21. No agents: the help, then a plain line saying so.
     const everyone = layerAgents["virtual-desktop"].agents;
     layerAgents["virtual-desktop"].agents = [];
-    byId("ext-agents-virtual-desktop").click();
-    await drain();
-    const emptyLayer = layers[layers.length - 1];
-    verdict.agentsEmptySaysSo = !emptyLayer.body.querySelector("table")
-        && emptyLayer.body.querySelector('[role="status"]').textContent === "No agents yet."
-        && emptyLayer.body.textContent.includes("Gives this agent its own Linux desktop.");
-    closeLayer(emptyLayer);
+    await openCard(extDialog, "Virtual Desktop");
+    verdict.agentsEmptySaysSo = !agentsHost().querySelector("table")
+        && agentsHost().querySelector('[role="status"]').textContent === "No agents yet."
+        && agentsHost().textContent.includes("Gives this agent its own Linux desktop.");
+    await goBack(extDialog);
     layerAgents["virtual-desktop"].agents = everyone;
 
-    // 21. An extension with a required field: the switch opens the settings
+    // 22. An extension with a required field: the switch opens the settings
     //     dialog instead of saving, and stays off under it; closing re-reads
     //     and focus returns to the switch. A stored summary shows in Status.
-    byId("ext-agents-mail").click();
-    await drain();
-    const mailLayer = layers[layers.length - 1];
+    await openCard(extDialog, "Microsoft 365 Mailbox");
+    const mailLayer = extDialog;
     verdict.agentsSummaryShowsWhenOn = statusOf(mailLayer, "a2") === "On · jim@contoso.com"
         && !switchOf(mailLayer, "a1").disabled;
     const configCallsBefore = configCalls.length;
@@ -1068,16 +1429,29 @@ const verdict = {};
     await drain();
     verdict.agentsDialogCloseRereadsAndRefocusesTheSwitch = agentsReads === mailReadsBefore + 1
         && document.activeElement === switchOf(mailLayer, "a1");
-    closeLayer(mailLayer);
     closeLayer(extDialog);
 
-    listReply = [{ ...bv, id: 'chatgpt', name: 'ChatGPT', enabled: true, model_provider: { connection_name: 'Chat GPT' },
-        requires_image_model: false, setup: { state: 'not_required' }, description: 'Commercial use requires permission from JtechMinds LLC.' }];
-    global.BossModExtensionsDialog.open();
-    await drain();
-    const chatLayer = layers[layers.length - 1];
+    // 23. An image-only extension lists who cannot use it, and why.
+    listReply = [{ ...bv, excluded_agents: [{ id: "a3", name: "Ada", model: "text-model" }, { id: "a5", name: "Bo", model: null }] }];
+    const excludedLayer = await openExtensions();
+    await openCard(excludedLayer, "Browser Vision");
+    const excludedNote = panelOf(excludedLayer).querySelector(".market-card-note");
+    verdict.excludedAgentsListedForImageOnlyExtension = Boolean(excludedNote)
+        && excludedNote.children[0].textContent === "Not available to agents whose model can’t see images:"
+        && sameJson(excludedNote.querySelector(".ext-excluded").querySelectorAll("li").map((li) => li.textContent),
+            ["Ada · text-model", "Bo · no model"])
+        && excludedNote.children[2].textContent === "Change models in Settings → Connections."
+        && !panelOf(excludedLayer).textContent.includes("Every agent’s model can see images");
+    closeLayer(excludedLayer);
+
+    // ── 24. The Connection section: ChatGPT's sign-in, polled while pending.
+    listReply = [chatgptItem()];
+    const chatLayer = await openExtensions();
+    await openCard(chatLayer, "ChatGPT");
     const buttonWith = (label) => [...chatLayer.body.querySelectorAll('button')].find(b => b.textContent === label);
-    verdict.chatgptSignInInExtension = Boolean(buttonWith('Continue with ChatGPT')) && text().includes('Commercial use requires permission');
+    verdict.chatgptSignInInExtension = Boolean(buttonWith('Continue with ChatGPT'))
+        && panelOf(chatLayer).contains(buttonWith('Continue with ChatGPT'))
+        && text().includes('Commercial use requires permission');
     buttonWith('Continue with ChatGPT').click();
     await drain();
     verdict.chatgptSignInStartsAndPolls = chatgptCalls.some(call => call.url.endsWith('/provider/actions') && call.body.action === 'login')
@@ -1085,51 +1459,80 @@ const verdict = {};
     chatgptReply = { connected: true, pending: false, error: null,
         message: 'Connected as new@example.com. Choose Chat GPT when creating or editing an agent.',
         actions: [{ key: 'logout', label: 'Sign out', values: {} }],
-        choices: [{ label: 'ChatGPT model', value: 'model', options: [{ value: 'model', label: 'Model' }], action: 'model', parameter: 'model' }] };
+        choices: [{ label: 'ChatGPT model', value: 'sol', options: [{ value: 'sol', label: 'Sol' }, { value: 'luna', label: 'Luna' }],
+            action: 'model', parameter: 'model' }] };
+    const chatgptReadsBeforePoll = chatgptCalls.length;
     await advance(2000);
-    verdict.chatgptCompletionShowsConnection = text().includes('Choose Chat GPT when creating or editing an agent.')
+    verdict.chatgptCompletionShowsConnection = chatgptCalls.length > chatgptReadsBeforePoll
+        && text().includes('Choose Chat GPT when creating or editing an agent.')
         && Boolean(buttonWith('Sign out')) && [...chatLayer.body.querySelectorAll('button')].some(b => b.getAttribute('aria-label') === 'ChatGPT model');
+    // Each choice: a visible label over the app's dropdown, never a native select.
+    const choiceLabel = byId('ext-provider-choice-0-label');
+    const choiceTrigger = byId('ext-provider-choice-0');
+    const choiceRow = choiceLabel ? choiceLabel.parentNode : null;
+    const choiceLabelled = Boolean(choiceLabel) && Boolean(choiceTrigger) && menuSelectIds.includes('ext-provider-choice-0')
+        && choiceLabel.tagName === 'SPAN' && choiceLabel.classList.contains('field-label-sm')
+        && choiceLabel.textContent === 'ChatGPT model'
+        && choiceRow.classList.contains('ext-choice') && choiceRow.children.indexOf(choiceLabel) === 0
+        && choiceRow.contains(choiceTrigger) && !chatLayer.body.querySelector('select');
+    choiceTrigger.click();
+    const heldWhileBusy = byId('ext-provider-choice-0').hasAttribute('disabled');
+    await drain();
+    const choicePost = chatgptCalls.filter((call) => call.url.endsWith('/provider/actions')).pop();
+    verdict.providerChoicesHaveVisibleLabels = choiceLabelled && heldWhileBusy
+        && sameJson(choicePost.body, { action: 'model', values: { model: 'luna' } })
+        && !byId('ext-provider-choice-0').hasAttribute('disabled');
+    // Pending again, then closed: the poll stops with the dialog.
+    chatgptReply = { ...chatgptReply, pending: true, message: 'Finish signing in in your browser…' };
+    buttonWith('Sign out').click();
+    await drain();
+    const pollArmed = timers.size > 0;
     const chatgptReadsBeforeClose = chatgptCalls.length;
     closeLayer(chatLayer);
     await advance(10000);
-    verdict.chatgptCloseStopsPolling = chatgptCalls.length === chatgptReadsBeforeClose;
+    verdict.chatgptCloseStopsPolling = pollArmed && chatgptCalls.length === chatgptReadsBeforeClose;
 
-    listReply = [{ ...bv, id: 'demo-provider', name: 'Demo provider', enabled: true,
-        requires_image_model: false, setup: { state: 'not_required' }, model_provider: { connection_name: 'Demo' } }];
-    global.BossModExtensionsDialog.open();
-    await drain();
-    const demoLayer = layers[layers.length - 1];
-    const startDemo = [...demoLayer.body.querySelectorAll('button')].find(b => b.textContent === 'Start demo');
-    startDemo.click();
+    // Any provider renders through the same rows: a message, then its actions.
+    listReply = [{ ...bv, id: 'demo-provider', name: 'Demo provider', enabled: true, requires_image_model: false,
+        setup: { state: 'not_required', detail: null }, model_provider: { connection_name: 'Demo' }, category: 'model-providers' }];
+    const demoLayer = await openExtensions();
+    await openCard(demoLayer, "Demo provider");
+    const startDemo = () => [...demoLayer.body.querySelectorAll('button')].find(b => b.textContent === 'Start demo');
+    startDemo().click();
     await drain();
     verdict.providerControlsHandleUnrelatedExtension = demoConnected && demoLayer.body.textContent.includes('Demo ready');
+    const demoNote = panelOf(demoLayer).querySelectorAll('.market-card-note').find(el => el.getAttribute('aria-live') === 'polite');
+    const demoActions = startDemo().parentNode;
+    verdict.providerControlsKeepTheirMarkup = Boolean(demoNote) && demoNote.textContent === 'Demo ready'
+        && startDemo().classList.contains('btn') && startDemo().classList.contains('btn-sm')
+        && startDemo().getAttribute('type') === 'button'
+        && demoActions.classList.contains('ext-panel-actions') && demoActions.parentNode === demoNote.parentNode
+        && demoNote.parentNode.children.indexOf(demoActions) === demoNote.parentNode.children.indexOf(demoNote) + 1;
     closeLayer(demoLayer);
 
-    // 7. A panel extension's card: status, facts, actions and the Settings button.
+    // ── 25. The Status section: a panel extension's message, facts and actions.
     const clipboardWrites = [];
     Object.defineProperty(global, 'navigator', {
         configurable: true, value: { clipboard: { writeText: async (value) => { clipboardWrites.push(value); } } },
     });
     listReply = [networkItem()];
-    global.BossModExtensionsDialog.open();
-    await drain();
-    let netLayer = layers[layers.length - 1];
-    const netButton = (label) => [...netLayer.body.querySelectorAll('button')].find(b => b.textContent === label);
-    const factInput = (label) => netLayer.body.querySelector(`#ext-panel-network-fact-${label}`);
+    let netLayer = await openExtensions();
+    await openCard(netLayer, "Local Network Access");
+    const netButton = (label) => [...panelOf(netLayer).querySelectorAll('button')].find(b => b.textContent === label);
+    const factInput = (index) => netLayer.body.querySelector(`#ext-panel-fact-${index}`);
     const codeField = factInput(1);
     verdict.panelShowsMessageFactsAndAction = text().includes('Use this only on a network you trust')
         && factInput(0).textContent === 'http://192.168.1.20:38472' && codeField.value === 'ABCD2345'
         && !factInput(0).classList.contains('bm-secret-masked') && codeField.classList.contains('bm-secret-masked')
         && codeField.getAttribute('readonly') !== null && factInput(0).getAttribute('role') === 'textbox'
-        && netLayer.body.querySelector('label[for="ext-panel-network-fact-1"]').textContent === 'Access code'
-        && Boolean(netButton('Generate new code')) && [...netLayer.body.querySelectorAll('button')].filter(b => b.classList.contains('btn')).length >= 5;
-    verdict.panelHasNoCommandLineAndShowsTheServiceSwitch = !netLayer.body.querySelector('.market-card-specialty')
-        && Boolean(byId('ext-switch-network')) && Boolean(byId('ext-card-settings-network'));
+        && netLayer.body.querySelector('label[for="ext-panel-fact-1"]').textContent === 'Access code'
+        && sameJson(panelOf(netLayer).querySelectorAll('button').map((b) => b.textContent), ['Copy', 'Show', 'Copy', 'Generate new code'])
+        && panelOf(netLayer).querySelectorAll('button').every((b) => b.classList.contains('btn'));
     verdict.panelMasksTheSecretUntilShown = netButton('Show').getAttribute('aria-pressed') === 'false';
     netButton('Show').click();
     verdict.panelShowRevealsTheSecret = !codeField.classList.contains('bm-secret-masked')
         && Boolean(netButton('Hide')) && netButton('Hide').getAttribute('aria-pressed') === 'true';
-    const copyButtons = [...netLayer.body.querySelectorAll('button')].filter(b => b.textContent === 'Copy');
+    const copyButtons = [...panelOf(netLayer).querySelectorAll('button')].filter(b => b.textContent === 'Copy');
     copyButtons[1].click();
     await drain();
     verdict.panelCopyWritesTheValue = copyButtons.length === 2 && clipboardWrites.join('|') === 'ABCD2345'
@@ -1137,30 +1540,37 @@ const verdict = {};
     await advance(2000);
     verdict.panelCopyFeedbackFadesBack = copyButtons[1].textContent === 'Copy';
 
-    // An action posts, then the refreshed panel replaces the old one.
+    // An action posts, then the refreshed panel replaces the old one, and the
+    // keyboard is back in the section.
     networkCode = 'ZZZZ9999';
     networkPanel = (body) => ({ ok: true, body: networkStatus(networkCode) });
     netButton('Generate new code').click();
     await drain();
     const post = networkCalls.filter(call => call.url.endsWith('/panel/actions')).pop();
     verdict.panelActionPostsAndRerenders = Boolean(post) && post.method === 'POST' && sameJson(post.body, { action: 'new_code', values: {} })
-        && factInput(1).value === 'ZZZZ9999' && !netButton('Generate new code').disabled;
-    // A refusal is an alert on the card and leaves the panel in place.
+        && factInput(1).value === 'ZZZZ9999' && !netButton('Generate new code').disabled
+        && document.activeElement === panelOf(netLayer);
+    // A refusal is an alert and leaves the panel in place.
     networkPanel = () => ({ ok: false, status: 409, code: 'PANEL_FAILED', message: 'Couldn’t save the new code: disk full.' });
     netButton('Generate new code').click();
     await drain();
     const alerts = [...netLayer.body.querySelectorAll('[role="alert"]')].map(el => el.textContent);
     verdict.panelActionRefusalIsAnAlert = alerts.includes('Couldn’t save the new code: disk full.')
         && factInput(1).value === 'ZZZZ9999';
+    // A command-less service: its switch in the hero, no command anywhere.
+    await openTab(netLayer, 'About');
+    verdict.panelHasNoCommandLineAndShowsTheServiceSwitch = Boolean(byId('ext-enabled'))
+        && byId('ext-enabled').getAttribute('aria-checked') === 'true'
+        && sameJson(tabNames(netLayer), ['Status', 'Settings', 'About'])
+        && sameJson(panelOf(netLayer).querySelectorAll('dt').map((dt) => dt.textContent), ['Extension ID']);
     closeLayer(netLayer);
 
     // The status's own error is an alert; a service that could not start is too.
     networkPanel = () => ({ ok: true, body: { ...networkStatus(networkCode), error: 'Something is wrong.' } });
     listReply = [{ ...networkItem(), service_error: 'Port 38472 is already in use.' }];
-    global.BossModExtensionsDialog.open();
-    await drain();
-    netLayer = layers[layers.length - 1];
-    const netAlerts = [...netLayer.body.querySelectorAll('.market-failed')].filter(el => el.getAttribute('role') === 'alert').map(el => el.textContent);
+    netLayer = await openExtensions();
+    await openCard(netLayer, "Local Network Access");
+    const netAlerts = [...netLayer.body.querySelectorAll('[role="alert"]')].map(el => el.textContent);
     verdict.panelErrorAndServiceErrorAreAlerts = netAlerts.includes('Something is wrong.')
         && netAlerts.includes('Port 38472 is already in use.');
     closeLayer(netLayer);
@@ -1168,102 +1578,119 @@ const verdict = {};
     // A panel that cannot be read says why and offers a retry.
     networkPanel = () => ({ ok: false, status: 409, code: 'PANEL_FAILED', message: 'The panel could not be read.' });
     listReply = [networkItem()];
-    global.BossModExtensionsDialog.open();
-    await drain();
-    netLayer = layers[layers.length - 1];
-    verdict.panelLoadFailureShowsTheReasonAndRetry = text().includes('The panel could not be read.')
-        && Boolean(netButton('Retry status')) && !factInput(0);
+    netLayer = await openExtensions();
+    await openCard(netLayer, "Local Network Access");
+    const liveFailedLine = panelOf(netLayer).querySelector('[role="alert"]');
+    verdict.panelLoadFailureShowsTheReasonAndRetry = Boolean(liveFailedLine)
+        && liveFailedLine.textContent === 'The panel could not be read.'
+        && Boolean(byId('ext-live-retry')) && byId('ext-live-retry').textContent === 'Try again' && !factInput(0);
     networkPanel = () => ({ ok: true, body: networkStatus(networkCode) });
-    netButton('Retry status').click();
+    byId('ext-live-retry').click();
     await drain();
-    verdict.panelRetryRereads = Boolean(factInput(0));
+    verdict.panelRetryRereads = Boolean(factInput(0)) && !byId('ext-live-retry');
     closeLayer(netLayer);
 
-    // An off extension shows Settings but no panel, and no panel read happens.
+    // ── 26. The Settings section: the shared form, inline, whether it is on or off.
     networkCalls.length = 0;
     listReply = [{ ...networkItem(), enabled: false }];
-    global.BossModExtensionsDialog.open();
-    await drain();
-    netLayer = layers[layers.length - 1];
-    verdict.settingsButtonShowsWhileOffWithoutAPanel = Boolean(netButton('Settings')) && !netLayer.body.querySelector('.ext-fact')
-        && !networkCalls.some(call => call.url.endsWith('/panel'));
-
-    // The settings dialog: the shared form on the extension-wide endpoints.
-    const listBeforeSettings = listCalls;
-    netButton('Settings').click();
-    await drain();
-    const settingsLayer = layers[layers.length - 1];
-    const portInput = settingsLayer.body.querySelector('#ext-settings-port');
-    verdict.settingsDialogRendersTheSharedForm = settingsLayer !== netLayer && settingsLayer.options.title === 'Local Network Access settings'
+    netLayer = await openExtensions();
+    await openCard(netLayer, "Local Network Access");
+    const settingsGets = () => networkCalls.filter(call => call.url === '/api/extensions/network/settings' && call.method === 'GET').length;
+    const offTabs = tabNames(netLayer);
+    const noPanelRead = !networkCalls.some(call => call.url.endsWith('/panel'));
+    const layersBeforeSettings = layers.length;
+    await openTab(netLayer, 'Settings');
+    const portInput = byId('ext-settings-port');
+    verdict.settingsSectionShowsWhileOff = sameJson(offTabs, ['Status', 'Settings', 'About']) && noPanelRead
+        && Boolean(portInput) && panelOf(netLayer).contains(portInput);
+    const inlineSave = byId('ext-settings-save');
+    verdict.settingsSectionRendersTheSharedForm = layers.length === layersBeforeSettings
         && Boolean(portInput) && portInput.getAttribute('type') === 'number' && portInput.getAttribute('min') === '1024'
         && portInput.getAttribute('max') === '65535' && portInput.value === '38472' && portInput.getAttribute('placeholder') === '38472'
-        && settingsLayer.body.textContent.includes('Pick another if it is taken.')
-        && networkCalls.some(call => call.url === '/api/extensions/network/settings' && call.method === 'GET');
+        && panelOf(netLayer).textContent.includes('Pick another if it is taken.')
+        && settingsGets() === 1
+        && Boolean(inlineSave) && inlineSave.getAttribute('type') === 'submit' && inlineSave.getAttribute('class') === 'btn btn-sm btn-primary'
+        && inlineSave.parentNode.classList.contains('ext-config-actions')
+        && inlineSave.closest('form') === panelOf(netLayer).querySelector('form')
+        && netLayer.body.querySelector('.actions').children.length === 0;
+    // Typing survives a tab switch: the form is one node for as long as the detail is open.
+    portInput.value = '5555';
+    await openTab(netLayer, 'About');
+    const hiddenWhileAbout = !byId('ext-settings-port');
+    await openTab(netLayer, 'Settings');
+    verdict.settingsTypingSurvivesATabSwitch = hiddenWhileAbout && byId('ext-settings-port') === portInput
+        && portInput.value === '5555' && settingsGets() === 1;
+    // Save stays in place: the saved values, "Saved." in the status line, the list re-read.
     portInput.value = '41000';
-    await settingsLayer.body.querySelector('#ext-settings-save').dispatchClick();
+    const listBeforeSettings = listCalls;
+    await byId('ext-settings-save').dispatchClick();
     await drain();
     const settingsPut = networkCalls.filter(call => call.method === 'PUT' && call.url.endsWith('/settings')).pop();
-    verdict.settingsDialogSavesAndSaysSaved = Boolean(settingsPut) && sameJson(settingsPut.body, { values: { port: '41000' } })
-        && settingsLayer.body.textContent.includes('Saved.') && Boolean(settingsLayer.body.querySelector('#ext-settings-done'))
-        && listCalls === listBeforeSettings + 1;
-    closeLayer(settingsLayer);
-
-    // A verified save shows the extension's own words; a refusal keeps the typing.
+    const statusLineOf = () => panelOf(netLayer).querySelector('.ext-config-status');
+    verdict.settingsSavesInPlaceAndSaysSaved = Boolean(settingsPut) && sameJson(settingsPut.body, { values: { port: '41000' } })
+        && statusLineOf().textContent === 'Saved.' && statusLineOf().getAttribute('role') === 'status'
+        && byId('ext-settings-port').value === '41000' && !byId('ext-settings-done') && !byId('ext-settings-save').disabled
+        && listCalls === listBeforeSettings + 1 && layers.length === layersBeforeSettings;
+    // A refusal keeps the typing.
     networkSettingsPut = () => ({ ok: false, status: 422, code: 'CONFIG_VERIFY_FAILED', message: 'Port 2000 is already in use.' });
-    netButton('Settings').click();
+    byId('ext-settings-port').value = '2000';
+    await byId('ext-settings-save').dispatchClick();
     await drain();
-    let again2 = layers[layers.length - 1];
-    again2.body.querySelector('#ext-settings-port').value = '2000';
-    await again2.body.querySelector('#ext-settings-save').dispatchClick();
-    await drain();
-    verdict.settingsRefusalKeepsTheTyping = again2.body.textContent.includes('Port 2000 is already in use.')
-        && again2.body.querySelector('#ext-settings-port').value === '2000' && !again2.body.querySelector('#ext-settings-save').disabled;
-    // Values stored but not applied: the card is told to re-read, the reason is shown.
+    verdict.settingsRefusalKeepsTheTyping = panelOf(netLayer).textContent.includes('Port 2000 is already in use.')
+        && byId('ext-settings-port').value === '2000' && !byId('ext-settings-save').disabled;
+    // Values stored but not applied: the item is re-read, the reason is shown.
     const listBeforeApply = listCalls;
     networkSettingsPut = () => ({ ok: false, status: 409, code: 'SERVICE_START_FAILED', message: 'Port 2000 is already in use.' });
-    await again2.body.querySelector('#ext-settings-save').dispatchClick();
+    await byId('ext-settings-save').dispatchClick();
     await drain();
-    verdict.settingsApplyFailureRereadsTheCard = listCalls === listBeforeApply + 1
-        && again2.body.textContent.includes('Port 2000 is already in use.');
-    closeLayer(again2);
-    networkSettingsPut = () => ({ ok: true, body: { label: 'Network access', help: 'h', configured: true, verified: 'Port 41001 is available.', fields: [] } });
-    netButton('Settings').click();
+    verdict.settingsApplyFailureRereadsTheItem = listCalls === listBeforeApply + 1
+        && panelOf(netLayer).textContent.includes('Port 2000 is already in use.') && byId('ext-settings-port').value === '2000';
+    // A verified save shows the extension's own words.
+    networkSettingsPut = (body) => networkSaved(body, 'Port 41001 is available.');
+    byId('ext-settings-port').value = '41001';
+    await byId('ext-settings-save').dispatchClick();
     await drain();
-    again2 = layers[layers.length - 1];
-    await again2.body.querySelector('#ext-settings-save').dispatchClick();
-    await drain();
-    verdict.settingsVerifiedTextIsShown = again2.body.textContent.includes('Port 41001 is available.');
-    closeLayer(again2);
+    verdict.settingsVerifiedTextIsShown = statusLineOf().textContent === 'Port 41001 is available.';
+    closeLayer(netLayer);
+    // Typing and focus survive a poll's re-render (a download elsewhere is running).
+    networkSettingsPut = (body) => networkSaved(body, null);
+    listReply = [networkItem(), vdInstalling];
+    netLayer = await openExtensions();
+    await openCard(netLayer, "Local Network Access");
+    await openTab(netLayer, 'Settings');
+    const pollPort = byId('ext-settings-port');
+    pollPort.focus();
+    pollPort.value = '39000';
+    // This fake never blurs a node the rebuild detaches, so the hand-back
+    // itself is counted: a browser drops focus to <body> without it.
+    let handedBack = 0;
+    const plainFocus = pollPort.focus;
+    pollPort.focus = function focusAgain() { handedBack += 1; return plainFocus.call(this); };
+    const getsBeforePoll = settingsGets();
+    const listBeforePoll = listCalls;
+    await advance(2000);
+    verdict.settingsTypingAndFocusSurviveAPollRender = listCalls === listBeforePoll + 1
+        && byId('ext-settings-port') === pollPort && pollPort.value === '39000'
+        && handedBack === 1 && document.activeElement === pollPort
+        && settingsGets() === getsBeforePoll && tabNamed(netLayer, 'Settings').getAttribute('aria-selected') === 'true';
     closeLayer(netLayer);
 
     // Turning a service on that cannot start: the switch stays off and says why.
     networkEnabled = () => ({ ok: false, status: 409, code: 'SERVICE_START_FAILED', message: 'Port 38472 is already in use.' });
-    global.BossModExtensionsDialog.open();
-    await drain();
-    netLayer = layers[layers.length - 1];
-    byId('ext-switch-network').click();
+    listReply = [{ ...networkItem(), enabled: false }];
+    netLayer = await openExtensions();
+    await openCard(netLayer, "Local Network Access");
+    byId('ext-enabled').click();
     await drain();
     verdict.failedServiceStartRevertsTheSwitchWithTheReason = text().includes('Port 38472 is already in use.')
-        && byId('ext-switch-network').getAttribute('aria-checked') === 'false';
+        && netLayer.body.querySelector('.market-error').getAttribute('role') === 'alert'
+        && byId('ext-enabled').getAttribute('aria-checked') === 'false';
     networkEnabled = (enabled) => ({ ok: true, body: { ...networkItem(), enabled } });
-    byId('ext-switch-network').click();
+    byId('ext-enabled').click();
     await drain();
-    verdict.serviceSwitchOnLoadsThePanel = Boolean(factInput(0)) && byId('ext-switch-network').getAttribute('aria-checked') === 'true';
+    verdict.serviceSwitchOnLoadsThePanel = Boolean(factInput(0)) && byId('ext-enabled').getAttribute('aria-checked') === 'true'
+        && !netLayer.body.querySelector('.market-error');
     closeLayer(netLayer);
-
-    // Provider controls render through the shared message / error / action helpers: same markup as before.
-    listReply = [{ ...bv, id: 'demo-provider', name: 'Demo provider', enabled: true, requires_image_model: false,
-        setup: { state: 'not_required' }, model_provider: { connection_name: 'Demo' } }];
-    global.BossModExtensionsDialog.open();
-    await drain();
-    const demoCard = layers[layers.length - 1];
-    const note = [...demoCard.body.querySelectorAll('.market-card-note')].find(el => el.getAttribute('aria-live') === 'polite');
-    const startButton = [...demoCard.body.querySelectorAll('button')].find(b => b.textContent === 'Start demo');
-    verdict.providerControlsKeepTheirMarkup = note.textContent === 'Demo ready'
-        && startButton.classList.contains('btn') && startButton.classList.contains('btn-sm')
-        && startButton.getAttribute('type') === 'button'
-        && note.parentNode.children.indexOf(startButton) === note.parentNode.children.indexOf(note) + 1;
-    closeLayer(demoCard);
 
     console.log(JSON.stringify(verdict));
 })().catch((err) => { process.stderr.write(String(err && err.stack ? err.stack : err)); process.exit(1); });

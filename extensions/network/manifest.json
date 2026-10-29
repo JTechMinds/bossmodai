@@ -3,6 +3,9 @@
   "name": "Local Network Access",
   "version": "1.0.0",
   "description": "Lets other devices on your local network open BossMod in a web browser. They need the address and the access code shown here. The connection isn’t encrypted, so turn this on only for a network you trust.",
+  "summary": "Open BossMod from other devices on your network.",
+  "author": "JTechMinds LLC",
+  "category": "networking",
   "service": true,
   "panel": true,
   "requires": {

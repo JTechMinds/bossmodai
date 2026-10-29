@@ -1,386 +1,389 @@
 /**
- * BossMod AI — Add → Extensions: one card per extension, with its switch.
+ * BossMod AI — Add → Extensions: browse the extensions, then manage one.
  *
- * A `panel` modal from core/overlays.js (layered, never a slide-out). Cards
- * are built here from the marketplace's `market-card*` classes rather than
- * reusing BossModPackCard.packCard: a pack card is one whole-card <button>,
- * and a switch inside a button is invalid HTML.
+ * The controller, mirroring marketplace.js: it owns the state, the API calls,
+ * the polling and the lifecycle of the live components, and draws nothing —
+ * extensions-view.js does. A `takeover` from core/overlays.js (the
+ * marketplace's size) holding TWO views: the grid of read-only cards and, once
+ * one is picked, extension-detail.js's view of that extension, where it is
+ * turned on, set up and managed. The open extension is a trail step
+ * (`Extensions › Browser Vision`), so ‹, Esc and the crumb go back to the grid.
  *
- * Card states, all driven by the item the server returns:
- *   invalid               → the reason, no controls;
- *   setup missing         → switch off; turning it on asks first (the
- *                           marketplace's inline confirm strip), then starts
- *                           the download with enable-on-success;
- *   installing            → switch disabled, a polite live line, and the list
- *                           is re-read every 2 s while the dialog is open;
- *   failed                → the error and Retry;
- *   ready / not required  → the switch drives PUT enabled, rolled back on a
- *                           refusal with the server's message on the card;
- *   enabled + excluded    → which agents cannot use it, and why.
+ * THE HARD PART: the detail is rebuilt on every change, and two of its
+ * sections hold live state a rebuild must not destroy — the Settings form
+ * (half-typed values) and the Agents table (its own read, a switch
+ * mid-request, focus). So those two are built ONCE per opened extension and
+ * kept (`live`); every render hands them to the detail, which re-parents the
+ * open one, and the view restores focus and the caret by id. They are
+ * disposed when the detail closes (‹, Esc, the crumb, ✕, or opening another
+ * extension), and the Agents table when the extension is turned off.
  *
- * An enabled extension with per-agent settings (`agent_config`) has a
- * Configure agents button under its switch, which opens a layer listing
- * every agent (BossModExtensionAgentsLayer); each agent's desk sets them too.
- *
- * An extension with its own settings (`settings`) has a Settings button under
- * its switch, on or off, which opens BossModExtensionSettingsDialog. An
- * enabled extension with a `panel` shows the status it reports under the
- * switch (BossModExtensionPanel), and a `service_error` — it is on but could
- * not start at boot — as an alert.
- *
- * A live view is not shown here: it is a screen button in each agent's chat
- * header. After a successful toggle this asks BossModLiveStatus to re-read,
- * so those buttons follow at once.
+ * A missing download asks first (the marketplace's confirm strip), then runs
+ * with enable-on-success. While any download runs, or the open extension's
+ * sign-in is pending, the list is re-read every 2 s. A successful toggle asks
+ * BossModLiveStatus to re-read, so the chat headers' live-view buttons follow.
  */
 const BossModExtensionsDialog = (() => {
-    const { h, clear } = BossModDom;
+    const { h } = BossModDom;
     const API = BossModExtensionsApi;
+    const VIEW = BossModExtensionsView;
     const TITLE = 'Extensions';
     const POLL_MS = 2000;
+    // The server's code for a settings save whose values were stored but
+    // whose running extension could not apply them.
+    const APPLY_FAILED = 'SERVICE_START_FAILED';
 
     const COPY = Object.freeze({
-        loading: 'Loading extensions…',
-        failed: 'Couldn’t load extensions.',
-        retry: 'Try again',
-        empty: 'No extensions installed. Drop an extension folder into extensions/ and restart BossMod to load it.',
-        unavailable: 'Unavailable',
-        installing: 'Downloading…',
-        retrySetup: 'Retry',
-        confirm: 'Download',
-        excludedLead: 'Not available to: ',
-        excludedTail: ' — their models aren’t marked image-capable (Settings → Connections).',
-        noModel: 'no model',
-        configureAgents: 'Configure agents',
-        settings: 'Settings',
-        retryPanel: 'Retry status',
+        notInstalled: 'That extension isn’t installed.',
     });
+
+    const message = (err) => String((err && err.message) || err);
 
     /**
      * Open the Extensions dialog.
      *
-     * @returns {void}
+     * @param {object} [options]
+     * @param {string} [options.extensionId]  Open straight onto this
+     *   extension's detail once the list has loaded (Settings → Connections'
+     *   "Manage extension"). An id the list does not hold leaves the grid up
+     *   and says so.
+     * @returns {{close: () => void}}
+     * @throws {Error} When `extensionId` is given but is not a non-empty string.
      */
-    function open() {
-        const host = h('div', { class: 'market-grid' });
+    function open(options) {
+        const { extensionId } = options || {};
+        if (extensionId !== undefined && (typeof extensionId !== 'string' || !extensionId)) {
+            throw new Error('[extensions-dialog] options.extensionId must be a non-empty string');
+        }
+        const host = h('div', { class: 'market-host' });
         const state = {
-            status: 'loading',
-            items: [],
-            error: '',
-            // Id whose "download first?" strip is showing.
-            confirming: null,
-            // Id with a request in flight; its controls are disabled.
-            busy: null,
-            // Id → the last refusal, shown on that card.
-            errors: {},
-            // Element id to focus after the next render.
-            focus: null,
+            // loading | failed | empty | ready; `actionError` is the last refusal.
+            status: 'loading', items: [], loadError: '', actionError: '',
+            // The rail row: 'all', 'on' or 'category:<slug>'.
+            filter: 'all',
+            // The extension being read survives ‹, so the grid marks its card;
+            // `cardFocus` is that card's selector, `sectionKey` the open section.
+            selectedId: null, detailOpen: false, cardFocus: null, sectionKey: null,
+            // The "download first?" strip; a request in flight (controls disabled).
+            confirming: false, busy: false,
+            // The open extension's live reads, and why the last one failed.
+            panel: null, provider: null, liveError: '',
+            browseScroll: 0, detailScroll: 0, panelScroll: 0,
+            // Spent by the view: a rebuilt tree has dropped the focused node.
+            focusRequest: null,
         };
+        /** The open extension's persistent nodes; see the header. */
+        let live = null;
         let timer = null;
         let closed = false;
+        /** Consumed by the first successful load. */
+        let deepLink = extensionId || null;
 
-        BossModOverlays.createModal({
+        const modal = BossModOverlays.createModal({
             title: TITLE,
             body: host,
             actions: [],
-            size: 'panel',
+            size: 'takeover',
             onClose: () => {
                 closed = true;
                 clearTimeout(timer);
+                disposeLive();
             },
         });
+
+        function selectedItem() {
+            if (!state.selectedId) return null;
+            const found = state.items.find((item) => item.id === state.selectedId);
+            return found === undefined ? null : found;
+        }
+
+        function render() {
+            state.selected = selectedItem();
+            VIEW.render(host, state, handlers, live);
+            state.focusRequest = null;
+            syncSteps();
+        }
+
+        // The open extension as a crumb back to the grid (the view's test: a
+        // failed read keeps the grid whatever `detailOpen` says).
+        function syncSteps() {
+            const showing = state.detailOpen && state.selected && state.status !== 'failed';
+            modal.setSteps(showing ? [{ title: state.selected.name, onBack: () => handlers.onBack() }] : []);
+        }
 
         function replaceItem(item) {
             state.items = state.items.map((existing) => (existing.id === item.id ? item : existing));
         }
 
+        function disposeLive() {
+            if (!live) return;
+            if (live.settings) live.settings.form.dispose();
+            if (live.agents) live.agents.dispose();
+            live = null;
+        }
+
+        // The Settings form, built once for the opened extension. Its adapter
+        // re-reads the item after a save, and after a save that stored the
+        // values but could not apply them to the running extension — the
+        // server has changed its state either way.
+        function createLive(item) {
+            live = { id: item.id, settings: null, agents: null };
+            if (item.valid && item.settings) {
+                const body = h('div', { class: 'ext-config' });
+                const form = BossModConfigForm.create({
+                    placement: 'inline',
+                    body,
+                    idPrefix: 'ext-settings',
+                    adapter: {
+                        load: () => API.getSettings(item.id),
+                        save: async (values) => {
+                            try {
+                                return await API.putSettings(item.id, values);
+                            } catch (err) {
+                                if (err && err.code === APPLY_FAILED) void reloadItem();
+                                throw err;
+                            }
+                        },
+                    },
+                    onSaved: () => { void reloadItem(); },
+                });
+                live.settings = { element: body, form };
+                void form.load();
+            }
+            syncAgents(item);
+        }
+
+        // The Agents table exists exactly while the open extension is on and
+        // has per-agent settings. No live components means the detail closed
+        // while a request ran, and there is nothing to sync.
+        function syncAgents(item) {
+            if (!live || live.id !== item.id) return;
+            const wanted = item.valid && item.enabled && Boolean(item.agent_config);
+            if (wanted && !live.agents) {
+                live.agents = BossModExtensionAgents.create({ extensionId: item.id, extensionName: item.name });
+            } else if (!wanted && live.agents) {
+                live.agents.dispose();
+                live.agents = null;
+            }
+        }
+
+        // The open extension's panel and provider reads. Each is read only
+        // while it is on; a failure is said in its section, never shown as
+        // the last good read. A reply for an extension no longer open is
+        // dropped.
+        async function loadLive(item) {
+            let panel = null;
+            let provider = null;
+            let error = '';
+            try {
+                if (item.panel && item.enabled) panel = await API.panelRequest(item.id);
+                if (item.model_provider && item.enabled) provider = await API.providerRequest(item.id);
+            } catch (err) {
+                error = message(err);
+            }
+            if (closed || state.selectedId !== item.id) return;
+            Object.assign(state, { panel, provider, liveError: error });
+        }
+
         function schedulePoll() {
             clearTimeout(timer);
-            const installing = state.items.some((item) => (item.setup && item.setup.state === 'installing') || (item.provider && item.provider.pending));
-            if (!closed && !state.busy && installing) timer = setTimeout(() => load(false), POLL_MS);
+            if (closed || state.busy) return;
+            const installing = state.items.some((item) => item.setup && item.setup.state === 'installing');
+            const pending = Boolean(state.detailOpen && state.provider && state.provider.pending);
+            if (installing || pending) timer = setTimeout(() => { void load(false); }, POLL_MS);
         }
 
         async function load(showLoading) {
+            clearTimeout(timer);
             if (showLoading) {
                 state.status = 'loading';
                 render();
             }
+            let items;
             try {
-                state.items = await API.listExtensions();
-                for (const item of state.items) {
-                    if (item.model_provider && item.enabled) {
-                        try { item.provider = await API.providerRequest(item.id); }
-                        catch (err) { state.errors[item.id] = String(err.message || err); }
-                    }
-                    if (item.panel && item.enabled) {
-                        try { item.panelStatus = await API.panelRequest(item.id); }
-                        catch (err) { state.errors[item.id] = String(err.message || err); }
-                    }
-                }
-                state.status = state.items.length ? 'ready' : 'empty';
-                state.error = '';
+                items = await API.listExtensions();
             } catch (err) {
-                state.status = 'failed';
-                state.error = String((err && err.message) || err);
-            }
-            if (closed) return;
-            render();
-            schedulePoll();
-        }
-
-        async function toggleEnabled(item, pressed) {
-            state.busy = item.id;
-            state.errors[item.id] = '';
-            state.focus = switchId(item.id);
-            render();
-            try {
-                const updated = await API.setEnabled(item.id, pressed);
-                replaceItem(updated);
-                if (updated.model_provider && pressed) {
-                    try { updated.provider = await API.providerRequest(updated.id); }
-                    catch (err) { state.errors[item.id] = String(err.message || err); }
-                }
-                if (updated.panel && pressed) {
-                    try { updated.panelStatus = await API.panelRequest(updated.id); }
-                    catch (err) { state.errors[item.id] = String(err.message || err); }
-                }
-                void BossModLiveStatus.refresh();
-            } catch (err) {
-                // Never show a state the server refused: the item is unchanged,
-                // so the re-render puts the switch back where it was.
-                state.errors[item.id] = String((err && err.message) || err);
-            }
-            state.busy = null;
-            // Back onto the switch, which was disabled (so the card held focus)
-            // while the request ran.
-            state.focus = switchId(item.id);
-            if (!closed) render();
-        }
-
-        async function providerAction(item, action, values) {
-            clearTimeout(timer);
-            state.busy = item.id;
-            state.errors[item.id] = '';
-            render();
-            try {
-                const provider = await API.providerRequest(item.id, action, values);
-                replaceItem({ ...item, provider });
-            } catch (err) {
-                state.errors[item.id] = String(err.message || err);
-            }
-            state.busy = null;
-            if (closed) return;
-            render();
-            schedulePoll();
-        }
-
-        async function panelAction(item, action) {
-            state.busy = item.id;
-            state.errors[item.id] = '';
-            render();
-            try {
-                const panelStatus = await API.panelRequest(item.id, action.key, action.values);
-                replaceItem({ ...item, panelStatus });
-            } catch (err) {
-                state.errors[item.id] = String(err.message || err);
-            }
-            state.busy = null;
-            if (!closed) render();
-        }
-
-        function panelControls(item, busy) {
-            if (!item.panelStatus) {
-                return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, COPY.retryPanel)];
-            }
-            return BossModExtensionPanel.render(item.panelStatus, {
-                idPrefix: `ext-panel-${item.id}`, busy, onAction: (action) => panelAction(item, action),
-            });
-        }
-
-        function providerControls(item, busy) {
-            const provider = item.provider;
-            if (!provider) return [h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load(false) }, 'Retry provider status')];
-            const rows = [
-                ...BossModExtensionPanel.messageRows(provider),
-                ...BossModExtensionPanel.actionButtons(provider.actions, busy, (action) => providerAction(item, action.key, action.values)),
-            ];
-            for (const choice of provider.choices) {
-                const control = BossModMenuSelect.create({ label: choice.label, options: choice.options, value: choice.value,
-                    onChange: (value) => providerAction(item, choice.action, { [choice.parameter]: value }),
+                if (closed) return;
+                // The message and its Try again live in the grid, so a failed
+                // read always brings the grid back, and nothing from the last
+                // read stays on screen under it.
+                disposeLive();
+                Object.assign(state, {
+                    status: 'failed', loadError: message(err), items: [], detailOpen: false,
                 });
-                const trigger = control.element.querySelector('button') || control.element;
-                if (busy) trigger.setAttribute('disabled', '');
-                rows.push(control.element);
+                render();
+                return;
             }
-            return rows;
-        }
-
-        async function beginSetup(item) {
-            state.confirming = null;
-            state.busy = item.id;
-            state.errors[item.id] = '';
-            state.focus = cardId(item.id);
-            render();
-            try {
-                replaceItem(await API.startSetup(item.id, true));
-            } catch (err) {
-                state.errors[item.id] = String((err && err.message) || err);
-            }
-            state.busy = null;
             if (closed) return;
+            Object.assign(state, { items, status: items.length ? 'ready' : 'empty', loadError: '' });
+            if (deepLink !== null) {
+                const wanted = deepLink;
+                deepLink = null;
+                if (items.some((item) => item.id === wanted)) {
+                    await handlers.onSelect(wanted, null);
+                    return;
+                }
+                state.actionError = COPY.notInstalled;
+            }
+            const item = selectedItem();
+            if (state.detailOpen && item) {
+                // A download that just finished turns the extension on.
+                syncAgents(item);
+                if (item.enabled) await loadLive(item);
+                if (closed) return;
+            }
             render();
             schedulePoll();
         }
 
-        function controls(item) {
-            const setup = item.setup || { state: 'not_required' };
-            const busy = state.busy === item.id;
-            const rows = [];
-
-            if (setup.state === 'missing') {
-                const confirming = state.confirming === item.id;
-                rows.push(switchFor(item, confirming, busy || confirming, (pressed) => {
-                    if (!pressed) return;
-                    state.confirming = item.id;
-                    state.focus = `ext-confirm-${item.id}`;
-                    render();
-                }));
-                if (confirming) {
-                    rows.push(BossModMarketplaceDetail.confirmStrip({
-                        text: `${item.setup_label || 'Run setup'}?`,
-                        id: `ext-confirm-${item.id}`,
-                        label: COPY.confirm,
-                        tone: 'primary',
-                        onConfirm: () => beginSetup(item),
-                        onCancel: () => {
-                            state.confirming = null;
-                            state.focus = switchId(item.id);
-                            render();
-                        },
-                    }));
-                }
-            } else if (setup.state === 'installing') {
-                rows.push(switchFor(item, item.enabled, true, () => {}));
-                rows.push(h('p', { class: 'market-status', 'aria-live': 'polite' }, COPY.installing));
-            } else if (setup.state === 'failed') {
-                rows.push(switchFor(item, false, true, () => {}));
-                rows.push(h('p', { class: 'market-failed', role: 'alert' }, setup.detail || COPY.failed));
-                rows.push(h('button', {
-                    class: 'btn btn-sm', type: 'button', id: `ext-retry-${item.id}`,
-                    disabled: busy, onclick: () => beginSetup(item),
-                }, COPY.retrySetup));
-            } else {
-                rows.push(switchFor(item, item.enabled, busy, (pressed) => toggleEnabled(item, pressed)));
+        // After a settings save: the item may have changed (a service
+        // restarted, or could not start).
+        async function reloadItem() {
+            let items;
+            try {
+                items = await API.listExtensions();
+            } catch (err) {
+                if (closed) return;
+                state.actionError = message(err);
+                render();
+                return;
             }
-            // Every branch puts the switch first; Configure agents follows it
-            // while the extension is on, and Settings whether it is on or off.
-            if (item.enabled && item.agent_config) {
-                rows.splice(1, 0, h('button', {
-                    class: 'btn btn-sm ext-card-agents', type: 'button', id: `ext-agents-${item.id}`, disabled: busy,
-                    onclick: () => BossModExtensionAgentsLayer.open({ extensionId: item.id, extensionName: item.name }),
-                }, COPY.configureAgents));
+            if (closed) return;
+            state.items = items;
+            const item = selectedItem();
+            if (state.detailOpen && item) {
+                syncAgents(item);
+                await loadLive(item);
+                if (closed) return;
             }
-            if (item.settings) {
-                rows.splice(1, 0, h('button', {
-                    class: 'btn btn-sm ext-card-settings', type: 'button', id: `ext-card-settings-${item.id}`, disabled: busy,
-                    onclick: () => BossModExtensionSettingsDialog.open({
-                        extensionId: item.id, extensionName: item.name, onChanged: () => { void load(false); },
-                    }),
-                }, COPY.settings));
-            }
-
-            if (item.enabled && item.service_error) {
-                rows.push(h('p', { class: 'market-failed', role: 'alert' }, item.service_error));
-            }
-            if (item.enabled && item.panel) rows.push(...panelControls(item, busy));
-            if (item.enabled && item.model_provider) rows.push(...providerControls(item, busy));
-            const excluded = item.excluded_agents || [];
-            if (item.enabled && excluded.length) {
-                const names = excluded
-                    .map((agent) => `${agent.name} (${agent.model || COPY.noModel})`)
-                    .join(', ');
-                rows.push(h('p', { class: 'market-card-note' }, COPY.excludedLead + names + COPY.excludedTail));
-            }
-            if (state.errors[item.id]) {
-                rows.push(h('p', { class: 'market-failed', role: 'alert' }, state.errors[item.id]));
-            }
-            return rows;
+            render();
+            schedulePoll();
         }
 
-        function switchFor(item, pressed, disabled, onChange) {
-            const toggle = BossModSwitch.create({ label: `Enable ${item.name}`, pressed, onChange });
-            toggle.element.setAttribute('id', switchId(item.id));
-            if (disabled) toggle.element.setAttribute('disabled', '');
-            return toggle.element;
+        // One request for the open extension: its controls held disabled
+        // while it runs, a refusal said above the hero, nothing the server
+        // refused shown as done. The pressed control is rebuilt (and disabled
+        // meanwhile), so the keyboard is held on `focusWhile` and then put on
+        // `focusAfter`.
+        async function runAction(focusWhile, focusAfter, work) {
+            clearTimeout(timer);
+            Object.assign(state, { busy: true, actionError: '' });
+            state.focusRequest = focusWhile;
+            render();
+            try {
+                await work();
+            } catch (err) {
+                if (!closed) state.actionError = message(err);
+            }
+            state.busy = false;
+            if (closed) return;
+            state.focusRequest = focusAfter;
+            render();
+            schedulePoll();
         }
 
-        function card(item) {
-            const titleId = `ext-title-${item.id}`;
-            const meta = [];
-            if (item.version) meta.push(h('span', { class: 'market-card-tag' }, `v${item.version}`));
-            if (!item.valid) meta.push(h('span', { class: 'market-card-tag' }, COPY.unavailable));
-            return h('article', {
-                class: 'market-card', id: cardId(item.id), tabindex: '-1', 'aria-labelledby': titleId,
+        const handlers = {
+            onFilter(id, focus) {
+                state.filter = id;
+                state.focusRequest = focus || null;
+                render();
             },
-            h('div', { class: 'market-card-head' },
-                h('h3', { class: 'market-card-title', id: titleId }, item.name)),
-            meta.length ? h('div', { class: 'market-card-meta' }, meta) : null,
-            item.command
-                ? h('p', { class: 'market-card-specialty' }, `${item.command.name} — ${item.command.summary}`)
-                : null,
-            item.description ? h('p', { class: 'market-card-desc' }, item.description) : null,
-            item.valid
-                ? controls(item)
-                : h('p', { class: 'market-card-note' }, item.invalid_reason || COPY.unavailable));
-        }
+            async onSelect(id, focus) {
+                disposeLive();
+                Object.assign(state, {
+                    selectedId: id, detailOpen: true, cardFocus: focus || null, sectionKey: null,
+                    confirming: false, actionError: '', panel: null, provider: null, liveError: '',
+                });
+                const item = selectedItem();
+                if (!item) throw new Error(`[extensions-dialog] no extension "${id}" to open`);
+                createLive(item);
+                state.focusRequest = '#ext-detail';
+                render();
+                if (item.enabled) {
+                    await loadLive(item);
+                    if (closed || state.selectedId !== id || !state.detailOpen) return;
+                    render();
+                }
+                schedulePoll();
+            },
+            // The selection survives: the grid marks the card that was read.
+            // Reached from the frame's ‹, Esc or crumb, through the step.
+            onBack() {
+                disposeLive();
+                Object.assign(state, { detailOpen: false, confirming: false, actionError: '' });
+                state.focusRequest = state.cardFocus || '#ext-rail-0';
+                render();
+            },
+            // `focus` is the tab to land on, and null for a hover.
+            onSection(id, focus) {
+                state.sectionKey = id;
+                state.focusRequest = focus || null;
+                render();
+            },
+            onToggle(pressed) {
+                const id = state.selectedId;
+                // A refusal leaves the item unchanged, so the re-render puts
+                // the switch back where the server still has it.
+                void runAction('#ext-detail', '#ext-enabled', async () => {
+                    const updated = await API.setEnabled(id, pressed);
+                    replaceItem(updated);
+                    syncAgents(updated);
+                    await loadLive(updated);
+                    void BossModLiveStatus.refresh();
+                });
+            },
+            onSetupAsk() {
+                state.confirming = true;
+                state.focusRequest = '#ext-setup-confirm';
+                render();
+            },
+            onSetupConfirm() {
+                const id = state.selectedId;
+                state.confirming = false;
+                void runAction('#ext-detail', '#ext-detail', async () => {
+                    replaceItem(await API.startSetup(id, true));
+                });
+            },
+            onSetupCancel() {
+                state.confirming = false;
+                state.focusRequest = '#ext-enabled';
+                render();
+            },
+            onPanelAction(action) {
+                const id = state.selectedId;
+                void runAction('#ext-section-panel', '#ext-section-panel', async () => {
+                    const panel = await API.panelRequest(id, action.key, action.values);
+                    if (state.selectedId === id) state.panel = panel;
+                });
+            },
+            onProviderAction(key, values) {
+                const id = state.selectedId;
+                void runAction('#ext-section-panel', '#ext-section-panel', async () => {
+                    const provider = await API.providerRequest(id, key, values);
+                    if (state.selectedId === id) state.provider = provider;
+                });
+            },
+            async onRetryLive() {
+                const item = selectedItem();
+                state.liveError = '';
+                state.focusRequest = '#ext-section-panel';
+                render();
+                await loadLive(item);
+                if (closed) return;
+                state.focusRequest = '#ext-section-panel';
+                render();
+                schedulePoll();
+            },
+            // A read that works deletes the very button that was pressed, so
+            // the caller names where the keyboard lands.
+            onRetry(focus) {
+                state.focusRequest = focus || null;
+                void load(true);
+            },
+        };
 
-        function content() {
-            if (state.status === 'loading') {
-                return h('p', { class: 'market-status', role: 'status' }, COPY.loading);
-            }
-            if (state.status === 'failed') {
-                return [
-                    h('p', { class: 'market-failed', role: 'alert' }, state.error || COPY.failed),
-                    h('button', {
-                        class: 'market-action', id: 'ext-list-retry', type: 'button',
-                        onclick: () => load(true),
-                    }, COPY.retry),
-                ];
-            }
-            if (state.status === 'empty') {
-                return h('p', { class: 'market-status', role: 'status' }, COPY.empty);
-            }
-            return h('div', { class: 'market-cards' }, state.items.map(card));
-        }
-
-        function render() {
-            const active = document.activeElement;
-            const kept = active && host.contains(active) ? active.getAttribute('id') : null;
-            const wanted = state.focus || kept;
-            state.focus = null;
-            clear(host);
-            const nodes = [].concat(content());
-            nodes.forEach((node) => host.append(node));
-            if (!wanted) return;
-            // A control that was replaced by a disabled one (a switch while its
-            // download runs) cannot take focus; its card can, so the keyboard
-            // stays on the extension it was working with.
-            let target = host.querySelector(`#${wanted}`);
-            if (!target || target.hasAttribute('disabled')) {
-                const cardNode = target && target.closest ? target.closest('.market-card') : null;
-                target = cardNode || null;
-            }
-            if (target) target.focus();
-        }
-
-        load(true);
-    }
-
-    function switchId(id) {
-        return `ext-switch-${id}`;
-    }
-
-    function cardId(id) {
-        return `ext-card-${id}`;
+        void load(true);
+        return { close: () => modal.close() };
     }
 
     return { open };

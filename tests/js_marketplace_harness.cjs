@@ -42,6 +42,8 @@ const NAMES = [
     // agent picker. They read marketplace-items.js's projection, so they load
     // after it and before the two views that spend them.
     "BossModPackCard", "BossModFilterRail",
+    // The tab list's interaction, which the pack's sections read through.
+    "BossModSectionReader",
     "BossModMarketplaceSections", "BossModMarketplaceDetail",
     "BossModMarketplaceView", "BossModMarketplaceUpdates", "BossModMarketplace",
 ];
@@ -958,7 +960,7 @@ async function main() {
 
     // ── Hover, layered on top: it selects only after the pointer RESTS, so
     //    dragging down the list on the way to the panel does not strobe it.
-    const DELAY = global.BossModMarketplaceSections.HOVER_DELAY_MS;
+    const DELAY = global.BossModSectionReader.HOVER_DELAY_MS;
     await fire(sectionTabs()[0], "mouseenter");
     await wait(Math.round(DELAY / 2));
     verdict.hoverWaitsForTheIntentDelay =

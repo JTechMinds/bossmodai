@@ -1,11 +1,13 @@
 /**
  * BossMod AI — the form for a manifest-declared set of settings.
  *
- * Shared by the two dialogs that edit one: an agent's settings for an
- * extension (agent-config-dialog.js, `agent_config`) and the extension's own
- * (extension-settings-dialog.js, `settings`). The caller owns the modal and
- * supplies a `{load, save}` adapter for its endpoints; this owns everything
- * about the form:
+ * Shared by the two surfaces that edit one: an agent's settings for an
+ * extension (agent-config-dialog.js, `agent_config`), in a modal whose footer
+ * holds Cancel and Save (`placement: 'footer'`), and the extension's own
+ * (`settings`), inline in the Extensions detail's Settings section with its
+ * own Save under the fields (`placement: 'inline'`). The caller owns the
+ * surface and supplies a `{load, save}` adapter for its endpoints; this owns
+ * everything about the form:
  *   - the extension's help text first, as text, one paragraph per blank line;
  *   - one labelled input per field the server describes: `secret` through
  *     BossModSecretField (never pre-filled; when one is stored the placeholder
@@ -16,7 +18,9 @@
  *     the status line says "Checking…"; a refusal shows the server's message
  *     verbatim and keeps the typing; success shows the extension's own
  *     `verified` text (what it checked, in its words) — or "Saved." when the
- *     server verified nothing — and leaves a Done button.
+ *     server verified nothing. In the footer that replaces the form and
+ *     leaves a Done button; inline the form stays, re-drawn with the saved
+ *     values, and the sentence is its status line.
  *
  * States: loading, load failed (with retry), form, verifying, refused, saved.
  */
@@ -35,13 +39,21 @@ const BossModConfigForm = (() => {
         saved: 'Saved.',
     });
 
+    /** Where Save lives; see `create`'s `placement`. */
+    const PLACEMENTS = Object.freeze(['footer', 'inline']);
+
     /**
-     * Build the form inside a caller-owned modal.
+     * Build the form inside a caller-owned surface.
      *
      * @param {object} options
-     * @param {{setActions: Function, element: Element}} options.modal  The modal
-     *   from BossModOverlays.createModal; the form sets its actions.
-     * @param {Element} options.body  The modal body the form renders into.
+     * @param {'footer'|'inline'} options.placement  `'footer'`: Cancel and Save
+     *   are the modal's actions, and a save ends on a Done screen. `'inline'`:
+     *   no modal — Save sits under the fields inside the form, and a save
+     *   re-draws the form with the saved values and says so in its status line.
+     * @param {{setActions: Function, element: Element}} [options.modal]  The
+     *   modal from BossModOverlays.createModal; the form sets its actions.
+     *   Required for `'footer'`, unused inline.
+     * @param {Element} options.body  The element the form renders into.
      * @param {string} options.idPrefix  Prefix of every element id (`ext-config`
      *   gives `ext-config-form`, `ext-config-save`, `ext-config-<key>`, …).
      * @param {{load: () => Promise<object>, save: (values: Object<string, string>) => Promise<object>}} options.adapter
@@ -52,13 +64,18 @@ const BossModConfigForm = (() => {
      *   successful save.
      * @param {(config: object) => object[]} [options.extraActions]  Modal actions
      *   placed before Cancel and Save, given the loaded config (e.g. Remove).
+     *   Footer only: inline there is no action row to place them in.
      * @returns {{load: () => Promise<void>, dispose: () => void,
      *   config: () => (object|null), showError: (message: string) => void}}
-     * @throws {Error} When a required option is missing.
+     * @throws {Error} When a required option is missing, the placement is
+     *   neither, or inline is given a modal's extra actions.
      */
     function create(options) {
-        const { modal, body, idPrefix, adapter, onSaved, extraActions } = options || {};
-        if (!modal) throw new Error('[config-form] modal is required');
+        const { placement, modal, body, idPrefix, adapter, onSaved, extraActions } = options || {};
+        if (!PLACEMENTS.includes(placement)) throw new Error('[config-form] placement must be footer or inline');
+        const inline = placement === 'inline';
+        if (!inline && !modal) throw new Error('[config-form] modal is required');
+        if (inline && extraActions) throw new Error('[config-form] extraActions need a modal footer');
         if (!body) throw new Error('[config-form] body is required');
         if (!idPrefix) throw new Error('[config-form] idPrefix is required');
         if (!adapter || typeof adapter.load !== 'function' || typeof adapter.save !== 'function') {
@@ -87,7 +104,7 @@ const BossModConfigForm = (() => {
         function renderLoading() {
             clear(body);
             body.append(h('p', { class: 'field-hint', role: 'status' }, COPY.loading));
-            modal.setActions([{ label: COPY.cancel, tone: 'quiet' }]);
+            if (!inline) modal.setActions([{ label: COPY.cancel, tone: 'quiet' }]);
         }
 
         function renderLoadFailed(message) {
@@ -95,7 +112,7 @@ const BossModConfigForm = (() => {
             body.append(
                 h('p', { class: 'field-hint', role: 'alert' }, message),
                 h('button', { class: 'btn btn-sm', id: `${idPrefix}-retry`, type: 'button', onclick: () => { void load(); } }, COPY.retry));
-            modal.setActions([{ label: COPY.cancel, tone: 'quiet' }]);
+            if (!inline) modal.setActions([{ label: COPY.cancel, tone: 'quiet' }]);
         }
 
         function fieldControl(field) {
@@ -148,8 +165,13 @@ const BossModConfigForm = (() => {
             h('div', { class: 'ext-config-help' }, help.map((para) => h('p', { class: 'field-hint' }, para))),
             config.fields.map(fieldControl),
             statusEl,
-            errorEl);
+            errorEl,
+            inline
+                ? h('div', { class: 'ext-config-actions' },
+                    h('button', { class: 'btn btn-sm btn-primary', id: saveId, type: 'submit' }, COPY.save))
+                : null);
             body.append(form);
+            if (inline) return;
             const actions = extraActions ? extraActions(config) : [];
             actions.push({ label: COPY.cancel, tone: 'quiet' });
             actions.push({ label: COPY.save, tone: 'primary', id: saveId, form: formId });
@@ -169,7 +191,7 @@ const BossModConfigForm = (() => {
         async function save() {
             if (busy) return;
             busy = true;
-            const saveBtn = modal.element.querySelector(`#${saveId}`);
+            const saveBtn = (inline ? body : modal.element).querySelector(`#${saveId}`);
             if (saveBtn) saveBtn.disabled = true;
             showError('');
             statusEl.textContent = COPY.verifying;
@@ -179,7 +201,8 @@ const BossModConfigForm = (() => {
                 statusEl.textContent = '';
                 config = result;
                 onSaved(result);
-                renderSaved(result.verified);
+                if (inline) renderSavedInline(result.verified);
+                else renderSaved(result.verified);
             } catch (err) {
                 if (disposed) return;
                 statusEl.textContent = '';
@@ -197,6 +220,19 @@ const BossModConfigForm = (() => {
             modal.setActions([{ label: COPY.done, tone: 'primary', id: `${idPrefix}-done` }]);
             const done = modal.element.querySelector(`#${idPrefix}-done`);
             if (done) done.focus();
+        }
+
+        // Inline there is no Done screen to end on: the form stays, holding
+        // what was just stored, and the status line says what the save did.
+        // The re-draw replaces the node the keyboard was on (Save, after
+        // Enter or a click), so it is handed back by id, as the view does.
+        function renderSavedInline(verified) {
+            const active = document.activeElement;
+            const kept = active && active.id && body.contains(active) ? active.id : '';
+            renderForm();
+            statusEl.textContent = verified || COPY.saved;
+            const again = kept ? body.querySelector(`#${kept}`) : null;
+            if (again) again.focus();
         }
 
         async function load() {

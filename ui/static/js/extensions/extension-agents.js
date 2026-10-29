@@ -1,12 +1,15 @@
 /**
- * BossMod AI — Extensions → Configure agents: one extension, every agent.
+ * BossMod AI — the Extensions detail's Agents section: one extension, every agent.
  *
- * A `panel` layer from core/overlays.js over the Extensions dialog, opened
- * from the card of an enabled extension with per-agent settings (manifest
- * `agent_config`), so the operator sets it up for every agent in one place.
- * The desk's Extensions row stays the per-agent way in. Built from one read
- * (BossModExtensionsApi.extensionAgents), so it knows nothing about any one
- * extension:
+ * Mounted in the Agents section of an enabled extension with per-agent
+ * settings (manifest `agent_config`), so the operator sets it up for every
+ * agent in one place; the desk's Extensions row stays the per-agent way in.
+ * It is a component, not a layer: the controller (extensions-dialog.js)
+ * creates it once per opened extension and hands its `element` to the section
+ * on every render, so the table, a switch mid-request and focus survive the
+ * detail's rebuilds and tab switches. The section panel scrolls it. Built from
+ * one read (BossModExtensionsApi.extensionAgents), so it knows nothing about
+ * any one extension:
  *   - the extension's help text first, as text, one paragraph per blank line;
  *   - a table: Agent (face and name) | Status ("On", "On · <summary>", "Off")
  *     | On (a switch) | Settings (a button, only while on).
@@ -28,7 +31,7 @@
  * change and whenever the settings dialog closes; there is no polling. Focus
  * returns to the row's switch (or, from Settings, its Settings button).
  */
-const BossModExtensionAgentsLayer = (() => {
+const BossModExtensionAgents = (() => {
     const { h, clear } = BossModDom;
     const API = BossModExtensionsApi;
 
@@ -55,19 +58,23 @@ const BossModExtensionAgentsLayer = (() => {
     const message = (err) => String((err && err.message) || err);
 
     /**
-     * Open the Configure agents layer for one extension.
+     * Build the Agents section for one extension and start its first read.
      *
      * @param {object} options
      * @param {string} options.extensionId  An enabled extension with `agent_config`.
-     * @param {string} options.extensionName  Named in the title, the table's
-     *   caption, each switch's label and the turn-off question.
-     * @returns {void}
+     * @param {string} options.extensionName  Named in the table's caption, each
+     *   switch's label and the turn-off question.
+     * @returns {{element: HTMLElement, refresh: () => Promise<void>,
+     *   dispose: () => void}} `element` is the `.ext-agents` host the section
+     *   mounts; `refresh` re-reads the table in place (never rejects: every
+     *   outcome is a state); `dispose` stops it for good — a read or a
+     *   settings dialog still in flight then lands nowhere.
      * @throws {Error} When an option is missing.
      */
-    function open(options) {
+    function create(options) {
         const { extensionId, extensionName } = options || {};
-        if (!extensionId) throw new Error('[extension-agents-layer] extensionId is required');
-        if (!extensionName) throw new Error('[extension-agents-layer] extensionName is required');
+        if (!extensionId) throw new Error('[extension-agents] extensionId is required');
+        if (!extensionName) throw new Error('[extension-agents] extensionName is required');
 
         const host = h('div', { class: 'ext-agents' });
         const state = {
@@ -86,19 +93,7 @@ const BossModExtensionAgentsLayer = (() => {
         /** Agent id → its row's controls, from the last render. */
         let controls = new Map();
         const load = BossModGates.createLoadGeneration();
-        let closed = false;
-
-        BossModOverlays.createModal({
-            title: `${extensionName} — agents`,
-            // Panel bodies do not scroll themselves (overlays.css); this does.
-            body: h('div', { class: 'ext-scroll' }, host),
-            actions: [],
-            size: 'panel',
-            onClose: () => {
-                closed = true;
-                load.next();
-            },
-        });
+        let disposed = false;
 
         /**
          * Re-read the table. A response overtaken by a later read is dropped.
@@ -114,12 +109,12 @@ const BossModExtensionAgentsLayer = (() => {
             }
             try {
                 const data = await API.extensionAgents(extensionId);
-                if (closed || !load.isCurrent(loadId)) return;
+                if (disposed || !load.isCurrent(loadId)) return;
                 state.data = data;
                 state.status = data.agents.length ? 'ready' : 'empty';
                 state.error = '';
             } catch (err) {
-                if (closed || !load.isCurrent(loadId)) return;
+                if (disposed || !load.isCurrent(loadId)) return;
                 state.status = 'failed';
                 state.error = message(err);
             }
@@ -144,7 +139,7 @@ const BossModExtensionAgentsLayer = (() => {
                 state.errors[agent.id] = message(err);
             }
             state.pending.delete(agent.id);
-            if (closed) return;
+            if (disposed) return;
             state.focus = { agentId: agent.id, control: 'switch' };
             if (ok) await refresh(false);
             else render();
@@ -157,7 +152,7 @@ const BossModExtensionAgentsLayer = (() => {
                 agentName: agent.name,
                 onSaved: () => { void refresh(false); },
                 onClosed: () => {
-                    if (closed) return;
+                    if (disposed) return;
                     state.focus = { agentId: agent.id, control };
                     void refresh(false);
                 },
@@ -291,7 +286,15 @@ const BossModExtensionAgentsLayer = (() => {
         }
 
         void refresh(true);
+        return {
+            element: host,
+            refresh: () => refresh(false),
+            dispose: () => {
+                disposed = true;
+                load.next();
+            },
+        };
     }
 
-    return { open };
+    return { create };
 })();

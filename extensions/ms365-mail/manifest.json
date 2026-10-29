@@ -3,6 +3,9 @@
   "name": "Microsoft 365 Mailbox",
   "version": "1.0.0",
   "description": "Lets agents send and read email through a Microsoft 365 mailbox, using an app you authorize in Microsoft Entra. After enabling, set up each agent's mailbox at their desk.",
+  "summary": "Agents send and read email from a Microsoft 365 mailbox.",
+  "author": "JTechMinds LLC",
+  "category": "email",
   "command": {
     "name": "mail",
     "summary": "Send and read email through your Microsoft 365 mailbox.",

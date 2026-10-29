@@ -125,6 +125,7 @@ def _install(client, monkeypatch, tmp_path, **manifest_parts) -> SimpleNamespace
     folder.mkdir()
     manifest = {
         "id": ext_id, "name": "Svc", "version": "1.0.0", "description": "A service.",
+        "summary": "s", "author": "Tests", "category": "testing",
         "service": True, "panel": True, "settings": _NUMBERS_ONLY, "defaults": {"reads_settings": True},
         **manifest_parts,
     }

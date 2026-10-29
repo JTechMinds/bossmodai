@@ -140,7 +140,7 @@ def _excluded_agents() -> list[dict[str, Any]]:
 
 
 def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
-    """One extension as the Extensions dialog renders it."""
+    """One extension as the Extensions view renders it."""
     manifest = entry.manifest
     if manifest is None:
         return {
@@ -148,6 +148,9 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
             "name": entry.id,
             "version": None,
             "description": None,
+            "summary": None,
+            "author": None,
+            "category": None,
             "command": None,
             "enabled": False,
             "valid": False,
@@ -172,6 +175,9 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
         "name": manifest.name,
         "version": manifest.version,
         "description": manifest.description,
+        "summary": manifest.summary,
+        "author": manifest.author,
+        "category": manifest.category,
         "command": (
             {"name": manifest.command.name, "summary": manifest.command.summary}
             if manifest.command is not None else None

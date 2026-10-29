@@ -179,6 +179,7 @@ def test_a_disabled_extensions_command_does_not_shut_it_down(monkeypatch: pytest
     folder.mkdir()
     (folder / "manifest.json").write_text(json.dumps({
         "id": "held-ext", "name": "Held", "version": "0.1.0", "description": "Holds something.",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": "held", "summary": "s", "usage": "held go", "help": "h"},
         "setup": {"required": False},
     }), encoding="utf-8")

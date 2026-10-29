@@ -46,6 +46,9 @@ def _manifest(ext_id: str = "demo-ext", command: str = "demo", **overrides: Any)
         "name": "Demo",
         "version": "0.1.0",
         "description": "A test extension.",
+        "summary": "One line.",
+        "author": "Tests",
+        "category": "testing",
         "command": {"name": command, "summary": "Demo things.", "usage": f"{command} go", "help": "Demo help."},
         "setup": {"required": False},
     }
@@ -112,6 +115,35 @@ def test_an_unknown_manifest_key_is_rejected(tmp_path: Path) -> None:
     entry = discover(tmp_path, CORE_COMMAND_NAMES).get("extra")
     assert entry is not None and not entry.valid
     assert "surprise" in entry.invalid_reason
+
+
+@pytest.mark.parametrize("field", ["summary", "author", "category"])
+def test_a_manifest_missing_card_metadata_is_invalid(tmp_path: Path, field: str) -> None:
+    # Required, so a folder without it lists as invalid with the validator's
+    # reason rather than as a silently blank card.
+    data = _manifest()
+    del data[field]
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    with pytest.raises(ManifestError, match=field):
+        load_manifest(path)
+
+
+@pytest.mark.parametrize("category", ["Web Browsing", "web--x", "-x"])
+def test_a_category_must_be_a_slug(tmp_path: Path, category: str) -> None:
+    path = tmp_path / "manifest.json"
+    path.write_text(json.dumps(_manifest(category=category)), encoding="utf-8")
+    with pytest.raises(ManifestError, match="category"):
+        load_manifest(path)
+
+
+def test_every_bundled_manifest_declares_card_metadata() -> None:
+    manifests = sorted((Path(__file__).resolve().parents[1] / "extensions").glob("*/manifest.json"))
+    # A glob that stops finding the bundled extensions proves nothing by being green.
+    assert len(manifests) >= 5, manifests
+    for path in manifests:
+        manifest = load_manifest(path)
+        assert manifest.summary and manifest.author and manifest.category, path
 
 
 def test_a_command_colliding_with_a_core_command_is_invalid(tmp_path: Path) -> None:

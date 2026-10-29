@@ -48,7 +48,10 @@ def _unique_id(prefix: str = "cap") -> str:
 
 
 def _base(ext_id: str, **overrides: Any) -> dict[str, Any]:
-    data: dict[str, Any] = {"id": ext_id, "name": "Cap", "version": "1.0.0", "description": "A test extension."}
+    data: dict[str, Any] = {
+        "id": ext_id, "name": "Cap", "version": "1.0.0", "description": "A test extension.",
+        "summary": "s", "author": "Tests", "category": "testing",
+    }
     data.update(overrides)
     return data
 

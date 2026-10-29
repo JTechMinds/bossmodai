@@ -1,4 +1,4 @@
-"""Extensions dialog, live-view status reader and viewer, Configure agents layer and the per-agent surfaces, in the fake DOM."""
+"""Extensions view (browse grid, detail and its sections), live-view status reader and viewer, and the per-agent surfaces, in the fake DOM."""
 
 from __future__ import annotations
 
@@ -15,18 +15,26 @@ MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "switch.js",
     JS / "core" / "avatar.js",
+    # The marketplace's browse and detail builders the Extensions view is made of.
+    JS / "marketplace" / "marketplace-withheld.js",
+    JS / "marketplace" / "marketplace-items.js",
+    JS / "marketplace" / "pack-card.js",
+    JS / "marketplace" / "filter-rail.js",
+    JS / "marketplace" / "section-reader.js",
     JS / "extensions" / "extensions-api.js",
     JS / "extensions" / "live-status.js",
     JS / "extensions" / "extensions-live.js",
-    JS / "extensions" / "extension-panel.js",
-    JS / "extensions" / "extensions-dialog.js",
     JS / "core" / "gates.js",
     JS / "core" / "secret-field.js",
     JS / "core" / "data-table.js",
     JS / "extensions" / "config-form.js",
     JS / "extensions" / "agent-config-dialog.js",
-    JS / "extensions" / "extension-settings-dialog.js",
-    JS / "extensions" / "extension-agents-layer.js",
+    JS / "extensions" / "extension-agents.js",
+    JS / "extensions" / "extension-panel.js",
+    JS / "extensions" / "extension-items.js",
+    JS / "extensions" / "extension-detail.js",
+    JS / "extensions" / "extensions-view.js",
+    JS / "extensions" / "extensions-dialog.js",
     JS / "context" / "desk-extensions.js",
     JS / "core" / "tabs.js",
     JS / "core" / "fact-list.js",
@@ -48,7 +56,7 @@ def _payload() -> dict:
 def test_status_reader_viewer_and_card() -> None:
     payload = _payload()
     for key in (
-        "cardHasNoWatchButton",
+        "detailHasNoWatchButton",
         "noFetchesWithoutSubscribers", "subscribingReadsAtOnce", "noPollingOverSixtySeconds",
         "anEventReadsExactlyOnce", "aNullEventReadsEverythingOnce", "anUnlistedEventReadsEverythingOnce",
         "aBurstOfFiveReadsAtMostTwice", "resyncReadsEverythingOnce",
@@ -71,8 +79,8 @@ def test_the_status_module_has_no_timer() -> None:
     assert "setInterval" not in source and "setTimeout" not in source
 
 
-def test_the_agents_layer_has_no_timer() -> None:
-    source = (JS / "extensions" / "extension-agents-layer.js").read_text(encoding="utf-8")
+def test_the_agents_section_has_no_timer() -> None:
+    source = (JS / "extensions" / "extension-agents.js").read_text(encoding="utf-8")
     assert "setInterval" not in source and "setTimeout" not in source
 
 
@@ -89,10 +97,11 @@ def test_the_live_tone_colours_the_icon_soft_green() -> None:
 
 def test_the_multi_agent_tile_layer_is_gone() -> None:
     live = (JS / "extensions" / "extensions-live.js").read_text(encoding="utf-8")
-    dialog = (JS / "extensions" / "extensions-dialog.js").read_text(encoding="utf-8")
     assert "return { openForAgent, headerCapability };" in live
     assert "ext-live-tile" not in live and "market-cards" not in live
-    assert "BossModExtensionsLive" not in dialog and "Watch" not in dialog
+    for name in ("extensions-dialog.js", "extensions-view.js", "extension-detail.js"):
+        source = (JS / "extensions" / name).read_text(encoding="utf-8")
+        assert "BossModExtensionsLive" not in source and "Watch" not in source, name
 
 
 def test_the_per_agent_surfaces() -> None:
@@ -115,11 +124,33 @@ def test_the_per_agent_surfaces() -> None:
         assert payload.get(key) is True, (key, payload)
 
 
-def test_the_configure_agents_layer() -> None:
+def test_the_browse_view() -> None:
     payload = _payload()
     for key in (
-        "configureAgentsOnlyWhenOnWithAgentConfig",
-        "agentsLayerShowsLoading", "agentsLayerFailedOffersRetry", "agentsLayerRetryLoadsTheTable",
+        "browseCardsShowNameVersionCategorySummaryAuthor", "cardsAreButtonsWithNoControls", "chipTonesFollowState",
+        "railHasShowAndCategoriesWithCounts", "railFiltersToOnAndToACategory", "listLoadFailureOffersRetry",
+        "emptySaysSo",
+    ):
+        assert payload.get(key) is True, (key, payload)
+
+
+def test_the_detail() -> None:
+    payload = _payload()
+    for key in (
+        "selectOpensDetailWithTrailStep", "backReturnsToTheGridAndTheCard", "heroShowsSummaryAndByline",
+        "sectionsFollowTheManifest", "offSectionsSayTurnItOn", "toggleRefreshesTheStatus",
+        "toggleRefusalRevertsWithTheReason", "setupMissingAsksThenStarts", "setupInstallingPollsUntilReady",
+        "setupFailedOffersRetry", "detailHasNoWatchButton", "openWithAnIdLandsOnItsDetail",
+        "openWithAnUnknownIdSaysSo", "closeDisposesAndStopsPolling",
+    ):
+        assert payload.get(key) is True, (key, payload)
+
+
+def test_the_agents_section() -> None:
+    payload = _payload()
+    for key in (
+        "agentsSectionOnlyWhenOnWithAgentConfig",
+        "agentsSectionShowsLoading", "agentsSectionFailedOffersRetry", "agentsSectionRetryLoadsTheTable",
         "agentsTableIsSemantic", "agentsRowsShowEachAgent", "agentsImageIncapableOffRowIsDisabled",
         "agentsQuickEnableSavesDefaults",
         "agentsTurnOffAsksFirst", "agentsTurnOffCancelKeepsIt", "agentsTurnOffRemovesTheSettings",
@@ -127,6 +158,7 @@ def test_the_configure_agents_layer() -> None:
         "agentsSettingsOpensTheDialog", "agentsSettingsCloseRereadsAndRefocuses",
         "agentsEmptySaysSo", "agentsSummaryShowsWhenOn",
         "agentsSwitchOpensSettingsWhenAFieldIsRequired", "agentsDialogCloseRereadsAndRefocusesTheSwitch",
+        "excludedAgentsListedForImageOnlyExtension",
     ):
         assert payload.get(key) is True, (key, payload)
 
@@ -140,32 +172,45 @@ def test_nothing_but_the_data_table_names_tabulator() -> None:
     assert offenders == ["core/data-table.js"], offenders
 
 
-def test_chatgpt_extension_sign_in_and_connection_status() -> None:
+def test_the_connection_section() -> None:
     payload = _payload()
-    for key in ("chatgptSignInInExtension", "chatgptSignInStartsAndPolls", "chatgptCompletionShowsConnection", "chatgptCloseStopsPolling", "providerControlsHandleUnrelatedExtension"):
+    for key in (
+        "chatgptSignInInExtension", "chatgptSignInStartsAndPolls", "chatgptCompletionShowsConnection",
+        "chatgptCloseStopsPolling", "providerControlsHandleUnrelatedExtension", "providerControlsKeepTheirMarkup",
+        "providerChoicesHaveVisibleLabels",
+    ):
         assert payload.get(key) is True, (key, payload)
 
 
-def test_a_panel_extensions_card_its_settings_and_the_shared_provider_markup() -> None:
+def test_the_status_section() -> None:
     payload = _payload()
     for key in (
         "panelShowsMessageFactsAndAction", "panelHasNoCommandLineAndShowsTheServiceSwitch",
         "panelMasksTheSecretUntilShown", "panelShowRevealsTheSecret", "panelCopyWritesTheValue",
         "panelCopyFeedbackFadesBack", "panelActionPostsAndRerenders", "panelActionRefusalIsAnAlert",
         "panelErrorAndServiceErrorAreAlerts", "panelLoadFailureShowsTheReasonAndRetry", "panelRetryRereads",
-        "settingsButtonShowsWhileOffWithoutAPanel", "settingsDialogRendersTheSharedForm",
-        "settingsDialogSavesAndSaysSaved", "settingsRefusalKeepsTheTyping", "settingsApplyFailureRereadsTheCard",
-        "settingsVerifiedTextIsShown", "failedServiceStartRevertsTheSwitchWithTheReason",
-        "serviceSwitchOnLoadsThePanel", "providerControlsKeepTheirMarkup",
+        "failedServiceStartRevertsTheSwitchWithTheReason", "serviceSwitchOnLoadsThePanel",
     ):
         assert payload.get(key) is True, (key, payload)
 
 
-def test_one_form_implementation_serves_both_settings_dialogs() -> None:
+def test_the_settings_section() -> None:
+    payload = _payload()
+    for key in (
+        "settingsSectionShowsWhileOff", "settingsSectionRendersTheSharedForm", "settingsSavesInPlaceAndSaysSaved",
+        "settingsRefusalKeepsTheTyping", "settingsApplyFailureRereadsTheItem", "settingsVerifiedTextIsShown",
+        "settingsTypingSurvivesATabSwitch", "settingsTypingAndFocusSurviveAPollRender",
+    ):
+        assert payload.get(key) is True, (key, payload)
+
+
+def test_one_form_implementation_serves_both_settings_surfaces() -> None:
     agent = (JS / "extensions" / "agent-config-dialog.js").read_text(encoding="utf-8")
-    settings = (JS / "extensions" / "extension-settings-dialog.js").read_text(encoding="utf-8")
+    settings = (JS / "extensions" / "extensions-dialog.js").read_text(encoding="utf-8")
     form = (JS / "extensions" / "config-form.js").read_text(encoding="utf-8")
     for source in (agent, settings):
         assert "BossModConfigForm.create(" in source
         assert "BossModSecretField" not in source and "field-input" not in source
+    assert "placement: 'footer'" in agent
+    assert "placement: 'inline'" in settings
     assert "BossModSecretField.bind" in form and "type: 'number'" in form

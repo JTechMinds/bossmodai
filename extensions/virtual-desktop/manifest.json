@@ -3,6 +3,9 @@
   "name": "Virtual Desktop",
   "version": "1.0.0",
   "description": "Gives agents their own Linux desktop (a Docker container) that they use by screenshot, mouse and keyboard.",
+  "summary": "Gives each agent its own Linux desktop.",
+  "author": "JTechMinds LLC",
+  "category": "computer-use",
   "command": {
     "name": "vm",
     "summary": "Use your own Linux desktop by screenshot, mouse and keyboard.",

@@ -46,6 +46,7 @@ HARNESS_MODULES = [
     JS / "marketplace" / "marketplace-items.js",
     JS / "marketplace" / "pack-card.js",
     JS / "marketplace" / "filter-rail.js",
+    JS / "marketplace" / "section-reader.js",
     JS / "marketplace" / "marketplace-sections.js",
     JS / "marketplace" / "marketplace-detail.js",
     JS / "marketplace" / "marketplace-view.js",
@@ -64,6 +65,7 @@ MARKETPLACE_MODULES = [
     JS / "marketplace" / "marketplace-items.js",
     JS / "marketplace" / "pack-card.js",
     JS / "marketplace" / "filter-rail.js",
+    JS / "marketplace" / "section-reader.js",
     JS / "marketplace" / "marketplace-sections.js",
     JS / "marketplace" / "marketplace-detail.js",
     JS / "marketplace" / "marketplace-view.js",
@@ -80,6 +82,7 @@ INDEX_MODULES = (
     "js/marketplace/marketplace-items.js",
     "js/marketplace/pack-card.js",
     "js/marketplace/filter-rail.js",
+    "js/marketplace/section-reader.js",
     "js/marketplace/marketplace-sections.js",
     "js/marketplace/marketplace-detail.js",
     "js/marketplace/marketplace-view.js",
@@ -494,14 +497,17 @@ def test_the_detail_draws_one_rule_and_reads_its_sections_in_a_tab_list() -> Non
         "nullSectionsRenderNoTab",
     ):
         assert payload[key] is True, key
-    reader = _read(JS / "marketplace" / "marketplace-sections.js")
+    # The tab list's interaction is section-reader.js's, shared with the
+    # Extensions detail; marketplace-sections.js hands it the pack's entries.
+    reader = _read(JS / "marketplace" / "section-reader.js")
     assert "role: 'tablist'" in reader
     assert "'aria-orientation': 'vertical'" in reader
     assert "role: 'tab'," in reader
     assert "'aria-selected': selected ? 'true' : 'false'," in reader
     assert "tabindex: selected ? '0' : '-1'," in reader
     assert "role: 'tabpanel'" in reader
-    assert "'aria-labelledby': `market-section-${at}`," in reader
+    assert "'aria-labelledby': `${idPrefix}-${at}`," in reader
+    assert "idPrefix: 'market-section'," in _read(JS / "marketplace" / "marketplace-sections.js")
     # Every key the pattern owes: both arrows, both ends, and the default that
     # does nothing at all rather than swallowing the keystroke.
     assert "const STEP = Object.freeze({ ArrowDown: 1, ArrowUp: -1 });" in reader
@@ -568,23 +574,23 @@ def test_hover_selects_a_section_only_once_the_pointer_has_rested() -> None:
         "leavingBeforeTheDelaySelectsNothing", "hoveringTheOpenSectionRebuildsNothing",
     ):
         assert payload[key] is True, key
-    reader = _read(JS / "marketplace" / "marketplace-sections.js")
+    reader = _read(JS / "marketplace" / "section-reader.js")
     assert "const HOVER_DELAY_MS = 120;" in reader
-    assert "onmouseenter: (event) => armHover(entry, selected, event.target, handlers)," in reader
+    assert "onmouseenter: (event) => armHover(entry, selected, event.target, config)," in reader
     assert "onmouseleave: () => cancelHover()," in reader
     # The loop guard, and the teardown guard: a timer must not reach past the
     # surface that armed it.
     armed = reader.split("function armHover(", 1)[1].split("\n    }", 1)[0]
     assert "if (selected) return;" in armed
     assert "if (!document.body.contains(node)) return;" in armed
-    assert "handlers.onSection(entry.spec.id, null);" in armed
+    assert "config.onSelect(entry.id, null);" in armed
     # Every deliberate selection goes through one door, so a pending hover
     # cannot land on top of the choice just made.
-    assert "function choose(entry, focus, handlers) {\n        cancelHover();" in reader
+    assert "function choose(entry, focus, config) {\n        cancelHover();" in reader
     # And hover is never the only way in: click and both arrows reach every
     # entry, which is what makes the list work on a touch screen.
-    assert "onclick: () => choose(entry, `#${id}`, handlers)," in reader
-    assert "onkeydown: (event) => move(event, at, entries, handlers)," in reader
+    assert "onclick: () => choose(entry, `#${id}`, config)," in reader
+    assert "onkeydown: (event) => move(event, at, entries, config)," in reader
 
 
 def test_the_sections_are_the_servers_and_absence_is_reported_as_absence() -> None:
@@ -1117,6 +1123,9 @@ def test_every_marketplace_module_stays_a_module() -> None:
         "marketplace.js", "marketplace-items.js", "marketplace-withheld.js",
         "marketplace-sections.js", "marketplace-detail.js", "marketplace-view.js",
         "pack-card.js", "filter-rail.js",
+        # The tab list's interaction, moved out of marketplace-sections.js
+        # when the Extensions detail came to read its sections the same way.
+        "section-reader.js",
         # The catalog-update banner and its review layer: a separate surface
         # with its own request and state, over the grid.
         "marketplace-updates.js",
@@ -1411,9 +1420,10 @@ def test_the_section_panel_hugs_its_content_and_cannot_move_the_list() -> None:
     assert "min-height" not in narrow
     assert "grid-template-columns: minmax(0, 1fr);" in narrow
     # Geometry stays CSS's: nothing in the reader measures a box to decide one.
-    reader = _code(JS / "marketplace" / "marketplace-sections.js")
-    for banned in ("offsetHeight", "clientHeight", "getBoundingClientRect", "style."):
-        assert banned not in reader, banned
+    for name in ("marketplace-sections.js", "section-reader.js"):
+        reader = _code(JS / "marketplace" / name)
+        for banned in ("offsetHeight", "clientHeight", "getBoundingClientRect", "style."):
+            assert banned not in reader, (name, banned)
 
 
 def test_the_section_panel_is_set_as_prose_and_not_as_chrome() -> None:

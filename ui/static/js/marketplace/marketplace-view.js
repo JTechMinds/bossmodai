@@ -66,6 +66,8 @@ const BossModMarketplaceView = (() => {
     const STATE_CHIP = Object.freeze({
         installed: 'Installed', update: 'Update available',
     });
+    // The tint each of those chips wears (pack-card.js `chipTone`).
+    const CHIP_TONE = Object.freeze({ installed: 'ok', update: 'attention' });
 
     // "code-review" -> "Code Review". The DERIVATION moved to the projection
     // when the detail view came to need the same string — it cannot call this
@@ -207,7 +209,7 @@ const BossModMarketplaceView = (() => {
             author: item.author,
             chip: STATE_CHIP[item.state] || null,
             packId: item.packId || null,
-            installedState: item.state === 'install' ? null : item.state,
+            chipTone: CHIP_TONE[item.state] || null,
         }, {
             id,
             selected: state.selectedId === item.key,

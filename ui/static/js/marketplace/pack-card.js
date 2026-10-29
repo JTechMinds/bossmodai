@@ -115,7 +115,11 @@ const BossModPackCard = (() => {
      *   also have to be known by everything in between. An
      *   empty `category` label means an empty chip, which is a blue box that
      *   says nothing — so the chip follows the label's truthiness, not the
-     *   field's presence.
+     *   field's presence. `chipTone` tints the footer chip — `'ok'` (green:
+     *   installed, on) or `'attention'` (amber: an update, unavailable) —
+     *   and null or absent leaves it neutral. It names a TONE rather than a
+     *   pack state, because the Extensions view's cards carry the same two
+     *   tints for states that are not installs.
      * @param {object} deps
      * @param {string} deps.id  The card's dom id. Required: a rebuild drops
      *   whatever node held focus, and the id is what a caller hands focus back
@@ -146,7 +150,7 @@ const BossModPackCard = (() => {
             type: 'button',
             id,
             'data-pack-id': view.packId || null,
-            'data-installed': view.installedState || null,
+            'data-chip-tone': view.chipTone || null,
             'aria-current': selected ? 'true' : null,
             onclick: onSelect,
         },

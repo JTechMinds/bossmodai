@@ -55,6 +55,7 @@ HARNESS_MODULES = [
     JS / "core" / "search-field.js",
     JS / "core" / "tabs.js",
     JS / "marketplace" / "marketplace-withheld.js",
+    JS / "marketplace" / "section-reader.js",
     JS / "marketplace" / "marketplace-sections.js",
     JS / "marketplace" / "marketplace-detail.js",
     CONTEXT / "agent-template-picker.js",

@@ -55,7 +55,7 @@ const NAMES = [
     "BossModSearchField", "BossModTabs",
     // Save as template asks its one question with the strip the marketplace
     // detail builds, so that view and the two modules it leans on load too.
-    "BossModMarketplaceWithheld", "BossModMarketplaceSections", "BossModMarketplaceDetail",
+    "BossModMarketplaceWithheld", "BossModSectionReader", "BossModMarketplaceSections", "BossModMarketplaceDetail",
     "BossModAgentTemplatePicker",
     "BossModAgentFormTemplate", "BossModAgentSaveTemplate", "BossModAgentDialogFooter",
     "BossModAgentAddPane", "BossModAgentDialogSlot",

@@ -3,6 +3,9 @@
   "name": "Browser Vision",
   "version": "1.0.0",
   "description": "Lets agents browse websites through screenshots with an adjustable click grid.",
+  "summary": "Agents browse websites by looking at screenshots.",
+  "author": "JTechMinds LLC",
+  "category": "web-browsing",
   "command": {
     "name": "bv",
     "summary": "Browse websites by screenshot + grid.",

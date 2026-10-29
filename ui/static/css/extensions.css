@@ -1,13 +1,19 @@
-/* ─── Extensions: the live view ───
+/* ─── Extensions ───
 
-   The Extensions dialog itself is built from marketplace.css's card classes;
-   this sheet adds only what those do not cover for the single-agent live
-   viewer — a band of the image's facts pinned above a scroller (panel bodies
-   do not scroll themselves, see overlays.css) and the full-size image. The
-   band is three quiet lines of soft grey text — the page (title, then its
-   URL, each when the item has one), the command, and the extension's facts —
-   with no fill, border or dividers: spacing alone sets it apart from the
-   image. Linked after marketplace.css. */
+   The Extensions view (extensions/extensions-view.js and extension-detail.js)
+   is built from marketplace.css's browse and detail classes — the rail, the
+   card grid, the hero and the section reader — so it reads like the agent
+   marketplace. This sheet holds only the extension-only parts: the inside of
+   a detail section (its settings form, status panel, dropdowns and agents
+   table), the single-agent live viewer and the per-agent view. Linked after
+   marketplace.css.
+
+   The live viewer is a band of the image's facts pinned above a scroller
+   (panel bodies do not scroll themselves, see overlays.css) and the full-size
+   image. The band is three quiet lines of soft grey text — the page (title,
+   then its URL, each when the item has one), the command, and the extension's
+   facts — with no fill, border or dividers: spacing alone sets it apart from
+   the image. */
 
 /* The viewer's body: the band stays put while the image pans beneath it —
    the focal content scrolls, its context does not. */
@@ -88,19 +94,24 @@ span.ext-live-url { text-decoration: none; }
   border: 1px solid var(--line);
 }
 
-/* ─── Settings forms (extensions/config-form.js, used by agent-config-dialog.js and extension-settings-dialog.js) ─── */
+/* ─── A detail section's content (extensions/extension-detail.js) ───
+
+   One column per section, on the section reader's 12px rhythm. */
+.ext-section-body { display: flex; flex-direction: column; gap: 12px; }
+
+/* The agents whose model can't see images, inside the section's note. */
+.ext-excluded { margin: 4px 0; padding-left: 16px; }
+
+/* ─── Settings forms (extensions/config-form.js: agent-config-dialog.js in a
+   modal footer, the Extensions detail's Settings section inline) ─── */
 
 .ext-config-form { display: flex; flex-direction: column; gap: 12px; }
 .ext-config-help { display: flex; flex-direction: column; gap: 6px; }
 .ext-config-help .field-hint { white-space: pre-wrap; word-break: break-word; }
 .ext-config-secret { display: flex; gap: 6px; align-items: center; }
 .ext-config-status:empty { display: none; }
-
-/* An Extensions card's Configure agents and Settings buttons, under its
-   switch. The card is a flex column that stretches its children; a button
-   keeps its width. */
-.ext-card-agents,
-.ext-card-settings { align-self: flex-start; }
+/* The inline form's own Save, under its fields at the right. */
+.ext-config-actions { display: flex; justify-content: flex-end; }
 
 /* ─── An extension's status panel (extensions/extension-panel.js) ───
 
@@ -127,20 +138,20 @@ span.ext-live-url { text-decoration: none; }
 
 .ext-panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
-/* ─── Configure agents (extensions/extension-agents-layer.js) ───
+/* A provider's choice: its visible label over the app's dropdown. */
+.ext-choice { display: flex; flex-direction: column; gap: 4px; }
+
+/* ─── The Agents section (extensions/extension-agents.js) ───
 
    One extension, every agent: its help, then a plain table — hairline rules
    between rows, quiet column heads in the viewer band's label ink, and the
-   switch and Settings columns only as wide as they need. Centred in the
-   panel's reading column, like the task detail, so a wide window adds margin
-   rather than pulling four columns apart. */
+   switch and Settings columns only as wide as they need. The section panel is
+   the reading column, so the table takes its width. */
 
 .ext-agents {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  max-width: var(--panel-column);
-  margin: 0 auto;
 }
 
 .ext-agents-table {

@@ -18,6 +18,10 @@ _COMMAND_PATTERN = r"^[a-z][a-z0-9-]{1,15}$"
 # A no_retry entry is matched word by word against the parsed (lowercased)
 # command, so it is lowercase words with single spaces.
 _NO_RETRY_PATTERN = r"^[a-z0-9-]+( [a-z0-9-]+)*$"
+# A category is a slug with single hyphens, so the UI's one slug → label
+# derivation (BossModMarketplaceItems.categoryLabel) title-cases it cleanly:
+# `code-review` → "Code Review", as the marketplace labels its categories.
+_CATEGORY_PATTERN = r"^[a-z][a-z0-9]*(-[a-z0-9]+)*$"
 
 
 class ManifestError(Exception):
@@ -261,6 +265,14 @@ class ExtensionManifest(_Strict):
     name: str = Field(min_length=1)
     version: str = Field(min_length=1)
     description: str = Field(min_length=1)
+    # The one line the Extensions view's card shows under the name; the
+    # description is the detail's lead paragraph.
+    summary: str = Field(min_length=1)
+    # Who made the extension, shown on its card and in its detail's byline.
+    author: str = Field(min_length=1)
+    # The Extensions view's rail group, as a slug the UI title-cases. The
+    # extension owns it: core never lists or names categories.
+    category: str = Field(pattern=_CATEGORY_PATTERN, max_length=40)
     # None: the extension gives agents no CLI command (a service or panel
     # extension). Every agent-facing block below then needs a command.
     command: CommandSpec | None = None

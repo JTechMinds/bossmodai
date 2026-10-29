@@ -2,8 +2,9 @@
 
    The agent marketplace, moved out of overlays.css: that file owns the overlay
    PRIMITIVES — the modal, the menu, the popover, the toast — and this is a
-   full-screen browsing-and-reading surface that merely rides one of them. Every
-   rule here lives inside .modal-panel[data-size="takeover"], so this sheet is
+   full-screen browsing-and-reading surface that merely rides one of them. The
+   Extensions view (extensions/extensions-view.js, a takeover of its own) and
+   the Add agent picker are built from these same classes too, so this sheet is
    linked AFTER overlays.css and the cascade order is load-bearing.
 
    TWO VIEWS, one at a time, and the panel is the same size for both. Browse is
@@ -412,9 +413,9 @@
   color: var(--muted);
 }
 
-.market-card[data-installed] { border-color: var(--line-strong); }
-.market-card[data-installed="installed"] .market-card-state { background: var(--ok-bg); color: var(--ok-ink); }
-.market-card[data-installed="update"] .market-card-state { background: var(--amber); color: var(--amber-ink); }
+.market-card[data-chip-tone] { border-color: var(--line-strong); }
+.market-card[data-chip-tone="ok"] .market-card-state { background: var(--ok-bg); color: var(--ok-ink); }
+.market-card[data-chip-tone="attention"] .market-card-state { background: var(--amber); color: var(--amber-ink); }
 
 .market-status { margin: 0; font-size: 13px; color: var(--muted); }
 .market-failed { margin: 0 0 8px; font-size: 13px; color: var(--alert); }
@@ -801,9 +802,15 @@
   .market-rail-item { width: auto; }
   /* The section list stops being a column beside the panel and becomes the row
      above it. Still a vertical tab list to the keyboard — the arrows that move
-     it are Up and Down at every width, because the list is the same list. */
-  .market-detail-read { grid-template-columns: minmax(0, 1fr); }
+     it are Up and Down at every width, because the list is the same list.
+     `start`: the row still takes the column's leftover height, and stretched
+     auto rows would split it into an empty band between the list and the
+     panel. Packed at the top, the slack falls below the panel instead. */
+  .market-detail-read { grid-template-columns: minmax(0, 1fr); align-content: start; }
   .market-section-list { flex-direction: row; flex-wrap: wrap; }
   .market-section-tab { width: auto; }
   .market-detail-title { font-size: 19px; }
+  /* The hero's action — Install, or an extension's switch — drops under the
+     name instead of squeezing it. */
+  .market-detail-hero { flex-wrap: wrap; }
 }

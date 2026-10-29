@@ -61,6 +61,9 @@ def providers(monkeypatch, tmp_path):
                     "name": ext_id,
                     "version": "1.0.0",
                     "description": "Independent provider",
+                    "summary": "Demo",
+                    "author": "Tests",
+                    "category": "testing",
                     "command": {
                         "name": ext_id,
                         "summary": "Demo",

@@ -198,6 +198,9 @@ def _fake_setup_extension(root: Path, ext_id: str, *, fail: bool) -> None:
         "name": "Setup Demo",
         "version": "1.0.0",
         "description": "Needs a download.",
+        "summary": "s",
+        "author": "Tests",
+        "category": "testing",
         "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": True, "label": "Download thing"},
     }), encoding="utf-8")
@@ -261,6 +264,8 @@ def test_an_invalid_extension_cannot_be_enabled_or_set_up(client, monkeypatch, t
     item = _item(client, "broken")
     assert item["valid"] is False and "not valid JSON" in item["invalid_reason"]
     assert item["live_view"] is None
+    # No manifest, so no card metadata: listed as null, never invented.
+    assert item["summary"] is None and item["author"] is None and item["category"] is None
     for response in (
         client.put("/api/extensions/broken/enabled", json={"enabled": True}),
         client.post("/api/extensions/broken/setup", json={"enable_on_success": True}),
@@ -325,6 +330,17 @@ def live_shots():
 def _enable_bv(client) -> None:
     _mark_ready()
     assert client.put(f"/api/extensions/{_BV}/enabled", json={"enabled": True}).status_code == 200
+
+
+def test_the_list_item_carries_its_card_metadata(client) -> None:
+    for ext_id in (_BV, "network"):
+        raw = json.loads(
+            (Path(__file__).resolve().parents[1] / "extensions" / ext_id / "manifest.json").read_text(encoding="utf-8"),
+        )
+        item = _item(client, ext_id)
+        assert item["summary"] == raw["summary"] and item["summary"]
+        assert item["author"] == raw["author"] and item["author"]
+        assert item["category"] == raw["category"] and item["category"]
 
 
 def test_the_list_item_names_its_live_view_or_has_none(client) -> None:
@@ -498,6 +514,7 @@ def test_an_extension_that_broke_its_live_view_contract_is_listed_invalid(client
     folder.mkdir()
     (folder / "manifest.json").write_text(json.dumps({
         "id": "liar", "name": "Liar", "version": "1.0.0", "description": "d",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": "liar", "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False}, "live_view": {"label": "Liar view", "icon": "monitor"},
     }), encoding="utf-8")
@@ -552,6 +569,7 @@ def test_a_live_item_without_an_address_has_a_null_url_and_no_folder(client, mon
     folder.mkdir()
     (folder / "manifest.json").write_text(json.dumps({
         "id": ext_id, "name": "Desk View", "version": "1.0.0", "description": "d",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False}, "live_view": {"label": "Desktop view", "icon": "monitor"},
     }), encoding="utf-8")
@@ -650,6 +668,7 @@ def _install_fake(client, monkeypatch, tmp_path, *, wake: bool, fields=None, wak
         ] + ([_INTERVAL_FIELD] if wake and wake_block is None else [])
     manifest = {
         "id": ext_id, "name": "Fake Mail", "version": "1.0.0", "description": "d",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False},
         "agent_config": {"label": "Fake mailbox", "help": "Para one.\n\nPara two.", "fields": fields},

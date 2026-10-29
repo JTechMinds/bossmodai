@@ -371,12 +371,13 @@
          rather than before it — after the two clients it calls, before the
          dialog that builds it.
 
-         Eight files, in dependency order and no cycle between them: what the
+         Ten files, in dependency order and no cycle between them: what the
          app says about packs it will not offer first (both views spend it),
          then the pure catalog-and-library projection, then the two builders
          the marketplace shares with the Add agent picker — the pack card and
          the filter rail, which read that projection and so follow it — then
-         the tabbed reader for one pack's sections, then the detail view that
+         the section reader's tab list (shared with the Extensions detail),
+         then the pack's sections that it reads, then the detail view that
          frames it and owns the confirm strip BOTH views spend, then the browse
          view that hands one pack over to it, then the state module that drives
          the pair.
@@ -390,31 +391,35 @@
     <script defer src="{{ static_url('js/marketplace/marketplace-items.js') }}"></script>
     <script defer src="{{ static_url('js/marketplace/pack-card.js') }}"></script>
     <script defer src="{{ static_url('js/marketplace/filter-rail.js') }}"></script>
+    <script defer src="{{ static_url('js/marketplace/section-reader.js') }}"></script>
     <script defer src="{{ static_url('js/marketplace/marketplace-sections.js') }}"></script>
     <script defer src="{{ static_url('js/marketplace/marketplace-detail.js') }}"></script>
     <script defer src="{{ static_url('js/marketplace/marketplace-view.js') }}"></script>
     <script defer src="{{ static_url('js/marketplace/marketplace-updates.js') }}"></script>
     <script defer src="{{ static_url('js/marketplace/marketplace.js') }}"></script>
 
-    <!-- Add → Extensions. After the marketplace: the dialog builds its cards
-         from the marketplace's classes and spends marketplace-detail.js's
-         confirm strip; before shell/add-agent-menu.js, whose third door
-         opens it. -->
+    <!-- Add → Extensions. After the marketplace: the view is built from the
+         marketplace's pack card, filter rail, section reader and classes, and
+         spends marketplace-detail.js's confirm strip; before
+         shell/add-agent-menu.js, whose third door opens it. The API client and
+         the live-view status come first, then the settings form, the
+         per-agent settings and view (opened from the desk's Extensions section
+         too), then the Agents section's table, which opens the per-agent
+         settings as a layer. -->
     <script defer src="{{ static_url('js/extensions/extensions-api.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/live-status.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extensions-live.js') }}"></script>
-    <!-- The settings form both settings dialogs share, then per-agent settings
-         and view, opened from the desk's Extensions section; the settings also
-         open from the Configure agents table. -->
     <script defer src="{{ static_url('js/extensions/config-form.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/agent-config-dialog.js') }}"></script>
-    <script defer src="{{ static_url('js/extensions/extension-settings-dialog.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/agent-view-dialog.js') }}"></script>
-    <!-- The Configure agents table, after the settings dialog it opens as a
-         layer; the status panel an Extensions card shows; then the Extensions
-         dialog, whose cards open the table, the settings and the panel. -->
-    <script defer src="{{ static_url('js/extensions/extension-agents-layer.js') }}"></script>
+    <script defer src="{{ static_url('js/extensions/extension-agents.js') }}"></script>
+    <!-- The Status and Connection sections' rendering, then the view's pure
+         projection, then the detail and the browse view that swaps to it, then
+         the controller that owns their state. -->
     <script defer src="{{ static_url('js/extensions/extension-panel.js') }}"></script>
+    <script defer src="{{ static_url('js/extensions/extension-items.js') }}"></script>
+    <script defer src="{{ static_url('js/extensions/extension-detail.js') }}"></script>
+    <script defer src="{{ static_url('js/extensions/extensions-view.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extensions-dialog.js') }}"></script>
 
     <script defer src="{{ static_url('js/context/agent-form-fields.js') }}"></script>

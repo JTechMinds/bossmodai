@@ -1,18 +1,20 @@
 /**
- * BossMod AI — the status panel on an Extensions card (a panel extension's
- * `PanelStatus`), and the message / error / action-button rendering the model
- * provider controls share with it.
+ * BossMod AI — the Extensions detail's Status and Connection sections: a panel
+ * extension's `PanelStatus`, and a model provider's sign-in, choices and
+ * actions, sharing one message / error / action-button rendering.
  *
  * The server describes what to show and this knows nothing about any one
  * extension: a plain sentence, an error as an alert, labelled facts (each may
- * be copied, or masked until revealed) and action buttons. Every control is a
- * `btn btn-sm`; a fact's value sits in a read-only box (wrapping text; a secret in the
- * masked field the settings form uses, so Show / Hide is BossModSecretField's),
- * with its buttons on the label's line so a long value keeps the full width.
+ * be copied, or masked until revealed), labelled dropdowns and action buttons.
+ * Every control is a `btn btn-sm`; a fact's value sits in a read-only box
+ * (wrapping text; a secret in the masked field the settings form uses, so
+ * Show / Hide is BossModSecretField's), with its buttons on the label's line
+ * so a long value keeps the full width. A provider's choice is the app's
+ * menu-select (never a native <select>) under a visible label of its own.
  *
- * States the caller shows around it: loading (the dialog's own), load failed
- * (the card's retry button and error line) and — because a status always
- * carries a message — never empty.
+ * States the caller shows around it: loading and load failed (the detail's
+ * own line and retry) and — because a status always carries a message —
+ * never empty.
  */
 const BossModExtensionPanel = (() => {
     const { h } = BossModDom;
@@ -130,5 +132,50 @@ const BossModExtensionPanel = (() => {
         ].filter(Boolean);
     }
 
-    return { render, messageRows, actionButtons };
+    /**
+     * A model provider's rows: its message and error, one labelled dropdown
+     * per choice, then its actions.
+     *
+     * @param {{message: string, error?: (string|null), choices: Array<{label: string,
+     *   value: string, options: Array<{value: string, label: string}>,
+     *   action: string, parameter: string}>, actions: object[]}} provider
+     *   A provider status as the server returns it.
+     * @param {object} options
+     * @param {string} options.idPrefix  Prefix of each dropdown's trigger id
+     *   (`${idPrefix}-choice-${i}`) and its visible label (`…-label`).
+     * @param {boolean} options.busy  Disables every control while a request runs.
+     * @param {(action: object) => void} options.onAction  Called with the chosen action.
+     * @param {(choice: object, value: string) => void} options.onChoice  Called
+     *   with the choice and the option picked.
+     * @returns {HTMLElement[]}
+     * @throws {Error} When a dropdown comes back without the trigger it was
+     *   given an id for: a disabled state could not then be applied to it.
+     */
+    function providerRows(provider, options) {
+        const { idPrefix, busy, onAction, onChoice } = options;
+        const choices = provider.choices.map((choice, index) => {
+            const id = `${idPrefix}-choice-${index}`;
+            const control = BossModMenuSelect.create({
+                label: choice.label, options: choice.options, value: choice.value, id,
+                onChange: (value) => onChoice(choice, value),
+            });
+            const trigger = control.element.querySelector(`#${id}`);
+            if (!trigger) throw new Error(`[extension-panel] the "${choice.label}" dropdown has no #${id} trigger`);
+            if (busy) trigger.setAttribute('disabled', '');
+            // The visible name above the trigger: the trigger itself shows only
+            // the current value, and its aria-label already says both.
+            return h('div', { class: 'ext-choice' },
+                h('span', { class: 'field-label-sm', id: `${id}-label` }, choice.label),
+                control.element);
+        });
+        return [
+            ...messageRows(provider),
+            ...choices,
+            provider.actions.length
+                ? h('div', { class: 'ext-panel-actions' }, actionButtons(provider.actions, busy, onAction))
+                : null,
+        ].filter(Boolean);
+    }
+
+    return { render, providerRows, messageRows, actionButtons };
 })();

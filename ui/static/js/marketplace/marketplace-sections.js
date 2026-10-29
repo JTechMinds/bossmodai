@@ -10,33 +10,17 @@
  * Its own module rather than more of marketplace-detail.js, and the seam is
  * real: that file owns the chrome around a pack — the back bar, the hero, the
  * byline, the install and uninstall it offers — and this owns the pack's own
- * text and the control that picks which of it is up. It is also the only part
- * of the marketplace with an INTERACTION of its own rather than a click that
- * hands straight back to the state module, which is the second reason it is
- * not spread through a view.
- *
- * Keyboard first, WAI-ARIA's vertical tabs exactly: roving tabindex, Up and
- * Down move the selection and take the focus with them, Home and End go to the
- * ends, and the panel is labelled by the tab that opened it. Hover is layered
- * ON TOP of that and never replaces it — it selects only after the pointer has
- * rested, so crossing the list on the way to the panel does not strobe it, and
- * it never moves focus. Touch and keyboard reach every section without it.
+ * text: which sections a pack carries, in what order, and what each panel
+ * holds. The INTERACTION that picks one — the tab list's keyboard, its roving
+ * tabindex and its hover intent — lives in section-reader.js, which the
+ * Extensions detail reads its own sections through as well, so the two
+ * details cannot come to behave differently.
  *
  * Every string it renders is the pack author's and reaches the document as a
  * text node through h(). There is no markup-string path in this file.
  */
 const BossModMarketplaceSections = (() => {
     const { h } = BossModDom;
-
-    // The one panel every tab drives. One pack is mounted at a time, so this
-    // id names exactly one node.
-    const PANEL_ID = 'market-section-panel';
-
-    // How long the pointer has to REST on an entry before it selects it.
-    // Dragging the pointer down the list on its way to the panel crosses every
-    // entry in a few milliseconds, and a panel that repaints four times on the
-    // way past is a panel nobody can read.
-    const HOVER_DELAY_MS = 120;
 
     const COPY = Object.freeze({ listLabel: 'Pack sections' });
 
@@ -140,94 +124,6 @@ const BossModMarketplaceSections = (() => {
         }).filter(Boolean);
     }
 
-    // The pending hover intent, and there is only ever one: arming a second
-    // entry cancels the first, which is what makes a pointer dragged down the
-    // list select the entry it STOPS on rather than every entry it crossed.
-    let hoverTimer = null;
-
-    function cancelHover() {
-        if (hoverTimer === null) return;
-        clearTimeout(hoverTimer);
-        hoverTimer = null;
-    }
-
-    /**
-     * Select after the pointer has rested on an entry, and not before.
-     *
-     * @param {object} entry  The entry the pointer is over.
-     * @param {boolean} selected  Whether its panel is already up.
-     * @param {HTMLElement} node  The tab itself, checked when the timer fires.
-     * @param {object} handlers  Reads `onSection`.
-     * @returns {void}
-     */
-    function armHover(entry, selected, node, handlers) {
-        cancelHover();
-        // The pointer resting on the entry that is already up has nothing to
-        // select, and selecting it anyway rebuilds the very node the pointer is
-        // standing on — which a browser answers with a fresh mouseenter on the
-        // replacement. That is a loop, not a selection.
-        if (selected) return;
-        hoverTimer = setTimeout(() => {
-            hoverTimer = null;
-            // The list was rebuilt or torn down while the pointer rested — a
-            // finished install, `‹ Back`, or Esc. A timer must not reach past
-            // the surface that armed it.
-            if (!document.body.contains(node)) return;
-            // No focus selector: a pointer must never take the keyboard off
-            // whatever the operator left it on.
-            handlers.onSection(entry.spec.id, null);
-        }, HOVER_DELAY_MS);
-    }
-
-    // One way in for every deliberate selection — a click, the arrows and both
-    // ends — so a pending hover cannot land on top of the choice just made.
-    function choose(entry, focus, handlers) {
-        cancelHover();
-        handlers.onSection(entry.spec.id, focus);
-    }
-
-    const STEP = Object.freeze({ ArrowDown: 1, ArrowUp: -1 });
-
-    // Automatic activation: the arrows move the selection and the panel
-    // together, because the panel is already built and there is nothing to
-    // wait for. Up and Down WRAP — six entries at the very most, which is short
-    // enough that stopping dead at the end is a worse answer than arriving at
-    // the other one. `at` is the index of the tab the key came FROM, not the
-    // selected one: after a hover has moved the selection out from under the
-    // keyboard, the arrows still step from where the focus actually is.
-    function move(event, at, entries, handlers) {
-        let next = null;
-        if (Object.prototype.hasOwnProperty.call(STEP, event.key)) {
-            next = (at + STEP[event.key] + entries.length) % entries.length;
-        } else if (event.key === 'Home') next = 0;
-        else if (event.key === 'End') next = entries.length - 1;
-        if (next === null) return;
-        event.preventDefault();
-        choose(entries[next], `#market-section-${next}`, handlers);
-    }
-
-    // A real tab: `aria-selected` says which one is up, the roving tabindex
-    // makes the whole list ONE tab stop, and `aria-controls` is published only
-    // by the selected tab because the others have no panel in the document to
-    // point at. The entries are NUMBERED — the section ids are ours, but the
-    // rail and the cards number their rows and a fourth convention here would
-    // be one to remember for nothing.
-    function tab(entry, at, selected, entries, handlers) {
-        const id = `market-section-${at}`;
-        return h('button', {
-            class: 'market-section-tab', type: 'button', id, role: 'tab',
-            'aria-selected': selected ? 'true' : 'false',
-            'aria-controls': selected ? PANEL_ID : null,
-            tabindex: selected ? '0' : '-1',
-            onclick: () => choose(entry, `#${id}`, handlers),
-            onkeydown: (event) => move(event, at, entries, handlers),
-            onmouseenter: (event) => armHover(entry, selected, event.target, handlers),
-            onmouseleave: () => cancelHover(),
-        },
-        h('span', { class: 'market-section-name' }, entry.spec.label),
-        h('span', { class: 'market-section-sub' }, entry.spec.sub));
-    }
-
     // One chip per tool. A `·` between them would be CSS-generated content,
     // which a screen reader announces as a character with no meaning; a list of
     // chips says the same thing and says it once.
@@ -248,6 +144,11 @@ const BossModMarketplaceSections = (() => {
     /**
      * The two-column reader: the sections this pack carries, and the one open.
      *
+     * The list and its keyboard, hover and focus are section-reader.js's; this
+     * hands it the pack's sections as entries. The ids keep their
+     * `market-section` prefix, so the markup is what it was before the
+     * interaction moved out.
+     *
      * @param {object} item  The projected pack.
      * @param {object} state  Reads `sectionKey`, the id of the section being
      *   read. Null — a pack just opened — reads the first section the pack
@@ -259,23 +160,17 @@ const BossModMarketplaceSections = (() => {
      *   so the caller draws neither an empty reader nor a rule above one.
      */
     function reader(item, state, handlers) {
-        const entries = available(item);
-        if (!entries.length) return null;
-        const held = entries.findIndex((entry) => entry.spec.id === state.sectionKey);
-        const at = held === -1 ? 0 : held;
-        return h('div', { class: 'market-detail-read' },
-            h('div', {
-                class: 'market-section-list', role: 'tablist',
-                'aria-orientation': 'vertical', 'aria-label': COPY.listLabel,
-            }, entries.map((entry, index) => tab(entry, index, index === at, entries, handlers))),
-            // `tabindex="0"`: the panel scrolls and holds no control of its
-            // own, so without a tab stop its content is unreachable by keyboard
-            // the moment it is taller than the box.
-            h('div', {
-                class: 'market-section-panel', id: PANEL_ID, role: 'tabpanel',
-                tabindex: '0', 'aria-labelledby': `market-section-${at}`,
-            }, panelBody(entries[at])));
+        const entries = available(item).map((entry) => ({
+            id: entry.spec.id, label: entry.spec.label, sub: entry.spec.sub, body: panelBody(entry),
+        }));
+        return BossModSectionReader.render({
+            idPrefix: 'market-section',
+            label: COPY.listLabel,
+            entries,
+            selectedId: state.sectionKey,
+            onSelect: (id, focus) => handlers.onSection(id, focus),
+        });
     }
 
-    return { COPY, SECTIONS, HOVER_DELAY_MS, sectionText, available, reader };
+    return { COPY, SECTIONS, sectionText, available, reader };
 })();

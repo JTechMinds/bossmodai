@@ -2,7 +2,7 @@
  * BossMod AI — one agent's settings for one extension (manifest `agent_config`).
  *
  * A default-size modal from core/overlays.js, opened from the agent's desk or
- * as a layer over the Extensions dialog's Configure agents table. The form
+ * as a layer over the Extensions detail's Agents section. The form
  * itself (fields, secrets, Save and its states) is BossModConfigForm, driven
  * here by the per-agent endpoints, so this module knows nothing about any one
  * extension. What it adds is Remove (only when configured), which asks first,
@@ -55,6 +55,7 @@ const BossModAgentConfigDialog = (() => {
         });
 
         form = BossModConfigForm.create({
+            placement: 'footer',
             modal,
             body,
             idPrefix: ID_PREFIX,

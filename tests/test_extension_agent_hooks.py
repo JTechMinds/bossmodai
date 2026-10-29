@@ -39,6 +39,7 @@ def teardown_function() -> None:
 def _entry(ext_id: str, *, live_view: bool = False, invalid: str | None = None) -> ExtensionEntry:
     data: dict[str, Any] = {
         "id": ext_id, "name": ext_id.title(), "version": "1", "description": "d",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False},
     }
@@ -322,6 +323,7 @@ def _write_extension(root: Path, ext_id: str, *, live_view: bool = False) -> Ext
     folder.mkdir(parents=True)
     manifest: dict[str, Any] = {
         "id": ext_id, "name": "Demo", "version": "1", "description": "d",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": ext_id.replace("-", "")[:15], "summary": "s", "usage": "u", "help": "h"},
         "setup": {"required": False},
     }

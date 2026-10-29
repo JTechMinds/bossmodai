@@ -95,7 +95,7 @@ const ConnectionsSection = (() => {
                             </div>
                         </div>
                         <div class="flex items-center gap-1 shrink-0 ml-4">
-                            ${conn.managed_by ? '<button data-manage-extension class="btn btn-sm" type="button">Manage extension</button>' : `
+                            ${conn.managed_by ? `<button data-manage-extension="${BossModFormat.escapeAttribute(conn.managed_by)}" class="btn btn-sm" type="button">Manage extension</button>` : `
                             <button data-edit-conn="${BossModFormat.escapeAttribute(conn.id)}"
                                     class="p-1.5 rounded-lg hover:bg-slate-100 transition-colors"
                                     title="Edit">
@@ -127,7 +127,7 @@ const ConnectionsSection = (() => {
 
         BossModSystemAi.bind(container, state);
         container.querySelectorAll('[data-manage-extension]').forEach(btn => {
-            btn.addEventListener('click', () => BossModExtensionsDialog.open());
+            btn.addEventListener('click', () => BossModExtensionsDialog.open({ extensionId: btn.dataset.manageExtension }));
         });
 
         container.querySelectorAll('[data-edit-conn]').forEach(btn => {

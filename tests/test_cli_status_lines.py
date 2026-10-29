@@ -266,6 +266,7 @@ async def test_only_an_extension_declaring_a_live_view_is_announced(
     folder.mkdir()
     manifest = {
         "id": "plain-ext", "name": "Plain", "version": "0.1.0", "description": "Maybe a live view.",
+        "summary": "s", "author": "Tests", "category": "testing",
         "command": {"name": "plain", "summary": "s", "usage": "plain go", "help": "h"},
         "setup": {"required": False},
     }
