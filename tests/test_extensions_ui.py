@@ -204,6 +204,30 @@ def test_the_settings_section() -> None:
         assert payload.get(key) is True, (key, payload)
 
 
+def test_the_extensions_detail_panel_has_no_ceiling() -> None:
+    """A dropdown's menu hangs past its box, and a scrolling panel clips it.
+
+    The Extensions detail manages rather than reads, so its section panel has
+    no ceiling and no scroller of its own and `.market-detail` scrolls; its
+    tab list pins to the top of that, except narrow, where it is the row above
+    the panel. Scoped by a class, so the marketplace keeps its reading panel.
+    """
+    css = (ROOT / "ui" / "static" / "css" / "extensions.css").read_text(encoding="utf-8")
+    sticky = ".ext-detail .market-section-list { position: sticky; top: 0; }"
+    static = ".ext-detail .market-section-list { position: static; }"
+    assert ".ext-detail .market-section-panel { max-height: none; overflow: visible; }" in css
+    narrow_at = css.index("@media (max-width: 700px) {")
+    # Wide pins and narrow does not: the override must sit in the narrow block,
+    # after the rule it overrides, or the cascade keeps the list pinned there.
+    assert sticky in css[:narrow_at]
+    assert static in css[narrow_at:].split("\n}", 1)[0]
+    detail = (JS / "extensions" / "extension-detail.js").read_text(encoding="utf-8")
+    assert "class: 'market-detail ext-detail'" in detail
+    market = (ROOT / "ui" / "static" / "css" / "marketplace.css").read_text(encoding="utf-8")
+    panel = market.split(".market-section-panel {", 1)[1].split("}", 1)[0]
+    assert "max-height: 52vh;" in panel, "the marketplace keeps its reading panel's ceiling"
+
+
 def test_one_form_implementation_serves_both_settings_surfaces() -> None:
     agent = (JS / "extensions" / "agent-config-dialog.js").read_text(encoding="utf-8")
     settings = (JS / "extensions" / "extensions-dialog.js").read_text(encoding="utf-8")

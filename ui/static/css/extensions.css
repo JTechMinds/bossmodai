@@ -99,6 +99,24 @@ span.ext-live-url { text-decoration: none; }
    One column per section, on the section reader's 12px rhythm. */
 .ext-section-body { display: flex; flex-direction: column; gap: 12px; }
 
+/* This detail MANAGES rather than reads: its sections hold dropdowns whose
+   menus hang past their own box, and an Agents table that should take the
+   room the window has. A panel with a ceiling and a scroller of its own
+   clips both, so here the panel grows with its section and .market-detail is
+   the view's one scroller. The marketplace keeps its 52vh reading panel. */
+.ext-detail .market-section-panel { max-height: none; overflow: visible; }
+/* A long section now scrolls the detail itself, so the tabs pin to its top:
+   they stay in reach, and a switch to a shorter section that clamps the
+   scroll does not slide them under a resting pointer (the hover-intent loop
+   the marketplace's ceiling exists to prevent; see .market-detail-read). */
+.ext-detail .market-section-list { position: sticky; top: 0; }
+
+/* Narrow, the list is the wrapped row above the panel (marketplace.css), so
+   it scrolls away with the view rather than pinning over the content. */
+@media (max-width: 700px) {
+  .ext-detail .market-section-list { position: static; }
+}
+
 /* The agents whose model can't see images, inside the section's note. */
 .ext-excluded { margin: 4px 0; padding-left: 16px; }
 

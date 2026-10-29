@@ -19,8 +19,9 @@
  * Scroll offsets are the operator's reading position, carried on the state:
  * the browse scroller always, and — because the detail now re-renders on a
  * timer while a download or a sign-in is pending — the detail column for the
- * same extension and its section panel for the same section. Geometry stays
- * CSS's; nothing here measures a box.
+ * same extension. The detail column is that view's one scroller: its section
+ * panel has no scroller of its own (extensions.css). Geometry stays CSS's;
+ * nothing here measures a box.
  *
  * Built with BossModDom.h: names, summaries and authors are manifest data.
  */
@@ -38,7 +39,7 @@ const BossModExtensionsView = (() => {
         noMatch: 'No extension in this group.',
     });
 
-    /** Host → which extension and section its detail last drew, for the scroll hand-back. */
+    /** Host → which extension its detail last drew, for the scroll hand-back. */
     const SHOWN = new WeakMap();
 
     // What the last action said. Outside the scroller, so it is never
@@ -104,9 +105,9 @@ const BossModExtensionsView = (() => {
      * @param {object} state  BossModExtensionsDialog's state plus the derived
      *   `selected` item. `detailOpen` chooses the view (a failed read always
      *   keeps the grid, where its message and Try again live); `focusRequest`
-     *   is a selector focus is placed on; `browseScroll`, `detailScroll` and
-     *   `panelScroll` are read and written here, because this is what destroys
-     *   and rebuilds the scrollers they belong to.
+     *   is a selector focus is placed on; `browseScroll` and `detailScroll`
+     *   are read and written here, because this is what destroys and
+     *   rebuilds the scrollers they belong to.
      * @param {object} handlers  The browse view's onFilter, onSelect and
      *   onRetry, plus the detail's (see extension-detail.js).
      * @param {object|null} live  The controller's persistent Settings and
@@ -122,17 +123,14 @@ const BossModExtensionsView = (() => {
         const leavingDetail = host.querySelector('.market-detail');
         const shown = SHOWN.has(host) ? SHOWN.get(host) : null;
         const sameItem = Boolean(leavingDetail && shown && shown.id === state.selectedId);
-        const sameSection = sameItem && shown.section === state.sectionKey;
-        const leavingPanel = sameSection ? leavingDetail.querySelector('.market-section-panel') : null;
         state.detailScroll = sameItem ? leavingDetail.scrollTop : 0;
-        state.panelScroll = leavingPanel ? leavingPanel.scrollTop : 0;
         clear(host);
         SHOWN.delete(host);
 
         const detail = Boolean(state.detailOpen && state.selected && state.status !== 'failed');
         if (detail) {
             host.append(BossModExtensionDetail.render(state, handlers, live));
-            SHOWN.set(host, { id: state.selectedId, section: state.sectionKey });
+            SHOWN.set(host, { id: state.selectedId });
         } else {
             const said = messages(state);
             if (said) host.append(said);
@@ -143,8 +141,6 @@ const BossModExtensionsView = (() => {
         if (scroller) scroller.scrollTop = state.browseScroll;
         const read = host.querySelector('.market-detail');
         if (read) read.scrollTop = state.detailScroll;
-        const panel = host.querySelector('.market-section-panel');
-        if (panel) panel.scrollTop = state.panelScroll;
         // The menu-select chevrons are placeholders until painted. Scoped to
         // this host, before the focus hand-back only because that half
         // returns early when there is nothing to hand focus to.

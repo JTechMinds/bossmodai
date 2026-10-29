@@ -199,7 +199,9 @@ const BossModExtensionDetail = (() => {
      * @param {{id: string, settings: ({element: HTMLElement}|null),
      *   agents: ({element: HTMLElement}|null)}|null} live  The controller's
      *   persistent nodes for the open extension.
-     * @returns {HTMLElement} `section.market-detail#ext-detail`.
+     * @returns {HTMLElement} `section.market-detail.ext-detail#ext-detail`;
+     *   `ext-detail` is the hook extensions.css scopes this detail's section
+     *   panel on (no ceiling, no scroller of its own).
      * @throws {Error} When nothing is selected, or a section whose live node
      *   the controller owes is missing: an empty section would read as an
      *   extension with nothing to set, and a silent one.
@@ -218,7 +220,7 @@ const BossModExtensionDetail = (() => {
             onSelect: handlers.onSection,
         });
         return h('section', {
-            class: 'market-detail', id: 'ext-detail', tabindex: '-1', 'aria-label': COPY.detailLabel,
+            class: 'market-detail ext-detail', id: 'ext-detail', tabindex: '-1', 'aria-label': COPY.detailLabel,
         },
         state.actionError ? h('p', { class: 'market-error', role: 'alert' }, state.actionError) : null,
         state.confirming ? BossModMarketplaceDetail.confirmStrip({

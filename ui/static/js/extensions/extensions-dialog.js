@@ -68,7 +68,7 @@ const BossModExtensionsDialog = (() => {
             confirming: false, busy: false,
             // The open extension's live reads, and why the last one failed.
             panel: null, provider: null, liveError: '',
-            browseScroll: 0, detailScroll: 0, panelScroll: 0,
+            browseScroll: 0, detailScroll: 0,
             // Spent by the view: a rebuilt tree has dropped the focused node.
             focusRequest: null,
         };
