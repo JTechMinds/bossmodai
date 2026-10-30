@@ -1260,6 +1260,10 @@ _TASK_REQUEST_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
             "that message does not say: details from earlier in the conversation, and the exact files, paths, "
             "items and limits you agreed on."
             + "\n"
+            + "- With `data.task.id`, the task keeps its description as it was written: the message you are "
+            "answering is added to its request, and your `desc`, if you give one, is noted on the task thread as "
+            "your working brief. Only the boss edits a task's description."
+            + "\n"
             + "- `data.plan` is optional for accepted work. Leave it out when you will do all of the work "
             "yourself. Each child in `data.plan.children` is a teammate's task and needs `who` or `aid`; to "
             "split your own work into parts, use `checklist add` once you start."
@@ -1319,7 +1323,8 @@ def reconcile_task_request_prompt_lines() -> None:
     ``_TASK_REQUEST_PROMPT_LINE_EDITS``: the trigger block shows a task's
     request above its severity; the decision contract's accept shape says a
     plan child names a teammate, its field notes say what ``desc`` and a
-    child's ``desc`` are for, and its memo example names files; the
+    child's ``desc`` are for and that an accept by ``data.task.id`` keeps
+    the task's description, and its memo example names files; the
     execution contract says an assign's ``desc`` is the teammate's whole
     brief, and its two assign examples name files. A row equal to the
     shipped default is skipped. A row without an exact old line keeps its

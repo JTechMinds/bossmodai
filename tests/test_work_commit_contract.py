@@ -603,7 +603,9 @@ def _accept_by_id(task_id: str, desc: str) -> dict[str, Any]:
     return parsed
 
 
-def test_accept_with_a_task_id_revises_and_resumes_that_task() -> None:
+def test_accept_with_a_task_id_keeps_the_description_and_resumes_that_task() -> None:
+    # A task's description is written once; the accept adds the message to
+    # its request and notes the agent's desc as a working brief.
     agent = db.create_agent("Charles", role="Engineer")
     first = _task(agent.id, title="Write the notes")
     activity_runtime.activate_work_activity(agent.id, first, task_status="active")
@@ -632,12 +634,18 @@ def test_accept_with_a_task_id_revises_and_resumes_that_task() -> None:
     assert state is not None
     apply_decision(parsed, agent, state, trigger)
     assert len(db.list_tasks(assigned_to=agent.id)) == tasks_before
-    revised = db.get_task(first.id)
-    assert revised.description == "Cover the Q3 numbers too."
+    bound = db.get_task(first.id)
+    assert bound.description == "Do the work."
+    events = db.list_task_events(first.id)
     assert any(
-        event.content == "Revised: Cover the Q3 numbers too."
-        for event in db.list_task_events(first.id)
+        event.content == "Working brief: Cover the Q3 numbers too."
+        and event.event_type == "comment"
+        and event.author_type == "agent"
+        and event.author_agent_id == agent.id
+        for event in events
     )
+    assert not any(event.content.startswith("Revised:") for event in events)
+    assert [message.content for message in bound.request_messages] == ["Charles, the notes should cover Q3 too."]
     live = activity_runtime.get_active_work_activity(agent.id)
     assert live is not None and live.task_id == first.id
     assert db.get_resumable_work_activity(agent.id, second.id) is not None

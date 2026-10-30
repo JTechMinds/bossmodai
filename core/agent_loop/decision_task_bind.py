@@ -241,20 +241,42 @@ def _bind_named_task(
     trigger: dict[str, Any],
     decision: ConversationDecision,
 ) -> dict[str, Any]:
-    """Bind the open task the agent named with ``data.task.id``, revising it if asked.
+    """Bind the open task the agent named with ``data.task.id``; its description is never rewritten.
+
+    A task's description is written once, by whoever created the task (the
+    boss in the Assign form, a teammate's brief, a schedule's instructions,
+    or the agent's own ``desc`` when its accept created the task), and
+    afterwards only the boss edits it (``PATCH /api/tasks/{id}``). An accept
+    by id therefore adds the message this turn answers to the task's request
+    (:func:`_save_turn_request`), and a non-empty ``desc`` that differs from
+    the description is noted on the task thread as the agent's
+    ``Working brief: <desc>`` comment. Why: on 2026-10-30 an accept by id
+    overwrote the boss's Assign-form description with the agent's one-line
+    ``desc``, written after it had seen only a 120-character board summary
+    of that text; the work followed the one-liner and the boss's words were
+    lost.
 
     ``validate_decision_for_trigger`` already checked that the id names an
-    open task assigned to this agent. A non-empty ``desc`` that differs from
-    the stored description replaces it and is recorded on the task thread
-    as a revision. The accept path then activates the task: it resumes
-    paused work, or pauses a different current task.
+    open task assigned to this agent. A task the boss held since validation
+    is refused first, so nothing on it changes: no comment and no request.
+    The accept path then activates the bound task: it resumes paused work,
+    or pauses a different current task.
 
-    A task the boss held since validation is refused before the revision is
-    written, so nothing on it changes. Otherwise the turn's message is
-    appended to the task's request after the first (:func:`_save_turn_request`).
+    Args:
+        agent: The accepting agent; it authors the working-brief comment.
+        trigger: The turn's live trigger. Its message(s) are added to the
+            request, and its ``trigger_id`` is the comment's source.
+        decision: The accept; ``taskId`` names the task and
+            ``taskDescription`` is the agent's ``desc``.
+
+    Returns:
+        ``{"task": <the task as stored after its request is saved>}``, or
+        ``{"error_result": <world_feedback>}`` for a task not yet released
+        to the agent (:func:`_unreleased_task_feedback`).
 
     Raises:
-        ValueError: The task vanished after validation.
+        ValueError: The task vanished after validation, or before its
+            request was saved.
     """
     task_id = str(decision.taskId or "").strip()
     task = db.get_task(task_id)
@@ -263,18 +285,19 @@ def _bind_named_task(
     unreleased = _unreleased_task_feedback(task, agent_name=agent.name)
     if unreleased is not None:
         return unreleased
-    description = (decision.taskDescription or "").strip()
-    if description and description != (task.description or "").strip():
-        task = db.update_task(task.id, description=description) or task
+    brief = (decision.taskDescription or "").strip()
+    if brief and brief != (task.description or "").strip():
         append_task_event(
             task_id=task.id,
             author_type="agent",
             author_agent_id=agent.id,
             author_name=agent.name,
             event_type="comment",
-            content=f"Revised: {description}",
+            content=f"Working brief: {brief}",
             source_trigger_id=trigger.get("trigger_id"),
         )
+    # Saved after the comment: it re-reads the task, so the row returned
+    # carries the activity time the comment stamped.
     return {"task": _save_turn_request(task, trigger)}
 
 def _ensure_deferred_task(

@@ -197,7 +197,9 @@ class ConversationDecision(BaseModel):
     taskTitle: str | None = None
     taskDescription: str | None = None
     # ``data.task.id``: one of the agent's own open tasks, to revise and
-    # continue it instead of creating a new one (accept + work only).
+    # continue it instead of creating a new one (accept + work only). The
+    # revision is the turn's message added to the task's request; the
+    # description is never rewritten (decision_task_bind._bind_named_task).
     taskId: str | None = None
     deliverables: list[DeliverableSpec] | None = None
     executionPlan: WorkExecutionPlan | None = None

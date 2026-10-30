@@ -948,7 +948,84 @@ def test_an_accept_naming_its_task_appends_the_new_message_after_the_first() -> 
     _accept_work(agent, {"type": "human_chat", "content": "Cover seat minimums too.", "from_name": "Human"},
                  taskId=task.id, taskTitle="Write the memo", taskDescription="One page, with seat minimums.")
     assert _request_contents(task.id) == ["Write the Q3 memo.", "Cover seat minimums too."]
-    assert db.get_task(task.id).description == "One page, with seat minimums."
+    # Written once: the later desc is a working brief, not a new description.
+    assert db.get_task(task.id).description == "One page."
+
+
+# The 2026-10-30 incident: an accept by id replaced the boss's Assign-form
+# description with the agent's one-line desc. A description is written once.
+_ASSIGN_FORM_BRIEF = (
+    "Refer to /projects/eval5/instructions.md for the full brief before you start.\n"
+    "Review and audit the current task prompt against it, then write a cleaned-up prompt to "
+    "/projects/eval5/task-prompt-clean.md. Keep every rule the original states, cut only repetition, "
+    "and list each cut with its reason at the end of the file."
+)
+_INCIDENT_ASK = "assigned you a new task to review audit and write"
+
+
+def _assign_as_operator(monkeypatch: pytest.MonkeyPatch, agent, title: str):
+    response = _task_api_client(monkeypatch).post(
+        "/api/tasks",
+        headers=_task_api_headers(),
+        json={"title": title, "description": _ASSIGN_FORM_BRIEF, "assigned_to": agent.id},
+    )
+    assert response.status_code == 201, response.text
+    task = db.get_task(response.json()["task"]["id"])
+    assert task is not None and task.description == _ASSIGN_FORM_BRIEF
+    return task
+
+
+def _working_briefs(task_id: str) -> list:
+    return [event for event in db.list_task_events(task_id) if event.content.startswith("Working brief:")]
+
+
+def test_an_accept_by_id_keeps_the_assign_form_description_and_notes_the_desc(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.agent_loop.turn_context import _get_current_task
+    from core.llm.context_builder import _format_task
+
+    agent = _create_agent()
+    task = _assign_as_operator(monkeypatch, agent, "Built a cleaned up task prompt")
+    result = _accept_work(
+        agent,
+        {"type": "human_chat", "content": _INCIDENT_ASK, "from_name": "Human", "trigger_id": "trigger-incident"},
+        taskId=task.id, taskTitle=task.title, taskDescription="Clean up the task prompt.",
+    )
+    assert result["event"] == "decision_applied", result
+
+    stored = db.get_task(task.id)
+    assert stored is not None and stored.description == _ASSIGN_FORM_BRIEF
+    assert _request_contents(task.id) == [_INCIDENT_ASK]
+    (brief,) = _working_briefs(task.id)
+    assert brief.content == "Working brief: Clean up the task prompt."
+    assert (brief.event_type, brief.author_type, brief.author_agent_id, brief.source_trigger_id) == (
+        "comment", "agent", agent.id, "trigger-incident",
+    )
+
+    current = _get_current_task(agent.id)
+    assert current is not None and current["id"] == task.id
+    block = _format_task(current)
+    # The boss's message, then the boss's full Assign-form text; never the one-liner.
+    assert "\n".join([_REQUEST_HEADING, f"[Boss]: {_INCIDENT_ASK}", f"description: {_ASSIGN_FORM_BRIEF}"]) in block
+    assert "Clean up the task prompt." not in block
+
+
+@pytest.mark.parametrize("desc", [_ASSIGN_FORM_BRIEF, None], ids=["same-desc", "no-desc"])
+def test_an_accept_by_id_with_no_new_desc_adds_no_working_brief(
+    monkeypatch: pytest.MonkeyPatch, desc: str | None,
+) -> None:
+    agent = _create_agent()
+    task = _assign_as_operator(monkeypatch, agent, "Built a cleaned up task prompt")
+    result = _accept_work(
+        agent,
+        {"type": "human_chat", "content": _INCIDENT_ASK, "from_name": "Human"},
+        taskId=task.id, taskTitle=task.title, taskDescription=desc,
+    )
+    assert result["event"] == "decision_applied", result
+    assert db.get_task(task.id).description == _ASSIGN_FORM_BRIEF
+    assert _working_briefs(task.id) == []
+    assert _request_contents(task.id) == [_INCIDENT_ASK]
 
 
 def test_a_channel_plan_forwards_the_request_to_each_child() -> None:

@@ -9,9 +9,12 @@ record's request.
 
 How it differs from a task's other inputs:
 
-- ``description`` is the accepting agent's brief: what the message does not
-  say (earlier context, the exact paths and limits agreed). It does not copy
-  the request.
+- ``description`` is written once, by whoever creates the task: for work
+  that starts in chat, the accepting agent's brief, which says what the
+  message does not (earlier context, the exact paths and limits agreed) and
+  does not copy the request. Afterwards only the boss edits it; an agent's
+  ``desc`` on a later accept by task id is noted on the task thread as its
+  working brief instead.
 - ``references`` are documents to read before starting.
 - deliverables (the work contract) are output the assignee must produce.
 
