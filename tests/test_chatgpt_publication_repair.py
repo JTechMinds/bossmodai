@@ -13,7 +13,7 @@ isolated = base.isolated
 
 def test_metadata_loss_repairs_without_remote_polling(monkeypatch):
     cid = base.saved_account()
-    base.auth.set_image_policy('enabled')
+    base.auth.set_image_policy('test-model', 'enabled')
     monkeypatch.setattr(base.auth, 'model_catalog', lambda _: pytest.fail('remote poll'))
     execute('DELETE FROM managed_connections')
     set_supports_images('test-model', True)
@@ -31,7 +31,7 @@ async def test_live_session_actual_reseed_repairs_publication(monkeypatch, tmp_p
     monkeypatch.setenv('BOSSMOD_COMPANY_ROOT', str(tmp_path / 'company'))
     monkeypatch.setattr(connection, '_PROJECT_ROOT', tmp_path)
     cid = base.saved_account()
-    base.auth.set_image_policy('enabled')
+    base.auth.set_image_policy('test-model', 'enabled')
     monkeypatch.setattr(base.auth, 'model_catalog', lambda _: pytest.fail('remote poll'))
     services = RuntimeServices()
     async def noop():

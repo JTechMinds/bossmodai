@@ -1,19 +1,44 @@
 """Optional model-provider contract and generic host dispatch.
 
 The host owns connection rows, call budgets and deadlines. Extensions own
-accounts, authentication, model transports, and the declarative operator UI.
+accounts, authentication, model transports, and what the operator is told.
+
+A provider describes itself to the operator through ``ProviderStatus``: one
+plain sentence about the account state, the saved accounts and the actions
+that act on them, and the models it publishes — each with what it can do and
+its one operator setting, image input — with the actions that act on the
+list. The host renders that structure as the extension's Account and Models
+sections without knowing any provider, and posts the operator's choices back
+through ``provider_action``.
 """
 
 from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import Any, Callable, Mapping, Literal, Protocol, runtime_checkable
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from core.models.thinking import ThinkingLevels, parse_thinking_levels
+from core.models.thinking import ThinkingLevel, ThinkingLevels, parse_thinking_levels
+
+# Whether a model accepts image input, as its provider reports it.
+ImageSupport = Literal["unknown", "supported", "unsupported"]
+# The operator's image-input setting for one model. ``auto`` follows
+# ImageSupport (on only when ``supported``).
+ImagePolicy = Literal["auto", "enabled", "disabled"]
+
+IMAGE_POLICY_ACTION = "image_policy"
+"""The provider action the host posts when the operator changes one model's image input.
+
+Its values are ``{"model": <ProviderModel.key>, "policy": <ImagePolicy>}``.
+Every model provider's ``provider_action`` must accept it, refusing an unknown
+model or a policy outside that model's ``image_choices`` with a
+``ProviderError``. The host UI mirrors this name (``IMAGE_POLICY_ACTION`` in
+ui/static/js/extensions/provider-sections.js).
+"""
 
 
 class ProviderError(Exception):
@@ -44,32 +69,134 @@ class _Strict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ProviderOption(_Strict):
-    value: str
-    label: str
-
-
 class ProviderAction(_Strict):
+    """One button the operator may press; the host posts it back unchanged.
+
+    Attributes:
+        key: The action name ``provider_action`` receives.
+        label: The button's text, in plain language.
+        values: The parameters ``provider_action`` receives with ``key``.
+        primary: Draw this as the section's one primary button (e.g. the
+            first sign-in). ``ProviderStatus`` allows at most one among its
+            ``actions``.
+    """
+
     key: str
     label: str
     values: dict[str, str] = Field(default_factory=dict)
+    primary: bool = False
 
 
-class ProviderChoice(_Strict):
-    label: str
-    value: str
-    options: list[ProviderOption]
-    action: str
-    parameter: str
+class ProviderAccount(_Strict):
+    """One account the provider has saved, as the operator recognizes it.
+
+    Attributes:
+        label: What the operator knows the account by, such as its email.
+            Never an internal id (a client id, a subject): two accounts with
+            the same label are told apart by the provider, e.g. a " (2)".
+        active: The account the provider's models run on. At most one is.
+        signed_in: Whether the account holds a usable sign-in.
+        action: The row's one button, such as "Switch" or "Sign in again";
+            None for the active account when it is signed in.
+    """
+
+    label: str = Field(min_length=1)
+    active: bool
+    signed_in: bool
+    action: ProviderAction | None = None
+
+
+class ProviderModel(_Strict):
+    """One model the provider publishes, and what the operator may set on it.
+
+    Attributes:
+        key: The ``ManagedModel.key`` it is published under; sent back as
+            ``values["model"]`` with ``IMAGE_POLICY_ACTION``.
+        name: Its display name.
+        thinking: The host thinking levels it offers, in host order.
+        thinking_default: The level the provider's own default uses, when the
+            provider says.
+        images: Whether it accepts image input.
+        image_policy: The image-input policy in effect, which may differ from
+            what the operator stored when the provider overrides it.
+        image_choices: The policies the operator may pick now; empty means
+            image input is read-only for this model.
+        note: One or two plain sentences about this model, or None.
+
+    Raises:
+        pydantic.ValidationError: When ``image_choices`` repeats a policy, or
+            is non-empty and does not include ``image_policy``.
+    """
+
+    key: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    thinking: list[ThinkingLevel] = Field(default_factory=list)
+    thinking_default: ThinkingLevel | None = None
+    images: ImageSupport
+    image_policy: ImagePolicy
+    image_choices: list[ImagePolicy] = Field(default_factory=list)
+    note: str | None = None
+
+    @model_validator(mode="after")
+    def _choices_hold_the_policy(self) -> "ProviderModel":
+        if len(set(self.image_choices)) != len(self.image_choices):
+            raise ValueError("image_choices must not repeat a policy")
+        if self.image_choices and self.image_policy not in self.image_choices:
+            raise ValueError(
+                f"image_policy {self.image_policy!r} is not one of image_choices"
+            )
+        return self
 
 
 class ProviderStatus(_Strict):
+    """What a model provider shows the operator: its account and its models.
+
+    Attributes:
+        connected: An account is signed in and its models are usable.
+        pending: A sign-in is open and waiting on the operator.
+        message: One short plain sentence about the account state.
+        error: Why the last operation failed, or None.
+        actions: Account-level actions: sign in, add another account, cancel
+            a sign-in, sign out.
+        accounts: The saved accounts, in the provider's order.
+        models: The models the provider publishes.
+        models_updated_at: When the models were last loaded (timezone-aware
+            UTC), or None when they never were.
+        model_actions: Actions on the model list, such as refreshing it.
+
+    Raises:
+        pydantic.ValidationError: When two models share a key, more than one
+            account is active, more than one of ``actions`` is primary, or
+            ``models_updated_at`` is not UTC.
+    """
+
     connected: bool = False
     pending: bool = False
     message: str
     error: str | None = None
     actions: list[ProviderAction] = Field(default_factory=list)
-    choices: list[ProviderChoice] = Field(default_factory=list)
+    accounts: list[ProviderAccount] = Field(default_factory=list)
+    models: list[ProviderModel] = Field(default_factory=list)
+    models_updated_at: AwareDatetime | None = None
+    model_actions: list[ProviderAction] = Field(default_factory=list)
+
+    @field_validator("models_updated_at")
+    @classmethod
+    def _utc(cls, value):
+        if value is not None and value.utcoffset() != timedelta(0):
+            raise ValueError("models_updated_at must be in UTC")
+        return value
+
+    @model_validator(mode="after")
+    def _one_of_each(self) -> "ProviderStatus":
+        keys = [model.key for model in self.models]
+        if len(set(keys)) != len(keys):
+            raise ValueError("model keys must be unique")
+        if sum(account.active for account in self.accounts) > 1:
+            raise ValueError("at most one account may be active")
+        if sum(action.primary for action in self.actions) > 1:
+            raise ValueError("at most one action may be primary")
+        return self
 
 
 @dataclass(frozen=True)
@@ -106,8 +233,8 @@ class ManagedModel(_Strict):
     name: str = Field(min_length=1)
     model: str = Field(min_length=1)
     thinking_levels: ThinkingLevels = Field(default_factory=dict)
-    images: Literal["unknown", "supported", "unsupported"] = "unknown"
-    image_policy: Literal["auto", "enabled", "disabled"] = "auto"
+    images: ImageSupport = "unknown"
+    image_policy: ImagePolicy = "auto"
     available: bool = True
     reason: str | None = None
 

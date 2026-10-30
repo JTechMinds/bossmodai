@@ -4,8 +4,8 @@
  * The projection from the server's extension list items
  * (api/routes/extensions.py `_item`) to what the browse view and the detail
  * print: a card's chip and its tint, the rail's rows and counts, which filter
- * keeps which items, which sections a detail reads, and the facts its About
- * section lists. Pure functions over the server's item, with no DOM except
+ * keeps which items, which sections a detail reads, and the facts its Tech
+ * info section lists. Pure functions over the server's item, with no DOM except
  * `markFor`, which builds the card's and the hero's bubble — so the view, the
  * detail and the controller read one answer to each question.
  *
@@ -37,19 +37,26 @@ const BossModExtensionItems = (() => {
         needs: 'Needs',
         needsImages: 'A model that can see images',
         setup: 'Setup',
+        version: 'Version',
+        author: 'Author',
         extensionId: 'Extension ID',
     });
 
     /**
      * The sections a detail can read, in reading order. Label and subtitle are
-     * frozen together because they are one row of the section list.
+     * frozen together because they are one row of the section list. A model
+     * provider reads as two: who is signed in (Account) and what agents can
+     * use (Models). The last is technical identification and is named so;
+     * a vaguer name such as "Details" would read, beside Models, as model
+     * details.
      */
     const SECTIONS = Object.freeze({
         status: Object.freeze({ id: 'status', label: 'Status', sub: 'What it’s doing now' }),
-        connection: Object.freeze({ id: 'connection', label: 'Connection', sub: 'Sign-in and models' }),
+        account: Object.freeze({ id: 'account', label: 'Account', sub: 'Who’s signed in' }),
+        models: Object.freeze({ id: 'models', label: 'Models', sub: 'What agents can use' }),
         settings: Object.freeze({ id: 'settings', label: 'Settings', sub: 'How it runs' }),
         agents: Object.freeze({ id: 'agents', label: 'Agents', sub: 'Who can use it' }),
-        about: Object.freeze({ id: 'about', label: 'About', sub: 'What it adds' }),
+        tech: Object.freeze({ id: 'tech', label: 'Tech info', sub: 'Version, ID and command' }),
     });
 
     /**
@@ -163,28 +170,31 @@ const BossModExtensionItems = (() => {
         if (!item.valid) return [];
         const out = [];
         if (item.panel) out.push(SECTIONS.status);
-        if (item.model_provider) out.push(SECTIONS.connection);
+        if (item.model_provider) out.push(SECTIONS.account, SECTIONS.models);
         if (item.settings) out.push(SECTIONS.settings);
         if (item.agent_config || item.requires_image_model) out.push(SECTIONS.agents);
-        out.push(SECTIONS.about);
+        out.push(SECTIONS.tech);
         return out;
     }
 
     /**
-     * What the About section lists: only the facts the item has, then its id,
-     * so About is never empty.
+     * What the Tech info section lists: the version and author when the
+     * manifest gives them, the id (always, so the section is never empty),
+     * then only the technical facts the item has.
      *
      * @param {object} item
      * @returns {Array<{label: string, value: string}>} For BossModFactList.
      */
-    function aboutFacts(item) {
+    function techFacts(item) {
         const facts = [];
+        if (item.version) facts.push({ label: COPY.version, value: item.version });
+        if (item.author) facts.push({ label: COPY.author, value: item.author });
+        facts.push({ label: COPY.extensionId, value: item.id });
         if (item.command) facts.push({ label: COPY.command, value: `${item.command.name} — ${item.command.summary}` });
         if (item.live_view) facts.push({ label: COPY.liveView, value: COPY.liveViewWhere(item.live_view.label) });
         if (item.agent_view) facts.push({ label: COPY.agentView, value: COPY.agentViewWhere(item.agent_view.label) });
         if (item.requires_image_model) facts.push({ label: COPY.needs, value: COPY.needsImages });
         if (item.setup_label) facts.push({ label: COPY.setup, value: item.setup_label });
-        facts.push({ label: COPY.extensionId, value: item.id });
         return facts;
     }
 
@@ -227,5 +237,5 @@ const BossModExtensionItems = (() => {
         };
     }
 
-    return { COPY, SECTIONS, chip, railGroups, visible, sectionsFor, aboutFacts, markFor, cardView, setupState };
+    return { COPY, SECTIONS, chip, railGroups, visible, sectionsFor, techFacts, markFor, cardView, setupState };
 })();

@@ -990,7 +990,7 @@
   font-weight: 500;
 }
 
-.menu-segment-option:hover { color: var(--ink); }
+.menu-segment-option:hover:not(:disabled) { color: var(--ink); }
 
 /* Outlined in ink, not filled with accent. A solid blue chip reads as a
    primary action rather than as which option you are on; an ink edge and ink
@@ -999,6 +999,10 @@
   border-color: var(--ink);
   color: var(--ink);
 }
+
+/* An option that cannot be picked now (a request is running, or the setting
+   does not offer it): the same dimming .btn[disabled] carries. */
+.menu-segment-option:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* The rail's two section-header menus, THREADS and PEOPLE (both built by
    core/menu-button.js). Same clip, a different answer: each hangs off

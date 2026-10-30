@@ -11,10 +11,12 @@
  *
  * The sections come from the manifest (BossModExtensionItems.sectionsFor), so
  * the tabs never jump when the switch flips: a section whose content needs the
- * extension on says how to turn it on instead. Two sections hold LIVE nodes
- * the controller (extensions-dialog.js) keeps for as long as the detail is
- * open — the Settings form and the Agents table — and this only mounts them,
- * so typing, a switch mid-request and focus survive every rebuild.
+ * extension on says how to turn it on instead. A model provider's Account and
+ * Models sections are provider-sections.js's, drawn from the one provider
+ * status the controller reads. Two sections hold LIVE nodes the controller
+ * (extensions-dialog.js) keeps for as long as the detail is open — the
+ * Settings form and the Agents table — and this only mounts them, so typing,
+ * a switch mid-request and focus survive every rebuild.
  *
  * Drawn wholesale on every render; the controller owns state and requests.
  * Every string — names, summaries, authors, server messages — is manifest or
@@ -23,6 +25,7 @@
 const BossModExtensionDetail = (() => {
     const { h } = BossModDom;
     const ITEMS = BossModExtensionItems;
+    const PROVIDER = BossModProviderSections;
 
     const COPY = Object.freeze({
         detailLabel: 'Extension detail',
@@ -36,7 +39,8 @@ const BossModExtensionDetail = (() => {
         sectionsLabel: 'Extension sections',
         loading: 'Loading…',
         offStatus: 'Turn it on to see its status.',
-        offConnection: 'Turn it on to sign in.',
+        offAccount: 'Turn it on to sign in.',
+        offModels: 'Turn it on to see its models.',
         offAgents: 'Turn it on to set it up for each agent.',
         excludedLead: 'Not available to agents whose model can’t see images:',
         excludedTail: 'Change models in Settings → Connections.',
@@ -126,14 +130,18 @@ const BossModExtensionDetail = (() => {
         return h('p', { class: 'market-status', role: 'status' }, COPY.loading);
     }
 
-    function connectionBody(item, state, handlers) {
-        if (!item.enabled) return h('p', { class: 'market-status' }, COPY.offConnection);
+    // A model provider's Account or Models section (`render` is
+    // PROVIDER.account or PROVIDER.models): what to do while it is off, then
+    // the one provider read both are drawn from, or why it failed.
+    function providerBody(item, state, handlers, offText, render) {
+        if (!item.enabled) return h('p', { class: 'market-status' }, offText);
         if (state.provider) {
-            return BossModExtensionPanel.providerRows(state.provider, {
+            return render(state.provider, {
                 idPrefix: 'ext-provider',
                 busy: state.busy,
+                connectionName: item.model_provider.connection_name,
                 onAction: (action) => handlers.onProviderAction(action.key, action.values),
-                onChoice: (choice, value) => handlers.onProviderAction(choice.action, { [choice.parameter]: value }),
+                onImagePolicy: (model, policy) => handlers.onProviderAction(PROVIDER.IMAGE_POLICY_ACTION, { model, policy }),
             });
         }
         if (state.liveError) return liveFailed(state, handlers);
@@ -178,10 +186,11 @@ const BossModExtensionDetail = (() => {
     function sectionBody(id, item, state, handlers, live) {
         let content;
         if (id === 'status') content = statusBody(item, state, handlers);
-        else if (id === 'connection') content = connectionBody(item, state, handlers);
+        else if (id === 'account') content = providerBody(item, state, handlers, COPY.offAccount, PROVIDER.account);
+        else if (id === 'models') content = providerBody(item, state, handlers, COPY.offModels, PROVIDER.models);
         else if (id === 'settings') content = settingsBody(item, live);
         else if (id === 'agents') content = agentsBody(item, live);
-        else if (id === 'about') content = BossModFactList.create(ITEMS.aboutFacts(item));
+        else if (id === 'tech') content = BossModFactList.create(ITEMS.techFacts(item));
         else throw new Error(`[extension-detail] unknown section "${id}"`);
         return h('div', { class: 'ext-section-body' }, content);
     }
@@ -193,7 +202,8 @@ const BossModExtensionDetail = (() => {
      *   item to show; `actionError` and `confirming` sit above the hero;
      *   `busy` disables the switch and the section controls; `sectionKey` is
      *   the open section; `panel`, `provider` and `liveError` are the live
-     *   reads the Status and Connection sections show.
+     *   reads the Status section and a provider's Account and Models
+     *   sections show.
      * @param {object} handlers  onToggle, onSetupAsk, onSetupConfirm,
      *   onSetupCancel, onSection, onPanelAction, onProviderAction, onRetryLive.
      * @param {{id: string, settings: ({element: HTMLElement}|null),

@@ -413,10 +413,13 @@
     <script defer src="{{ static_url('js/extensions/agent-config-dialog.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/agent-view-dialog.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extension-agents.js') }}"></script>
-    <!-- The Status and Connection sections' rendering, then the view's pure
-         projection, then the detail and the browse view that swaps to it, then
-         the controller that owns their state. -->
+    <!-- The Status section's rendering, then a model provider's Account and
+         Models sections (which reuse its message and buttons, and name
+         thinking levels with context/agent-fields.js, loaded above), then the
+         view's pure projection, then the detail and the browse view that swaps
+         to it, then the controller that owns their state. -->
     <script defer src="{{ static_url('js/extensions/extension-panel.js') }}"></script>
+    <script defer src="{{ static_url('js/extensions/provider-sections.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extension-items.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extension-detail.js') }}"></script>
     <script defer src="{{ static_url('js/extensions/extensions-view.js') }}"></script>

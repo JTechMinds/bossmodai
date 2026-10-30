@@ -4,9 +4,9 @@
    is built from marketplace.css's browse and detail classes — the rail, the
    card grid, the hero and the section reader — so it reads like the agent
    marketplace. This sheet holds only the extension-only parts: the inside of
-   a detail section (its settings form, status panel, dropdowns and agents
-   table), the single-agent live viewer and the per-agent view. Linked after
-   marketplace.css.
+   a detail section (its settings form, status panel, a model provider's
+   accounts and models table, and the agents table), the single-agent live
+   viewer and the per-agent view. Linked after marketplace.css.
 
    The live viewer is a band of the image's facts pinned above a scroller
    (panel bodies do not scroll themselves, see overlays.css) and the full-size
@@ -110,6 +110,10 @@ span.ext-live-url { text-decoration: none; }
    scroll does not slide them under a resting pointer (the hover-intent loop
    the marketplace's ceiling exists to prevent; see .market-detail-read). */
 .ext-detail .market-section-list { position: sticky; top: 0; }
+/* The description spans the detail. 78ch is the marketplace's reading
+   measure for a pack's prose; here it left a narrow column beside empty
+   width above sections that use all of it. */
+.ext-detail .market-detail-lead { max-width: none; }
 
 /* Narrow, the list is the wrapped row above the panel (marketplace.css), so
    it scrolls away with the view rather than pinning over the content. */
@@ -156,15 +160,79 @@ span.ext-live-url { text-decoration: none; }
 
 .ext-panel-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
-/* A provider's choice: its visible label over the app's dropdown. */
-.ext-choice { display: flex; flex-direction: column; gap: 4px; }
+/* A status's sentence (a panel's, a provider's account state): ordinary
+   state in the page's ink, not a warning. Only an error is coloured. */
+.ext-message { margin: 0; font-size: 13px; color: var(--ink); }
+
+/* ─── A model provider's Account and Models sections
+   (extensions/provider-sections.js) ─── */
+
+/* The account sentence, with the pill that says the same as a shape. */
+.ext-account-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ext-account-head > .status-pill { flex: none; }
+
+/* The saved accounts: a plain list ruled like the agents table's rows, each
+   its label, a quiet badge, and its one button at the row's end. */
+.ext-accounts { margin: 0; padding: 0; list-style: none; }
+
+.ext-accounts > li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--table-row);
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--ink);
+}
+
+.ext-accounts > li > .btn { margin-left: auto; }
+
+/* An email is one unbroken word; it wraps rather than push the button out. */
+.ext-account-label { min-width: 0; overflow-wrap: anywhere; }
+
+/* When the list was loaded on the left, its actions held to the right even
+   when there is no time to show. */
+.ext-models-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ext-models-head > .ext-panel-actions { margin-left: auto; }
+
+/* A model's note, and a thinking default, as a quiet line under the cell's
+   own text (block, and not the row header's weight). */
+.ext-model-note {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--muted);
+}
+
+/* The segment, then what Auto comes to for that model, on one line. The
+   column is only as wide as its content, so a segment left free to wrap
+   would fold into a stack of chips. */
+.ext-image-cell { display: flex; align-items: center; gap: 8px; }
+.ext-image-cell > .menu-segment { flex-wrap: nowrap; }
+.ext-image-effect { font-size: 12px; color: var(--muted); }
 
 /* ─── The Agents section (extensions/extension-agents.js) ───
 
    One extension, every agent: its help, then a plain table — hairline rules
    between rows, quiet column heads in the viewer band's label ink, and the
    switch and Settings columns only as wide as they need. The section panel is
-   the reading column, so the table takes its width. */
+   the reading column, so the table takes its width. A provider's models
+   table (.ext-models-table) is the same table, so it shares these rules. */
 
 .ext-agents {
   display: flex;
@@ -172,7 +240,8 @@ span.ext-live-url { text-decoration: none; }
   gap: 16px;
 }
 
-.ext-agents-table {
+.ext-agents-table,
+.ext-models-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 13px;
@@ -180,7 +249,9 @@ span.ext-live-url { text-decoration: none; }
 }
 
 .ext-agents-table th,
-.ext-agents-table td {
+.ext-agents-table td,
+.ext-models-table th,
+.ext-models-table td {
   padding: 8px;
   border-top: 1px solid var(--line);
   text-align: left;
@@ -188,7 +259,8 @@ span.ext-live-url { text-decoration: none; }
 }
 
 /* The column heads: .ext-live-label's ink at the band's size, not a th's bold. */
-.ext-agents-table thead th {
+.ext-agents-table thead th,
+.ext-models-table thead th {
   padding-top: 0;
   border-top: 0;
   font-size: 12px;
@@ -197,12 +269,15 @@ span.ext-live-url { text-decoration: none; }
 }
 
 /* One height for every agent's row, whether or not it holds a button. */
-.ext-agents-table tbody tr { height: var(--table-row); }
+.ext-agents-table tbody tr,
+.ext-models-table tbody tr { height: var(--table-row); }
 
 /* Each row's header is its agent. */
-.ext-agents-table tbody th { font-weight: 500; }
+.ext-agents-table tbody th,
+.ext-models-table tbody th { font-weight: 500; }
 
-.ext-agents-table .ext-agents-control { width: 1%; white-space: nowrap; }
+.ext-agents-table .ext-agents-control,
+.ext-models-table .ext-agents-control { width: 1%; white-space: nowrap; }
 
 /* A refusal under its row reads as part of that row: no rule between them. */
 .ext-agents-table .ext-agents-error-row { height: auto; }

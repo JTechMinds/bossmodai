@@ -25,7 +25,7 @@ from core import config
 from core.extensions.loader import import_package
 from core.extensions.registry import get_discovery
 from core.extensions.contract import ExtensionContext
-from core.extensions.model_provider import ProviderCompletion, services_for
+from core.extensions.model_provider import IMAGE_POLICY_ACTION, ProviderCompletion, services_for
 
 API_BASE = "extension://chatgpt"
 package = import_package(get_discovery().get("chatgpt"))
@@ -360,16 +360,23 @@ def test_api_protects_managed_connection_and_hides_tokens(monkeypatch):
         assert (
             client.post(
                 "/api/extensions/chatgpt/provider/actions",
-                json={"action": "model", "values": {"model": "not-offered"}},
+                json={"action": IMAGE_POLICY_ACTION, "values": {"model": "not-offered", "policy": "auto"}},
             ).status_code
             == 409
         )
         assert (
             client.post(
                 "/api/extensions/chatgpt/provider/actions",
-                json={"action": "model", "values": {"model": "test-model"}},
+                json={"action": IMAGE_POLICY_ACTION, "values": {"model": "test-model", "policy": "auto"}},
             ).status_code
             == 200
+        )
+        assert (
+            client.post(
+                "/api/extensions/chatgpt/provider/actions",
+                json={"action": "model", "values": {"model": "test-model"}},
+            ).status_code
+            == 409
         )
         extension = next(
             item
@@ -951,10 +958,10 @@ def test_per_model_identity_removal_reappearance_and_policy(monkeypatch):
     saved_account(models=[{'slug': 'test-model', 'display_name': 'Test'}, {'slug': 'second', 'display_name': 'Second'}])
     initial = {c.model: c.id for c in db.list_connections()}
     assert len(initial) == 2
-    auth.select_model('second')
+    auth.set_image_policy('second', 'enabled')
     assert {c.model: c.id for c in db.list_connections()} == initial
-    auth.set_image_policy('enabled')
     assert image_capability(db.get_connection_by_id(initial['second']))
+    assert not image_capability(db.get_connection_by_id(initial['test-model']))
     monkeypatch.setattr(auth, 'model_catalog', lambda _: [{'slug': 'test-model', 'display_name': 'Renamed'}])
     auth.refresh_models()
     assert not metadata(initial['second'])['available']
@@ -1120,9 +1127,9 @@ def test_unknown_effort_and_direct_images_fail_closed():
         with pytest.raises(ChatGPTError):
             auth.validate_request(request)
     assert auth.validate_request(ProviderRequest('test-model', [], '{"reasoning":{"effort":"low"}}')) == 'secret-access'
-    auth.set_image_policy('enabled')
+    auth.set_image_policy('test-model', 'enabled')
     assert auth.validate_request(ProviderRequest('test-model', [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'https://example.com/image'}}]}])) == 'secret-access'
-    auth.set_image_policy('disabled')
+    auth.set_image_policy('test-model', 'disabled')
     with pytest.raises(ChatGPTError):
         auth.validate_request(ProviderRequest('test-model', [{'content': [{'type': 'input_image'}]}]))
 
@@ -1170,7 +1177,7 @@ def test_signed_out_and_disabled_images_fail_closed(monkeypatch):
     from db.managed_connections import image_capability
     from core.extensions.model_provider import ProviderRequest
     connection_id = saved_account(refresh_token=None)
-    auth.set_image_policy('enabled')
+    auth.set_image_policy('test-model', 'enabled')
     assert image_capability(db.get_connection_by_id(connection_id))
     set_enabled('chatgpt', False)
     assert not image_capability(db.get_connection_by_id(connection_id))
@@ -1184,10 +1191,11 @@ def test_signed_out_and_disabled_images_fail_closed(monkeypatch):
 
 def test_same_account_reauth_preserves_disabled_image_policy(monkeypatch):
     saved_account()
-    auth.set_image_policy('disabled')
+    auth.set_image_policy('test-model', 'disabled')
     mock_login(monkeypatch)
     auth.accept_callback(callback_query(), attempt())
-    assert auth.account_status()['image_policy'] == 'disabled'
+    assert auth.account_status()['image_policies'] == {'test-model': 'disabled'}
+    assert [(m.key, m.image_policy) for m in extension().provider_status().models] == [('test-model', 'disabled')]
 
 
 def test_reconciliation_concurrent_stable_ids():
@@ -1233,33 +1241,102 @@ def test_refresh_publishes_each_models_catalog_capabilities(monkeypatch):
         assert stored['models'][0]['efforts'] == ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 
 
-def test_status_reports_tiers_omissions_and_coverage_for_the_selected_model(monkeypatch):
+def test_status_models_carry_thinking_default_and_image_policy_per_model(monkeypatch):
     saved_account()
     serve_catalog(monkeypatch, fixture_catalog())
     auth.refresh_models()
+    status = extension().provider_status()
+    rows = {model.key: model for model in status.models}
+    assert list(rows) == ['fixture-model-a', 'fixture-model-b', 'fixture-model-c']
+    a, b, c = rows['fixture-model-a'], rows['fixture-model-b'], rows['fixture-model-c']
+    # Host keys in host order; the wire's `none` is the host's `off`.
+    assert (a.name, a.thinking, a.thinking_default) == (
+        'Fixture A', ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], 'low')
+    assert a.note == "Ultra thinking isn't available in BossMod yet."
+    assert (a.images, a.image_policy, a.image_choices) == ('supported', 'auto', ['auto', 'enabled', 'disabled'])
+    assert (b.thinking, b.thinking_default, b.note) == (['low', 'high'], None, None)
+    # A model that takes no images may not be set to Enabled.
+    assert (b.images, b.image_policy, b.image_choices) == ('unsupported', 'auto', ['auto', 'disabled'])
+    assert (c.thinking, c.thinking_default) == ([], None)
+    assert c.note == "ChatGPT didn't list thinking options for this model."
+    assert (c.images, c.image_policy, c.image_choices) == ('unknown', 'auto', ['auto', 'enabled', 'disabled'])
+    # A default the host can't name is not offered as one; `none` is `off`.
+    serve_catalog(monkeypatch, {'models': [
+        codex_model('fixture-model-d', 'Fixture D', efforts=('none', 'low'), default='none'),
+        codex_model('fixture-model-e', 'Fixture E', efforts=('low', 'ultra', 'hyper'), default='ultra'),
+    ]})
+    auth.refresh_models()
+    d, e = extension().provider_status().models
+    assert (d.thinking, d.thinking_default) == (['off', 'low'], 'off')
+    assert (e.thinking, e.thinking_default) == (['low'], None)
+    assert e.note == "Ultra and Hyper thinking isn't available in BossMod yet."
 
-    def status():
-        result = extension().provider_status()
-        return result.message, next(c for c in result.choices if c.action == 'images').label
 
-    message, _ = status()
-    assert 'The selected model is no longer offered by your account; choose another.' in message
-    assert 'Thinking options loaded for 2 of 3 models.' in message
-    auth.select_model('fixture-model-a')
-    message, label = status()
-    assert 'Thinking: Server default (ChatGPT uses low), off, minimal, low, medium, high, xhigh, max.' in message
-    assert 'Not available in BossMod yet: ultra.' in message
-    assert 'Thinking options loaded for 2 of 3 models.' in message
-    assert 'Refresh models to load' not in message and "didn't list" not in message
-    assert label == 'Image input (Auto: on)'
-    auth.select_model('fixture-model-b')
-    message, label = status()
-    assert 'Thinking: Server default, low, high.' in message and 'Not available' not in message
-    assert label == "Image input (Auto: off; this model doesn't accept images)"
-    auth.select_model('fixture-model-c')
-    message, label = status()
-    assert "Thinking: Server default only. ChatGPT didn't list thinking options for this model." in message
-    assert label == 'Image input (Auto: off; support unknown)'
+def test_models_updated_at_is_a_utc_datetime():
+    from datetime import datetime, timedelta, timezone
+    saved_account()
+    assert extension().provider_status().models_updated_at is None
+    saved_account(refreshed_at=1793292844.25)
+    updated = extension().provider_status().models_updated_at
+    assert updated == datetime(2026, 10, 29, 16, 54, 4, 250000, tzinfo=timezone.utc)
+    assert updated.utcoffset() == timedelta(0)
+
+
+def test_account_labels_never_show_ids_and_repeats_are_numbered():
+    with store.locked() as data:
+        data["accounts"] = {
+            "oaiapp_first": account(client_id="oaiapp_first", email="same@example.com"),
+            "oaiapp_second": account(client_id="oaiapp_second", subject="subject-two", email="same@example.com",
+                                     access_token=None),
+            "oaiapp_third": account(client_id="oaiapp_third", subject="subject-three", email=None),
+        }
+        data["active"] = "oaiapp_first"
+        store.save(data)
+    status = extension().provider_status()
+    assert [(a.label, a.active, a.signed_in) for a in status.accounts] == [
+        ("same@example.com", True, True), ("same@example.com (2)", False, False), ("subject-three", False, True)]
+    assert not any("oaiapp" in a.label for a in status.accounts)
+    assert [a.action and (a.action.key, a.action.label, a.action.values) for a in status.accounts] == [
+        None,
+        ("login", "Switch", {"account_id": "oaiapp_second"}),
+        ("login", "Switch", {"account_id": "oaiapp_third"}),
+    ]
+    # The active account signed out: its row offers Sign in again, and there is no Sign out.
+    with store.locked() as data:
+        data["active"] = "oaiapp_second"
+        store.save(data)
+    status = extension().provider_status()
+    assert [a.action.label for a in status.accounts] == ["Switch", "Sign in again", "Switch"]
+    assert [a.action.values for a in status.accounts][1] == {"account_id": "oaiapp_second"}
+    assert [(a.key, a.label) for a in status.actions] == [("login", "Add another account")]
+
+
+def test_account_actions_follow_sign_in_state(monkeypatch):
+    signed_out = extension().provider_status()
+    assert (signed_out.connected, signed_out.message) == (False, "Sign in to let agents use your ChatGPT plan.")
+    assert [(a.key, a.label, a.values, a.primary) for a in signed_out.actions] == [
+        ("login", "Sign in with ChatGPT", {"account_id": ""}, True)]
+    assert (signed_out.accounts, signed_out.models, signed_out.model_actions) == ([], [], [])
+    # No refresh token, so signing out below has nothing to revoke remotely.
+    saved_account(refresh_token=None)
+    connected = extension().provider_status()
+    assert (connected.connected, connected.message) == (True, "Signed in as test@example.com.")
+    assert [(a.key, a.label, a.primary) for a in connected.actions] == [
+        ("login", "Add another account", False), ("logout", "Sign out", False)]
+    assert [(a.label, a.active, a.signed_in, a.action) for a in connected.accounts] == [
+        ("test@example.com", True, True, None)]
+    assert [(a.key, a.label) for a in connected.model_actions] == [("refresh", "Refresh models")]
+    assert [m.key for m in connected.models] == ["test-model"]
+    monkeypatch.setattr(auth, "open_browser", lambda url: True)
+    auth.begin_login()
+    pending = extension().provider_status()
+    assert (pending.pending, pending.message) == (True, "Finish signing in in your browser.")
+    assert [(a.key, a.label) for a in pending.actions] == [("cancel", "Cancel sign-in")]
+    auth.cancel_login()
+    monkeypatch.setattr(auth, "http_client_factory", lambda **kwargs: pytest.fail("signed out with no refresh token"))
+    extension().provider_action("logout", {})
+    after = extension().provider_status()
+    assert after.message == "Signed out." and not after.connected and after.models == []
 
 
 def test_same_connection_gains_and_loses_tiers_across_refreshes_without_restart(monkeypatch):
@@ -1366,8 +1443,7 @@ def test_image_conflict_publishes_disabled_without_breaking_publication(monkeypa
     saved_account()
     serve_catalog(monkeypatch, fixture_catalog())
     auth.refresh_models()
-    auth.select_model('fixture-model-a')
-    auth.set_image_policy('enabled')
+    auth.set_image_policy('fixture-model-a', 'enabled')
     a, meta = published('fixture-model-a')
     assert meta['image_policy'] == 'enabled' and image_capability(a)
     text_only = codex_model('fixture-model-a', 'Fixture A', modalities=('text',))
@@ -1375,23 +1451,24 @@ def test_image_conflict_publishes_disabled_without_breaking_publication(monkeypa
     auth.refresh_models()
     status = auth.account_status()
     assert status['connected'] and status['error'] is None
-    assert status['image_policy'] == 'enabled' and status['image_conflicts'] == ['Fixture A']
+    assert status['image_policies']['fixture-model-a'] == 'enabled' and status['image_conflicts'] == ['Fixture A']
     a, meta = published('fixture-model-a')
     assert (meta['images'], meta['image_policy']) == ('unsupported', 'disabled')
     assert not image_capability(a)
     assert published('fixture-model-b')[1]['available'] and published('fixture-model-c')[1]['available']
-    provider_status = extension().provider_status()
-    assert ("ChatGPT says Fixture A doesn't accept images, so image input stays off although it's set to Enabled."
-            in provider_status.message)
+    row = next(m for m in extension().provider_status().models if m.key == 'fixture-model-a')
+    assert (row.images, row.image_policy, row.image_choices) == ('unsupported', 'disabled', ['auto', 'disabled'])
+    assert row.note == "ChatGPT says this model can't take images, so image input is off."
     image = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
     with pytest.raises(ChatGPTError, match='Image input is disabled'):
         auth.validate_request(ProviderRequest('fixture-model-a', image))
     with pytest.raises(ChatGPTError, match="doesn't accept images"):
-        auth.set_image_policy('enabled')
-    auth.set_image_policy('auto')
+        auth.set_image_policy('fixture-model-a', 'enabled')
+    auth.set_image_policy('fixture-model-a', 'auto')
     assert auth.account_status()['image_conflicts'] == []
     assert published('fixture-model-a')[1]['image_policy'] == 'auto'
-    assert 'ChatGPT says' not in extension().provider_status().message
+    row = next(m for m in extension().provider_status().models if m.key == 'fixture-model-a')
+    assert (row.image_policy, row.note) == ('auto', None)
 
 
 @pytest.mark.parametrize('version', [{}, {'catalog_version': 1}])
@@ -1402,9 +1479,10 @@ def test_pre_upgrade_catalog_offers_server_default_and_asks_for_refresh(monkeypa
     monkeypatch.setattr(auth, 'http_client_factory', lambda **_: pytest.fail('status polling used the network'))
     status = extension().provider_status()
     assert status.connected
-    assert 'Thinking: Server default only. Refresh models to load thinking options.' in status.message
-    assert 'loaded for' not in status.message and "didn't list" not in status.message
-    assert next(c for c in status.choices if c.action == 'images').label == 'Image input (Auto: off; support unknown)'
+    (row,) = status.models
+    assert (row.key, row.thinking, row.thinking_default) == ('test-model', [], None)
+    assert row.note == 'Refresh models to load thinking options.'
+    assert (row.images, row.image_policy) == ('unknown', 'auto')
     from db.managed_connections import metadata
     assert db.get_connection_by_id(connection_id).thinking_levels is None
     assert metadata(connection_id)['images'] == 'unknown'

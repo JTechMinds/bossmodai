@@ -15,6 +15,8 @@ MODULES = [
     JS / "core" / "format.js",
     JS / "core" / "switch.js",
     JS / "core" / "avatar.js",
+    # The app's thinking-level labels, which the Models section names levels by.
+    JS / "context" / "agent-fields.js",
     # The marketplace's browse and detail builders the Extensions view is made of.
     JS / "marketplace" / "marketplace-withheld.js",
     JS / "marketplace" / "marketplace-items.js",
@@ -31,6 +33,7 @@ MODULES = [
     JS / "extensions" / "agent-config-dialog.js",
     JS / "extensions" / "extension-agents.js",
     JS / "extensions" / "extension-panel.js",
+    JS / "extensions" / "provider-sections.js",
     JS / "extensions" / "extension-items.js",
     JS / "extensions" / "extension-detail.js",
     JS / "extensions" / "extensions-view.js",
@@ -141,7 +144,7 @@ def test_the_detail() -> None:
         "sectionsFollowTheManifest", "offSectionsSayTurnItOn", "toggleRefreshesTheStatus",
         "toggleRefusalRevertsWithTheReason", "setupMissingAsksThenStarts", "setupInstallingPollsUntilReady",
         "setupFailedOffersRetry", "detailHasNoWatchButton", "openWithAnIdLandsOnItsDetail",
-        "openWithAnUnknownIdSaysSo", "closeDisposesAndStopsPolling",
+        "openWithAnUnknownIdSaysSo", "closeDisposesAndStopsPolling", "techInfoTabListsVersionAuthorAndId",
     ):
         assert payload.get(key) is True, (key, payload)
 
@@ -172,12 +175,14 @@ def test_nothing_but_the_data_table_names_tabulator() -> None:
     assert offenders == ["core/data-table.js"], offenders
 
 
-def test_the_connection_section() -> None:
+def test_the_provider_sections() -> None:
     payload = _payload()
     for key in (
         "chatgptSignInInExtension", "chatgptSignInStartsAndPolls", "chatgptCompletionShowsConnection",
-        "chatgptCloseStopsPolling", "providerControlsHandleUnrelatedExtension", "providerControlsKeepTheirMarkup",
-        "providerChoicesHaveVisibleLabels",
+        "chatgptCloseStopsPolling", "providerControlsHandleUnrelatedExtension",
+        "providerHasAccountAndModelsTabs", "accountShowsWhoAndConnectedPill", "accountRowsHaveNoIds",
+        "accountActionsFollowState", "modelsTableListsEachModel", "modelsThinkingUsesAppLabels",
+        "imageSegmentPostsTheModelAndPolicy", "imageSegmentDisablesUnavailableChoices", "modelsUpdatedAtIsFormatted",
     ):
         assert payload.get(key) is True, (key, payload)
 
@@ -190,6 +195,7 @@ def test_the_status_section() -> None:
         "panelCopyFeedbackFadesBack", "panelActionPostsAndRerenders", "panelActionRefusalIsAnAlert",
         "panelErrorAndServiceErrorAreAlerts", "panelLoadFailureShowsTheReasonAndRetry", "panelRetryRereads",
         "failedServiceStartRevertsTheSwitchWithTheReason", "serviceSwitchOnLoadsThePanel",
+        "statusMessageIsNeutral",
     ):
         assert payload.get(key) is True, (key, payload)
 
@@ -226,6 +232,19 @@ def test_the_extensions_detail_panel_has_no_ceiling() -> None:
     market = (ROOT / "ui" / "static" / "css" / "marketplace.css").read_text(encoding="utf-8")
     panel = market.split(".market-section-panel {", 1)[1].split("}", 1)[0]
     assert "max-height: 52vh;" in panel, "the marketplace keeps its reading panel's ceiling"
+
+
+def test_description_is_full_width() -> None:
+    """The Extensions detail manages, so its description spans the detail.
+
+    Scoped by the detail's class: the marketplace keeps its 78ch reading
+    measure for a pack's prose.
+    """
+    css = (ROOT / "ui" / "static" / "css" / "extensions.css").read_text(encoding="utf-8")
+    assert ".ext-detail .market-detail-lead { max-width: none; }" in css
+    market = (ROOT / "ui" / "static" / "css" / "marketplace.css").read_text(encoding="utf-8")
+    lead = market.split(".market-detail-lead {", 1)[1].split("}", 1)[0]
+    assert "max-width: 78ch;" in lead, "the marketplace keeps its reading measure"
 
 
 def test_one_form_implementation_serves_both_settings_surfaces() -> None:

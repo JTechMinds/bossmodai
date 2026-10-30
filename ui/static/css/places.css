@@ -97,6 +97,11 @@
 .status-pill[data-severity="P1"] { background: var(--amber); color: var(--amber-ink); }
 .status-pill[data-severity="P2"] { background: var(--blue); color: var(--blue-ink); }
 
+/* A pill toned by meaning rather than by a task's status: all is well, or
+   something is under way (e.g. an extension's account sign-in). */
+.status-pill[data-tone="ok"] { background: var(--ok-bg); color: var(--ok-ink); }
+.status-pill[data-tone="pending"] { background: var(--blue); color: var(--blue-ink); }
+
 /* ─── Office ─── */
 
 .office-place {

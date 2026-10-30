@@ -3,6 +3,7 @@
 from __future__ import annotations
 import json
 import os
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -17,6 +18,7 @@ from core.extensions import loader, registry
 from core.extensions.model_provider import ProviderError, provider_id, resolve_provider
 
 _PROVIDER = """
+from datetime import datetime, timezone
 from core.extensions.contract import SetupStatus
 from core.extensions.model_provider import ProviderCompletion, ProviderStatus
 
@@ -31,7 +33,13 @@ class DemoProvider:
     def handle(self, ctx, parsed, body): pass
     def provider_status(self):
         return ProviderStatus(message="Demo provider ready", connected=True,
-            actions=[{"key": "connect", "label": "Connect demo"}])
+            actions=[{"key": "connect", "label": "Connect demo"}],
+            accounts=[{"label": "demo@example.com", "active": True, "signed_in": True}],
+            models=[{"key": "demo-model", "name": "Demo model", "thinking": ["low", "high"],
+                     "thinking_default": "low", "images": "supported", "image_policy": "auto",
+                     "image_choices": ["auto", "enabled", "disabled"], "note": "A demo."}],
+            models_updated_at=datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc),
+            model_actions=[{"key": "refresh", "label": "Refresh demo"}])
     def provider_action(self, action, values):
         self.ctx.model_provider.publish_connection("demo-model")
     async def provider_complete(self, request):
@@ -160,6 +168,81 @@ def test_generic_api_discovers_and_dispatches_another_provider(providers):
         assert client.post("/api/connections/" + cid + "/duplicate").status_code == 409
         registry.set_enabled("alpha-model", False)
         assert client.get("/api/extensions/alpha-model/provider").status_code == 409
+
+
+def test_a_structured_status_round_trips_through_the_api(providers):
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    with TestClient(
+        app, headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
+    ) as client:
+        status = client.get("/api/extensions/alpha-model/provider").json()
+    # ISO 8601 in UTC, which the UI's date formatter reads.
+    assert status["models_updated_at"] == "2026-10-29T09:30:00Z"
+    assert datetime.fromisoformat(status["models_updated_at"]) == datetime(
+        2026, 10, 29, 9, 30, tzinfo=timezone.utc
+    )
+    assert status["accounts"] == [
+        {"label": "demo@example.com", "active": True, "signed_in": True, "action": None}
+    ]
+    assert status["models"] == [
+        {
+            "key": "demo-model", "name": "Demo model", "thinking": ["low", "high"],
+            "thinking_default": "low", "images": "supported", "image_policy": "auto",
+            "image_choices": ["auto", "enabled", "disabled"], "note": "A demo.",
+        }
+    ]
+    assert status["actions"] == [
+        {"key": "connect", "label": "Connect demo", "values": {}, "primary": False}
+    ]
+    assert status["model_actions"] == [
+        {"key": "refresh", "label": "Refresh demo", "values": {}, "primary": False}
+    ]
+    assert "choices" not in status
+
+
+def test_the_status_contract_refuses_an_ambiguous_shape():
+    from pydantic import ValidationError
+    from core.extensions.model_provider import ProviderModel, ProviderStatus
+    model = {"key": "m", "name": "M", "images": "unknown", "image_policy": "auto"}
+    account = {"label": "a@example.com", "active": True, "signed_in": True}
+    primary = {"key": "a", "label": "A", "primary": True}
+    with pytest.raises(ValidationError, match="model keys must be unique"):
+        ProviderStatus(message="x", models=[model, model])
+    with pytest.raises(ValidationError, match="at most one account may be active"):
+        ProviderStatus(message="x", accounts=[account, {**account, "label": "b@example.com"}])
+    with pytest.raises(ValidationError, match="at most one action may be primary"):
+        ProviderStatus(message="x", actions=[primary, {**primary, "key": "b"}])
+    with pytest.raises(ValidationError, match="not one of image_choices"):
+        ProviderModel(**{**model, "image_policy": "enabled", "image_choices": ["auto", "disabled"]})
+    with pytest.raises(ValidationError, match="must not repeat"):
+        ProviderModel(**{**model, "image_choices": ["auto", "auto"]})
+    with pytest.raises(ValidationError, match="ultra"):
+        ProviderModel(**{**model, "thinking": ["ultra"]})
+    with pytest.raises(ValidationError, match="timezone info"):
+        ProviderStatus(message="x", models_updated_at=datetime(2026, 10, 29, 9, 30))
+    with pytest.raises(ValidationError, match="must be in UTC"):
+        ProviderStatus(
+            message="x",
+            models_updated_at=datetime(2026, 10, 29, 9, 30, tzinfo=timezone(timedelta(hours=2))),
+        )
+    # Empty choices mean read-only, whatever the policy in effect.
+    assert ProviderModel(**{**model, "image_policy": "enabled"}).image_choices == []
+    # One of each is fine.
+    ProviderStatus(
+        message="x",
+        models=[model, {**model, "key": "n"}],
+        accounts=[account, {**account, "label": "b@example.com", "active": False}],
+        actions=[primary, {"key": "b", "label": "B"}],
+    )
+
+
+def test_the_flat_choice_contract_is_gone():
+    from core.extensions import model_provider
+    assert not hasattr(model_provider, "ProviderChoice")
+    assert not hasattr(model_provider, "ProviderOption")
+    assert model_provider.IMAGE_POLICY_ACTION == "image_policy"
 
 
 def test_missing_folder_fails_closed_without_loading_vendor_code(

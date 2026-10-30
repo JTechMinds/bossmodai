@@ -1,6 +1,6 @@
 /**
  * Node harness: the Extensions view (browse grid, detail and its Status,
- * Connection, Settings, Agents and About sections), the live-view status
+ * Account, Models, Settings, Agents and Tech info sections), the live-view status
  * reader, the single-agent live viewer, and the per-agent surfaces — the data
  * table's wrapper contract (over an injected table factory: Tabulator needs
  * real layout, so its rendering is checked in the real app), the desk's
@@ -10,8 +10,9 @@
  * The modal frame (its trail steps recorded), the confirm strip, the dropdown,
  * the clock and the network are stubbed; the bus, the Extensions view and its
  * controller, the marketplace's pack card, filter rail and section reader, the
- * status module, the viewer, the agents table, the switch, the avatar and the
- * DOM helpers are the real modules. Prints one JSON object of named verdicts.
+ * provider sections, the agent form's thinking labels, the status module, the
+ * viewer, the agents table, the switch, the avatar and the DOM helpers are the
+ * real modules. Prints one JSON object of named verdicts.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -21,13 +22,16 @@ installDom();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModBus", "BossModFormat", "BossModSwitch", "BossModAvatar",
+    // The app's one thinking-level label table, which the Models section reads.
+    "BossModAgentFields",
     // The browse and detail builders the Extensions view shares with the
     // marketplace, in index.html order: the view's correctness depends on them.
     "BossModMarketplaceWithheld", "BossModMarketplaceItems", "BossModPackCard", "BossModFilterRail",
     "BossModSectionReader",
     "BossModExtensionsApi", "BossModLiveStatus", "BossModExtensionsLive",
     "BossModGates", "BossModSecretField", "BossModDataTable", "BossModConfigForm", "BossModAgentConfigDialog",
-    "BossModExtensionAgents", "BossModExtensionPanel", "BossModExtensionItems", "BossModExtensionDetail",
+    "BossModExtensionAgents", "BossModExtensionPanel", "BossModProviderSections", "BossModExtensionItems",
+    "BossModExtensionDetail",
     "BossModExtensionsView", "BossModExtensionsDialog", "BossModDeskExtensions",
     "BossModTabs", "BossModFactList", "BossModAgentViewDialog", "BossModExternalOpen", "BossModDeskOpener",
 ];
@@ -124,6 +128,9 @@ global.Tabulator = class {
     destroy() { this.destroyed = true; }
 };
 global.BossModIcons = { paint: () => {} };
+// agent-fields.js names the agent palette at load; only its thinking labels
+// are read here, and those are the real module's.
+global.BossModAgentStatus = { AGENT_COLOR_PALETTE: [] };
 const revoked = [];
 global.URL.revokeObjectURL = (url) => { revoked.push(url); };
 const blobFetches = [];
@@ -191,8 +198,38 @@ const liveCallsBy = {};
 let listCalls = 0;
 const folderOpens = [];
 let listReply = [bv];
-let chatgptReply = { connected: false, pending: false, message: 'Sign in to add the Chat GPT connection.', error: null,
-    actions: [{ key: 'login', label: 'Continue with ChatGPT', values: { account_id: '' } }], choices: [] };
+// A provider status as core/extensions/model_provider.py ProviderStatus
+// serialises it: signed out, then (connectedReply) two saved accounts, one
+// signed out, and four models covering every image and thinking shape.
+let chatgptReply = { connected: false, pending: false, message: 'Sign in to let agents use your ChatGPT plan.', error: null,
+    actions: [{ key: 'login', label: 'Sign in with ChatGPT', values: { account_id: '' }, primary: true }],
+    accounts: [], models: [], models_updated_at: null, model_actions: [] };
+const connectedReply = () => ({
+    connected: true, pending: false, error: null, message: 'Signed in as new@example.com.',
+    actions: [
+        { key: 'login', label: 'Add another account', values: { account_id: '' }, primary: false },
+        { key: 'logout', label: 'Sign out', values: {}, primary: false },
+    ],
+    accounts: [
+        { label: 'new@example.com', active: true, signed_in: true, action: null },
+        { label: 'new@example.com (2)', active: false, signed_in: false,
+            action: { key: 'login', label: 'Switch', values: { account_id: 'oaiapp_7f3e9a21' }, primary: false } },
+    ],
+    models: [
+        { key: 'fixture-a', name: 'Fixture A', thinking: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+            thinking_default: 'low', images: 'supported', image_policy: 'auto', image_choices: ['auto', 'enabled', 'disabled'],
+            note: 'Ultra thinking isn’t available in BossMod yet.' },
+        { key: 'fixture-b', name: 'Fixture B', thinking: ['low', 'high'], thinking_default: null, images: 'unsupported',
+            image_policy: 'auto', image_choices: ['auto', 'disabled'], note: null },
+        { key: 'fixture-c', name: 'Fixture C', thinking: [], thinking_default: null, images: 'unknown',
+            image_policy: 'disabled', image_choices: ['auto', 'enabled', 'disabled'],
+            note: 'ChatGPT didn’t list thinking options for this model.' },
+        { key: 'fixture-d', name: 'Fixture D', thinking: [], thinking_default: null, images: 'unknown',
+            image_policy: 'auto', image_choices: [], note: null },
+    ],
+    models_updated_at: '2026-10-29T09:30:00Z',
+    model_actions: [{ key: 'refresh', label: 'Refresh models', values: {}, primary: false }],
+});
 const chatgptCalls = [];
 let demoConnected = false;
 // The Local Network Access stand-in: a command-less service with a panel and
@@ -299,7 +336,8 @@ global.apiFetch = async (url, init) => {
     if (url.startsWith('/api/extensions/demo-provider/provider')) {
         if (init && init.method === 'POST') demoConnected = JSON.parse(init.body).action === 'start-demo';
         return ok({ connected: demoConnected, pending: false, message: demoConnected ? 'Demo ready' : 'Connect demo provider',
-            actions: [{ key: 'start-demo', label: 'Start demo', values: {} }], choices: [] });
+            error: null, actions: [{ key: 'start-demo', label: 'Start demo', values: {}, primary: false }],
+            accounts: [], models: [], models_updated_at: null, model_actions: [] });
     }
     const agentsMatch = url.match(/^\/api\/extensions\/([\w-]+)\/agents$/);
     if (agentsMatch) {
@@ -328,7 +366,10 @@ global.apiFetch = async (url, init) => {
         const body = init && init.body ? JSON.parse(init.body) : null;
         chatgptCalls.push({ url, method, body });
         if (body && body.action === 'login') chatgptReply = { ...chatgptReply, pending: true,
-            message: 'Finish signing in in your browser…', actions: [{ key: 'cancel', label: 'Cancel sign-in', values: {} }] };
+            message: 'Finish signing in in your browser.', actions: [{ key: 'cancel', label: 'Cancel sign-in', values: {}, primary: false }] };
+        // The provider stores the one model's policy and answers with it in effect.
+        if (body && body.action === 'image_policy') chatgptReply = { ...chatgptReply, models: chatgptReply.models.map(
+            (model) => (model.key === body.values.model ? { ...model, image_policy: body.values.policy } : model)) };
         return ok(chatgptReply);
     }
     const viewMatch = url.match(/^\/api\/extensions\/mail\/agents\/a1\/view\?view=(\w+)&skip=(\d+)&top=(\d+)$/);
@@ -1073,13 +1114,16 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && enabledSwitch.getAttribute("role") === "switch" && enabledSwitch.getAttribute("aria-checked") === "true"
         && enabledSwitch.querySelector(".switch-label").textContent === "Enabled"
         && enabledSwitch.parentNode.classList.contains("market-detail-actions");
-    await openTab(detailLayer, "About");
-    const aboutPairs = panelOf(detailLayer).querySelectorAll("dt").map((dt) => [dt.textContent, dt.parentNode.children[
+    await openTab(detailLayer, "Tech info");
+    const techPairs = panelOf(detailLayer).querySelectorAll("dt").map((dt) => [dt.textContent, dt.parentNode.children[
         dt.parentNode.children.indexOf(dt) + 1].textContent]);
-    const bvAbout = sameJson(aboutPairs, [
+    const bvTech = sameJson(techPairs, [
+        ["Version", "1.0.0"], ["Author", "JTechMinds LLC"], ["Extension ID", "browser-vision"],
         ["Agent command", "bv — s"], ["Live view", "Browser view, from each agent’s chat header"],
-        ["Needs", "A model that can see images"], ["Setup", "Download browser (~120 MB)"], ["Extension ID", "browser-vision"],
+        ["Needs", "A model that can see images"], ["Setup", "Download browser (~120 MB)"],
     ]);
+    verdict.techInfoTabListsVersionAuthorAndId = bvTech
+        && tabNamed(detailLayer, "Tech info").querySelector(".market-section-sub").textContent === "Version, ID and command";
     await goBack(detailLayer);
     verdict.backReturnsToTheGridAndTheCard = !byId("ext-detail") && Boolean(detailLayer.body.querySelector(".market-body"))
         && detailLayer.steps.length === 0
@@ -1103,14 +1147,14 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     for (const name of ["Browser Vision", "Virtual Desktop", "Microsoft 365 Mailbox", "Local Network Access", "ChatGPT", "broken"]) {
         shapes[name] = await shapeOf(name);
     }
-    verdict.sectionsFollowTheManifest = bvAbout
-        && sameJson(shapes["Browser Vision"].names, ["Agents", "About"])
-        && sameJson(shapes["Virtual Desktop"].names, ["Agents", "About"])
-        && sameJson(shapes["Microsoft 365 Mailbox"].names, ["Agents", "About"])
-        && sameJson(shapes["Local Network Access"].names, ["Status", "Settings", "About"])
-        && sameJson(shapes["Local Network Access"].subs, ["What it’s doing now", "How it runs", "What it adds"])
-        && sameJson(shapes.ChatGPT.names, ["Connection", "About"])
-        && sameJson(shapes.ChatGPT.subs, ["Sign-in and models", "What it adds"])
+    verdict.sectionsFollowTheManifest = bvTech
+        && sameJson(shapes["Browser Vision"].names, ["Agents", "Tech info"])
+        && sameJson(shapes["Virtual Desktop"].names, ["Agents", "Tech info"])
+        && sameJson(shapes["Microsoft 365 Mailbox"].names, ["Agents", "Tech info"])
+        && sameJson(shapes["Local Network Access"].names, ["Status", "Settings", "Tech info"])
+        && sameJson(shapes["Local Network Access"].subs, ["What it’s doing now", "How it runs", "Version, ID and command"])
+        && sameJson(shapes.ChatGPT.names, ["Account", "Models", "Tech info"])
+        && sameJson(shapes.ChatGPT.subs, ["Who’s signed in", "What agents can use", "Version, ID and command"])
         && shapes["Local Network Access"].rule && shapes["Local Network Access"].toggle
         && sameJson(shapes.broken.names, []) && !shapes.broken.rule && !shapes.broken.toggle
         && Boolean(shapes.broken.note) && shapes.broken.note.textContent === invalidItem.invalid_reason;
@@ -1124,12 +1168,14 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     const netOffTabs = tabNames(offLayer);
     await goBack(offLayer);
     await openCard(offLayer, "ChatGPT");
-    const connectionOff = panelOf(offLayer).textContent;
+    const accountOff = panelOf(offLayer).textContent;
     const chatOffTabs = tabNames(offLayer);
+    await openTab(offLayer, "Models");
+    const modelsOff = panelOf(offLayer).textContent;
     await goBack(offLayer);
     await openCard(offLayer, "Virtual Desktop");
     verdict.offSectionsSayTurnItOn = statusOff === "Turn it on to see its status."
-        && connectionOff === "Turn it on to sign in."
+        && accountOff === "Turn it on to sign in." && modelsOff === "Turn it on to see its models."
         && panelOf(offLayer).textContent === "Turn it on to set it up for each agent."
         && !offLayer.body.querySelector(".ext-agents")
         && sameJson(netOffTabs, shapes["Local Network Access"].names) && sameJson(chatOffTabs, shapes.ChatGPT.names)
@@ -1211,13 +1257,13 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     closeLayer(failedSetupLayer);
 
     // Opened with an id (Settings → Connections' Manage extension): straight
-    // onto that extension's detail, its first section — a provider's Connection.
+    // onto that extension's detail, its first section — a provider's Account.
     listReply = [bv, chatgptItem()];
     const deepLayer = await openExtensions({ extensionId: "chatgpt" });
     const selectedTab = tabsOf(deepLayer).find((tab) => tab.getAttribute("aria-selected") === "true");
     const landed = Boolean(byId("ext-detail")) && deepLayer.body.querySelector(".market-detail-title").textContent === "ChatGPT"
         && sameJson(deepLayer.steps.map((step) => step.title), ["ChatGPT"])
-        && Boolean(selectedTab) && tabName(selectedTab) === "Connection"
+        && Boolean(selectedTab) && tabName(selectedTab) === "Account"
         && document.activeElement === byId("ext-detail");
     await goBack(deepLayer);
     verdict.openWithAnIdLandsOnItsDetail = landed && Boolean(deepLayer.body.querySelector(".market-body"))
@@ -1444,55 +1490,153 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && !panelOf(excludedLayer).textContent.includes("Every agent’s model can see images");
     closeLayer(excludedLayer);
 
-    // ── 24. The Connection section: ChatGPT's sign-in, polled while pending.
+    // ── 24. A model provider's Account and Models sections: ChatGPT signed
+    //     out, signing in (polled), then connected with two accounts and four
+    //     models; each section holds only its own actions.
     listReply = [chatgptItem()];
     const chatLayer = await openExtensions();
     await openCard(chatLayer, "ChatGPT");
     const buttonWith = (label) => [...chatLayer.body.querySelectorAll('button')].find(b => b.textContent === label);
-    verdict.chatgptSignInInExtension = Boolean(buttonWith('Continue with ChatGPT'))
-        && panelOf(chatLayer).contains(buttonWith('Continue with ChatGPT'))
+    const headOf = () => panelOf(chatLayer).querySelector('.ext-account-head');
+    const pillOf = () => (headOf() ? headOf().querySelector('.status-pill') : null);
+    const messageOf = () => (headOf() ? headOf().querySelector('.ext-message') : null);
+    verdict.providerHasAccountAndModelsTabs = sameJson(tabNames(chatLayer), ['Account', 'Models', 'Tech info'])
+        && tabNamed(chatLayer, 'Account').getAttribute('aria-selected') === 'true';
+    const signIn = buttonWith('Sign in with ChatGPT');
+    verdict.chatgptSignInInExtension = Boolean(signIn) && panelOf(chatLayer).contains(signIn)
         && text().includes('Commercial use requires permission');
-    buttonWith('Continue with ChatGPT').click();
+    const signedOutState = Boolean(signIn) && signIn.classList.contains('btn-primary')
+        && signIn.parentNode.classList.contains('ext-panel-actions')
+        && pillOf().textContent === 'Signed out' && pillOf().getAttribute('data-tone') === null
+        && messageOf().textContent === 'Sign in to let agents use your ChatGPT plan.'
+        && !panelOf(chatLayer).querySelector('.ext-accounts');
+    await openTab(chatLayer, 'Models');
+    const modelsSignedOut = panelOf(chatLayer).textContent === 'Sign in to see your models.';
+    await openTab(chatLayer, 'Account');
+    buttonWith('Sign in with ChatGPT').click();
     await drain();
     verdict.chatgptSignInStartsAndPolls = chatgptCalls.some(call => call.url.endsWith('/provider/actions') && call.body.action === 'login')
-        && text().includes('Finish signing in in your browser') && Boolean(buttonWith('Cancel sign-in'));
-    chatgptReply = { connected: true, pending: false, error: null,
-        message: 'Connected as new@example.com. Choose Chat GPT when creating or editing an agent.',
-        actions: [{ key: 'logout', label: 'Sign out', values: {} }],
-        choices: [{ label: 'ChatGPT model', value: 'sol', options: [{ value: 'sol', label: 'Sol' }, { value: 'luna', label: 'Luna' }],
-            action: 'model', parameter: 'model' }] };
+        && text().includes('Finish signing in in your browser.') && Boolean(buttonWith('Cancel sign-in'));
+    const pendingState = pillOf().textContent === 'Signing in…' && pillOf().getAttribute('data-tone') === 'pending'
+        && !buttonWith('Cancel sign-in').classList.contains('btn-primary') && !buttonWith('Sign in with ChatGPT');
+    chatgptReply = connectedReply();
     const chatgptReadsBeforePoll = chatgptCalls.length;
     await advance(2000);
     verdict.chatgptCompletionShowsConnection = chatgptCalls.length > chatgptReadsBeforePoll
-        && text().includes('Choose Chat GPT when creating or editing an agent.')
-        && Boolean(buttonWith('Sign out')) && [...chatLayer.body.querySelectorAll('button')].some(b => b.getAttribute('aria-label') === 'ChatGPT model');
-    // Each choice: a visible label over the app's dropdown, never a native select.
-    const choiceLabel = byId('ext-provider-choice-0-label');
-    const choiceTrigger = byId('ext-provider-choice-0');
-    const choiceRow = choiceLabel ? choiceLabel.parentNode : null;
-    const choiceLabelled = Boolean(choiceLabel) && Boolean(choiceTrigger) && menuSelectIds.includes('ext-provider-choice-0')
-        && choiceLabel.tagName === 'SPAN' && choiceLabel.classList.contains('field-label-sm')
-        && choiceLabel.textContent === 'ChatGPT model'
-        && choiceRow.classList.contains('ext-choice') && choiceRow.children.indexOf(choiceLabel) === 0
-        && choiceRow.contains(choiceTrigger) && !chatLayer.body.querySelector('select');
-    choiceTrigger.click();
-    const heldWhileBusy = byId('ext-provider-choice-0').hasAttribute('disabled');
+        && messageOf().textContent === 'Signed in as new@example.com.' && Boolean(buttonWith('Sign out'));
+    // The sentence beside a pill that says the same as a shape, in plain ink.
+    verdict.accountShowsWhoAndConnectedPill = pillOf().textContent === 'Connected' && pillOf().getAttribute('data-tone') === 'ok'
+        && messageOf().getAttribute('aria-live') === 'polite' && headOf().children.indexOf(messageOf()) === 0
+        && !panelOf(chatLayer).querySelector('.market-card-note');
+    // Each saved account by what the operator knows it by — never its id.
+    const accountRows = () => panelOf(chatLayer).querySelector('.ext-accounts').children;
+    const rows = accountRows();
+    const badgeOf = (row) => (row.querySelector('.status-pill') ? row.querySelector('.status-pill').textContent : null);
+    const switchButton = rows[1].querySelector('button');
+    const rowsShown = rows.length === 2
+        && sameJson(rows.map((row) => row.querySelector('.ext-account-label').textContent), ['new@example.com', 'new@example.com (2)'])
+        && sameJson(rows.map(badgeOf), ['Active', 'Signed out'])
+        && !rows[0].querySelector('button') && switchButton.textContent === 'Switch'
+        && switchButton.getAttribute('aria-describedby') === rows[1].querySelector('.ext-account-label').getAttribute('id')
+        && !chatLayer.body.textContent.includes('oaiapp_7f3e9a21');
+    switchButton.click();
     await drain();
-    const choicePost = chatgptCalls.filter((call) => call.url.endsWith('/provider/actions')).pop();
-    verdict.providerChoicesHaveVisibleLabels = choiceLabelled && heldWhileBusy
-        && sameJson(choicePost.body, { action: 'model', values: { model: 'luna' } })
-        && !byId('ext-provider-choice-0').hasAttribute('disabled');
+    const switchPost = chatgptCalls.filter((call) => call.url.endsWith('/provider/actions')).pop();
+    verdict.accountRowsHaveNoIds = rowsShown
+        && sameJson(switchPost.body, { action: 'login', values: { account_id: 'oaiapp_7f3e9a21' } });
+    chatgptReply = connectedReply();
+    await advance(2000);
+    // Account actions in the Account section, after the list; none primary once signed in.
+    const accountActions = panelOf(chatLayer).querySelectorAll('.ext-panel-actions');
+    const connectedState = accountActions.length === 1
+        && sameJson(accountActions[0].children.map((b) => b.textContent), ['Add another account', 'Sign out'])
+        && accountActions[0].children.every((b) => b.getAttribute('class') === 'btn btn-sm')
+        && panelOf(chatLayer).children[0].children.indexOf(accountActions[0])
+            > panelOf(chatLayer).children[0].children.indexOf(panelOf(chatLayer).querySelector('.ext-accounts'))
+        && !buttonWith('Refresh models');
+    // The Models section: what each model is, when the list was loaded, its
+    // own action, and the table.
+    await openTab(chatLayer, 'Models');
+    const modelsPanel = panelOf(chatLayer);
+    const modelsTable = () => panelOf(chatLayer).querySelector('.ext-models-table');
+    const bodyRows = () => modelsTable().querySelector('tbody').children;
+    const nameOf = (row) => row.children[0].children[0].textContent;
+    const thinkingOf = (row) => row.children[1].children[0].textContent;
+    const segmentOf = (row) => row.children[2].querySelector('[role="group"]');
+    const optionsOf = (row) => segmentOf(row).querySelectorAll('button');
+    const pressedOf = (row) => optionsOf(row).filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent);
+    const effectOf = (row) => (row.children[2].querySelector('.ext-image-effect')
+        ? row.children[2].querySelector('.ext-image-effect').textContent : null);
+    const [rowA, rowB, rowC, rowD] = bodyRows();
+    verdict.accountActionsFollowState = signedOutState && pendingState && connectedState
+        && Boolean(buttonWith('Refresh models')) && modelsPanel.contains(buttonWith('Refresh models'))
+        && !buttonWith('Sign out') && !buttonWith('Add another account');
+    verdict.modelsTableListsEachModel = Boolean(modelsTable())
+        && modelsPanel.querySelector('.field-hint').textContent
+            === 'Each model is a “Chat GPT” connection you can pick when you create or edit an agent.'
+        && modelsTable().querySelector('caption').getAttribute('class') === 'visually-hidden'
+        && sameJson(modelsTable().querySelector('thead').querySelectorAll('th').map((th) => [th.textContent, th.getAttribute('scope')]),
+            [['Model', 'col'], ['Thinking', 'col'], ['Image input', 'col']])
+        && sameJson(bodyRows().map(nameOf), ['Fixture A', 'Fixture B', 'Fixture C', 'Fixture D'])
+        && bodyRows().every((row) => row.children[0].tagName === 'TH' && row.children[0].getAttribute('scope') === 'row')
+        && rowA.children[0].querySelector('.ext-model-note').textContent === 'Ultra thinking isn’t available in BossMod yet.'
+        && !rowB.children[0].querySelector('.ext-model-note')
+        && rowC.children[0].querySelector('.ext-model-note').textContent === 'ChatGPT didn’t list thinking options for this model.';
+    // The app's own level labels (agent-fields.js), then the default.
+    verdict.modelsThinkingUsesAppLabels = thinkingOf(rowA) === 'Off, Minimal, Low, Medium, High, Extra high, Max'
+        && rowA.children[1].querySelector('.ext-model-note').textContent === 'Default: Low'
+        && rowB.children[1].textContent === 'Low, High'
+        && rowC.children[1].textContent === 'Default only' && !rowC.children[1].querySelector('.ext-model-note')
+        && throwsError(() => global.BossModProviderSections.models(
+            { ...connectedReply(), models: [{ ...connectedReply().models[1], thinking: ['ultra'] }] },
+            { busy: false, connectionName: 'Chat GPT', onAction() {}, onImagePolicy() {} }));
+    verdict.imageSegmentDisablesUnavailableChoices = sameJson(optionsOf(rowA).map((b) => b.textContent), ['Auto', 'On', 'Off'])
+        && segmentOf(rowA).classList.contains('menu-segment') && segmentOf(rowA).getAttribute('aria-label') === 'Image input for Fixture A'
+        && optionsOf(rowA).every((b) => b.classList.contains('menu-segment-option') && b.getAttribute('type') === 'button' && !b.disabled)
+        && sameJson(pressedOf(rowA), ['Auto']) && effectOf(rowA) === 'on'
+        // ChatGPT says no images: On cannot be picked, and Auto comes to off.
+        && sameJson(optionsOf(rowB).map((b) => b.disabled), [false, true, false]) && effectOf(rowB) === 'off'
+        // Not Auto: nothing to explain.
+        && sameJson(pressedOf(rowC), ['Off']) && effectOf(rowC) === null
+        // No choices offered: read-only.
+        && optionsOf(rowD).every((b) => b.disabled) && sameJson(pressedOf(rowD), ['Auto'])
+        && !chatLayer.body.querySelector('select');
+    // A click on the option in effect posts nothing; another posts the model
+    // and the policy, every control held while it runs, and the answer shown.
+    const callsBeforeImage = chatgptCalls.length;
+    optionsOf(rowA)[0].click();
+    await drain();
+    const pressedIsInert = chatgptCalls.length === callsBeforeImage;
+    optionsOf(rowA)[2].click();
+    const heldWhileBusy = bodyRows().every((row) => optionsOf(row).every((b) => b.disabled))
+        && buttonWith('Refresh models').disabled;
+    await drain();
+    const imagePost = chatgptCalls.filter((call) => call.url.endsWith('/provider/actions')).pop();
+    verdict.imageSegmentPostsTheModelAndPolicy = pressedIsInert && heldWhileBusy
+        && imagePost.method === 'POST'
+        && sameJson(imagePost.body, { action: 'image_policy', values: { model: 'fixture-a', policy: 'disabled' } })
+        && global.BossModProviderSections.IMAGE_POLICY_ACTION === 'image_policy'
+        && sameJson(pressedOf(bodyRows()[0]), ['Off']) && effectOf(bodyRows()[0]) === null
+        && !optionsOf(bodyRows()[0])[0].disabled;
+    const modelsHead = panelOf(chatLayer).querySelector('.ext-models-head');
+    verdict.modelsUpdatedAtIsFormatted = Boolean(modelsHead)
+        && modelsHead.children[0].textContent === `Updated ${global.BossModFormat.formatDateTime('2026-10-29T09:30:00Z')}`
+        && !modelsHead.textContent.includes('2026-10-29T') && !modelsHead.textContent.includes('1793')
+        && modelsHead.children[1].classList.contains('ext-panel-actions') && modelsHead.children[1].contains(buttonWith('Refresh models'))
+        && throwsError(() => global.BossModProviderSections.models({ ...connectedReply(), models_updated_at: 'not a time' },
+            { busy: false, connectionName: 'Chat GPT', onAction() {}, onImagePolicy() {} }));
     // Pending again, then closed: the poll stops with the dialog.
-    chatgptReply = { ...chatgptReply, pending: true, message: 'Finish signing in in your browser…' };
+    await openTab(chatLayer, 'Account');
+    chatgptReply = { ...connectedReply(), pending: true, message: 'Finish signing in in your browser.' };
     buttonWith('Sign out').click();
     await drain();
     const pollArmed = timers.size > 0;
     const chatgptReadsBeforeClose = chatgptCalls.length;
     closeLayer(chatLayer);
     await advance(10000);
-    verdict.chatgptCloseStopsPolling = pollArmed && chatgptCalls.length === chatgptReadsBeforeClose;
+    verdict.chatgptCloseStopsPolling = pollArmed && chatgptCalls.length === chatgptReadsBeforeClose && modelsSignedOut;
 
-    // Any provider renders through the same rows: a message, then its actions.
+    // Any provider renders through the same sections: its sentence, then its actions.
     listReply = [{ ...bv, id: 'demo-provider', name: 'Demo provider', enabled: true, requires_image_model: false,
         setup: { state: 'not_required', detail: null }, model_provider: { connection_name: 'Demo' }, category: 'model-providers' }];
     const demoLayer = await openExtensions();
@@ -1500,14 +1644,14 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     const startDemo = () => [...demoLayer.body.querySelectorAll('button')].find(b => b.textContent === 'Start demo');
     startDemo().click();
     await drain();
-    verdict.providerControlsHandleUnrelatedExtension = demoConnected && demoLayer.body.textContent.includes('Demo ready');
-    const demoNote = panelOf(demoLayer).querySelectorAll('.market-card-note').find(el => el.getAttribute('aria-live') === 'polite');
-    const demoActions = startDemo().parentNode;
-    verdict.providerControlsKeepTheirMarkup = Boolean(demoNote) && demoNote.textContent === 'Demo ready'
-        && startDemo().classList.contains('btn') && startDemo().classList.contains('btn-sm')
-        && startDemo().getAttribute('type') === 'button'
-        && demoActions.classList.contains('ext-panel-actions') && demoActions.parentNode === demoNote.parentNode
-        && demoNote.parentNode.children.indexOf(demoActions) === demoNote.parentNode.children.indexOf(demoNote) + 1;
+    const demoTabs = tabNames(demoLayer);
+    await openTab(demoLayer, 'Models');
+    verdict.providerControlsHandleUnrelatedExtension = demoConnected && sameJson(demoTabs, ['Account', 'Models', 'Tech info'])
+        && panelOf(demoLayer).textContent === 'No models yet. Refresh models to load them.';
+    await openTab(demoLayer, 'Account');
+    verdict.providerControlsHandleUnrelatedExtension = verdict.providerControlsHandleUnrelatedExtension
+        && panelOf(demoLayer).querySelector('.ext-message').textContent === 'Demo ready'
+        && startDemo().getAttribute('class') === 'btn btn-sm' && startDemo().parentNode.classList.contains('ext-panel-actions');
     closeLayer(demoLayer);
 
     // ── 25. The Status section: a panel extension's message, facts and actions.
@@ -1528,6 +1672,12 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && netLayer.body.querySelector('label[for="ext-panel-fact-1"]').textContent === 'Access code'
         && sameJson(panelOf(netLayer).querySelectorAll('button').map((b) => b.textContent), ['Copy', 'Show', 'Copy', 'Generate new code'])
         && panelOf(netLayer).querySelectorAll('button').every((b) => b.classList.contains('btn'));
+    // The sentence is ordinary state in the page's ink, not the amber note.
+    const netMessage = panelOf(netLayer).querySelector('.ext-message');
+    verdict.statusMessageIsNeutral = Boolean(netMessage) && netMessage.getAttribute('aria-live') === 'polite'
+        && netMessage.textContent.startsWith('Other devices can open BossMod')
+        && !panelOf(netLayer).querySelector('.market-card-note')
+        && verdict.accountShowsWhoAndConnectedPill === true;
     verdict.panelMasksTheSecretUntilShown = netButton('Show').getAttribute('aria-pressed') === 'false';
     netButton('Show').click();
     verdict.panelShowRevealsTheSecret = !codeField.classList.contains('bm-secret-masked')
@@ -1558,11 +1708,11 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     verdict.panelActionRefusalIsAnAlert = alerts.includes('Couldn’t save the new code: disk full.')
         && factInput(1).value === 'ZZZZ9999';
     // A command-less service: its switch in the hero, no command anywhere.
-    await openTab(netLayer, 'About');
+    await openTab(netLayer, 'Tech info');
     verdict.panelHasNoCommandLineAndShowsTheServiceSwitch = Boolean(byId('ext-enabled'))
         && byId('ext-enabled').getAttribute('aria-checked') === 'true'
-        && sameJson(tabNames(netLayer), ['Status', 'Settings', 'About'])
-        && sameJson(panelOf(netLayer).querySelectorAll('dt').map((dt) => dt.textContent), ['Extension ID']);
+        && sameJson(tabNames(netLayer), ['Status', 'Settings', 'Tech info'])
+        && sameJson(panelOf(netLayer).querySelectorAll('dt').map((dt) => dt.textContent), ['Version', 'Author', 'Extension ID']);
     closeLayer(netLayer);
 
     // The status's own error is an alert; a service that could not start is too.
@@ -1601,7 +1751,7 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     const layersBeforeSettings = layers.length;
     await openTab(netLayer, 'Settings');
     const portInput = byId('ext-settings-port');
-    verdict.settingsSectionShowsWhileOff = sameJson(offTabs, ['Status', 'Settings', 'About']) && noPanelRead
+    verdict.settingsSectionShowsWhileOff = sameJson(offTabs, ['Status', 'Settings', 'Tech info']) && noPanelRead
         && Boolean(portInput) && panelOf(netLayer).contains(portInput);
     const inlineSave = byId('ext-settings-save');
     verdict.settingsSectionRendersTheSharedForm = layers.length === layersBeforeSettings
@@ -1615,10 +1765,10 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && netLayer.body.querySelector('.actions').children.length === 0;
     // Typing survives a tab switch: the form is one node for as long as the detail is open.
     portInput.value = '5555';
-    await openTab(netLayer, 'About');
-    const hiddenWhileAbout = !byId('ext-settings-port');
+    await openTab(netLayer, 'Tech info');
+    const hiddenWhileTech = !byId('ext-settings-port');
     await openTab(netLayer, 'Settings');
-    verdict.settingsTypingSurvivesATabSwitch = hiddenWhileAbout && byId('ext-settings-port') === portInput
+    verdict.settingsTypingSurvivesATabSwitch = hiddenWhileTech && byId('ext-settings-port') === portInput
         && portInput.value === '5555' && settingsGets() === 1;
     // Save stays in place: the saved values, "Saved." in the status line, the list re-read.
     portInput.value = '41000';

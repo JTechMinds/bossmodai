@@ -100,7 +100,9 @@ class ChatGPTSession:
             connection_id = data.get("connection_id")
             models = active.get("models", [])
             model = data.get("model")
-            policy = active.get("image_policies", {}).get(model, "auto")
+            # The operator's stored choice per model; status shows what is in
+            # effect, which a conflict can override.
+            policies = dict(active.get("image_policies", {}))
             refreshed = active.get("refreshed_at")
             catalog_version = active.get("catalog_version")
             conflicts = image_conflicts(active)
@@ -119,7 +121,7 @@ class ChatGPTSession:
             "models": models,
             "connection_id": connection_id,
             "model": model,
-            "image_policy": policy,
+            "image_policies": policies,
             "refreshed_at": refreshed,
             "catalog_version": catalog_version,
             "image_conflicts": conflicts,
@@ -296,20 +298,33 @@ class ChatGPTSession:
                 self._login_error = "Model refresh failed. Last successful catalog retained; retry Refresh models."
                 raise
 
-    def set_image_policy(self, policy):
+    def set_image_policy(self, model: str, policy: str) -> None:
+        """Store the operator's image-input policy for one model and republish.
+
+        Every model of the active account is republished, so the model's own
+        connection carries the new policy at once.
+
+        Args:
+            model: A catalog slug of the active account (its ``ProviderModel.key``).
+            policy: ``auto``, ``enabled`` or ``disabled``.
+
+        Raises:
+            ChatGPTError: For any other policy, a disabled extension, an active
+                account that is not signed in, a model its catalog does not
+                list, or ``enabled`` on a model ChatGPT says takes no images.
+        """
         if policy not in {"auto", "enabled", "disabled"}:
             raise ChatGPTError("Choose Auto, Enabled, or Disabled.")
         self.require_enabled()
         with self.store.locked() as data:
             account = data["accounts"].get(data["active"], {})
-            model = data.get("model")
             entry = catalog_entry(account, model)
             if not account.get("access_token") or entry is None:
                 raise ChatGPTError("Sign in and choose an available model first.")
             if Capability.from_entry(entry).image_conflict(policy):
                 raise ChatGPTError("ChatGPT reports this model doesn't accept images.")
             account.setdefault("image_policies", {})[model] = policy
-            self._ensure_connection(data, model)
+            self._ensure_connection(data, data.get("model") or account["models"][0]["slug"])
             self.store.save(data)
 
     def validate_request(self, request):
@@ -555,27 +570,6 @@ class ChatGPTSession:
             attempt, self._pending = (self._pending, None)
             attempt["timer"].cancel()
             attempt["server"].shutdown()
-
-    def select_model(self, model: str) -> None:
-        self.require_enabled()
-        self.access_token()
-        with self.store.locked() as data:
-            account = data["accounts"].get(data["active"], {})
-            if model not in {item["slug"] for item in account.get("models", [])}:
-                raise ChatGPTError(
-                    "Choose a model offered by your connected ChatGPT account."
-                )
-        # Control target only: agent routes are independent connections.
-        with self.store.locked() as data:
-            account = data["accounts"].get(data["active"], {})
-            if not account.get("access_token") or model not in {
-                item["slug"] for item in account.get("models", [])
-            }:
-                raise ChatGPTError(
-                    "Choose a model offered by your connected ChatGPT account."
-                )
-            data["model"] = model
-            self.store.save(data)
 
     def sign_out(self) -> dict:
         self.cancel_login()
