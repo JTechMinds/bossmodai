@@ -99,6 +99,10 @@ span.ext-live-url { text-decoration: none; }
    One column per section, on the section reader's 12px rhythm. */
 .ext-section-body { display: flex; flex-direction: column; gap: 12px; }
 
+/* The scrollbar's gutter is always reserved, so the switch, description and
+   tabs never shift when a long section or an open menu makes the detail scroll. */
+.ext-detail { scrollbar-gutter: stable; }
+
 /* This detail MANAGES rather than reads: its sections hold dropdowns whose
    menus hang past their own box, and an Agents table that should take the
    room the window has. A panel with a ceiling and a scroller of its own

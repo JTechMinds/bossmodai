@@ -96,7 +96,7 @@ class ChatGPTSession:
                     self._login_error = None
                 except Exception:
                     connected = False
-                    self._login_error = "Model publication needs repair. Retry Refresh models."
+                    self._login_error = "BossMod couldn't update your ChatGPT models. Use Refresh models to try again."
             connection_id = data.get("connection_id")
             models = active.get("models", [])
             model = data.get("model")
@@ -295,7 +295,7 @@ class ChatGPTSession:
                     self.store.save(data)
                 self._login_error = None
             except Exception:
-                self._login_error = "Model refresh failed. Last successful catalog retained; retry Refresh models."
+                self._login_error = "Couldn't refresh your models. The last list is kept; try Refresh models again."
                 raise
 
     def set_image_policy(self, model: str, policy: str) -> None:
@@ -314,15 +314,17 @@ class ChatGPTSession:
                 list, or ``enabled`` on a model ChatGPT says takes no images.
         """
         if policy not in {"auto", "enabled", "disabled"}:
-            raise ChatGPTError("Choose Auto, Enabled, or Disabled.")
+            raise ChatGPTError("Choose Auto, On or Off.")
         self.require_enabled()
         with self.store.locked() as data:
             account = data["accounts"].get(data["active"], {})
             entry = catalog_entry(account, model)
-            if not account.get("access_token") or entry is None:
-                raise ChatGPTError("Sign in and choose an available model first.")
+            if not account.get("access_token"):
+                raise ChatGPTError("Sign in to ChatGPT first.")
+            if entry is None:
+                raise ChatGPTError("Your ChatGPT account doesn't offer that model. Refresh models and try again.")
             if Capability.from_entry(entry).image_conflict(policy):
-                raise ChatGPTError("ChatGPT reports this model doesn't accept images.")
+                raise ChatGPTError("ChatGPT says this model can't take images.")
             account.setdefault("image_policies", {})[model] = policy
             self._ensure_connection(data, data.get("model") or account["models"][0]["slug"])
             self.store.save(data)
@@ -332,12 +334,12 @@ class ChatGPTSession:
         token = self.access_token()
         status = self.account_status()
         if not status["connected"]:
-            raise ChatGPTError("Model publication needs repair. Retry Refresh models.")
+            raise ChatGPTError("BossMod couldn't update your ChatGPT models. Use Refresh models to try again.")
         with self.store.locked() as data:
             account = data["accounts"].get(data["active"], {})
             entry = catalog_entry(account, request.model)
             if entry is None:
-                raise ChatGPTError("This model is unavailable in the active ChatGPT account. Refresh models in Extensions.")
+                raise ChatGPTError("This model isn't offered by your ChatGPT account. Refresh models in Extensions → ChatGPT → Models.")
             try:
                 extra = json.loads(request.extra_body or "{}")
                 if not isinstance(extra, dict) or not isinstance(extra.get("reasoning", {}), dict):
@@ -352,7 +354,7 @@ class ChatGPTSession:
             for message in request.messages:
                 content = message.get("content")
                 if isinstance(content, list) and not images and any(isinstance(part, dict) and part.get("type") in {"image_url", "input_image", "image"} for part in content):
-                    raise ChatGPTError("Image input is disabled for this ChatGPT model. Enable it in Extensions to assert support.")
+                    raise ChatGPTError("This ChatGPT model isn't set to take images. Check its image input in Extensions → ChatGPT → Models.")
         return token
 
     def accept_callback(self, query: dict[str, list[str]], attempt: dict) -> None:

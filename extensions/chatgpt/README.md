@@ -2,19 +2,27 @@
 
 ## User experience
 
-1. Open **Extensions**, enable **ChatGPT**, and click **Continue with ChatGPT**.
+1. Open **Extensions → ChatGPT**, turn it on, and on the **Account** tab click
+   **Sign in with ChatGPT**.
 2. Sign in in the system browser and authorize BossMod to use your eligible ChatGPT plan.
-3. After a model-access check completes, BossMod creates one **Chat GPT** connection.
-4. Select **Chat GPT** in the existing AI Connection dropdown when creating or editing any agent.
+3. After the access check, BossMod adds one connection **per model** your plan offers,
+   named `Chat GPT — <model>`.
+4. Pick one of those connections when creating or editing an agent.
 
-The extension offers account registration/reauthorization, model selection, cancellation,
-and sign-out. Changing its model updates all agents using the shared connection.
-Signing out or disabling the extension preserves that connection's ID and agent links;
-requests stop until the extension is enabled and a valid account is connected again.
-Existing API-key connections continue to work normally. The managed connection is
-configured through the extension rather than the ordinary endpoint/API-key form.
+The **Account** tab shows who is signed in. From there you can switch to another saved
+account, add another account, or sign out; a sign-in still open in the browser can be
+cancelled there too.
 
-The extension card includes BossMod's commercial-use notice and JtechMinds contact.
+The **Models** tab lists each model your plan offers with its thinking levels and its
+image input (Auto, On or Off). **Refresh models** reloads the list from your account.
+
+Signing out or disabling the extension preserves each model connection's ID and agent
+links; requests stop until the extension is enabled and a valid account is connected
+again. Existing API-key connections continue to work normally. The managed connections
+are configured through the extension rather than the ordinary endpoint/API-key form.
+
+The extension's description in Extensions includes BossMod's commercial-use notice and
+JtechMinds contact.
 The existing repository license remains authoritative. This notice does not change
 OpenAI's eligibility requirements or terms. Plan access does not import ChatGPT
 conversation history, memories, or every feature of the ChatGPT app.
@@ -35,8 +43,11 @@ The host uses `extension://<extension-id>` as an internal routing marker, regist
 connection rows, enforces call budgets/deadlines, and dispatches generic operator
 actions. A provider raises the contract's `ProviderUsageLimitError` when the account's
 plan usage is exhausted, and the host stops that work without retrying it. Provider
-status contains typed action/choice descriptors, so the normal Extensions dialog
-renders the provider's controls without provider-specific JS.
+status describes the accounts and the account actions, and the models (each one's
+thinking levels, image support, image policy and the image choices allowed) with the
+model actions. The Extensions view renders them as the extension's Account and Models
+sections with no provider-specific JS, and the operator's image choice comes back as
+the contract's `IMAGE_POLICY_ACTION`.
 Another provider can implement this capability by adding its own extension folder;
 no additional routing, endpoint, or UI branches are needed. Disabling/removing the
 folder fails closed for its managed connections; ordinary connections still work.
@@ -78,8 +89,8 @@ are read:
 
 - `supported_reasoning_levels[].effort`: the model's thinking tiers. `none` publishes
   as BossMod's Off; other names keep their name when BossMod's thinking vocabulary has
-  them. Names BossMod doesn't know (for example `ultra`) are left out and listed in the
-  status as "Not available in BossMod yet".
+  them. Names BossMod doesn't know (for example `ultra`) are left out and noted under
+  the model in the Models tab ("Ultra thinking isn't available in BossMod yet.").
 - `default_reasoning_level`: shown as what ChatGPT uses for Server default.
 - `input_modalities`: a list containing `image` means images are supported; a list
   without it means unsupported; a missing or malformed list means unknown, so Auto
@@ -90,22 +101,21 @@ level to BossMod's vocabulary applies without a re-fetch. A malformed field is l
 out and logged at WARNING; it never rejects the catalog or the model.
 
 If the catalog stops carrying these fields, every model drops to Server default only
-with image support unknown, and the status says "ChatGPT didn't list thinking options
-for this model" and "Thinking options loaded for 0 of N models". A catalog stored
-before this version shows "Refresh models to load thinking options." until the next
-refresh. Capabilities never expire on a timer.
+with image support unknown, and each model's row says "ChatGPT didn't list thinking
+options for this model." A catalog stored before this version shows "Refresh models to
+load thinking options." until the next refresh. Capabilities never expire on a timer.
 
-If a model's image input is set to Enabled and a later refresh reports that the model
+If a model's image input is set to On and a later refresh reports that the model
 doesn't accept images, the model is published with images off, the stored choice is
-kept, and the status names the conflict. Enabled can't be chosen for such a model.
+kept, and the model's row says so. On can't be chosen for such a model.
 Under Auto, a model whose catalog lists image input receives attachments and Browser
-Vision images, which uses plan usage; set the model to Disabled to stop that.
+Vision images, which uses plan usage; set the model to Off to stop that.
 
 Schema reference: https://github.com/openai/codex/blob/d556e68ff0a2d64cd2aaa6e00748cb977f511981/codex-rs/protocol/src/openai_models.rs
 
 ## Install
 
-The host must support the optional model-provider contract introduced by this PR.
+The host must support the optional model-provider contract (`core/extensions/model_provider.py`).
 After installing these source changes, run `uv sync` and restart BossMod. No database
 migration or shared developer key is required. Subsequent model-provider extensions
 use this same host contract. The manifest declares the Python modules it requires;

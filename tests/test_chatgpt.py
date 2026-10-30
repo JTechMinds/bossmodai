@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from pathlib import Path
 from types import SimpleNamespace as NS
@@ -1460,15 +1461,29 @@ def test_image_conflict_publishes_disabled_without_breaking_publication(monkeypa
     assert (row.images, row.image_policy, row.image_choices) == ('unsupported', 'disabled', ['auto', 'disabled'])
     assert row.note == "ChatGPT says this model can't take images, so image input is off."
     image = [{'role': 'user', 'content': [{'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,AA=='}}]}]
-    with pytest.raises(ChatGPTError, match='Image input is disabled'):
+    with pytest.raises(ChatGPTError, match=re.escape(
+            "This ChatGPT model isn't set to take images. Check its image input in Extensions → ChatGPT → Models.")):
         auth.validate_request(ProviderRequest('fixture-model-a', image))
-    with pytest.raises(ChatGPTError, match="doesn't accept images"):
+    with pytest.raises(ChatGPTError, match=re.escape("ChatGPT says this model can't take images.")):
         auth.set_image_policy('fixture-model-a', 'enabled')
     auth.set_image_policy('fixture-model-a', 'auto')
     assert auth.account_status()['image_conflicts'] == []
     assert published('fixture-model-a')[1]['image_policy'] == 'auto'
     row = next(m for m in extension().provider_status().models if m.key == 'fixture-model-a')
     assert (row.image_policy, row.note) == ('auto', None)
+
+
+def test_image_policy_refusals_name_their_own_cause():
+    # Signed out wins over a listed model; an unlisted model while signed in has its own sentence.
+    saved_account(access_token=None)
+    with pytest.raises(ChatGPTError, match=re.escape("Sign in to ChatGPT first.")):
+        auth.set_image_policy('test-model', 'auto')
+    saved_account()
+    with pytest.raises(ChatGPTError, match=re.escape(
+            "Your ChatGPT account doesn't offer that model. Refresh models and try again.")):
+        auth.set_image_policy('not-offered', 'auto')
+    with store.locked() as data:
+        assert data['accounts']['oaiapp_test'].get('image_policies', {}) == {}
 
 
 @pytest.mark.parametrize('version', [{}, {'catalog_version': 1}])
