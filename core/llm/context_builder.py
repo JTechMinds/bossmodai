@@ -33,7 +33,8 @@ from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from core.tasking import board_status_cells, build_task_board
 from core.tasking.checklist import format_checklist_for_context
-from core.tasking.references import format_references_for_context
+from core.tasking.references import REFERENCES_HEADING, format_references_for_context
+from core.tasking.requests import format_request_for_context
 from core.time import ensure_utc, now_local
 from core.world.tilemap import get_room_at
 
@@ -549,22 +550,20 @@ def _format_task(task: dict[str, Any]) -> str:
     if not task:
         return "none"
     title = task.get("title", "Untitled")
-    desc = task.get("description", "No description")
+    desc = task.get("description") or "No description"
     status = task.get("status", "unknown")
     summary = task.get("completion_summary") or task.get("status_note")
-    details = [
-        f"id: {task.get('id', 'unknown')}",
-        f"title: {title}",
-        f"status: {status}",
-        f"description: {desc}",
-    ]
+    details = [f"id: {task.get('id', 'unknown')}", f"title: {title}", f"status: {status}"]
+    # The requester's words above the agent's brief (core/tasking/requests.py).
+    details.extend(format_request_for_context(task.get("request")))
+    details.append(f"description: {desc}")
     if summary:
         details.append(f"latest_summary: {summary}")
     if task.get("severity"):
         details.append(f"severity: {task['severity']}")
     reference_lines = format_references_for_context(task.get("references") or [])
     if reference_lines:
-        details.extend(["references (read before starting):", *reference_lines])
+        details.extend([REFERENCES_HEADING, *reference_lines])
     deliverable_lines = format_deliverables_for_context(task)
     if deliverable_lines:
         details.append("deliverables:")

@@ -353,6 +353,9 @@ CREATE TABLE IF NOT EXISTS tasks (
     -- P0 critical … P3 low (core/models/task.py TaskSeverity); never empty.
     severity       VARCHAR NOT NULL DEFAULT 'P3' CHECK (severity IN ('P0','P1','P2','P3')),
     origin_attachment_ids TEXT,
+    -- The message(s) that asked for the work: a JSON list of
+    -- TaskRequestMessage (core/models/task.py). NULL means none recorded.
+    request_messages TEXT,
     created_at     TIMESTAMP DEFAULT current_timestamp
 );
 
@@ -1196,6 +1199,9 @@ CREATE TABLE IF NOT EXISTS agent_schedules (
     -- Whether the agent may change it (operator-only). Operator-created
     -- schedules start locked; agent-created ones start unlocked.
     agent_can_change    BOOLEAN NOT NULL DEFAULT 0,
+    -- The message(s) that asked for it, when an agent set it up from one: a
+    -- JSON list of TaskRequestMessage (core/models/task.py). NULL means none recorded.
+    request_messages    TEXT,
     created_at          TIMESTAMP DEFAULT current_timestamp,
     updated_at          TIMESTAMP DEFAULT current_timestamp
 );

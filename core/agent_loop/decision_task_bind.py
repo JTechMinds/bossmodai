@@ -16,6 +16,7 @@ from core.agent_loop.task_roles import default_task_owner_id, task_requester_id_
 from core.models import Agent, Task
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.dependencies import is_released
+from core.tasking.requests import append_task_request, request_messages_for_trigger
 from core.tasking.service import append_task_event, create_or_bind_subtask, create_or_bind_task
 
 
@@ -61,12 +62,28 @@ def _ambiguous_match_feedback(
         "expected_action": "clarify",
     }
 
-def _task_from_creation(creation, *, agent_name: str) -> dict[str, Any]:
+def _save_turn_request(task: Task, trigger: dict[str, Any]) -> Task:
+    """Save the message(s) this turn answered on ``task`` as its request, word for word.
+
+    The agent's ``desc`` is its own brief on top of them
+    (``core/tasking/requests.py``). It runs on the task an accept or defer
+    lands on, before an accept's plan children are created, so each child's
+    ``task_assigned`` wake already carries the request behind its parent;
+    and outside any transaction, since the append opens its own.
+
+    Raises:
+        ValueError: The task vanished before its request was saved.
+    """
+    return append_task_request(task.id, request_messages_for_trigger(trigger))
+
+
+def _task_from_creation(creation, *, agent_name: str, trigger: dict[str, Any]) -> dict[str, Any]:
     """Unwrap a create-or-bind result into a task, honest clarify feedback, or on-hold feedback.
 
     A bind by title can land on an open held task (``held`` is an open
     status); that is refused. A task created here has no prerequisites, so
-    it is never held.
+    it is never held. The task the agent may act on gets the turn's request
+    saved on it (:func:`_save_turn_request`).
     """
     if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
         title = (
@@ -82,7 +99,10 @@ def _task_from_creation(creation, *, agent_name: str) -> dict[str, Any]:
                 context="Clarify which existing task to use instead of creating a duplicate.",
             )
         }
-    return _unreleased_task_feedback(creation.task, agent_name=agent_name) or {"task": creation.task}
+    unreleased = _unreleased_task_feedback(creation.task, agent_name=agent_name)
+    if unreleased is not None:
+        return unreleased
+    return {"task": _save_turn_request(creation.task, trigger)}
 
 def _follow_up_parent_task_for_trigger(agent: Agent, trigger: dict[str, Any]):
     """Return the completed task that a revision-style follow-up should attach to."""
@@ -132,6 +152,11 @@ def _resolve_or_create_work_task(
     Whichever task that is, work not yet released to the agent (held, or
     blocked on a failed prerequisite) comes back as on-hold feedback
     instead (:func:`_unreleased_task_feedback`).
+
+    A new task's description is the agent's brief (``desc``) alone, or none;
+    the requester's own words are saved on the task this creates or binds,
+    as its request (:func:`_save_turn_request`). A task wake answers no
+    message, so it saves none.
     """
     if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
@@ -168,7 +193,7 @@ def _resolve_or_create_work_task(
             create_or_bind_subtask(
                 parent_task=parent_task,
                 title=(decision.taskTitle or "").strip(),
-                description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+                description=(decision.taskDescription or "").strip() or None,
                 project=parent_task.project,
                 assigned_to=agent.id,
                 requester_id=requester_id,
@@ -185,11 +210,12 @@ def _resolve_or_create_work_task(
                 origin_attachment_ids=origin_attachment_ids,
             ),
             agent_name=agent.name,
+            trigger=trigger,
         )
     return _task_from_creation(
         create_or_bind_task(
             title=(decision.taskTitle or "").strip(),
-            description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+            description=(decision.taskDescription or "").strip() or None,
             project=None,
             assigned_to=agent.id,
             requester_id=requester_id,
@@ -207,6 +233,7 @@ def _resolve_or_create_work_task(
             origin_attachment_ids=origin_attachment_ids,
         ),
         agent_name=agent.name,
+        trigger=trigger,
     )
 
 def _bind_named_task(
@@ -223,7 +250,8 @@ def _bind_named_task(
     paused work, or pauses a different current task.
 
     A task the boss held since validation is refused before the revision is
-    written, so nothing on it changes.
+    written, so nothing on it changes. Otherwise the turn's message is
+    appended to the task's request after the first (:func:`_save_turn_request`).
 
     Raises:
         ValueError: The task vanished after validation.
@@ -247,7 +275,7 @@ def _bind_named_task(
             content=f"Revised: {description}",
             source_trigger_id=trigger.get("trigger_id"),
         )
-    return {"task": task}
+    return {"task": _save_turn_request(task, trigger)}
 
 def _ensure_deferred_task(
     agent: Agent,
@@ -259,6 +287,12 @@ def _ensure_deferred_task(
     Work not yet released to the agent comes back as on-hold feedback
     instead: deferring it would move a held task to ``pending`` and so
     release it (:func:`_unreleased_task_feedback`).
+
+    As on accept, a new task's description is the agent's brief alone, the
+    requester's words are saved on it as its request
+    (:func:`_save_turn_request`), and it keeps the files attached to the
+    message it came from (``origin_attachment_ids``), so the work starts
+    later with them.
     """
     if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
@@ -283,7 +317,7 @@ def _ensure_deferred_task(
             create_or_bind_subtask(
                 parent_task=parent_task,
                 title=(decision.taskTitle or "").strip(),
-                description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+                description=(decision.taskDescription or "").strip() or None,
                 project=parent_task.project,
                 assigned_to=agent.id,
                 requester_id=requester_id,
@@ -297,13 +331,15 @@ def _ensure_deferred_task(
                 audit_author_type="agent",
                 audit_author_agent_id=agent.id,
                 audit_source_trigger_id=trigger.get("trigger_id"),
+                origin_attachment_ids=trigger.get("attachment_ids"),
             ),
             agent_name=agent.name,
+            trigger=trigger,
         )
     return _task_from_creation(
         create_or_bind_task(
             title=(decision.taskTitle or "").strip(),
-            description=(decision.taskDescription or trigger.get("content") or "").strip() or None,
+            description=(decision.taskDescription or "").strip() or None,
             project=None,
             assigned_to=agent.id,
             requester_id=requester_id,
@@ -318,6 +354,8 @@ def _ensure_deferred_task(
             audit_author_type="agent",
             audit_author_agent_id=agent.id,
             audit_source_trigger_id=trigger.get("trigger_id"),
+            origin_attachment_ids=trigger.get("attachment_ids"),
         ),
         agent_name=agent.name,
+        trigger=trigger,
     )

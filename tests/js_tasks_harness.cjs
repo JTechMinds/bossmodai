@@ -29,7 +29,7 @@ const NAMES = [
     "BossModFloorScope",
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskChecklist", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory",
-    "BossModTaskDetailSections",
+    "BossModTaskDetailSections", "BossModTaskRequest",
     "BossModTaskDetail",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksCancel", "BossModTasksComplete",

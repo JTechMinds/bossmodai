@@ -12,7 +12,10 @@ from core.agent_loop import activity_runtime
 from core.agent_loop.actions import execute_action
 from core.agent_loop.decision_contract import (
     ConversationDecision,
+    act_for_decision,
+    decision_act_error,
     parse_direct_turn_response,
+    repair_kept_act,
     validate_decision_for_trigger,
 )
 from core.agent_loop.decision_memory import memory_repair_error, save_decision_memory
@@ -263,9 +266,16 @@ async def _run_decision_turn(
                 decision=True,
             ):
                 decision_repair_attempts += 1
+                # Broken JSON has no candidate object, so there is no act to keep.
+                candidate = parsed.get("_candidate_payload")
                 continuation_messages = _build_decision_repair_messages(
                     parsed_error=parsed.get("_raw_snippet", ""),
                     kind=str(parse_kind or ""),
+                    kept_act=repair_kept_act(
+                        candidate.get("act") if isinstance(candidate, dict) else None,
+                        trigger_type=trigger_type,
+                        trigger=trigger,
+                    ),
                 )
                 step_traces.append(
                     _build_step_trace(
@@ -679,8 +689,27 @@ async def _run_decision_turn(
             # corrects its object in this turn instead of the dispatcher
             # retrying the whole turn blind.
             decision_repair_attempts += 1
+            # When the validator rejected the act itself (not a field inside
+            # it), "keep your act" would contradict the error, e.g. a reply
+            # with work_commit true told both "keep reply" and "use accept".
+            act_error = decision_act_error(
+                decision,
+                trigger_type=trigger_type,
+                active_task_id=initial_task_id,
+                has_live_work=has_live_work,
+                agent_id=agent.id,
+                trigger=trigger,
+            )
+            kept_act: str | None = None
+            if act_error is None:
+                kept_act = repair_kept_act(
+                    act_for_decision(decision.decision),
+                    trigger_type=trigger_type,
+                    trigger=trigger,
+                )
             continuation_messages = _build_decision_repair_messages(
                 parsed_error=validation_error,
+                kept_act=kept_act,
             )
             step_traces.append(
                 _build_step_trace(
@@ -778,6 +807,11 @@ async def _run_decision_turn(
                     decision_repair_attempts += 1
                     continuation_messages = _build_decision_repair_messages(
                         parsed_error=memory_repair_error(reason),
+                        kept_act=repair_kept_act(
+                            act_for_decision(decision.decision),
+                            trigger_type=trigger_type,
+                            trigger=trigger,
+                        ),
                     )
                     step_traces.append(
                         _build_step_trace(

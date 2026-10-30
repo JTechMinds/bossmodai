@@ -16,14 +16,24 @@ from typing import Any
 
 import pytest
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 import db
+from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
+from api.routes import router
 from core import config
+from core.agent_loop import activity_runtime
+from core.agent_loop.turn_request import bind_turn_request
+from core.agent_loop.work_binding import bind_turn
 from core.bm_cli.runtime import execute_bm_cli
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import AgentScheduleUpdate, ScheduleCreate, ScheduleUpdate
+from core.models.task import TaskRequestMessage
 from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.scheduling import service
 from core.scheduling.service import OPERATOR, ScheduleActor, ScheduleLocked, ScheduleNotFound
+from core.tasking.requests import append_task_request
 
 RULE = {"frequency": "daily", "interval": 1, "times": ["09:00"], "start_date": "2026-09-01"}
 LOCKED = "This schedule does not allow you to modify it. Contact Boss if you need help managing this schedule."
@@ -311,6 +321,75 @@ def test_usage_errors_list_the_forms() -> None:
         result = _cli(ada, command)
         assert not result.ok
         assert "schedules remove <id>" in result.prompt_content, command
+
+
+# ─── The request a schedule keeps (core/tasking/requests.py) ───
+
+
+def _request_contents(schedule_id: str) -> list[str]:
+    schedule = db.get_schedule(schedule_id)
+    assert schedule is not None
+    return [message.content for message in schedule.request_messages]
+
+
+def test_schedules_add_in_a_work_turn_saves_the_bound_tasks_request() -> None:
+    ada = db.create_agent("Ada", role="Operator")
+    task = db.create_task(title="Monday sales report", assigned_to=ada.id, created_by=HUMAN_SENDER_ID)
+    append_task_request(task.id, [
+        TaskRequestMessage(author_type="human", author_name="Boss", content="Every Monday, send me the sales report."),
+    ])
+    activity_runtime.activate_work_activity(ada.id, db.get_task(task.id), task_status="active")
+    work = {"type": "activity_resumed", "content": "Continue.", "task_id": task.id}
+    with bind_turn(ada.id, work), bind_turn_request(ada.id, work):
+        added = _cli(ada, "schedules add", _add_body("Send the sales report"))
+    assert added.ok, added.prompt_content
+    (schedule,) = db.list_schedules_for_agent(ada.id)
+    assert _request_contents(schedule.id) == ["Every Monday, send me the sales report."]
+
+
+def test_schedules_edit_in_a_chat_turn_appends_and_on_off_save_nothing() -> None:
+    ada = db.create_agent("Ada", role="Operator")
+    with bind_turn_request(ada.id, {"type": "human_chat", "content": "Ping me every 5 minutes."}):
+        assert _cli(ada, "schedules add", _add_body()).ok
+    (schedule,) = db.list_schedules_for_agent(ada.id)
+    short = schedule.id[:8]
+    assert _request_contents(schedule.id) == ["Ping me every 5 minutes."]
+
+    with bind_turn_request(ada.id, {"type": "human_chat", "content": "Call it Ping."}):
+        assert _cli(ada, f"schedules edit {short}", json.dumps({"title": "Ping"})).ok
+    with bind_turn_request(ada.id, {"type": "human_chat", "content": "Call it Ping."}):
+        assert _cli(ada, f"schedules edit {short}", json.dumps({"title": "Ping!"})).ok
+    with bind_turn_request(ada.id, {"type": "human_chat", "content": "Pause it for now."}):
+        assert _cli(ada, f"schedules off {short}").ok
+    assert _request_contents(schedule.id) == ["Ping me every 5 minutes.", "Call it Ping."]
+    assert db.get_schedule(schedule.id).title == "Ping!"
+
+
+def test_the_operators_api_create_and_edit_save_no_request() -> None:
+    ada = db.create_agent("Ada", role="Operator")
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    client = TestClient(app, headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()})
+    created = client.post(
+        f"/api/agents/{ada.id}/schedules",
+        json={"title": "Check GitHub", "instructions": "Look.", "recurrence": RULE},
+    )
+    assert created.status_code == 201, created.text
+    assert created.json()["request_messages"] == []
+    patched = client.patch(f"/api/schedules/{created.json()['id']}", json={"title": "Check the repo"})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["request_messages"] == []
+    assert _request_contents(created.json()["id"]) == []
+    row = db.query_one("SELECT request_messages FROM agent_schedules WHERE id = $1", [created.json()["id"]])
+    assert row is not None and row["request_messages"] is None
+
+
+def test_a_schedules_request_messages_are_never_removed() -> None:
+    ada = db.create_agent("Ada", role="Operator")
+    schedule = service.create_schedule(ada.id, _create(), actor=OPERATOR)
+    with pytest.raises(ValueError, match="never removed"):
+        db.update_schedule(schedule.id, request_messages=[])
 
 
 # ─── The worker's reload only syncs ───

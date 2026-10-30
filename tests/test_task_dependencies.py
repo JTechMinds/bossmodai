@@ -1328,6 +1328,8 @@ def test_an_accept_naming_a_task_held_since_validation_writes_no_revision() -> N
     stored = db.get_task(draft.id)
     assert stored is not None and stored.status == "held" and stored.description == "Draft."
     assert _events(draft.id) == before
+    # A refused bind saves no request either.
+    assert stored.request_messages == []
 
 
 def test_an_accept_whose_title_binds_a_held_task_is_refused() -> None:
@@ -1345,6 +1347,8 @@ def test_an_accept_whose_title_binds_a_held_task_is_refused() -> None:
     # Bound to the held task, not a duplicate created beside it.
     assert [task.id for task in _tasks_titled("Draft")] == [draft.id]
     assert _status(draft.id) == "held"
+    # A refused bind saves no request either.
+    assert db.get_task(draft.id).request_messages == []
     assert db.list_activities(agent_id=sam.id) == []
 
 
@@ -1359,7 +1363,7 @@ def test_the_prompts_teach_after_and_lint_clean() -> None:
         "If a task needs another task's output, add `after`. Never message a teammate to wait, "
         "and do not assign work that cannot start yet without `after`."
     ) in execution
-    assert '"after":["Review API logs"]' in execution
+    assert '"after":["Find the cause of the POST /orders 500s"]' in execution
     assert '"key":"draft","who":"Sam","after":["research"]' in decision
     assert "These tasks finished first:\n{{trigger.task_prerequisites}}" in trigger_event
 

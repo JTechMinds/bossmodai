@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,13 @@ from tests._connections import model_connection
 from core import config
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import persist_result_triggers
+from core.agent_loop.decision_contract import (
+    TASK_ID_NOT_OPEN,
+    WORK_COMMIT_STARTS_NOTHING,
+    act_for_decision,
+    parse_direct_turn_response,
+    repair_kept_act,
+)
 from core.agent_loop.decision_parse_fail import (
     DEFAULT_DECISION_REPAIR_ATTEMPTS,
     PARSE_FAIL_IDLE_NOTE,
@@ -82,9 +90,15 @@ def _script_completions(
     return seen, prompts
 
 
-def _joined_repair(kind: str, snippet: str) -> str:
-    messages = _build_decision_repair_messages(parsed_error=snippet, kind=kind)
+def _joined_repair(kind: str, snippet: str, kept_act: str | None = None) -> str:
+    messages = _build_decision_repair_messages(parsed_error=snippet, kind=kind, kept_act=kept_act)
     return "\n".join(item["content"] for item in messages)
+
+
+def _added_system_text(prompts: list[list[dict[str, str]]], call: int) -> str:
+    """Return the system messages call ``call`` saw that the call before it did not."""
+    added = prompts[call][len(prompts[call - 1]):]
+    return "\n".join(item.get("content") or "" for item in added if item.get("role") == "system")
 
 
 def test_decision_repair_attempts_defaults_to_six() -> None:
@@ -102,6 +116,7 @@ def test_decision_repair_attempts_defaults_to_six() -> None:
         ("prose_status", "I'll do the tests next."),
         ("invalid_decision", '{"act":"reply","work_commit":false,"th2":"x"}'),
         ("invalid_json", '{"act":'),
+        ("invalid_value", 'Value error, plan mode "delegate" needs at least one child with "who" or "aid"'),
     ],
 )
 def test_every_decision_repair_kind_includes_corrective_steer(kind: str, snippet: str) -> None:
@@ -280,3 +295,240 @@ async def test_truncated_json_repairs_then_stops(
     notes = db.list_notifications(agent_id=agent.id, limit=8)
     assert sum(1 for item in notes if (item.content or "").strip() == PARSE_FAIL_IDLE_NOTE) == 1
     assert outcome.result.get("trigger_requests") == []
+
+
+_KEEP_ACCEPT = 'You answered with act "accept", which this turn allows. Keep "accept" and everything it carried'
+
+
+def _accept(**extra: Any) -> str:
+    """Return a work accept for the eval4 audit, with ``extra`` keys merged in."""
+    payload: dict[str, Any] = {
+        "act": "accept",
+        "intent": "work",
+        "msg": "Understood — I'll perform the read-only audit and write the report.",
+        "commit": "work",
+        "data": {
+            "task": {
+                "title": "Eval4 read-only audit",
+                "desc": "Audit the eval4 project read-only, as /projects/eval4/instructions.md asks.",
+            },
+        },
+        "th": "accept work",
+    }
+    for key, value in extra.items():
+        if key == "data":
+            payload["data"] = {**payload["data"], **value}
+        elif key == "task":
+            payload["data"]["task"] = {**payload["data"]["task"], **value}
+        else:
+            payload[key] = value
+    return json.dumps(payload)
+
+
+def _eval4_chat() -> dict[str, Any]:
+    return {
+        "type": "human_chat",
+        "content": "I've got a new task for you, see /projects/eval4/instructions.md",
+        "from_name": "Human",
+        "from_id": HUMAN_SENDER_ID,
+        "source_channel": "chat",
+    }
+
+
+def _assert_task_started(outcome: Any, agent_id: str) -> None:
+    assert outcome.trigger_status == "completed"
+    assert [task.title for task in db.list_tasks(assigned_to=agent_id)] == ["Eval4 read-only audit"]
+    assert any(
+        item.get("trigger_type") == "activity_resumed" for item in outcome.result.get("trigger_requests") or []
+    ), "accept + commit=work schedules the first execution turn"
+
+
+@pytest.mark.asyncio
+async def test_eng_boxies_self_plan_children_repair_keeps_the_accept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Live 2026-10-30 (Eng-Boxies): an accept whose plan children were the
+    # agent's own sub-steps (no who/aid) was refused, the repair called it
+    # broken JSON and offered only the no-work reply, and no work started.
+    agent = db.create_agent("Eng-Boxies", role="Engineer", connection_id=model_connection("test/mock"))
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    own_steps = _accept(
+        data={
+            "plan": {
+                "mode": "self",
+                "children": [
+                    {"task": {"title": "Inventory the eval4 files"}},
+                    {"task": {"title": "Audit each file against the instructions"}},
+                    {"task": {"title": "Write the audit report"}},
+                ],
+            }
+        }
+    )
+    seen, prompts = _script_completions(monkeypatch, [own_steps, _accept()])
+
+    outcome = await run_turn(agent, state, _eval4_chat())
+
+    assert len(seen) == 2
+    repair_text = _added_system_text(prompts, 1)
+    assert _KEEP_ACCEPT in repair_text
+    # Uncut (the repair trims snippets past 180 characters with "..."), and the
+    # kept-act sentence follows it in the same paragraph.
+    assert (
+        'a value that does not fit this turn: Value error, each plan child is a teammate\'s task and needs '
+        '"who" or "aid". For your own sub-steps, leave "plan" out and use checklist add once you start. '
+        f"{_KEEP_ACCEPT}"
+    ) in repair_text
+    assert 'is a teammate\'s task and needs "who" or "aid"' in repair_text
+    assert 'leave "plan" out and use checklist add' in repair_text
+    assert "truncated or broken JSON" not in repair_text
+    assert "agentId" not in repair_text and "agentName" not in repair_text
+    assert "Envelope for a reply that starts no work (no Board change):" in repair_text
+    assert "Minimal allowed envelope" not in repair_text
+    assert len([step for step in outcome.steps if "decision_repair_requested" in str(step.get("result"))]) == 1
+    _assert_task_started(outcome, agent.id)
+
+
+@pytest.mark.asyncio
+async def test_a_turn_validation_repair_keeps_the_accept(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    seen, prompts = _script_completions(monkeypatch, [_accept(task={"id": "task-that-is-not-open"}), _accept()])
+
+    outcome = await run_turn(agent, state, _eval4_chat())
+
+    assert len(seen) == 2
+    repair_text = _added_system_text(prompts, 1)
+    assert TASK_ID_NOT_OPEN in repair_text
+    assert _KEEP_ACCEPT in repair_text
+    _assert_task_started(outcome, agent.id)
+
+
+@pytest.mark.asyncio
+async def test_a_refused_remember_repair_keeps_the_accept(monkeypatch: pytest.MonkeyPatch) -> None:
+    db.set_setting("standing_prefs_line_max_chars", "40", "context")
+    config.reload()
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    too_long = "The boss keeps eval instructions under /projects/eval4, one file per run."
+    seen, prompts = _script_completions(monkeypatch, [_accept(remember=too_long), _accept()])
+
+    outcome = await run_turn(agent, state, _eval4_chat())
+
+    assert len(seen) == 2
+    repair_text = _added_system_text(prompts, 1)
+    assert "memory not saved:" in repair_text
+    assert _KEEP_ACCEPT in repair_text
+    _assert_task_started(outcome, agent.id)
+
+
+_KEEP_ANY_ACT = "You answered with act"
+
+
+@pytest.mark.asyncio
+async def test_a_committed_reply_with_nothing_open_is_not_told_to_keep_reply(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The validator rejects the reply itself and says "use accept"; a "keep
+    # reply" line beside it would steer back into the stalled start.
+    agent = db.create_agent("Eng-Boxies", role="Engineer", connection_id=model_connection("test/mock"))
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    committed = '{"say":"Understood — starting the read-only audit now.","actions":[],"work_commit":true}'
+    seen, prompts = _script_completions(monkeypatch, [committed, _accept()])
+
+    outcome = await run_turn(agent, state, _eval4_chat())
+
+    assert len(seen) == 2
+    repair_text = _added_system_text(prompts, 1)
+    assert WORK_COMMIT_STARTS_NOTHING in repair_text
+    assert _KEEP_ANY_ACT not in repair_text
+    _assert_task_started(outcome, agent.id)
+
+
+@pytest.mark.asyncio
+async def test_a_cancel_with_nothing_active_is_not_told_to_keep_cancel(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent("Jim", role="Engineer", connection_id=model_connection("test/mock"))
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    cancel = json.dumps({"act": "cancel", "intent": "work", "msg": "Cancelling the audit.", "th": "cancel"})
+    reply = '{"say":"Nothing is running, so there is nothing to cancel.","actions":[],"work_commit":false}'
+    seen, prompts = _script_completions(monkeypatch, [cancel, reply])
+
+    outcome = await run_turn(agent, state, {**_eval4_chat(), "content": "Cancel the eval4 audit."})
+
+    assert len(seen) == 2
+    repair_text = _added_system_text(prompts, 1)
+    assert "cancel is only valid when there is an active task to close" in repair_text
+    assert _KEEP_ANY_ACT not in repair_text
+    assert outcome.result.get("event") == "decision_applied"
+
+
+@pytest.mark.asyncio
+async def test_a_work_accept_on_a_peer_message_is_not_told_to_keep_accept(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = db.create_agent("Eng-Boxies", role="Engineer", connection_id=model_connection("test/mock"))
+    peer = db.create_agent("Ett-PO", role="Product Owner")
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    reply = '{"say":"Assign it to me as a task and I will start.","actions":[],"work_commit":false}'
+    seen, prompts = _script_completions(monkeypatch, [_accept(), reply])
+    peer_message = {
+        "type": "peer_message",
+        "from_agent": peer.id,
+        "from_name": peer.name,
+        "content": "Can you audit eval4 for me?",
+    }
+
+    outcome = await run_turn(agent, state, peer_message)
+
+    assert len(seen) == 2
+    repair_text = _added_system_text(prompts, 1)
+    assert "peer messages are conversational only" in repair_text
+    assert _KEEP_ANY_ACT not in repair_text
+    assert outcome.result.get("event") == "decision_applied"
+    assert db.list_tasks(assigned_to=agent.id) == []
+
+
+def test_the_kept_act_sentence_joins_the_first_paragraph_and_leaves_no_blank_run() -> None:
+    error = TASK_ID_NOT_OPEN
+    without = _build_decision_repair_messages(parsed_error=error, kept_act=None)[0]["content"]
+    assert "\n\n\n" not in without
+    assert without.startswith(
+        f"Your last response did not fit this conversation turn: {error}.\n\nReturn one JSON object"
+    )
+    kept = _build_decision_repair_messages(parsed_error=error, kept_act="accept")[0]["content"]
+    assert "\n\n\n" not in kept
+    assert kept.splitlines()[0] == (
+        f'Your last response did not fit this conversation turn: {error}. You answered with act "accept", '
+        'which this turn allows. Keep "accept" and everything it carried, and change only what is named above.'
+    )
+    assert kept.splitlines()[1:] == without.splitlines()[1:]
+
+
+def test_repair_kept_act_gives_none_for_an_act_the_turn_does_not_allow() -> None:
+    assignee_update = {"type": "task_update", "task_party": "assignee", "task_id": "t1"}
+    kept = repair_kept_act("accept", trigger_type="task_update", trigger=assignee_update)
+    assert kept is None
+    assert "You answered with act" not in _joined_repair("invalid_value", "Value error, bad plan", kept)
+    assert repair_kept_act(None, trigger_type="human_chat", trigger=_eval4_chat()) is None
+    assert repair_kept_act("cli", trigger_type="human_chat", trigger=_eval4_chat()) is None
+    # A stakeholder's task_update allows accept, so the same act is kept there.
+    stakeholder_update = {**assignee_update, "task_party": "stakeholder"}
+    assert repair_kept_act("accept", trigger_type="task_update", trigger=stakeholder_update) == "accept"
+    assert _KEEP_ACCEPT in _joined_repair("invalid_value", "Value error, bad plan", "accept")
+
+
+def test_a_say_only_envelope_keeps_reply() -> None:
+    parsed = parse_direct_turn_response('{"say":"Still reading the brief.","actions":[],"work_commit":false}')
+    assert parsed["decision"] == "answer"
+    act = act_for_decision(parsed["decision"])
+    assert act == "reply"
+    assert repair_kept_act(act, trigger_type="human_chat", trigger=_eval4_chat()) == "reply"
+    assert act_for_decision("accept") == "accept"
+    assert act_for_decision("_parse_failed") is None

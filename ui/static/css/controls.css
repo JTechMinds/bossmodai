@@ -710,8 +710,13 @@ button.avatar:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
  * Six lines until core/clamped-markdown.js has measured whether the text
  * overflows. Promoted from the task detail's instructions when the agent
  * desk's description became the second surface to need it.
+ *
+ * The line clamp cannot see inside a code fence (.md pre is its own
+ * formatting context), so a clamped block that contains one is also capped
+ * at six lines' height. Prose without a fence keeps the line clamp alone.
  */
 .clamped-md > .is-clamped { display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.clamped-md > .is-clamped:has(pre) { max-height: calc(6 * 1lh); }
 
 /* ─── Empty slot ───
  *

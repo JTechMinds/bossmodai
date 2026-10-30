@@ -30,7 +30,7 @@ import db
 
 logger = logging.getLogger(__name__)
 
-_LOOP_PROMPT_ALLOWED_PATHS = {"command", "reason", "parsed_error", "detail", "target"}
+_LOOP_PROMPT_ALLOWED_PATHS = {"command", "reason", "parsed_error", "detail", "target", "kept_act"}
 
 
 def _render_loop_prompt(template_key: str, **context: Any) -> str:
@@ -172,11 +172,36 @@ def _build_decision_repair_messages(
     *,
     parsed_error: str,
     kind: str = "",
+    kept_act: str | None,
 ) -> list[dict[str, str]]:
-    """Build one strict repair prompt after a bad decision envelope.
+    """Build one strict repair prompt after a bad decision.
 
-    Prose, invented keys, and broken JSON share this steer: what failed,
-    the allowed envelope, and one JSON object with no fences.
+    Every decision repair shares this steer: prose, invented keys, broken
+    JSON, a value that does not fit, a decision invalid for the turn, and a
+    refused ``remember``. It says what failed, the keys and the no-work reply
+    envelope, and asks for one JSON object with no fences.
+
+    Args:
+        parsed_error: What failed: the parser's snippet, or the turn
+            validator's / memory store's message.
+        kind: The parse failure kind; when set, ``parsed_error`` is prefixed
+            with that kind's label (``describe_decision_parse_failure``).
+            Empty for errors that already read as a sentence.
+        kept_act: The act to keep (``decision_contract.repair_kept_act``),
+            rendered as a "You answered with act ..., keep it" sentence
+            appended to the primary block's first paragraph, after the
+            error; ``None`` omits that sentence. Required so every caller
+            decides: a repair that offers only the no-work reply envelope
+            would otherwise steer an ``accept`` with one bad field into a
+            reply that starts nothing.
+
+    Returns:
+        Three system messages: the primary block, the preserve-intent block,
+        and the keys block.
+
+    Raises:
+        core.llm.template_engine.TemplateError: A repair prompt file does not
+            render against these values.
     """
     described = describe_decision_parse_failure(kind, parsed_error) if kind else parsed_error
     messages = [
@@ -185,6 +210,7 @@ def _build_decision_repair_messages(
             "content": _render_loop_prompt(
                 "internal_loop_decision_repair_primary",
                 parsed_error=described,
+                kept_act="" if kept_act is None else kept_act,
             ),
         },
         {

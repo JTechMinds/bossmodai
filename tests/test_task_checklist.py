@@ -443,6 +443,33 @@ def test_current_task_carries_the_checklist_into_the_prompt_and_the_cli() -> Non
         assert "\n".join(lines) in result.prompt_content, command
 
 
+def test_task_detail_shows_the_request_before_the_description_and_the_references_after_it() -> None:
+    from core.models.task import TaskReference, TaskRequestMessage
+    from core.tasking.requests import append_task_request
+
+    agent = _agent()
+    task = _task(agent, references=[TaskReference(path="/projects/app/spec.md", description="The spec")])
+    append_task_request(task.id, [
+        TaskRequestMessage(author_type="human", author_name="Boss", content="Audit it against\n/projects/app/spec.md"),
+    ])
+    lines = _cli(agent, f"task {task.id}").prompt_content.split("\n")
+    request_at = lines.index(
+        "request (what was asked, word for word, oldest first; where the description leaves something out, "
+        "go by this and any document it names):"
+    )
+    description_at = lines.index("description: Audit everything the last change touched.")
+    assert lines[request_at + 1: description_at] == ["[Boss]: Audit it against", "/projects/app/spec.md"]
+    assert lines[description_at + 1: description_at + 3] == [
+        "references (read before starting):", "- /projects/app/spec.md — The spec",
+    ]
+    # A child with no request of its own shows the one behind its parent.
+    child = _task(agent, title="Audit the db layer", parent_task_id=task.id)
+    child_view = _cli(agent, f"task {child.id}").prompt_content
+    assert 'request behind the parent task "Audit the codebase"' in child_view
+    assert child_view.index("[Boss]: Audit it against") < child_view.index("description:")
+    assert "references (read before starting):" not in child_view
+
+
 def test_a_task_without_items_adds_no_checklist_lines() -> None:
     agent, _task_row = _working()
     assert "checklist (" not in _format_task(_get_current_task(agent.id))

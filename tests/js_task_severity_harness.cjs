@@ -30,6 +30,7 @@ const NAMES = [
     "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskCard", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
+    "BossModTaskRequest",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",

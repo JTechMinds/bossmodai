@@ -8,35 +8,51 @@ the clock (core/scheduling/timetable.py).
 
 from __future__ import annotations
 
+import json
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
 from core.models.schedule import AgentSchedule, RecurrenceRule, ScheduleOutcome
+from core.models.task import TaskRequestMessage
 from db.connection import transaction
 from db.crud import build_update, execute, insert_returning_dict, query, query_one
 
 _SCHEDULE_COLUMNS = (
     "id, agent_id, title, instructions, recurrence, notification_policy, enabled, "
     "last_occurrence_at, last_outcome, last_outcome_detail, last_task_id, created_by, agent_can_change, "
-    "created_at, updated_at"
+    "request_messages, created_at, updated_at"
 )
 
 # What an edit may change. The outcome columns are record_outcome's; who may
-# change agent_can_change is the service's rule (core/scheduling/service.py).
-_EDITABLE_COLUMNS = {"title", "instructions", "recurrence", "notification_policy", "enabled", "agent_can_change"}
+# change agent_can_change is the service's rule (core/scheduling/service.py),
+# and request_messages is only ever appended to by the service's merge.
+_EDITABLE_COLUMNS = {
+    "title", "instructions", "recurrence", "notification_policy", "enabled", "agent_can_change", "request_messages",
+}
 
 
 def _schedule_from_row(row: dict[str, Any]) -> AgentSchedule:
     """Hydrate one row, parsing ``recurrence`` through ``RecurrenceRule``.
 
+    ``request_messages`` of ``NULL`` means none recorded and reads as ``[]``.
+
     Raises:
         pydantic.ValidationError: The stored rule is not valid JSON or not a
-            valid rule. Only this module writes it, so that is corruption,
-            and it is never replaced by a default.
+            valid rule, or a stored request message is malformed. Only this
+            module writes them, so that is corruption, and it is never
+            replaced by a default.
     """
     data = dict(row)
     data["recurrence"] = RecurrenceRule.model_validate_json(data["recurrence"])
+    raw_request = data.get("request_messages")
+    data["request_messages"] = json.loads(raw_request) if raw_request else []
     return AgentSchedule.model_validate(data)
+
+
+def _request_json(messages: Sequence[TaskRequestMessage]) -> str:
+    """The stored form of request messages: a JSON list of their dumps."""
+    return json.dumps([message.model_dump(mode="json") for message in messages])
 
 
 def create_schedule(
@@ -49,6 +65,7 @@ def create_schedule(
     enabled: bool,
     created_by: str,
     agent_can_change: bool,
+    request_messages: Sequence[TaskRequestMessage],
 ) -> AgentSchedule:
     """Insert one schedule for ``agent_id``.
 
@@ -61,6 +78,8 @@ def create_schedule(
         enabled: Whether the worker runs it.
         created_by: ``HUMAN_SENDER_ID`` (the operator) or the creating agent's id.
         agent_can_change: Whether the agent may change it.
+        request_messages: The message(s) that asked for it, word for word;
+            stored as JSON, or ``NULL`` when empty (none recorded).
 
     Returns:
         The stored schedule.
@@ -72,14 +91,15 @@ def create_schedule(
     row = insert_returning_dict(
         """
         INSERT INTO agent_schedules (
-            agent_id, title, instructions, recurrence, notification_policy, enabled, created_by, agent_can_change
+            agent_id, title, instructions, recurrence, notification_policy, enabled, created_by, agent_can_change,
+            request_messages
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
         RETURNING id
         """,
         [
             agent_id, title, instructions, recurrence.model_dump_json(), notification_policy, enabled,
-            created_by, agent_can_change,
+            created_by, agent_can_change, _request_json(request_messages) if request_messages else None,
         ],
     )
     # Re-read rather than hydrate the RETURNING row: SQLite reports no
@@ -150,20 +170,24 @@ def list_enabled_schedules() -> list[AgentSchedule]:
 
 
 def update_schedule(schedule_id: str, **fields: Any) -> AgentSchedule | None:
-    """Apply an operator edit and stamp ``updated_at``.
+    """Apply an edit and stamp ``updated_at``.
 
     Args:
         schedule_id: The schedule to change.
         **fields: Any of ``title``, ``instructions``, ``recurrence`` (a
-            ``RecurrenceRule``), ``notification_policy``, ``enabled`` and
-            ``agent_can_change``.
+            ``RecurrenceRule``), ``notification_policy``, ``enabled``,
+            ``agent_can_change`` and ``request_messages`` (a list of
+            ``TaskRequestMessage``, replacing the stored list; only the
+            service passes it, already merged onto what is stored).
 
     Returns:
         The stored schedule, or ``None`` when there is no such row.
 
     Raises:
-        ValueError: No field, or a field outside the editable set (the
-            outcome columns belong to ``record_outcome``).
+        ValueError: No field, a field outside the editable set (the
+            outcome columns belong to ``record_outcome``), or an empty
+            ``request_messages`` (a schedule's request messages are never
+            removed).
         sqlite3.IntegrityError: The policy is not one of the three.
     """
     if not fields:
@@ -177,6 +201,10 @@ def update_schedule(schedule_id: str, **fields: Any) -> AgentSchedule | None:
         if not isinstance(rule, RecurrenceRule):
             raise ValueError("update_schedule takes recurrence as a RecurrenceRule")
         values["recurrence"] = rule.model_dump_json()
+    if "request_messages" in values:
+        if not values["request_messages"]:
+            raise ValueError("A schedule's request messages are never removed")
+        values["request_messages"] = _request_json(values["request_messages"])
     values["updated_at"] = datetime.now(timezone.utc)
     build_update("agent_schedules", "id", schedule_id, values, _EDITABLE_COLUMNS | {"updated_at"})
     return get_schedule(schedule_id)

@@ -58,6 +58,10 @@ TASK_TRIGGER_FIELDS: tuple[tuple[str, str], ...] = (
         "Tasks that finished before this one could start, one '- title (assignee): summary; files: paths' "
         "line each, when present",
     ),
+    (
+        "task_request",
+        "Assigned task's request, word for word: its own, or the one behind its parent task, when present",
+    ),
 )
 
 
@@ -84,6 +88,66 @@ class TaskReference(BaseModel):
         if not text:
             raise ValueError('reference "path" must be non-empty')
         return text
+
+
+class TaskRequestMessage(BaseModel):
+    """One message, word for word, that asked for the work a task records.
+
+    Input the assignee works from, as ``references`` are, but a different
+    kind: ``description`` is the brief the accepting agent wrote,
+    ``references`` are documents to read, and a request message is what the
+    requester actually said. The system saves it when a turn turns a message
+    into a task, a backlog item or a schedule; the rules (which message,
+    append only, forwarding to a child) live in ``core/tasking/requests.py``.
+
+    Attributes:
+        author_type: ``human`` (the boss), ``agent`` or ``system``.
+        author_agent_id: The agent's id for an ``agent`` author; ``None``
+            for every other author.
+        author_name: The author's name when it was saved, an audit snapshot.
+            A human is always shown with the current boss label instead.
+            Stripped; never blank.
+        content: The message exactly as sent, newlines included. Never blank
+            (judged after stripping), and stored stripped.
+
+    Raises:
+        pydantic.ValidationError: ``content`` or ``author_name`` is blank, an
+            ``agent`` author has no ``author_agent_id``, another author has
+            one, ``author_type`` is not one of the three, or an unknown
+            field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    # The same three author types the message tables allow (db/schema.sql).
+    author_type: Literal["human", "agent", "system"]
+    author_agent_id: str | None = None
+    author_name: str
+    content: str
+
+    @field_validator("author_name")
+    @classmethod
+    def _strip_author_name(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("a request message needs its author's name")
+        return text
+
+    @field_validator("content")
+    @classmethod
+    def _strip_content(cls, value: str) -> str:
+        text = value.strip()
+        if not text:
+            raise ValueError("a request message needs content")
+        return text
+
+    @model_validator(mode="after")
+    def _agent_id_matches_author_type(self) -> "TaskRequestMessage":
+        if self.author_type == "agent" and not (self.author_agent_id or "").strip():
+            raise ValueError("an agent's request message needs author_agent_id")
+        if self.author_type != "agent" and self.author_agent_id is not None:
+            raise ValueError(f"a {self.author_type} request message has no author_agent_id")
+        return self
 
 
 # Where one checklist item stands: still to do, done, or not needed.
@@ -185,6 +249,9 @@ class Task(BaseModel):
     created_at: datetime
     closed_at: datetime | None = None
     origin_attachment_ids: list[str] | None = None
+    # The message(s) that asked for this work, oldest first (the
+    # tasks.request_messages JSON column; core/tasking/requests.py).
+    request_messages: list[TaskRequestMessage] = Field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------

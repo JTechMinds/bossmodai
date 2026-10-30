@@ -138,7 +138,7 @@ const NAMES = [
     // conversation route. All are read at call time.
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables", "BossModTaskEvents",
     "BossModTaskSteps", "BossModTaskStepsHistory",
-    "BossModTaskDetailSections", "BossModTaskDetail", "BossModTasksCancel",
+    "BossModTaskDetailSections", "BossModTaskRequest", "BossModTaskDetail", "BossModTasksCancel",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksComplete",
     "BossModTasksHold", "BossModTasksRelease",

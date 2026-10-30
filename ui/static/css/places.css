@@ -466,6 +466,11 @@
 .task-detail-section > .task-detail-meta { margin: 10px 0 4px; }
 
 .task-detail-instructions { font-size: 13px; }
+/* The Request section (task-request.js): each message under its author, the
+   text the same size as the Task description below it. */
+.task-detail-request + .task-detail-request { margin-top: 10px; }
+.task-detail-request-author { display: flex; align-items: center; gap: 6px; margin: 0 0 4px; font-size: 12px; color: var(--muted); }
+.task-detail-request-text { font-size: 13px; }
 .task-detail-file { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px 10px;
   border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); text-align: left; font-size: 13px; }
 .task-detail-file + .task-detail-file { margin-top: 6px; }

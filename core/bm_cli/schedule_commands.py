@@ -20,6 +20,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 import db
+from core.agent_loop.turn_request import turn_work_request_messages
 from core.bm_cli.command_registry import SCHEDULE_FORMS
 from core.bm_cli.results import error_result, success_result, trim
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
@@ -53,6 +54,11 @@ def handle_schedules(
 
     ``<id>`` is a unique prefix of at least 8 characters of one of the
     caller's schedules.
+
+    ``add`` and ``edit`` save, with the schedule, the message the turn is
+    answering, or in a work turn the bound task's own request
+    (``turn_request.turn_work_request_messages``): each run's task carries
+    it as its request. ``on``, ``off`` and ``remove`` save nothing.
 
     Args:
         context: The calling agent's CLI context; only its own schedules are touched.
@@ -107,7 +113,9 @@ def _add(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | 
         return body
     actor = service.ScheduleActor("agent", context.agent.id)
     try:
-        schedule = service.create_schedule(context.agent.id, body, actor=actor)
+        schedule = service.create_schedule(
+            context.agent.id, body, actor=actor, request_messages=turn_work_request_messages(context.agent.id),
+        )
     except ValueError as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)
     return _changed(context, parsed, "scheduled", schedule)
@@ -125,7 +133,10 @@ def _change(
             body = _body(parsed, content, AgentScheduleUpdate, context)
             if isinstance(body, BossModCliResult):
                 return body
-            return _changed(context, parsed, "changed", service.update_schedule(resolved.id, body, actor=actor))
+            updated = service.update_schedule(
+                resolved.id, body, actor=actor, request_messages=turn_work_request_messages(context.agent.id),
+            )
+            return _changed(context, parsed, "changed", updated)
         if subcommand in {"on", "off"}:
             on = subcommand == "on"
             schedule = service.set_enabled(resolved.id, on, actor=actor)

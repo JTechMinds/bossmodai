@@ -1,8 +1,9 @@
 """Fail-closed steer when a turn emits prose or an invalid decision object.
 
-Decision turns may repair prose, invented keys, and broken JSON up to the
-configured attempt limit, then fail-close. Execution turns repair prose and
-broken JSON up to their cap; invented keys fail-close immediately.
+Decision turns may repair prose, invented keys, broken JSON, and values that
+do not fit the turn up to the configured attempt limit, then fail-close.
+Execution turns repair prose, broken JSON, and values that do not fit up to
+their cap; invented keys fail-close immediately.
 Soft-block behavior is unchanged.
 
 Product envelope: ``say`` (operator chat) plus optional ``actions`` (Board /
@@ -18,7 +19,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-ParseFailureKind = Literal["prose_status", "invalid_json", "invalid_decision"]
+ParseFailureKind = Literal["prose_status", "invalid_json", "invalid_decision", "invalid_value"]
 
 PROSE_STATUS_STEER = (
     "Emit the required JSON decision/action shape for this turn "
@@ -69,19 +70,39 @@ def kind_for_schema_error(
     payload: dict[str, Any] | None = None,
     exc: Exception | None = None,
 ) -> ParseFailureKind:
-    """Unknown top-level keys and bad envelopes are invalid decisions, not malformed JSON."""
+    """Classify a schema error raised on a reply that parsed as a JSON object.
+
+    Only the schema paths call this (``decision_contract._schema_failed_payload``
+    and ``actions._schema_failed_action``), after ``json.loads`` produced an
+    object, so the JSON is never broken here: a decode error is classified by
+    :func:`classify_json_parse_failure` instead.
+
+    Args:
+        error: The validation message (pydantic's first error, or the
+            ``ValueError`` text).
+        payload: The parsed object as the model returned it; its keys
+            outside the compact and envelope keys mark invented keys.
+        exc: The raised exception; an ``InvalidDecisionEnvelope`` is a
+            malformed say/actions envelope.
+
+    Returns:
+        ``"invalid_decision"`` for invented top-level keys or a bad envelope,
+        otherwise ``"invalid_value"``: a well-formed object whose value does
+        not fit the turn (a missing field, a bad plan, a bad ``outs`` item).
+    """
     extra = set(payload or ()) - _COMPACT_ROOT_KEYS
     if extra or "unexpected top-level keys" in (error or ""):
         return "invalid_decision"
     if isinstance(exc, InvalidDecisionEnvelope):
         return "invalid_decision"
-    return "invalid_json"
+    return "invalid_value"
 
 
 _PARSE_KIND_LABELS = {
     "prose_status": "prose status instead of a JSON envelope",
     "invalid_decision": "invented or disallowed keys",
     "invalid_json": "truncated or broken JSON",
+    "invalid_value": "a value that does not fit this turn",
 }
 
 # Execution turns reply with one action object, not the say/actions envelope.
@@ -89,6 +110,7 @@ _EXECUTION_PARSE_KIND_LABELS = {
     "prose_status": "prose instead of one JSON action object",
     "invalid_decision": "invented or disallowed keys",
     "invalid_json": "invalid action JSON",
+    "invalid_value": "a value that does not fit this action",
 }
 
 
@@ -102,9 +124,9 @@ def parse_failure_should_repair(
     """Return whether this parse failure may take another repair wake.
 
     Decision turns repair every parse kind until ``max_repairs``.
-    Execution turns repair ``prose_status`` and ``invalid_json`` until
-    ``max_repairs``; ``invalid_decision`` (invented approval keys) fail-closes
-    immediately.
+    Execution turns repair ``prose_status``, ``invalid_json`` and
+    ``invalid_value`` until ``max_repairs``; ``invalid_decision`` (invented
+    approval keys) fail-closes immediately.
 
     Args:
         kind: The parse failure kind (or ``llm_timeout`` on decision turns).
@@ -135,7 +157,7 @@ def describe_execution_parse_failure(kind: str, snippet: str = "") -> str:
 
     Args:
         kind: The parse failure kind (``prose_status``, ``invalid_json``,
-            or ``invalid_decision``).
+            ``invalid_decision``, or ``invalid_value``).
         snippet: The raw reply excerpt; whitespace is collapsed and long
             text is cut to 180 characters.
 
@@ -163,7 +185,7 @@ def parse_failure_steer(kind: str, snippet: str = "", *, decision: bool) -> str:
 
     Args:
         kind: The parse failure kind (``prose_status``, ``invalid_json``,
-            or ``invalid_decision``).
+            ``invalid_decision``, or ``invalid_value``).
         snippet: The parser error; appended as ``Parser error: ...`` unless
             the kind is ``prose_status`` or the snippet is blank.
         decision: True for a decision turn, False for an execution turn.
@@ -172,6 +194,7 @@ def parse_failure_steer(kind: str, snippet: str = "", *, decision: bool) -> str:
         ``INVALID_DECISION_STEER`` for invented keys on either turn,
         otherwise ``PROSE_STATUS_STEER`` (decision) or
         ``EXECUTION_PARSE_STEER`` (execution), plus the parser error.
+        ``invalid_value`` and ``invalid_json`` get the same steer.
     """
     extra = (snippet or "").strip()
     if kind == "invalid_decision":

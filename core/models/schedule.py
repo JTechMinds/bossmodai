@@ -18,7 +18,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from core.models.notification import TaskNotificationPolicy
-from core.models.task import Task, TaskStatus
+from core.models.task import Task, TaskRequestMessage, TaskStatus
 
 ScheduleFrequency = Literal["daily", "weekly", "monthly"]
 ScheduleOutcome = Literal["fired", "missed", "skipped_open", "skipped_vacation", "failed"]
@@ -187,7 +187,12 @@ class AgentSchedule(BaseModel):
     runner reads it to skip an occurrence while that task is still open.
     ``created_by`` is ``HUMAN_SENDER_ID`` or the agent that set it up, and
     ``agent_can_change`` whether the agent may change it (only the operator
-    sets that; core/scheduling/service.py).
+    sets that; core/scheduling/service.py). ``request_messages`` are the
+    message(s) that asked for it, word for word, saved when an agent set it
+    up or changed it: the message its turn answered, or in a work turn the
+    bound task's own request (core/tasking/requests.py). Each run's task
+    carries them as its request. Nobody types them, so a schedule only the
+    operator touched has none.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -205,6 +210,7 @@ class AgentSchedule(BaseModel):
     last_task_id: str | None = None
     created_by: str
     agent_can_change: bool
+    request_messages: list[TaskRequestMessage] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
 

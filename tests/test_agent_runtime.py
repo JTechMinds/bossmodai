@@ -830,6 +830,211 @@ def test_apply_decision_multi_delegation_rolls_back_earlier_children_on_clarify(
 
 
 # ---------------------------------------------------------------------------
+# Task requests — the requester's words are saved with accepted or deferred
+# work and forwarded to its children (core/tasking/requests.py)
+# ---------------------------------------------------------------------------
+
+_REQUEST_HEADING = (
+    "request (what was asked, word for word, oldest first; where the description leaves something out, "
+    "go by this and any document it names):"
+)
+_LONG_ASK = (
+    "Take the systems rubric review of our tests: /projects/app/Docs/rubric-review.md\n"
+    "Resolve and validate each finding, rows 1-12 first."
+)
+
+
+def _accept_work(agent, trigger: dict[str, Any], **decision: Any) -> dict[str, Any]:
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    return apply_decision(
+        {"decision": "accept", "intentKind": "work_request", "commitmentKind": "work", "reply": "On it.", **decision},
+        agent,
+        state,
+        trigger,
+    )
+
+
+def _request_contents(task_id: str) -> list[str]:
+    task = db.get_task(task_id)
+    assert task is not None
+    return [message.content for message in task.request_messages]
+
+
+def test_an_accept_keeps_the_desc_as_the_brief_and_the_message_as_the_request() -> None:
+    agent = _create_agent()
+    result = _accept_work(
+        agent,
+        {"type": "human_chat", "content": _LONG_ASK, "from_name": "Human"},
+        taskTitle="Review the rubric", taskDescription="Start with rows 1-12.",
+    )
+    assert result["event"] == "decision_applied", result
+    (task,) = _open_tasks_with_title("Review the rubric", assigned_to=agent.id)
+    assert task.description == "Start with rows 1-12."
+    assert [m.model_dump() for m in task.request_messages] == [
+        {"author_type": "human", "author_agent_id": None, "author_name": "Boss", "content": _LONG_ASK},
+    ]
+
+
+def test_an_accept_without_a_desc_has_no_description_and_keeps_the_message() -> None:
+    agent = _create_agent()
+    _accept_work(agent, {"type": "human_chat", "content": _LONG_ASK, "from_name": "Human"}, taskTitle="Review it")
+    (task,) = _open_tasks_with_title("Review it", assigned_to=agent.id)
+    assert task.description is None
+    assert _request_contents(task.id) == [_LONG_ASK]
+
+
+def test_a_task_accepted_without_a_desc_reads_no_description_in_the_prompt() -> None:
+    from core.agent_loop.turn_context import _get_current_task
+    from core.llm.context_builder import _format_task
+
+    agent = _create_agent()
+    _accept_work(agent, {"type": "human_chat", "content": _LONG_ASK, "from_name": "Human"}, taskTitle="Review it")
+    current = _get_current_task(agent.id)
+    assert current is not None and current["description"] is None
+    block = _format_task(current)
+    assert "description: No description" in block.split("\n")
+    assert "None" not in block
+
+
+def test_an_accept_on_a_channel_line_whose_author_cannot_be_recorded_still_creates_the_task(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+
+    lead = _create_agent("Ada")
+    channel = db.create_channel(name="Ops", member_agent_ids=[lead.id], created_by=HUMAN_SENDER_ID)
+    trigger = {
+        # An agent opener with no from_agent: the request cannot name its author.
+        "type": "channel_response", "channel_id": channel.id, "channel_name": channel.name,
+        "content": "Team, audit the tests.", "author_type": "agent", "from_name": "Alex",
+        "latest_content": "Start with test_login.py", "latest_author_type": "human",
+        "latest_from_agent": "", "latest_from_name": "Boss",
+    }
+    with caplog.at_level(logging.WARNING, logger="core.tasking.requests"):
+        result = _accept_work(lead, trigger, taskTitle="Audit the tests", taskDescription="Login tests first.")
+    assert result["event"] == "decision_applied", result
+    (task,) = _open_tasks_with_title("Audit the tests", assigned_to=lead.id)
+    assert task.status == "accepted"
+    assert _request_contents(task.id) == ["Start with test_login.py"]
+    assert any("opener message" in record.getMessage() for record in caplog.records)
+
+
+def test_a_defer_keeps_the_request_and_the_messages_attachments() -> None:
+    agent = _create_agent()
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    result = apply_decision(
+        {
+            "decision": "defer", "intentKind": "work_request", "commitmentKind": "work",
+            "taskTitle": "Review the rubric", "reply": "After lunch.",
+        },
+        agent,
+        state,
+        {"type": "human_chat", "content": _LONG_ASK, "from_name": "Human", "attachment_ids": ["att-1", "att-2"]},
+    )
+    assert result["event"] == "decision_applied", result
+    (task,) = _open_tasks_with_title("Review the rubric", assigned_to=agent.id)
+    assert task.status == "pending"
+    assert _request_contents(task.id) == [_LONG_ASK]
+    assert task.origin_attachment_ids == ["att-1", "att-2"]
+
+
+def test_an_accept_naming_its_task_appends_the_new_message_after_the_first() -> None:
+    agent = _create_agent()
+    _accept_work(agent, {"type": "human_chat", "content": "Write the Q3 memo.", "from_name": "Human"},
+                 taskTitle="Write the memo", taskDescription="One page.")
+    (task,) = _open_tasks_with_title("Write the memo", assigned_to=agent.id)
+    _accept_work(agent, {"type": "human_chat", "content": "Cover seat minimums too.", "from_name": "Human"},
+                 taskId=task.id, taskTitle="Write the memo", taskDescription="One page, with seat minimums.")
+    assert _request_contents(task.id) == ["Write the Q3 memo.", "Cover seat minimums too."]
+    assert db.get_task(task.id).description == "One page, with seat minimums."
+
+
+def test_a_channel_plan_forwards_the_request_to_each_child() -> None:
+    from core.agent_loop.channel_rounds import start_channel_peer_round
+    from core.agent_loop.turn_context import _get_current_task
+    from core.llm.context_builder import _format_task
+
+    lead = _create_agent("Ada")
+    helper = _create_agent("Bea")
+    channel = db.create_channel(name="Ops", member_agent_ids=[lead.id, helper.id], created_by=HUMAN_SENDER_ID)
+    message = db.create_channel_message(
+        channel_id=channel.id, author_type="human", author_name="Human Operator", content=_LONG_ASK,
+        source_channel="channel",
+    )
+    wakes = start_channel_peer_round(
+        channel_id=channel.id, message_id=message.id, content=message.content,
+        from_name="Human Operator", author_type="human",
+    )
+    # The lead's turn as the active responder (channel_response): which
+    # member the round wakes first is not fixed, and a channel_message turn
+    # by a member who is not first is only queued.
+    result = _accept_work(
+        lead,
+        {
+            "type": "channel_response", "channel_id": channel.id, "channel_name": channel.name,
+            "round_id": wakes[0]["payload"]["round_id"], "source_message_id": message.id,
+            "content": message.content, "from_name": "Human Operator", "author_type": "human",
+            "dispatch_mode": wakes[0]["payload"]["dispatch_mode"],
+        },
+        taskTitle="Coordinate the rubric review",
+        taskDescription="Split the findings and check the fixes.",
+        executionPlan={
+            "mode": "delegate",
+            "delegations": [{"agentId": helper.id, "taskTitle": "Check rows 1-12", "taskDescription": "Rows 1-12."}],
+        },
+    )
+    assert result["event"] == "decision_applied", result
+    forwarded = [
+        'request behind the parent task "Coordinate the rubric review" (word for word, oldest first; '
+        "your part is this task's description):",
+        f"[Boss]: {_LONG_ASK}",
+    ]
+    (assigned,) = [item for item in result["trigger_requests"] if item["trigger_type"] == "task_assigned"]
+    assert assigned["agent_id"] == helper.id
+    assert assigned["payload"]["task_request"] == "\n".join(forwarded)
+
+    child = db.get_task(assigned["task_id"])
+    assert child is not None and child.request_messages == []
+    activity_runtime.activate_work_activity(helper.id, child, task_status="active")
+    current = _get_current_task(helper.id)
+    assert current is not None
+    # The forwarded request sits between the status line and the child's own brief.
+    assert "\n".join(["status: active", *forwarded, "description: Rows 1-12."]) in _format_task(current)
+
+
+def test_the_execution_prompt_shows_the_request_above_the_description() -> None:
+    from core.agent_loop.turn_context import _get_current_activity, _get_current_task
+    from core.llm import context_builder
+
+    agent = _create_agent()
+    _accept_work(
+        agent,
+        {"type": "human_chat", "content": "Summarize /projects/app/brief.md for the launch call.", "from_name": "Human"},
+        taskTitle="Summarize the brief", taskDescription="Two short paragraphs.",
+    )
+    state = db.get_agent_state(agent.id)
+    assert state is not None
+    turn = context_builder.TurnContext(
+        agent=agent,
+        state=state,
+        trigger={"type": "activity_resumed", "content": "Resume.", "source_channel": "work"},
+        conversation_history=[],
+        prompt_notifications=[],
+        reference_materials=[],
+        current_activity=_get_current_activity(agent.id),
+        current_task=_get_current_task(agent.id),
+        contract_kind="execution",
+    )
+    system_prompt = context_builder.build_context(turn)[0]["content"]
+    current_task = system_prompt.split("## Current Task", 1)[1].split("## Task Board", 1)[0]
+    assert _REQUEST_HEADING in current_task
+    assert "[Boss]: Summarize /projects/app/brief.md for the launch call." in current_task
+    assert current_task.index("/projects/app/brief.md") < current_task.index("description: Two short paragraphs.")
+
+
+# ---------------------------------------------------------------------------
 # HA-CORR-P1-03 — watchdog covers accepted / waiting
 # ---------------------------------------------------------------------------
 

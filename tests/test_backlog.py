@@ -29,6 +29,8 @@ from core.agent_loop.actions_tasks import _handle_delegate_task
 from core.agent_loop.activity_runtime import activate_work_activity
 from core.agent_loop.activity_scheduler import build_task_assigned_trigger
 from core.agent_loop.turn_context import _get_current_task
+from core.agent_loop.turn_request import bind_turn_request
+from core.agent_loop.work_binding import bind_turn
 from core.agent_loop.watchdog import TaskWatchdog
 from core.agent_repository import agent_repository
 from core.bm_cli.floor_roots import projects_root_for_storage_key
@@ -39,6 +41,7 @@ from core.llm.context_builder import _format_task, _format_trigger
 from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import RecurrenceRule
+from core.models.task import TaskRequestMessage
 from core.runtime import runtime_services
 from core.scheduling.runner import run_now
 from core.tasking.service import list_open_child_tasks
@@ -145,7 +148,7 @@ def test_filing_during_a_scheduled_run_leaves_the_run_closable_and_the_next_run_
         recurrence=RecurrenceRule.model_validate({
             "frequency": "daily", "interval": 1, "times": ["09:00"], "start_date": "2026-10-01",
         }),
-        notification_policy="none", enabled=True, created_by=HUMAN_SENDER_ID, agent_can_change=False,
+        notification_policy="none", enabled=True, created_by=HUMAN_SENDER_ID, agent_can_change=False, request_messages=(),
     )
     run = run_now(schedule.id, now=NOW)
     transition_task(run.task.id, "accepted", reason="Test accepted it.", actor="Test")
@@ -174,6 +177,46 @@ def test_the_same_title_filed_twice_binds_to_the_first() -> None:
     assert "activity" not in again.data
     assert db.get_task(first).severity == "P3"
     assert [task.id for task in db.list_backlog_tasks(status="pending")] == [first]
+
+
+_ASK = {"type": "human_chat", "content": "The login page 500s on a wrong password; file it.", "from_name": "Human"}
+
+
+def _request_contents(task_id: str) -> list[str]:
+    return [message.content for message in db.get_task(task_id).request_messages]
+
+
+def test_filing_in_a_chat_turn_saves_the_message_on_the_item() -> None:
+    qa = _agent("Quinn")
+    with bind_turn_request(qa.id, _ASK):
+        task_id = _file(qa, title="Login returns 500").data["task_id"]
+    assert [message.model_dump() for message in db.get_task(task_id).request_messages] == [
+        {"author_type": "human", "author_agent_id": None, "author_name": "Boss", "content": _ASK["content"]},
+    ]
+
+
+def test_filing_in_a_work_turn_saves_no_request() -> None:
+    qa = _agent("Quinn")
+    task = db.create_task(title="QA sweep", assigned_to=qa.id, created_by=HUMAN_SENDER_ID)
+    db.update_task(task.id, request_messages=[
+        TaskRequestMessage(author_type="human", author_name="Boss", content="Sweep the product."),
+    ])
+    activate_work_activity(qa.id, db.get_task(task.id))
+    work = {"type": "activity_resumed", "content": "Continue.", "task_id": task.id}
+    with bind_turn(qa.id, work), bind_turn_request(qa.id, work):
+        task_id = _file(qa, title="Checkout button overlaps footer").data["task_id"]
+    # A finding filed mid-task is the agent's own; the sweep's request is not what was asked for it.
+    assert _request_contents(task_id) == []
+
+
+def test_filing_the_same_title_again_appends_the_new_message() -> None:
+    qa = _agent("Quinn")
+    with bind_turn_request(qa.id, _ASK):
+        first = _file(qa, title="Login returns 500").data["task_id"]
+    with bind_turn_request(qa.id, {"type": "human_chat", "content": "It also happens on signup."}):
+        again = _file(qa, title="Login returns 500")
+    assert again.data == {"action": "already_filed", "task_id": first}
+    assert _request_contents(first) == [_ASK["content"], "It also happens on signup."]
 
 
 def test_a_vacationing_agent_has_no_backlog() -> None:
@@ -283,6 +326,29 @@ def test_assigning_hands_ownership_to_the_assignee_who_can_then_delegate(monkeyp
     assert result["event"] != "world_feedback", result
     children = list_open_child_tasks(parent_task_id=task_id)
     assert [(child.assigned_to, child.owner_id) for child in children] == [(helper.id, engineer.id)]
+
+
+def test_a_child_delegated_from_a_filed_item_carries_the_items_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _client(monkeypatch)
+    qa, engineer, helper = _agent("Quinn"), _agent("Eve"), _agent("Hal")
+    with bind_turn_request(qa.id, _ASK):
+        task_id = _file(qa, title="Login returns 500").data["task_id"]
+    assert client.patch(f"/api/tasks/{task_id}", headers=_headers(), json={"assigned_to": engineer.id}).status_code == 200
+    transition_task(task_id, "accepted", reason="Test accepted it.", actor="Test")
+    transition_task(task_id, "active", reason="Test started it.", actor="Test")
+    activate_work_activity(engineer.id, db.get_task(task_id))
+
+    result = asyncio.run(_handle_delegate_task(
+        engineer, db.get_agent_state(engineer.id),
+        {"agentId": helper.id, "taskTitle": "Write the regression test", "taskDescription": "Cover it."},
+    ))
+
+    (wake,) = [item for item in result["trigger_requests"] if item["trigger_type"] == "task_assigned"]
+    assert wake["payload"]["task_request"] == (
+        'request behind the parent task "Login returns 500" (word for word, oldest first; '
+        "your part is this task's description):\n"
+        f"[Boss]: {_ASK['content']}"
+    )
 
 
 def test_a_filed_item_cannot_be_assigned_across_floors(monkeypatch: pytest.MonkeyPatch) -> None:

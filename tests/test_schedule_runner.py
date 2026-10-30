@@ -13,6 +13,7 @@ from core import config
 from core.floors import send_home
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import RecurrenceRule
+from core.models.task import TaskRequestMessage
 from core.scheduling import runner
 from core.scheduling.runner import (
     ScheduleRunFailed,
@@ -54,7 +55,7 @@ def _rule() -> RecurrenceRule:
 def _schedule(agent_id: str, *, title: str = "Check the status page", enabled: bool = True):
     return db.create_schedule(
         agent_id=agent_id, title=title, instructions="Log in and read the status page.",
-        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled, created_by=HUMAN_SENDER_ID, agent_can_change=False,
+        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled, created_by=HUMAN_SENDER_ID, agent_can_change=False, request_messages=(),
     )
 
 
@@ -86,6 +87,38 @@ def test_a_due_run_creates_a_task_for_the_agent_and_returns_its_wake() -> None:
     assert run.rule == schedule.recurrence
     row = db.get_schedule(schedule.id)
     assert (row.last_outcome, row.last_task_id, row.last_occurrence_at) == ("fired", task.id, DUE)
+
+
+def test_a_fired_run_carries_the_schedules_request_into_its_task_and_its_wake() -> None:
+    ada = _agent()
+    ask = TaskRequestMessage(
+        author_type="human", author_name="Boss", content="Every morning, read /projects/ops/status.md for me.",
+    )
+    schedule = db.create_schedule(
+        agent_id=ada.id, title="Check the status page", instructions="Log in and read the status page.",
+        recurrence=_rule(), notification_policy="completion_blocked", enabled=True, created_by=ada.id,
+        agent_can_change=True, request_messages=[ask],
+    )
+
+    run = run_occurrence(schedule.id, due_at=DUE, now=DUE + timedelta(seconds=1), timing=TIMING)
+
+    assert run is not None and run.outcome == "fired" and run.task is not None
+    assert run.task.request_messages == [ask]
+    assert db.get_task(run.task.id).request_messages == [ask]
+    assert run.trigger is not None
+    assert run.trigger["payload"]["task_request"].split("\n") == [
+        "request (what was asked, word for word, oldest first; where the description leaves something out, "
+        "go by this and any document it names):",
+        "[Boss]: Every morning, read /projects/ops/status.md for me.",
+    ]
+
+
+def test_an_operators_schedule_run_has_no_request() -> None:
+    ada = _agent()
+    run = run_occurrence(_schedule(ada.id).id, due_at=DUE, now=DUE + timedelta(seconds=1), timing=TIMING)
+    assert run is not None and run.task is not None
+    assert run.task.request_messages == []
+    assert run.trigger is not None and run.trigger["payload"]["task_request"] == ""
 
 
 def test_a_run_handled_past_the_grace_window_is_missed_and_creates_nothing() -> None:

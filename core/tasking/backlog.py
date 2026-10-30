@@ -16,13 +16,15 @@ operator triages it, and ownership lands on the first assignee
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import db
 from core.floors import FloorDenied, home_floor_id, task_floor_id
 from core.models import Agent, Task
-from core.models.task import BacklogItemCreate
+from core.models.task import BacklogItemCreate, TaskRequestMessage
 from core.tasking.references import RejectedReference, check_references
+from core.tasking.requests import append_task_request
 from core.tasking.service import create_or_bind_task
 
 BACKLOG_STATUS = "pending"
@@ -48,7 +50,9 @@ class BacklogFiling:
     rejected_references: tuple[RejectedReference, ...]
 
 
-def file_backlog_item(agent: Agent, item: BacklogItemCreate) -> BacklogFiling:
+def file_backlog_item(
+    agent: Agent, item: BacklogItemCreate, *, request_messages: Sequence[TaskRequestMessage],
+) -> BacklogFiling:
     """File one unassigned, unowned, unparented backlog item reported by ``agent``.
 
     The item is independent of whatever task the agent is working on, so a
@@ -58,16 +62,25 @@ def file_backlog_item(agent: Agent, item: BacklogItemCreate) -> BacklogFiling:
     task with this title) leaves the existing task's severity and references
     as they are.
 
+    ``request_messages`` are saved on the item's task as its request
+    (``core/tasking/requests.py``), on a new filing and on a bind alike: a
+    bind appends the messages the task does not hold yet.
+
     Args:
         agent: The reporter; becomes the requester and creator.
         item: The validated ``backlog add`` body.
+        request_messages: The message(s) the reporter's turn is answering,
+            word for word; empty when it answers none (an item filed
+            mid-task is the agent's own finding, and saves no request).
 
     Returns:
-        The filing's task, outcome, matching candidates and rejected references.
+        The filing's task (with its request), outcome, matching candidates
+        and rejected references.
 
     Raises:
         FloorDenied: The agent has no home floor (on vacation): the item
             would sit on no floor, where no agent could ever see it.
+        ValueError: The filed task vanished while its request was saved.
     """
     if not home_floor_id(agent.id):
         raise FloorDenied(NO_FLOOR_REASON)
@@ -92,8 +105,11 @@ def file_backlog_item(agent: Agent, item: BacklogItemCreate) -> BacklogFiling:
         audit_author_agent_id=agent.id,
         audit_event_type="assignment",
     )
+    task = result.task
+    if result.outcome in {"create_new_task", "bind_existing_task"} and task is not None:
+        task = append_task_request(task.id, request_messages)
     return BacklogFiling(
-        task=result.task,
+        task=task,
         outcome=result.outcome,
         candidates=result.resolution.candidates,
         rejected_references=tuple(rejected),

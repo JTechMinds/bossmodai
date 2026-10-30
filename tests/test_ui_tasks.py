@@ -41,7 +41,7 @@ HARNESS_MODULES = [
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
     # The detail's Recent steps and the step history layer it opens.
     TASKS / "task-steps.js", TASKS / "task-steps-history.js",
-    TASKS / "task-detail-sections.js", TASKS / "task-detail.js",
+    TASKS / "task-detail-sections.js", TASKS / "task-request.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
     TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js",
@@ -72,6 +72,8 @@ DETAIL_MODULES = [
     # The detail's Recent steps and the step history layer it opens.
     TASKS / "task-steps.js", TASKS / "task-steps-history.js",
     TASKS / "task-detail-sections.js",
+    # The Request section the detail draws above the task's description.
+    TASKS / "task-request.js",
     # Edit mode ranks assignees as the assign dialog does, so it loads after
     # assign-form.js; the detail builds it when Edit mode is picked.
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
@@ -612,6 +614,13 @@ def test_task_detail_harness() -> None:
         "closingDetailUnsubscribes": True,
         "liveDuringLoadIsHeld": True,
         "recentEmptyAndErrorRetry": True,
+        # The Request section (task-request.js).
+        "ownRequestReadsAsAsked": True,
+        "requestClampFollowsOverflow": True,
+        "forwardedRequestNamesTheParent": True,
+        "noRequestNoSection": True,
+        "malformedRequestThrows": True,
+        "requestSitsAboveTheTaskInViewAndEditMode": True,
     }
 
 

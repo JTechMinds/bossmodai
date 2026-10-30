@@ -19,6 +19,7 @@ from core.agent_loop.parse_steer import (
     INVALID_DECISION_STEER,
     PROSE_STATUS_STEER,
     classify_json_parse_failure,
+    describe_decision_parse_failure,
     describe_execution_parse_failure,
     kind_for_schema_error,
     parse_failure_should_repair,
@@ -108,11 +109,12 @@ def test_classify_prose_status_vs_invalid_json() -> None:
         'missing "act"',
         {"decision": "answer", "_needsApproval": True},
     ) == "invalid_decision"
-    assert kind_for_schema_error('missing "act"') == "invalid_json"
+    # Schema errors only arise on a parsed object: a value error, never broken JSON.
+    assert kind_for_schema_error('missing "act"') == "invalid_value"
     assert kind_for_schema_error(
         'missing "act"',
         {"say": "Committed.", "actions": []},
-    ) == "invalid_json"
+    ) == "invalid_value"
     steer = parse_failure_steer("prose_status", decision=True)
     assert PROSE_STATUS_STEER in steer
     assert "say plus optional actions" in steer
@@ -141,6 +143,53 @@ def test_execution_parse_failure_steer_uses_execution_wording() -> None:
     assert parse_failure_steer("prose_status", "Working on it.", decision=False) == EXECUTION_PARSE_STEER
     # Invented keys keep the fail-closed approval steer on either turn.
     assert parse_failure_steer("invalid_decision", decision=False) == INVALID_DECISION_STEER
+
+
+def test_a_schema_value_error_on_a_parsed_object_is_invalid_value() -> None:
+    # Decision turn: the object parsed, but a plan child names no teammate.
+    parsed = parse_direct_turn_response(
+        '{"act":"accept","intent":"work","msg":"On it.","commit":"work",'
+        '"data":{"task":{"title":"Audit"},"plan":{"mode":"self","children":[{"task":{"title":"Read"}}]}},'
+        '"th":"accept"}'
+    )
+    assert parsed["decision"] == "_parse_failed"
+    assert parsed["_parse_kind"] == "invalid_value"
+    described = describe_decision_parse_failure("invalid_value", parsed["_raw_snippet"])
+    assert described.startswith('a value that does not fit this turn: Value error, each plan child is a teammate\'s task and needs "who" or "aid"')
+    assert "truncated or broken JSON" not in described
+    # Execution turn: a well-formed action with a bad outs item.
+    action = parse_action(
+        '{"act":"assign","data":{"aid":"x","task":{"title":"Review","outs":[{"path":"/projects/v.md"}]}},'
+        '"th":"hand off"}'
+    )
+    assert action["action"] == "_parse_failed"
+    assert action["_parse_kind"] == "invalid_value"
+    assert describe_execution_parse_failure("invalid_value") == "a value that does not fit this action"
+
+
+def test_a_real_decode_error_is_still_invalid_json() -> None:
+    for raw in ('{"act":', '{"act":"reply","work_commit":false,"msg":"Done.",}'):
+        parsed = parse_direct_turn_response(raw)
+        assert parsed["decision"] == "_parse_failed", raw
+        assert parsed["_parse_kind"] == "invalid_json", raw
+    assert describe_decision_parse_failure("invalid_json") == "truncated or broken JSON"
+
+
+def test_invalid_value_is_repaired_on_both_turn_kinds() -> None:
+    for decision in (True, False):
+        assert parse_failure_should_repair(
+            kind="invalid_value", repair_attempts=0, max_repairs=2, decision=decision
+        ) is True
+        assert parse_failure_should_repair(
+            kind="invalid_value", repair_attempts=2, max_repairs=2, decision=decision
+        ) is False
+    snippet = 'Value error, plan mode "delegate" needs at least one child with "who" or "aid"'
+    assert parse_failure_steer("invalid_value", snippet, decision=True) == (
+        f"{PROSE_STATUS_STEER} Parser error: {snippet}"
+    )
+    assert parse_failure_steer("invalid_value", snippet, decision=False) == (
+        f"{EXECUTION_PARSE_STEER} Parser error: {snippet}"
+    )
 
 
 def test_parse_action_names_the_json_decode_error() -> None:

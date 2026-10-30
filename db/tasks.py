@@ -24,7 +24,7 @@ _TASK_COLUMNS = (
     "tnt.channel_id AS notification_channel_id, "
     "t.parent_task_id, t.schedule_id, t.cost_ceiling, t.completion_summary, "
     "t.status_note, t.watchdog_pinged_at, t.last_progress_at, t.last_heartbeat_at, "
-    "t.last_activity, t.closed_at, t.origin_attachment_ids, t.created_at, "
+    "t.last_activity, t.closed_at, t.origin_attachment_ids, t.request_messages, t.created_at, "
     # Edge order (insertion), not the primary key's order, which would sort by id.
     "(SELECT json_group_array(td.prerequisite_id ORDER BY td.rowid) "
     "FROM task_dependencies td WHERE td.task_id = t.id) AS prerequisites"
@@ -34,7 +34,7 @@ _TASK_VALID_COLUMNS = {
     "title", "description", "project", "assigned_to", "requester_id", "owner_id",
     "status", "severity", "parent_task_id", "cost_ceiling", "completion_summary",
     "status_note", "watchdog_pinged_at", "last_progress_at", "last_heartbeat_at",
-    "last_activity", "closed_at",
+    "last_activity", "closed_at", "request_messages",
 }
 
 
@@ -199,7 +199,8 @@ def _task_from_row(row: dict[str, Any]) -> Task:
 
     A task with no ``task_references`` row has no references (``[]``), one
     with no ``task_checklists`` row has no checklist (``[]``), and one with
-    no ``task_dependencies`` edge has no prerequisites (``[]``).
+    no ``task_dependencies`` edge has no prerequisites (``[]``). A
+    ``request_messages`` of ``NULL`` means none recorded, read as ``[]``.
     """
     data = dict(row)
     raw_contract = data.get("work_contract")
@@ -215,6 +216,8 @@ def _task_from_row(row: dict[str, Any]) -> Task:
     data["prerequisites"] = json.loads(raw_prerequisites) if raw_prerequisites else []
     raw_origin_atts = data.get("origin_attachment_ids")
     data["origin_attachment_ids"] = json.loads(raw_origin_atts) if raw_origin_atts else None
+    raw_request = data.get("request_messages")
+    data["request_messages"] = json.loads(raw_request) if raw_request else []
     return Task.model_validate(data)
 
 
@@ -545,12 +548,18 @@ def update_task(task_id: str, *, expected_status: str | None = None, **fields: A
     checklist. Only ``core/tasking/checklist.py`` passes it, inside a
     transaction that read the current list first.
 
+    ``request_messages`` (a list of ``TaskRequestMessage``) replaces the
+    task's saved request. Only ``core/tasking/requests.py`` passes it, inside
+    a transaction that read the current list first, so messages are only
+    ever appended.
+
     Raises:
         IllegalTaskTransition: ``status`` is not a legal move from the
             current status.
         ValueError: ``checklist`` is an empty list (a checklist's items are
-            never removed), checked before anything is written; or the
-            notification settings are invalid.
+            never removed) or ``request_messages`` is an empty list (a
+            task's request messages are never removed), each checked before
+            anything is written; or the notification settings are invalid.
     """
     if "status" in fields:
         from core.tasking.transitions import TERMINAL_TASK_STATUSES, assert_valid_task_transition
@@ -575,6 +584,13 @@ def update_task(task_id: str, *, expected_status: str | None = None, **fields: A
     # Refused before any write, so a bad call changes nothing.
     if checklist is not ... and not checklist:
         raise ValueError("A checklist's items are never removed")
+    if "request_messages" in fields:
+        if not fields["request_messages"]:
+            raise ValueError("A task's request messages are never removed")
+        # A column of its own (not a side table), so it rides the row write below.
+        fields["request_messages"] = json.dumps(
+            [message.model_dump(mode="json") for message in fields["request_messages"]]
+        )
     source_channel = fields.pop("source_channel", None) if "source_channel" in fields else ...
     notification_policy = fields.pop("notification_policy", None) if "notification_policy" in fields else ...
     notification_channel_id = fields.pop("notification_channel_id", None) if "notification_channel_id" in fields else ...

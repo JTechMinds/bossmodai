@@ -33,6 +33,7 @@ RULES:
   - socialmsg: require data.to and data.msg; require data.aid only when data.to="agent"
   - taskmsg: require data.tid and data.msg; include data.kind so the runtime knows whether this is a passive update or a response request
   - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional, file deliverables only: [{"type":"file","path":"/projects/...","desc":"optional"}]; omit outs when the result is not a file
+  - assign + desc: data.task.desc is the teammate's whole brief. They also see the request your task came from, when there is one, but not your conversation or anything you read. Name the exact files, paths, items and limits they need.
   - assign + after: optional data.after lists the titles of your open tasks this one waits on (part of a title is enough); it starts by itself when they finish
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings
@@ -114,8 +115,8 @@ EXAMPLES:
   {"act":"cli","data":{"cmd":"status"},"th":"check live status"}
   {"act":"request_host_access","data":{"path":"/home/you/app.py","why":"Need to review the named host file"},"th":"open host-path consent"}
   {"act":"socialmsg","data":{"to":"human","msg":"Got it. I'll take a look and report back soon."},"th":"send a non-task social message"}
-  {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect failures and summarize the root cause."}},"th":"delegate follow-up"}
-  {"act":"assign","data":{"aid":"agent-456","after":["Review API logs"],"task":{"title":"Fix the failing endpoint","desc":"Fix the root cause the log review finds."}},"th":"delegate the fix to start after the review"}
+  {"act":"assign","data":{"aid":"agent-123","task":{"title":"Find the cause of the POST /orders 500s","desc":"Since the 10:00 deploy, POST /orders returns 500. Read /projects/api/logs/orders-2026-10-28.log and /projects/api/src/orders.py, and write the cause with the log lines that show it.","outs":[{"type":"file","path":"/projects/api/notes/orders-500.md"}]}},"th":"delegate the investigation"}
+  {"act":"assign","data":{"aid":"agent-456","after":["Find the cause of the POST /orders 500s"],"task":{"title":"Fix the POST /orders 500s","desc":"Fix the cause written in /projects/api/notes/orders-500.md in /projects/api/src/orders.py, and add a test in /projects/api/tests/test_orders.py that fails before the fix."}},"th":"delegate the fix to start after the investigation"}
   {"act":"taskmsg","data":{"tid":"task-123","kind":"review","msg":"Please tighten the summary and send it back when ready."},"th":"continue the existing task thread"}
   {"act":"cli","data":{"cmd":"checklist add","body":"Audit core/tasking\nAudit db/tasks.py\nWrite the findings summary"},"th":"plan the audit in parts"}
   {"act":"cli","data":{"cmd":"checklist done 1","body":"3 issues, written to /projects/app/audit.md under Tasking"},"th":"check off part 1"}

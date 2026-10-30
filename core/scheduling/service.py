@@ -20,6 +20,7 @@ the caller passes ``now``.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -31,7 +32,9 @@ from core.boss import boss_label
 from core.default_prompts import render_default_prompt
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import AgentSchedule, ScheduleCreate, ScheduleView
+from core.models.task import TaskRequestMessage
 from core.scheduling.recurrence import describe, next_occurrence
+from core.tasking.requests import merge_request_messages
 
 RELOAD_COMMAND = "reload_schedules"
 _LOCKED_PROMPT_KEY = "internal_schedule_locked"
@@ -90,7 +93,13 @@ def render_locked_message() -> str:
     )
 
 
-def create_schedule(agent_id: str, body: ScheduleCreate, *, actor: ScheduleActor) -> AgentSchedule:
+def create_schedule(
+    agent_id: str,
+    body: ScheduleCreate,
+    *,
+    actor: ScheduleActor,
+    request_messages: Sequence[TaskRequestMessage] = (),
+) -> AgentSchedule:
     """Store a new schedule for an existing agent.
 
     ``created_by`` comes from the actor. An agent's schedule starts with
@@ -101,6 +110,10 @@ def create_schedule(agent_id: str, body: ScheduleCreate, *, actor: ScheduleActor
         agent_id: The agent whose recurring work this is.
         body: The validated create payload.
         actor: Who is creating it; an agent may only create for itself.
+        request_messages: The message(s) that asked for it, word for word
+            (an agent's ``schedules add``; core/tasking/requests.py). Each
+            run's task carries them as its request. The operator's API
+            passes none: nobody types a request.
 
     Returns:
         The stored schedule.
@@ -128,6 +141,7 @@ def create_schedule(agent_id: str, body: ScheduleCreate, *, actor: ScheduleActor
         enabled=body.enabled,
         created_by=created_by,
         agent_can_change=agent_can_change,
+        request_messages=request_messages,
     )
 
 
@@ -146,14 +160,29 @@ def _changeable(schedule_id: str, actor: ScheduleActor) -> AgentSchedule:
     return schedule
 
 
-def update_schedule(schedule_id: str, body: BaseModel, *, actor: ScheduleActor) -> AgentSchedule:
+def update_schedule(
+    schedule_id: str,
+    body: BaseModel,
+    *,
+    actor: ScheduleActor,
+    request_messages: Sequence[TaskRequestMessage] = (),
+) -> AgentSchedule:
     """Apply the fields present in ``body`` (``model_fields_set``) and nothing else.
+
+    ``request_messages`` are appended to the schedule's saved request, each
+    one it does not hold yet (``merge_request_messages``); nothing is
+    removed. No transaction guards the read and the write: only the
+    schedule's own agent appends, one turn at a time, and the operator's
+    edits never write this column.
 
     Args:
         schedule_id: The schedule to edit.
         body: A validated ``ScheduleUpdate`` (operator) or
             ``AgentScheduleUpdate`` (agent); it always carries a field.
         actor: Who is editing.
+        request_messages: The message(s) that asked for the change, word for
+            word (an agent's ``schedules edit``); the operator's API passes
+            none.
 
     Returns:
         The stored schedule.
@@ -163,10 +192,14 @@ def update_schedule(schedule_id: str, body: BaseModel, *, actor: ScheduleActor) 
         ScheduleLocked: An agent editing a locked schedule.
         ValueError: An agent body carrying ``agent_can_change`` (operator-only).
     """
-    _changeable(schedule_id, actor)
+    schedule = _changeable(schedule_id, actor)
     fields = {name: getattr(body, name) for name in body.model_fields_set}
     if actor.kind == "agent" and "agent_can_change" in fields:
         raise ValueError("Only the boss can set agent_can_change")
+    if request_messages:
+        merged = merge_request_messages(schedule.request_messages, request_messages)
+        if len(merged) > len(schedule.request_messages):
+            fields["request_messages"] = merged
     updated = db.update_schedule(schedule_id, **fields)
     if updated is None:
         raise ScheduleNotFound("Schedule not found")

@@ -37,6 +37,9 @@ _ACT_TO_DECISION = {
     "decline": "decline",
     "defer": "defer",
 }
+# One wire act per decision (the map is one-to-one), for repairs that name
+# the act the model chose.
+_DECISION_TO_ACT = {decision: act for act, decision in _ACT_TO_DECISION.items()}
 _INTENT_TO_NAME = {
     "question": "question",
     "status": "status_request",
@@ -119,7 +122,14 @@ class DelegatedWorkItem(BaseModel):
     @model_validator(mode="after")
     def _validate_target(self) -> "DelegatedWorkItem":
         if not ((self.agentId and self.agentId.strip()) or (self.agentName and self.agentName.strip())):
-            raise ValueError('delegated work must identify the assignee with "agentId" or "agentName"')
+            # Wire keys (``who``/``aid``), not these field names: the model
+            # repairs from this text and never sees ``agentId``/``agentName``.
+            # With pydantic's "Value error, " prefix it must stay within the
+            # repair's 180-character snippet, or the model reads it cut off.
+            raise ValueError(
+                'each plan child is a teammate\'s task and needs "who" or "aid". '
+                'For your own sub-steps, leave "plan" out and use checklist add once you start'
+            )
         if not (self.taskTitle and self.taskTitle.strip()):
             raise ValueError('delegated work requires a non-empty "taskTitle"')
         return self
@@ -136,9 +146,12 @@ class WorkExecutionPlan(BaseModel):
     @model_validator(mode="after")
     def _validate_shape(self) -> "WorkExecutionPlan":
         if self.mode == "self" and self.delegations:
-            raise ValueError('work plan mode "self" must not include delegated work')
+            raise ValueError(
+                'plan mode "self" means you do all of it, so it has no children. '
+                'Use mode "mixed" when teammates take some parts, or leave "plan" out'
+            )
         if self.mode in {"delegate", "mixed"} and not self.delegations:
-            raise ValueError(f'work plan mode "{self.mode}" requires at least one delegated child task')
+            raise ValueError(f'plan mode "{self.mode}" needs at least one child with "who" or "aid"')
         self._validate_child_keys()
         return self
 
@@ -269,6 +282,53 @@ def allowed_conversation_acts_for_trigger(
 def _task_party(trigger: dict[str, Any] | None) -> str:
     """Return the trigger's normalized ``task_party`` ("" when absent)."""
     return str((trigger or {}).get("task_party") or "").strip().lower()
+
+
+def act_for_decision(decision: str) -> str | None:
+    """Return the wire ``act`` the model wrote for a canonical decision name.
+
+    The inverse of ``_ACT_TO_DECISION``: ``answer`` gives ``reply`` and every
+    other decision name is its own act.
+
+    Args:
+        decision: A canonical decision name (``ConversationDecision.decision``).
+
+    Returns:
+        The wire act, or ``None`` when ``decision`` is not a conversation
+        decision name (such as the ``_parse_failed`` marker), which no act
+        produces.
+    """
+    return _DECISION_TO_ACT.get(decision)
+
+
+def repair_kept_act(
+    act: str | None,
+    *,
+    trigger_type: str,
+    trigger: dict[str, Any] | None,
+) -> str | None:
+    """Return the act a decision repair should tell the model to keep.
+
+    A repair names what failed; when the act the model chose is one this turn
+    allows, the repair also says to keep that act and change only the named
+    field, so a bad field on an ``accept`` is fixed instead of the accept
+    being dropped for a reply that starts nothing.
+
+    Args:
+        act: The wire act the model answered with, or ``None`` when its reply
+            carried none (broken JSON, a say-only envelope that failed to
+            parse).
+        trigger_type: The turn's trigger type.
+        trigger: The turn's trigger payload (its ``task_party`` widens a
+            ``task_update``; see :func:`allowed_conversation_acts_for_trigger`).
+
+    Returns:
+        ``act`` when it is one of the turn's allowed conversation acts,
+        otherwise ``None`` (nothing to keep).
+    """
+    if act in allowed_conversation_acts_for_trigger(trigger_type, trigger):
+        return act
+    return None
 
 
 def parse_decision(raw_response: str) -> dict[str, Any]:
@@ -569,6 +629,79 @@ def _validation_message(exc: Exception) -> str:
     return str(exc) or "Invalid decision payload"
 
 
+def decision_act_error(
+    decision: ConversationDecision,
+    *,
+    trigger_type: str,
+    active_task_id: str | None,
+    has_live_work: bool,
+    agent_id: str,
+    trigger: dict[str, Any] | None = None,
+) -> str | None:
+    """Return why the decision's act or commitment is wrong for this turn.
+
+    These are the turn checks that reject the act itself (or the commitment
+    it makes), as opposed to a field inside an act the turn accepts, such as
+    an empty reply or a ``data.task.id`` that is not open.
+    :func:`validate_decision_for_trigger` runs these first; a repair names
+    the act to keep only when this returns ``None``, because keeping an act
+    this rejects would contradict the error the repair shows.
+
+    Args:
+        decision: The parsed decision.
+        trigger_type: The turn's trigger type.
+        active_task_id: The agent's active task when the turn started, or
+            ``None``; ``cancel`` needs one to close.
+        has_live_work: Whether the agent had an active work activity when the
+            turn started; it decides what a reply's ``work_commit: true`` may
+            mean (see :func:`_work_commit_error`).
+        agent_id: The deciding agent, used to look up its open work for a
+            reply's ``work_commit: true``.
+        trigger: The turn's trigger payload (``task_party`` and
+            ``task_status`` select the acts a ``task_update`` or
+            ``task_follow_up`` allows).
+
+    Returns:
+        The validator message for the first act-level problem, or ``None``
+        when the act and commitment fit this turn.
+    """
+    if trigger_type == "watchdog_status_ping" and decision.decision != "answer":
+        return "watchdog status pings require a direct reply"
+
+    allowed = allowed_decisions_for_trigger(trigger_type, trigger)
+    if decision.decision not in allowed:
+        return f'this turn only allows decisions: {", ".join(allowed)}'
+
+    if decision.decision == "cancel" and active_task_id is None:
+        return 'cancel is only valid when there is an active task to close'
+
+    if decision.decision == "observe" and trigger_type not in {"peer_message", "task_update", *_SHARED_CONVERSATION_TRIGGER_TYPES}:
+        return '"observe" is only valid for peer messages, task updates, or shared meeting/channel conversation turns'
+
+    if trigger_type == "task_follow_up":
+        if _is_pending_assignee_turn(trigger):
+            if decision.decision not in {"accept", "clarify", "defer", "decline"}:
+                return "pending task decisions must accept, clarify, defer, or decline the existing task"
+        elif decision.decision not in {"answer", "clarify"}:
+            return "task follow-up turns only allow reply or clarify unless the pending task is awaiting your decision"
+
+    if decision.commitmentKind == "work":
+        if trigger_type == "peer_message":
+            return 'peer messages are conversational only; use explicit task assignment instead of creating durable work from coworker chat'
+        if trigger_type == "meeting_invite":
+            return 'meeting invites are coordination only; accept/decline the meeting and use tasks for durable work'
+
+    if decision.decision == "answer" and decision.workCommit:
+        return _work_commit_error(
+            trigger_type=trigger_type,
+            trigger=trigger,
+            has_live_work=has_live_work,
+            agent_id=agent_id,
+        )
+
+    return None
+
+
 def validate_decision_for_trigger(
     decision: ConversationDecision,
     *,
@@ -580,17 +713,36 @@ def validate_decision_for_trigger(
 ) -> str | None:
     """Validate a parsed decision against the conversation turn context.
 
-    ``has_live_work`` is whether the agent had an active work activity when
-    the turn started; it decides what a reply's ``work_commit: true`` may
-    mean (see :func:`_work_commit_error`). ``agent_id`` is the replying
-    agent, needed to check that a committed reply names its own open task.
-    """
-    if trigger_type == "watchdog_status_ping" and decision.decision != "answer":
-        return "watchdog status pings require a direct reply"
+    Act-level problems (:func:`decision_act_error`: the act or commitment is
+    wrong for this turn) are reported first; then the fields inside the act
+    are checked. A decision with both kinds of problem gets the act error.
 
-    allowed = allowed_decisions_for_trigger(trigger_type, trigger)
-    if decision.decision not in allowed:
-        return f'this turn only allows decisions: {", ".join(allowed)}'
+    Args:
+        decision: The parsed decision.
+        trigger_type: The turn's trigger type.
+        active_task_id: The agent's active task when the turn started, or
+            ``None``.
+        has_live_work: Whether the agent had an active work activity when the
+            turn started; it decides what a reply's ``work_commit: true`` may
+            mean (see :func:`_work_commit_error`).
+        agent_id: The deciding agent, needed to check that a committed reply
+            or a ``data.task.id`` names its own open task.
+        trigger: The turn's trigger payload.
+
+    Returns:
+        The first validator message, or ``None`` when the decision is valid
+        for this turn.
+    """
+    act_error = decision_act_error(
+        decision,
+        trigger_type=trigger_type,
+        active_task_id=active_task_id,
+        has_live_work=has_live_work,
+        agent_id=agent_id,
+        trigger=trigger,
+    )
+    if act_error is not None:
+        return act_error
 
     if trigger_type in {
         "human_chat",
@@ -613,14 +765,8 @@ def validate_decision_for_trigger(
         if not _task_is_open_for(decision.taskId, agent_id):
             return TASK_ID_NOT_OPEN
 
-    if decision.decision == "cancel":
-        if active_task_id is None:
-            return 'cancel is only valid when there is an active task to close'
-        if decision.intentKind != "work_request":
-            return 'cancel decisions must use intentKind="work_request"'
-
-    if decision.decision == "observe" and trigger_type not in {"peer_message", "task_update", *_SHARED_CONVERSATION_TRIGGER_TYPES}:
-        return '"observe" is only valid for peer messages, task updates, or shared meeting/channel conversation turns'
+    if decision.decision == "cancel" and decision.intentKind != "work_request":
+        return 'cancel decisions must use intentKind="work_request"'
 
     if trigger_type == "task_assigned":
         if decision.executionPlan is not None:
@@ -635,13 +781,7 @@ def validate_decision_for_trigger(
             return 'deferring an assignment must keep commitmentKind="work"'
 
     if trigger_type == "task_follow_up":
-        task_status = str((trigger or {}).get("task_status") or "").strip().lower()
-        task_party = str((trigger or {}).get("task_party") or "").strip().lower()
-        pending_assignee_turn = task_status == "pending" and task_party == "assignee"
-
-        if pending_assignee_turn:
-            if decision.decision not in {"accept", "clarify", "defer", "decline"}:
-                return "pending task decisions must accept, clarify, defer, or decline the existing task"
+        if _is_pending_assignee_turn(trigger):
             if decision.executionPlan is not None:
                 return 'task follow-up decisions for an existing pending task must not include an "executionPlan"'
             if decision.commitmentKind == "work" and decision.taskTitle:
@@ -652,11 +792,8 @@ def validate_decision_for_trigger(
                 return 'accepting a pending task follow-up must use commitmentKind="work"'
             if decision.decision == "defer" and decision.commitmentKind != "work":
                 return 'deferring a pending task follow-up must keep commitmentKind="work"'
-        else:
-            if decision.decision not in {"answer", "clarify"}:
-                return "task follow-up turns only allow reply or clarify unless the pending task is awaiting your decision"
-            if decision.commitmentKind != "none":
-                return 'task follow-up reply turns must use commitmentKind="none"'
+        elif decision.commitmentKind != "none":
+            return 'task follow-up reply turns must use commitmentKind="none"'
 
     if trigger_type == "meeting_invite":
         if decision.decision == "accept" and decision.commitmentKind != "meeting":
@@ -674,10 +811,6 @@ def validate_decision_for_trigger(
         "channel_response",
         "task_update",
     } and decision.commitmentKind == "work":
-        if trigger_type == "peer_message":
-            return 'peer messages are conversational only; use explicit task assignment instead of creating durable work from coworker chat'
-        if trigger_type == "meeting_invite":
-            return 'meeting invites are coordination only; accept/decline the meeting and use tasks for durable work'
         if (
             decision.decision in {"accept", "defer"}
             and decision.taskId is None
@@ -687,15 +820,18 @@ def validate_decision_for_trigger(
         if decision.executionPlan is not None and trigger_type == "peer_message":
             return 'peer messages are conversational only; delegated work plans belong on accepted task work, not coworker chat'
 
-    if decision.decision == "answer" and decision.workCommit:
-        return _work_commit_error(
-            trigger_type=trigger_type,
-            trigger=trigger,
-            has_live_work=has_live_work,
-            agent_id=agent_id,
-        )
-
     return None
+
+
+def _is_pending_assignee_turn(trigger: dict[str, Any] | None) -> bool:
+    """Return whether a ``task_follow_up`` asks its assignee to take up a pending task.
+
+    One definition for the act check and the field checks, so both read the
+    turn the same way.
+    """
+    task_status = str((trigger or {}).get("task_status") or "").strip().lower()
+    task_party = str((trigger or {}).get("task_party") or "").strip().lower()
+    return task_status == "pending" and task_party == "assignee"
 
 
 def _work_commit_error(

@@ -426,6 +426,7 @@ def seed_defaults() -> None:
     reconcile_checklist_prompt_lines()
     # After the pass above: its new line is this pass's old line.
     reconcile_checklist_context_prompt_line()
+    reconcile_task_request_prompt_lines()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
 
 
@@ -1209,6 +1210,128 @@ def reconcile_checklist_context_prompt_line() -> None:
         _CHECKLIST_CONTEXT_PROMPT_LINE_RECONCILED,
         missing_row_label="checklist context",
         missing_line_label="checklist context",
+    )
+
+
+# Task requests (core/tasking/requests.py): the system now saves the message
+# a task came from, so the prompts say what ``desc`` is for. The trigger
+# block shows a task's request; the decision contract's accept shape says a
+# plan child names a teammate, its field notes say what the brief and a
+# child's brief are for, and the memo example names its files; the
+# execution contract says an assign's desc is the teammate's whole brief,
+# and both assign examples name their files. Each pair is (old, new), each
+# without its newline, copied verbatim from the shipped file before and
+# after the edit; an insertion keeps its anchor line as its last line.
+_TASK_REQUEST_SEVERITY_ANCHOR = "{{if trigger.task_severity}}Severity: {{trigger.task_severity}}{{end}}"
+_TASK_REQUEST_ASSIGN_AFTER_ANCHOR = (
+    "  - assign + after: optional data.after lists the titles of your open tasks this one waits on (part of a "
+    "title is enough); it starts by itself when they finish"
+)
+_TASK_REQUEST_ACCEPT_SHAPE_HEAD = (
+    '{"act":"accept","intent":"work | meeting | break | move | other","msg":"string","commit":"work | meeting | '
+    'break | conversation","data":{"dst":"desk | meeting | break | main | south | hall","title":"string",'
+    '"detail":"string","task":{"id":"string (one of your open task ids, to revise that task)","title":"string",'
+    '"desc":"string","outs":[{"type":"file","path":"string","desc":"string | null"}]},"plan":{"mode":"self | '
+    'delegate | mixed","children":[{"key":"string | null (short name other children use in after)",'
+)
+_TASK_REQUEST_ACCEPT_SHAPE_TAIL = (
+    '"after":["string (an earlier child\'s key, or the title of one of your open tasks)"],"task":"child task '
+    'object with title/desc/optional outs"}]}},"th":"string"}'
+)
+_TASK_REQUEST_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_block_trigger_event": (
+        (
+            _TASK_REQUEST_SEVERITY_ANCHOR,
+            "{{if trigger.task_request}}{{trigger.task_request}}{{end}}" + "\n" + _TASK_REQUEST_SEVERITY_ANCHOR,
+        ),
+    ),
+    "runtime_contract_decision": (
+        (
+            _TASK_REQUEST_ACCEPT_SHAPE_HEAD + '"who":"string | null","aid":"string | null",'
+            + _TASK_REQUEST_ACCEPT_SHAPE_TAIL,
+            _TASK_REQUEST_ACCEPT_SHAPE_HEAD
+            + '"who":"string (teammate\'s name; or give aid)","aid":"string (teammate\'s agent id; or give who)",'
+            + _TASK_REQUEST_ACCEPT_SHAPE_TAIL,
+        ),
+        (
+            '- `data.plan` is optional for accepted work. Use `mode="self"` when you will do the work yourself.',
+            "- `data.task.desc` is your brief for the work. The message you are answering is saved with the task "
+            "word for word and shown whenever the task is worked, so do not copy it into the brief. Write what "
+            "that message does not say: details from earlier in the conversation, and the exact files, paths, "
+            "items and limits you agreed on."
+            + "\n"
+            + "- `data.plan` is optional for accepted work. Leave it out when you will do all of the work "
+            "yourself. Each child in `data.plan.children` is a teammate's task and needs `who` or `aid`; to "
+            "split your own work into parts, use `checklist add` once you start."
+            + "\n"
+            + "- A child task's `desc` is that teammate's whole brief for their part. They also see the message "
+            "you are answering, but not the rest of this conversation or anything you looked up. Name the exact "
+            "files, paths, items and limits they need.",
+        ),
+        (
+            '{"act":"accept","intent":"work","msg":"I’ll draft it.","commit":"work","data":{"task":{"title":'
+            '"Write memo","desc":"Draft the memo.","outs":[{"type":"file","path":"memo.md"}]}},"th":"accept work"}',
+            '{"act":"accept","intent":"work","msg":"I’ll draft it.","commit":"work","data":{"task":{"title":'
+            '"Write Q3 pricing memo","desc":"One-page memo for the sales team. Use the new tiers in '
+            "/projects/pricing/q3-tiers.md, effective October 1, and answer the two customer questions the boss "
+            'listed earlier: annual billing and seat minimums.","outs":[{"type":"file","path":'
+            '"/projects/pricing/q3-memo.md"}]}},"th":"accept work"}',
+        ),
+    ),
+    "runtime_contract_execution": (
+        (
+            _TASK_REQUEST_ASSIGN_AFTER_ANCHOR,
+            "  - assign + desc: data.task.desc is the teammate's whole brief. They also see the request your task "
+            "came from, when there is one, but not your conversation or anything you read. Name the exact files, "
+            "paths, items and limits they need."
+            + "\n"
+            + _TASK_REQUEST_ASSIGN_AFTER_ANCHOR,
+        ),
+        (
+            '  {"act":"assign","data":{"aid":"agent-123","task":{"title":"Review API logs","desc":"Inspect '
+            'failures and summarize the root cause."}},"th":"delegate follow-up"}',
+            '  {"act":"assign","data":{"aid":"agent-123","task":{"title":"Find the cause of the POST /orders '
+            '500s","desc":"Since the 10:00 deploy, POST /orders returns 500. Read '
+            "/projects/api/logs/orders-2026-10-28.log and /projects/api/src/orders.py, and write the cause with "
+            'the log lines that show it.","outs":[{"type":"file","path":"/projects/api/notes/orders-500.md"}]}},'
+            '"th":"delegate the investigation"}',
+        ),
+        (
+            '  {"act":"assign","data":{"aid":"agent-456","after":["Review API logs"],"task":{"title":"Fix the '
+            'failing endpoint","desc":"Fix the root cause the log review finds."}},"th":"delegate the fix to '
+            'start after the review"}',
+            '  {"act":"assign","data":{"aid":"agent-456","after":["Find the cause of the POST /orders 500s"],'
+            '"task":{"title":"Fix the POST /orders 500s","desc":"Fix the cause written in '
+            "/projects/api/notes/orders-500.md in /projects/api/src/orders.py, and add a test in "
+            '/projects/api/tests/test_orders.py that fails before the fix."}},"th":"delegate the fix to start '
+            'after the investigation"}',
+        ),
+    ),
+}
+_TASK_REQUEST_PROMPT_LINES_RECONCILED = "task_request_prompt_lines_reconciled"
+
+
+def reconcile_task_request_prompt_lines() -> None:
+    """Teach the stored prompts that a task keeps the message it came from, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_execution_outs_prompt_line`, driven by
+    ``_TASK_REQUEST_PROMPT_LINE_EDITS``: the trigger block shows a task's
+    request above its severity; the decision contract's accept shape says a
+    plan child names a teammate, its field notes say what ``desc`` and a
+    child's ``desc`` are for, and its memo example names files; the
+    execution contract says an assign's ``desc`` is the teammate's whole
+    brief, and its two assign examples name files. A row equal to the
+    shipped default is skipped. A row without an exact old line keeps its
+    bytes for that line, and a warning names the key and the line, so the
+    operator can review it by hand. Later calls, once the marker is
+    recorded, are no-ops.
+    """
+    _reconcile_prompt_lines(
+        _TASK_REQUEST_PROMPT_LINE_EDITS,
+        _TASK_REQUEST_PROMPT_LINES_RECONCILED,
+        missing_row_label="task request",
+        missing_line_label="task request",
     )
 
 

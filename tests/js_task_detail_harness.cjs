@@ -53,6 +53,7 @@ const NAMES = [
     "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
+    "BossModTaskRequest",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",
@@ -454,6 +455,7 @@ async function main() {
     const { completeNeedsSummary, summaryUncapped } = await operatorActions();
     const holdRelease = await holdAndRelease();
     const stepCases = await steps();
+    const requestCases = await requestSection();
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -479,7 +481,120 @@ async function main() {
         activityReadsAsSentences,
         deliverablesCounted,
         ...stepCases,
+        ...requestCases,
     }));
+}
+
+/**
+ * The Request section (task-request.js): what was asked, word for word,
+ * under each author, above the task's own description, read-only in view
+ * and in Edit mode; a child without a request of its own shows its parent's.
+ */
+async function requestSection() {
+    const REQUEST = global.BossModTaskRequest;
+    const throws = (fn) => { try { fn(); return false; } catch (err) { return true; } };
+    const ASKED = {
+        ...BLOCKED, id: "t-asked", title: "Review the rubric",
+        request_messages: [
+            { author_type: "human", author_agent_id: null, author_name: "Boss",
+                content: "Review /projects/app/Docs/rubric-review.md\nRows 1-12 first." },
+            { author_type: "agent", author_agent_id: "a1", author_name: "Jim", content: "Also check the scoring." },
+        ],
+    };
+    const ASKED_CHILD = { ...CHILD_OPEN, id: "c-asked", parent_task_id: ASKED.id, request_messages: [] };
+    const tasks = [ASKED, ASKED_CHILD];
+    const colorOf = (agentId) => (agentId === "a1" ? "#3b82f6" : undefined);
+
+    // ── ownRequestReadsAsAsked ──────────────────────────────────────────
+    const own = REQUEST.section(ASKED, { tasks, colorOf });
+    const authors = own.element.querySelectorAll(".task-detail-request-author");
+    const texts = own.element.querySelectorAll(".task-detail-request-text");
+    const ownRequestReadsAsAsked = own.element.querySelector(".task-detail-heading").textContent === "Request"
+        && own.element.querySelector(".task-detail-meta").textContent === "What was asked, word for word."
+        && authors.length === 2
+        && authors[0].textContent === "You" && !authors[0].querySelector(".avatar")
+        && authors[1].textContent.endsWith("Jim") && Boolean(authors[1].querySelector(".avatar"))
+        && same(texts.map((node) => node.textContent), ASKED.request_messages.map((item) => item.content))
+        && texts.every((node) => node.classList.contains("md"))
+        && renders.includes(ASKED.request_messages[0].content);
+    if (!ownRequestReadsAsAsked) fail(`own request read ${JSON.stringify(authors.map((node) => node.textContent))}`);
+
+    // ── requestClampFollowsOverflow ─────────────────────────────────────
+    const more = own.element.querySelectorAll(".clamped-more");
+    texts[0].scrollHeight = 400;
+    texts[0].clientHeight = 100;
+    texts[1].scrollHeight = 20;
+    texts[1].clientHeight = 20;
+    own.measure();
+    const requestClampFollowsOverflow = more.length === 2 && more[0].textContent === "Show the full message"
+        && more[0].hidden === false && texts[0].classList.contains("is-clamped")
+        && !own.element.querySelectorAll(".clamped-more").includes(more[1])
+        && !texts[1].classList.contains("is-clamped");
+    if (!requestClampFollowsOverflow) fail("the request's clamps did not follow their own overflow");
+
+    // ── forwardedRequestNamesTheParent ──────────────────────────────────
+    const forwarded = REQUEST.section(ASKED_CHILD, { tasks, colorOf });
+    const forwardedRequestNamesTheParent = Boolean(forwarded)
+        && forwarded.element.querySelector(".task-detail-meta").textContent
+            === "From the parent task, “Review the rubric”, word for word."
+        && same(forwarded.element.querySelectorAll(".task-detail-request-text").map((node) => node.textContent),
+            ASKED.request_messages.map((item) => item.content));
+    if (!forwardedRequestNamesTheParent) fail("a child without a request did not show its parent's");
+
+    // ── noRequestNoSection ──────────────────────────────────────────────
+    const noRequestNoSection = REQUEST.section(BLOCKED, { tasks: TASKS, colorOf }) === null
+        // A child whose parent has no request, and one whose parent is not listed.
+        && REQUEST.section(CHILD_OPEN, { tasks: TASKS, colorOf }) === null
+        && REQUEST.section(ASKED_CHILD, { tasks: [ASKED_CHILD], colorOf }) === null;
+    if (!noRequestNoSection) fail("a task without a request still drew a Request section");
+
+    // ── malformedRequestThrows ──────────────────────────────────────────
+    const malformed = (message) => throws(() => REQUEST.section({ id: "x", request_messages: [message] }, { tasks, colorOf }));
+    const malformedRequestThrows = malformed({ author_type: "human", author_name: "Boss", content: "" })
+        && malformed({ author_name: "Jim", content: "Do it." })
+        && malformed({ author_type: "agent", author_agent_id: "a1", author_name: "", content: "Do it." })
+        && throws(() => REQUEST.section(ASKED, { tasks }))
+        && throws(() => REQUEST.section(ASKED, { colorOf }));
+    if (!malformedRequestThrows) fail("a malformed request message drew a row instead of throwing");
+
+    // ── requestSitsAboveTheTaskInViewAndEditMode ────────────────────────
+    const { actions } = recordingActions();
+    global.BossModTaskDetail.openTaskDetail({
+        api, bus, taskId: ASKED.id, tasks, colorOf, onNavigate: () => {}, actions, onOpenChat: () => {},
+    });
+    await drain();
+    const panel = top();
+    // The first two plain headings; Activity's comes last.
+    const headings = () => panel.querySelectorAll(".task-detail-heading").map((node) => node.textContent).slice(0, 2);
+    const requestNode = () => panel.querySelectorAll(".task-detail-section")
+        .find((node) => node.children[0] && node.children[0].textContent === "Request") || null;
+    const adjacent = () => {
+        const column = panel.querySelector(".task-detail-column");
+        const at = column.children.indexOf(requestNode());
+        const next = column.children[at + 1];
+        return at >= 0 && Boolean(next) && next.children[0].textContent === "Task";
+    };
+    const inView = same(headings(), ["Request", "Task"]) && adjacent();
+    await click(panel.querySelector("#ct-edit-mode-btn"), "the pencil");
+    const editing = requestNode();
+    const inEdit = Boolean(panel.querySelector(".edit-field-multiline")) && same(headings(), ["Request", "Task"])
+        && adjacent() && editing.querySelectorAll("input").length === 0
+        && editing.querySelectorAll("textarea").length === 0
+        && editing.querySelectorAll(".task-detail-request").length === 2;
+    const requestSitsAboveTheTaskInViewAndEditMode = inView && inEdit;
+    if (!requestSitsAboveTheTaskInViewAndEditMode) fail(`request placement: view ${inView}, edit ${inEdit}`);
+    await click(panel.querySelector("#ct-edit-discard"), "✕");
+    panel.querySelector(".modal-close").dispatchClick();
+    await drain();
+
+    return {
+        ownRequestReadsAsAsked,
+        requestClampFollowsOverflow,
+        forwardedRequestNamesTheParent,
+        noRequestNoSection,
+        malformedRequestThrows,
+        requestSitsAboveTheTaskInViewAndEditMode,
+    };
 }
 
 /**

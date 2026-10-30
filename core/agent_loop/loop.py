@@ -35,6 +35,7 @@ from core.agent_loop.turn_context import (
     _get_reference_materials,
     stamp_channel_latest_line,
 )
+from core.agent_loop.turn_request import bind_turn_request
 from core.agent_loop.work_binding import bind_turn, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, mark_restored, restore_work_turn
 from core.agent_loop.work_summary import StepSummaryRun
@@ -67,9 +68,12 @@ async def run_turn(
 
     The whole turn runs inside ``work_binding.bind_turn``, so every
     turn-facing "what live work is this turn bound to?" lookup sees the
-    turn's binding (empty for a detached trigger).
+    turn's binding (empty for a detached trigger), and inside
+    ``turn_request.bind_turn_request``, so a CLI command that turns the
+    message being answered into a record (``backlog add``, ``schedules``)
+    can save the requester's words with it.
     """
-    with bind_turn(agent.id, trigger):
+    with bind_turn(agent.id, trigger), bind_turn_request(agent.id, trigger):
         return await _run_bound_turn(agent, state, trigger)
 
 

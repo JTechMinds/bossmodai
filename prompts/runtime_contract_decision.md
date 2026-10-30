@@ -47,7 +47,7 @@ For reply:
 
 For accept:
 ```json
-{"act":"accept","intent":"work | meeting | break | move | other","msg":"string","commit":"work | meeting | break | conversation","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":{"id":"string (one of your open task ids, to revise that task)","title":"string","desc":"string","outs":[{"type":"file","path":"string","desc":"string | null"}]},"plan":{"mode":"self | delegate | mixed","children":[{"key":"string | null (short name other children use in after)","who":"string | null","aid":"string | null","after":["string (an earlier child's key, or the title of one of your open tasks)"],"task":"child task object with title/desc/optional outs"}]}},"th":"string"}
+{"act":"accept","intent":"work | meeting | break | move | other","msg":"string","commit":"work | meeting | break | conversation","data":{"dst":"desk | meeting | break | main | south | hall","title":"string","detail":"string","task":{"id":"string (one of your open task ids, to revise that task)","title":"string","desc":"string","outs":[{"type":"file","path":"string","desc":"string | null"}]},"plan":{"mode":"self | delegate | mixed","children":[{"key":"string | null (short name other children use in after)","who":"string (teammate's name; or give aid)","aid":"string (teammate's agent id; or give who)","after":["string (an earlier child's key, or the title of one of your open tasks)"],"task":"child task object with title/desc/optional outs"}]}},"th":"string"}
 ```
 
 For clarify or decline:
@@ -383,7 +383,9 @@ FIELD NOTES
 - For `reply`, `clarify`, `cancel`, `decline`, and `observe`, leave `commit` out.
 - Include `data` only when the chosen act actually needs it.
 - For `reply`, `clarify`, `cancel`, `decline`, and `observe`, leave `data` out unless there is a real reason to include it.
-- `data.plan` is optional for accepted work. Use `mode="self"` when you will do the work yourself.
+- `data.task.desc` is your brief for the work. The message you are answering is saved with the task word for word and shown whenever the task is worked, so do not copy it into the brief. Write what that message does not say: details from earlier in the conversation, and the exact files, paths, items and limits you agreed on.
+- `data.plan` is optional for accepted work. Leave it out when you will do all of the work yourself. Each child in `data.plan.children` is a teammate's task and needs `who` or `aid`; to split your own work into parts, use `checklist add` once you start.
+- A child task's `desc` is that teammate's whole brief for their part. They also see the message you are answering, but not the rest of this conversation or anything you looked up. Name the exact files, paths, items and limits they need.
 - `mode="delegate"` means another teammate owns the deliverable and the parent task is coordination/reporting work.
 - `mode="mixed"` means you will both own parent work and create child delegated tasks.
 - Use `who` when you know the teammate by name; use `aid` when you know the exact agent id.
@@ -582,7 +584,7 @@ EXAMPLES
 ```
 
 ```json
-{"act":"accept","intent":"work","msg":"I’ll draft it.","commit":"work","data":{"task":{"title":"Write memo","desc":"Draft the memo.","outs":[{"type":"file","path":"memo.md"}]}},"th":"accept work"}
+{"act":"accept","intent":"work","msg":"I’ll draft it.","commit":"work","data":{"task":{"title":"Write Q3 pricing memo","desc":"One-page memo for the sales team. Use the new tiers in /projects/pricing/q3-tiers.md, effective October 1, and answer the two customer questions the boss listed earlier: annual billing and seat minimums.","outs":[{"type":"file","path":"/projects/pricing/q3-memo.md"}]}},"th":"accept work"}
 ```
 
 ```json

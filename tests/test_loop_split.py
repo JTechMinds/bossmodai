@@ -103,7 +103,7 @@ def test_summarize_decision_label() -> None:
 
 
 def test_repair_builders_keep_roles_and_error() -> None:
-    decision_msgs = _build_decision_repair_messages(parsed_error="not json")
+    decision_msgs = _build_decision_repair_messages(parsed_error="not json", kept_act=None)
     assert len(decision_msgs) == 3
     assert all(msg["role"] == "system" for msg in decision_msgs)
     assert "not json" in decision_msgs[0]["content"]

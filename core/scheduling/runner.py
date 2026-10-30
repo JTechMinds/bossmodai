@@ -31,6 +31,7 @@ from core.floors import is_on_vacation
 from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import AgentSchedule, RecurrenceRule, ScheduleOutcome
+from core.tasking.requests import append_task_request
 from core.tasking.service import create_or_bind_task
 from core.tasking.transitions import TERMINAL_TASK_STATUSES
 
@@ -282,13 +283,18 @@ def _fire(schedule: AgentSchedule) -> tuple[Task, dict[str, Any] | None, dict[st
     The task is the operator's (``requester=HUMAN_SENDER_ID``, source
     ``api``), so its status lines land in the operator's DM with the agent
     through ``origin_thread_target`` unless the policy is ``none``. The
-    description is the operator's instructions only: that this is one run of
-    a recurring task is told to the agent by the ``task_assigned`` trigger
-    block, from the schedule fields ``build_task_assigned_trigger`` adds,
-    resolved when the prompt is built rather than baked into the task.
+    description is the schedule's instructions, and the task's request is
+    the schedule's saved request (the message(s) an agent was answering when
+    it set the schedule up; none for the operator's): that this is one run
+    of a recurring task is told to the agent by the ``task_assigned``
+    trigger block, from the schedule fields ``build_task_assigned_trigger``
+    adds, resolved when the prompt is built rather than baked into the task.
+    The request is saved before the wake is built, so the run's
+    ``task_assigned`` payload and its ``{{task}}`` block both carry it.
 
     Raises:
         RuntimeError: Creation returned no task (an invariant breach).
+        ValueError: The new task vanished while its request was saved.
         Whatever ``create_or_bind_task`` raises (``FloorDenied``,
         ``ValueError``, a database error).
     """
@@ -312,4 +318,5 @@ def _fire(schedule: AgentSchedule) -> tuple[Task, dict[str, Any] | None, dict[st
     )
     if result.task is None:
         raise RuntimeError(f"creating a run of schedule {schedule.id} returned no task ({result.outcome})")
-    return result.task, assignment_wake_trigger(result.task), result.origin_line
+    task = append_task_request(result.task.id, schedule.request_messages)
+    return task, assignment_wake_trigger(task), result.origin_line

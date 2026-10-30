@@ -24,6 +24,7 @@ from core.agent_loop.decision_contract import (
     WORK_COMMIT_STARTS_NOTHING,
     ConversationDecision,
     allowed_conversation_acts_for_trigger,
+    decision_act_error,
     parse_direct_turn_response,
     validate_decision_for_trigger,
 )
@@ -846,6 +847,133 @@ def test_task_update_acts_in_the_shipped_contract_match_the_code() -> None:
     assert stakeholder_acts == "observe | reply | accept | defer"
     assert assignee_acts == "observe"
     assert allowed_conversation_acts_for_trigger("task_update") == ("observe",)
+
+
+# ─── decision_act_error: the act itself is wrong, not a field inside it ───
+
+
+_WORK_ACCEPT = {
+    "decision": "accept",
+    "intentKind": "work_request",
+    "commitmentKind": "work",
+    "reply": "On it.",
+    "taskTitle": "Run the audit",
+}
+_PLAIN_REPLY = {"decision": "answer", "intentKind": "status_request", "reply": "Noted.", "workCommit": False}
+_COMMITTED_REPLY = {"decision": "answer", "intentKind": "work_request", "reply": "On it.", "workCommit": True}
+
+
+def _turn_checks(agent_id: str, trigger: dict[str, Any]) -> dict[str, Any]:
+    """The validator's turn arguments for ``trigger``, with nothing active or live."""
+    return {
+        "trigger_type": str(trigger["type"]),
+        "active_task_id": None,
+        "has_live_work": False,
+        "agent_id": agent_id,
+        "trigger": trigger,
+    }
+
+
+_ACT_ERRORS = {
+    "watchdog_ping_not_a_reply": (
+        {"type": "watchdog_status_ping"},
+        {"decision": "clarify", "intentKind": "question", "reply": "Which task?"},
+        "watchdog status pings require a direct reply",
+    ),
+    "act_not_allowed": (
+        _human_chat(),
+        {"decision": "observe", "intentKind": "other"},
+        "this turn only allows decisions: answer, accept, clarify, cancel, decline, defer",
+    ),
+    "cancel_with_nothing_active": (
+        _human_chat(),
+        {"decision": "cancel", "intentKind": "work_request", "reply": "Cancelling."},
+        "cancel is only valid when there is an active task to close",
+    ),
+    # A trigger type with no act list of its own gets the default acts, which
+    # include observe, but observe is not valid on it.
+    "observe_off_its_turns": (
+        {"type": "social"},
+        {"decision": "observe", "intentKind": "other"},
+        '"observe" is only valid for peer messages, task updates, or shared meeting/channel conversation turns',
+    ),
+    "pending_follow_up_reply": (
+        {"type": "task_follow_up", "task_id": "t1", "task_status": "pending", "task_party": "assignee"},
+        _PLAIN_REPLY,
+        "pending task decisions must accept, clarify, defer, or decline the existing task",
+    ),
+    "follow_up_accept_on_a_started_task": (
+        {"type": "task_follow_up", "task_id": "t1", "task_status": "active", "task_party": "assignee"},
+        _WORK_ACCEPT,
+        "task follow-up turns only allow reply or clarify unless the pending task is awaiting your decision",
+    ),
+    "work_from_a_peer_message": (
+        {"type": "peer_message", "from_agent": "a-peer", "from_name": "Ett-PO", "content": "Audit eval4?"},
+        _WORK_ACCEPT,
+        "peer messages are conversational only; use explicit task assignment instead of creating durable work "
+        "from coworker chat",
+    ),
+    # Act-first: before the split, the meeting field check ("must use
+    # commitmentKind=meeting") came first for this decision.
+    "work_from_a_meeting_invite": (
+        {"type": "meeting_invite"},
+        _WORK_ACCEPT,
+        "meeting invites are coordination only; accept/decline the meeting and use tasks for durable work",
+    ),
+    "committed_reply_with_nothing_open": (_human_chat(), _COMMITTED_REPLY, WORK_COMMIT_STARTS_NOTHING),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_ACT_ERRORS))
+def test_each_act_level_check_is_a_decision_act_error(case: str) -> None:
+    agent = db.create_agent("Charles", role="Engineer")
+    trigger, raw, expected = _ACT_ERRORS[case]
+    decision = ConversationDecision.model_validate(raw)
+    checks = _turn_checks(agent.id, trigger)
+    assert decision_act_error(decision, **checks) == expected
+    assert validate_decision_for_trigger(decision, **checks) == expected
+
+
+def test_a_field_error_is_not_an_act_error() -> None:
+    agent = db.create_agent("Charles", role="Engineer")
+    checks = _turn_checks(agent.id, _human_chat())
+    not_open = ConversationDecision.model_validate(_accept_by_id("no-such-task", "More scope."))
+    blank_reply = ConversationDecision.model_validate({**_PLAIN_REPLY, "reply": "   "})
+    for decision, expected in (
+        (not_open, TASK_ID_NOT_OPEN),
+        (blank_reply, 'conversation turns require a non-empty "reply" unless you choose "observe"'),
+    ):
+        assert decision_act_error(decision, **checks) is None
+        assert validate_decision_for_trigger(decision, **checks) == expected
+
+
+_ACT_AND_FIELD_ERRORS = {
+    "act_not_allowed": (
+        _task_update(party="assignee"),
+        {**_PLAIN_REPLY, "reply": "   "},
+        "this turn only allows decisions: observe",
+    ),
+    # Before the split, the empty-reply check came first for these two.
+    "cancel_with_nothing_active": (
+        _human_chat(),
+        {"decision": "cancel", "intentKind": "work_request", "reply": "   "},
+        "cancel is only valid when there is an active task to close",
+    ),
+    "committed_reply_with_nothing_open": (
+        _human_chat(),
+        {**_COMMITTED_REPLY, "reply": "   "},
+        WORK_COMMIT_STARTS_NOTHING,
+    ),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_ACT_AND_FIELD_ERRORS))
+def test_an_act_error_is_reported_before_a_field_error(case: str) -> None:
+    agent = db.create_agent("Charles", role="Engineer")
+    trigger, raw, expected = _ACT_AND_FIELD_ERRORS[case]
+    decision = ConversationDecision.model_validate(raw)
+    assert not (decision.reply or "").strip(), "the decision also fails the empty-reply field check"
+    assert validate_decision_for_trigger(decision, **_turn_checks(agent.id, trigger)) == expected
 
 
 _TRIGGER_BLOCK_KEY = "runtime_block_trigger_event"

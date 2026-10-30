@@ -9,6 +9,7 @@ from core.boss import boss_label
 from core.agent_loop import activity_runtime
 from core.llm import routing
 from core.models import AgentState
+from core.tasking.requests import request_payload_for_task
 import db
 
 _DECISION_TRIGGER_TYPES = {
@@ -50,7 +51,12 @@ def _get_nearby_agents(
     return db.get_nearby_agents(agent_id, state.x, state.y, radius)
 
 def _get_current_task(agent_id: str) -> dict[str, Any] | None:
-    """Fetch the agent's current task if any."""
+    """Fetch the agent's current task if any.
+
+    ``request`` is the request its assignee works from
+    (``core/tasking/requests.py`` ``request_payload_for_task``): its own, or
+    the one behind its parent; ``None`` when neither has one.
+    """
     active = activity_runtime.get_active_activity(agent_id)
     if not active or not active.task_id:
         return None
@@ -72,6 +78,7 @@ def _get_current_task(agent_id: str) -> dict[str, Any] | None:
         "completion_summary": task.completion_summary,
         "status_note": task.status_note,
         "origin_attachment_ids": task.origin_attachment_ids,
+        "request": request_payload_for_task(task),
     }
 
 def _get_current_activity(agent_id: str) -> dict[str, Any] | None:

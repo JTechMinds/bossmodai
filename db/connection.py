@@ -467,6 +467,10 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _add_column_if_missing(
         con, "tasks", "origin_attachment_ids", "TEXT",
     )
+    # Existing rows read as having no request (NULL is "none recorded"),
+    # which is what was kept for them.
+    _add_column_if_missing(con, "tasks", "request_messages", "TEXT")
+    _add_column_if_missing(con, "agent_schedules", "request_messages", "TEXT")
     # After every table rebuild above (a rebuild drops the old table's
     # indexes) and after tasks.owner_id is added.
     _create_hot_path_indexes(con)

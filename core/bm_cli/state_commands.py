@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 import db
@@ -11,6 +12,8 @@ from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCo
 from core.default_prompts import load_default_prompt
 from core.tasking.board import build_task_board, serialize_task_board
 from core.tasking.checklist import format_checklist_for_context
+from core.tasking.references import REFERENCES_HEADING, format_references_for_context
+from core.tasking.requests import format_request_for_context, request_payload_for_task
 from core.world.tilemap import get_room_at
 
 
@@ -220,7 +223,13 @@ def handle_waiting_on_me(context: CliExecutionContext, parsed: ParsedCliCommand,
 
 
 def handle_task_detail(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
-    """Return one task plus its recent task-thread events."""
+    """Return one task plus its recent task-thread events.
+
+    The TASK section reads as the prompt's Current Task block does: the
+    request (its own, or the one behind its parent;
+    ``core/tasking/requests.py``) above the description, and the references
+    after it.
+    """
     task_id = parsed.args[0].strip() if parsed.args else ""
     if not task_id:
         return success_result(
@@ -243,7 +252,11 @@ def handle_task_detail(context: CliExecutionContext, parsed: ParsedCliCommand, c
             "completion_summary": task.completion_summary,
             "status_note": task.status_note,
             "checklist": [item.model_dump(mode="json") for item in task.checklist],
-        }
+        },
+        request_lines=format_request_for_context(request_payload_for_task(task)),
+        reference_lines=(
+            [REFERENCES_HEADING, *format_references_for_context(task.references)] if task.references else ()
+        ),
     )
     sections = [("TASK", lines)]
     sections.append(("TASK THREAD", _task_event_lines(events)))
@@ -364,13 +377,34 @@ def _activity_lines(activity: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _current_task_lines(task: dict[str, Any]) -> list[str]:
-    """Render current task detail lines, ending with the task's checklist when it has one."""
+def _current_task_lines(
+    task: dict[str, Any],
+    *,
+    request_lines: Sequence[str] = (),
+    reference_lines: Sequence[str] = (),
+) -> list[str]:
+    """Render current task detail lines, ending with the task's checklist when it has one.
+
+    Only ``task <id>`` passes ``request_lines`` (after ``status``, before
+    ``description``) and ``reference_lines`` (right after ``description``):
+    ``current-task`` and the board are compact views of work whose full form
+    is already in the prompt's ``{{task}}`` block.
+
+    Args:
+        task: The task's fields, as a dict.
+        request_lines: The request, as ``format_request_for_context`` gives it.
+        reference_lines: The references heading and one line per reference.
+
+    Returns:
+        The lines, in order.
+    """
     lines = [
         f"id: {task['id']}",
         f"title: {task['title']}",
         f"status: {task['status']}",
+        *request_lines,
         f"description: {task['description']}",
+        *reference_lines,
     ]
     if task.get("completion_summary"):
         lines.append(f"completion_summary: {task['completion_summary']}")

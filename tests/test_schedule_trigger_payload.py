@@ -65,7 +65,7 @@ def _scheduled_task(*, enabled: bool = True, title: str = "Ping me"):
     ada = db.create_agent("Ada", role="Operator")
     schedule = db.create_schedule(
         agent_id=ada.id, title=title, instructions="Send the operator a ping.",
-        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled, created_by=HUMAN_SENDER_ID, agent_can_change=False,
+        recurrence=_rule(), notification_policy="completion_blocked", enabled=enabled, created_by=HUMAN_SENDER_ID, agent_can_change=False, request_messages=(),
     )
     run = run_now(schedule.id, now=NOW)
     return ada, schedule, db.get_task(run.task.id)
@@ -154,7 +154,7 @@ def test_schedules_lists_only_the_callers_schedules() -> None:
     bob = db.create_agent("Bob", role="Operator")
     db.create_schedule(
         agent_id=bob.id, title="Bob's routine", instructions="x", recurrence=_rule(),
-        notification_policy="none", enabled=True, created_by=HUMAN_SENDER_ID, agent_can_change=False,
+        notification_policy="none", enabled=True, created_by=HUMAN_SENDER_ID, agent_can_change=False, request_messages=(),
     )
     result = execute_bm_cli(ada, db.get_agent_state(ada.id), "schedules")
     assert result.ok, result.prompt_content

@@ -17,6 +17,7 @@ from pydantic import ValidationError
 
 import db
 from core import config
+from core.agent_loop.turn_request import turn_request_messages
 from core.bm_cli.command_registry import BACKLOG_FORMS
 from core.bm_cli.results import error_result, success_result, trim
 from core.bm_cli.schedule_commands import validation_sentences
@@ -105,7 +106,9 @@ def _add(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | 
     if isinstance(body, BossModCliResult):
         return body
     try:
-        filing = file_backlog_item(context.agent, body)
+        filing = file_backlog_item(
+            context.agent, body, request_messages=turn_request_messages(context.agent.id),
+        )
     except FloorDenied as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)
     if filing.outcome == "clarify_ambiguous_match" or filing.task is None:

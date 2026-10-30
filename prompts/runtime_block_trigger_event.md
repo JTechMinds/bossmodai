@@ -73,6 +73,7 @@ Perform this run's work now, then close this task out. Do not wait for the next 
 {{elseif trigger.task_description}}
 Task description: {{trigger.task_description}}
 {{end}}
+{{if trigger.task_request}}{{trigger.task_request}}{{end}}
 {{if trigger.task_severity}}Severity: {{trigger.task_severity}}{{end}}
 {{if trigger.task_references}}Reference documents (read these before starting):
 {{trigger.task_references}}{{end}}

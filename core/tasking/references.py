@@ -22,6 +22,9 @@ from core.models import Agent
 from core.models.task import TaskReference
 
 _SHARED_PREFIX = "/projects/"
+# The line every view of a task's references opens with: the prompt's Current
+# Task block (core/llm/context_builder.py) and ``task <id>``.
+REFERENCES_HEADING = "references (read before starting):"
 NOT_SHARED_REASON = "only /projects files can be shared; /me is private to you"
 NO_SUCH_FILE_REASON = "no such file"
 

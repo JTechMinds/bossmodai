@@ -1,4 +1,4 @@
-Your last response did not fit this conversation turn: {{parsed_error}}.
+Your last response did not fit this conversation turn: {{parsed_error}}.{{if kept_act}} You answered with act "{{kept_act}}", which this turn allows. Keep "{{kept_act}}" and everything it carried, and change only what is named above.{{end}}
 
 Return one JSON object, no fences/markdown.
 

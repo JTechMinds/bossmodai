@@ -2,13 +2,13 @@
  * BossMod AI — the task detail dialog.
  *
  * A panel modal whose body is one centred column: the status line, the facts,
- * the one callout the state calls for, what it waits on, the task itself,
- * its references, the deliverables, the assignee's checklist, its recent
- * steps, the subtasks, what counts as done, and the activity. The title is
- * the modal's own head and is not repeated below it. The sections are pure
- * builders in task-detail-sections.js; this file composes them, owns the
- * modal, and owns the head's tools: the pencil that enters Edit mode, and
- * its ✓ and ✕.
+ * the one callout the state calls for, what it waits on, the request, the
+ * task itself, its references, the deliverables, the assignee's checklist,
+ * its recent steps, the subtasks, what counts as done, and the activity. The
+ * title is the modal's own head and is not repeated below it. The sections
+ * are pure builders in task-detail-sections.js and, for the request,
+ * task-request.js; this file composes them, owns the modal, and owns the
+ * head's tools: the pencil that enters Edit mode, and its ✓ and ✕.
  *
  * Recent steps (task-steps.js) is the one live part: built once, it follows
  * the `task_step` topic for as long as the detail is open, and its "See all
@@ -103,12 +103,15 @@ const BossModTaskDetail = (() => {
          * repaint after a save or a status action.
          * @param {object} current
          * @param {boolean} editing
-         * @returns {{measure: () => void}|null} The instructions' clamp,
-         *   already measured unless the modal is not yet on screen.
+         * @returns {{measure: () => void}} Measures the request's and the
+         *   instructions' clamps; already called unless the modal is not yet
+         *   on screen.
          */
         function renderColumn(current, editing) {
             const children = tasks.filter((item) => item.parent_task_id === current.id);
             const instructions = editing ? null : SECTIONS.instructions(current);
+            // Read-only in Edit mode too: nobody edits what was asked.
+            const request = BossModTaskRequest.section(current, { tasks, colorOf });
             const assigneeValue = editing ? editMode.assigneeControl : undefined;
             const severityValue = editing ? editMode.severityControl : undefined;
             status = editing ? statusActions(current) : null;
@@ -120,6 +123,8 @@ const BossModTaskDetail = (() => {
                 // What it waits on, or waited on before it started, right
                 // under its state.
                 SECTIONS.waitingOn(current, tasks, onNavigate),
+                // What was asked, word for word, above the agent's brief of it.
+                request && request.element,
                 editing ? editMode.descriptionSection : (instructions && instructions.element),
                 // What to read first comes before what to produce.
                 SECTIONS.references(current, api),
@@ -135,11 +140,13 @@ const BossModTaskDetail = (() => {
                 SECTIONS.doneContract(current),
                 events.element,
             ].filter(Boolean));
-            // The clamp is measured on screen; the first paint is measured
+            // The clamps are measured on screen; the first paint is measured
             // once the modal has mounted it.
-            if (panel && instructions) instructions.measure();
+            const clamps = [request, instructions].filter(Boolean);
+            const measure = () => clamps.forEach((clamp) => clamp.measure());
+            if (panel) measure();
             BossModIcons.paint(column, 'task-detail');
-            return instructions;
+            return { measure };
         }
 
         /**
@@ -223,7 +230,7 @@ const BossModTaskDetail = (() => {
             pencilButton.hidden = editing || finished;
         }
 
-        const firstInstructions = renderColumn(task, false);
+        const firstPaint = renderColumn(task, false);
         syncHead(false);
         panel = BossModOverlays.createModal({
             title: task.title || 'Task',
@@ -355,8 +362,8 @@ const BossModTaskDetail = (() => {
         }
 
         // Measured once the modal is on screen, which is the first moment the
-        // instructions have a height to compare against.
-        if (firstInstructions) firstInstructions.measure();
+        // clamps have a height to compare against.
+        firstPaint.measure();
         BossModIcons.paint(panel.element, 'task-detail');
 
         return { close: panel.close };

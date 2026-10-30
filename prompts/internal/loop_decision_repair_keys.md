@@ -1,6 +1,6 @@
 Return one JSON object, no fences/markdown.
 
-Minimal allowed envelope for this turn (no Board change):
+Envelope for a reply that starts no work (no Board change):
 {"say":"string","actions":[],"work_commit":false}
 
 Allowed keys only:

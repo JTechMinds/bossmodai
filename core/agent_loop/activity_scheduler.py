@@ -16,6 +16,7 @@ from core.models import Activity, AgentState, Task
 from core.scheduling.recurrence import describe, format_local_run, next_occurrence
 from core.tasking.dependencies import assignee_label
 from core.tasking.references import format_references_for_context
+from core.tasking.requests import format_request_for_context, request_payload_for_task
 from core.tasking.resolution import ACTIONABLE_TASK_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -229,9 +230,13 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
 
     The payload also carries the task's ``task_severity``, its
     ``task_references`` (one ``- <path> — <description>`` line each, empty
-    when it has none) and its ``task_prerequisites`` (see
-    ``_prerequisites_payload``), so the assignee sees how serious the work
-    is, what to read first and what finished before it.
+    when it has none), its ``task_prerequisites`` (see
+    ``_prerequisites_payload``) and its ``task_request`` (the request's
+    heading and one ``[<name>]: <message>`` line each, word for word: the
+    task's own, or the one behind its parent task, empty when neither has
+    one; ``core/tasking/requests.py``), so the assignee sees how serious the
+    work is, what to read first, what finished before it, and what was
+    actually asked.
     """
     sender = task_assignment_sender(task)
 
@@ -246,6 +251,7 @@ def build_task_assigned_trigger(task: Task) -> dict[str, Any]:
             "task_severity": task.severity,
             "task_references": "\n".join(format_references_for_context(task.references)),
             "task_prerequisites": _prerequisites_payload(task),
+            "task_request": "\n".join(format_request_for_context(request_payload_for_task(task))),
             "project": task.project,
             "from_agent": sender["from_agent"],
             "from_name": sender["from_name"],
