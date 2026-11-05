@@ -14,14 +14,13 @@ from html import escape
 from http.cookies import CookieError, SimpleCookie
 from pathlib import Path
 from string import Template
-from typing import Callable
 from urllib.parse import parse_qs
 
 from starlette.responses import HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse, Response
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocket
 
-from .access import LoginThrottle, codes_match, session_matches, session_value
+from .access import LoginThrottle, canonical_code, codes_match, session_matches, session_value
 
 logger = logging.getLogger(__name__)
 
@@ -63,14 +62,18 @@ class LanGateMiddleware:
 
     Args:
         app: The app process's ASGI application.
-        code_provider: Returns the current access code; read on every request
-            so a rotated code takes effect at once.
+        code: The access code. Fixed for the gate's lifetime: saving the
+            extension's settings restarts the listener, which builds a new
+            gate with the new code.
         throttle: Locks out a client after repeated wrong codes.
         protected_prefix: A path prefix refused to every session on this
             listener (the extension's own enable, settings and panel routes).
         folder: Where ``login.html`` and ``login.css`` are read from.
 
     Raises:
+        ValueError: ``code`` is empty once surrounding spaces are dropped (a
+            gate nobody could sign in to; settings already require at least
+            6 characters).
         OSError: The login page files cannot be read.
     """
 
@@ -78,13 +81,15 @@ class LanGateMiddleware:
         self,
         app: ASGIApp,
         *,
-        code_provider: Callable[[], str],
+        code: str,
         throttle: LoginThrottle,
         protected_prefix: str,
         folder: Path = _FOLDER,
     ) -> None:
+        if not canonical_code(code):
+            raise ValueError("the network access code is empty")
         self.app = app
-        self._code = code_provider
+        self._code = code
         self._throttle = throttle
         self._protected = protected_prefix
         self._page = Template((folder / "login.html").read_text(encoding="utf-8"))
@@ -101,7 +106,7 @@ class LanGateMiddleware:
     # ─── helpers ───
 
     def _signed_in(self, scope: Scope) -> bool:
-        return session_matches(_cookie(scope, COOKIE_NAME), self._code())
+        return session_matches(_cookie(scope, COOKIE_NAME), self._code)
 
     def _login_page(self, error: str | None, status: int = 200) -> Response:
         block = (
@@ -160,11 +165,10 @@ class LanGateMiddleware:
         if body is None:
             return PlainTextResponse(COPY["too_large"], status_code=413)
         typed = parse_qs(body.decode("utf-8", errors="replace")).get("code", [""])[0]
-        code = self._code()
-        if codes_match(typed, code):
+        if codes_match(typed, self._code):
             self._throttle.record_success(client)
             response = RedirectResponse("/", status_code=303)
-            response.set_cookie(COOKIE_NAME, session_value(code), httponly=True, samesite="strict", path="/")
+            response.set_cookie(COOKIE_NAME, session_value(self._code), httponly=True, samesite="strict", path="/")
             logger.info("Network sign-in from %s", client)
             return response
         self._throttle.record_failure(client)

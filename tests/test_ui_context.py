@@ -60,6 +60,8 @@ CONTEXT_MODULES = [
     CONVERSATION / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
     CONVERSATION / "composer-attachments.js",
+    CONVERSATION / "composer-history.js",
+    CONVERSATION / "mention-draft.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
     NEEDS / "need-shape.js",

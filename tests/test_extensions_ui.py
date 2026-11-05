@@ -190,9 +190,9 @@ def test_the_provider_sections() -> None:
 def test_the_status_section() -> None:
     payload = _payload()
     for key in (
-        "panelShowsMessageFactsAndAction", "panelHasNoCommandLineAndShowsTheServiceSwitch",
+        "panelGroupsHaveTitlesAndHints", "panelHasNoActionButtons", "panelHasNoCommandLineAndShowsTheServiceSwitch",
         "panelMasksTheSecretUntilShown", "panelShowRevealsTheSecret", "panelCopyWritesTheValue",
-        "panelCopyFeedbackFadesBack", "panelActionPostsAndRerenders", "panelActionRefusalIsAnAlert",
+        "panelCopyFeedbackFadesBack", "offStatusNamesMissingSettings",
         "panelErrorAndServiceErrorAreAlerts", "panelLoadFailureShowsTheReasonAndRetry", "panelRetryRereads",
         "failedServiceStartRevertsTheSwitchWithTheReason", "serviceSwitchOnLoadsThePanel",
         "statusMessageIsNeutral",
@@ -203,7 +203,8 @@ def test_the_status_section() -> None:
 def test_the_settings_section() -> None:
     payload = _payload()
     for key in (
-        "settingsSectionShowsWhileOff", "settingsSectionRendersTheSharedForm", "settingsSavesInPlaceAndSaysSaved",
+        "settingsSectionShowsWhileOff", "settingsSectionRendersTheSharedForm", "settingsFieldHintsDescribeEachField",
+        "settingsSavesInPlaceAndSaysSaved",
         "settingsRefusalKeepsTheTyping", "settingsApplyFailureRereadsTheItem", "settingsVerifiedTextIsShown",
         "settingsTypingSurvivesATabSwitch", "settingsTypingAndFocusSurviveAPollRender",
     ):

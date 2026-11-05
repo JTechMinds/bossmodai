@@ -2,7 +2,7 @@
   "id": "network",
   "name": "Local Network Access",
   "version": "1.0.0",
-  "description": "Lets other devices on your local network open BossMod in a web browser. They need the address and the access code shown here. The connection isn’t encrypted, so turn this on only for a network you trust.",
+  "description": "Lets other devices on your network open BossMod in a web browser with an access code you choose. The connection isn’t encrypted, so turn this on only on a network you trust.",
   "summary": "Open BossMod from other devices on your network.",
   "author": "JTechMinds LLC",
   "category": "networking",
@@ -15,7 +15,7 @@
   },
   "settings": {
     "label": "Network access",
-    "help": "Choose the port other devices use to reach BossMod. If another program already uses it, pick a different one.",
+    "help": "Other devices use this port and access code to open BossMod.",
     "fields": [
       {
         "key": "port",
@@ -24,7 +24,16 @@
         "required": false,
         "default": "38472",
         "min": 1024,
-        "max": 65535
+        "max": 65535,
+        "hint": "Change it only if another program already uses this port."
+      },
+      {
+        "key": "access_code",
+        "label": "Access code",
+        "kind": "secret",
+        "required": true,
+        "min_length": 6,
+        "hint": "At least 6 characters. Capital letters don’t matter. Changing it signs every device out."
       }
     ]
   },
@@ -32,7 +41,6 @@
     "bind_host": "0.0.0.0",
     "login_max_failures": 5,
     "login_lockout_seconds": 300,
-    "code_length": 8,
     "stop_timeout_seconds": 5,
     "route_probe_address": "192.0.2.1"
   }

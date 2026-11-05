@@ -233,34 +233,49 @@ const connectedReply = () => ({
 const chatgptCalls = [];
 let demoConnected = false;
 // The Local Network Access stand-in: a command-less service with a panel and
-// settings. Each reply is a function so a case can swap behaviour.
+// settings. Each reply is a function so a case can swap behaviour. The status
+// is shaped as extensions/network/status.py `running(…, "linux")` serialises it.
 const networkCalls = [];
 const networkStatus = (code) => ({
-    message: 'Other devices can open BossMod at the address below. Use this only on a network you trust: the connection isn’t encrypted.',
+    message: 'Other devices on your network can open BossMod.',
     error: null,
-    facts: [
-        { label: 'Address', value: 'http://192.168.1.20:38472', copyable: true, secret: false },
-        { label: 'Access code', value: code, copyable: true, secret: true },
+    groups: [
+        { title: 'Connect another device', intro: null, facts: [
+            { label: 'Address', value: 'http://192.168.1.20:38472', copyable: true, secret: false,
+                hint: 'Open this in a web browser on the other device.' },
+            { label: 'Access code', value: code, copyable: true, secret: true,
+                hint: 'Enter it when the other device asks. You can change it in Settings.' },
+        ] },
+        { title: 'If a device can’t connect',
+            intro: 'Check that both devices are on the same network. If they are, this computer’s firewall may be blocking port 38472.',
+            facts: [
+                { label: 'Firewall command (ufw)', value: 'sudo ufw allow 38472/tcp', copyable: true, secret: false,
+                    hint: 'If your firewall is ufw, the one Ubuntu uses, run this in a terminal.' },
+            ] },
     ],
-    actions: [{ key: 'new_code', label: 'Generate new code', values: {} }],
 });
-let networkCode = 'ABCD2345';
+const networkCode = 'ABCD2345';
 let networkPanel = () => ({ ok: true, body: networkStatus(networkCode) });
 let networkEnabled = (enabled) => ({ ok: true, body: { ...networkItem(), enabled } });
 const networkSettings = {
     label: 'Network access', help: 'Choose the port other devices use.\n\nPick another if it is taken.', configured: false,
-    fields: [{ key: 'port', label: 'Port', kind: 'number', required: false, min: 1024, max: 65535, default: '38472', value: '38472' }],
+    fields: [
+        { key: 'port', label: 'Port', kind: 'number', required: false, hint: 'Change it only if another program already uses this port.',
+            min: 1024, max: 65535, default: '38472', value: '38472' },
+        { key: 'access_code', label: 'Access code', kind: 'secret', required: true,
+            hint: 'At least 6 characters. Capital letters don’t matter. Changing it signs every device out.', set: false },
+    ],
 };
 // A stored save answers the GET shape with the saved values, plus `verified`.
 const networkSaved = (body, verified) => ({ ok: true, body: {
     ...JSON.parse(JSON.stringify(networkSettings)), configured: true, verified,
-    fields: [{ ...networkSettings.fields[0], value: body.values.port }],
+    fields: [{ ...networkSettings.fields[0], value: body.values.port }, { ...networkSettings.fields[1], set: true }],
 } });
 let networkSettingsPut = (body) => networkSaved(body, null);
 const networkItem = () => ({
     ...bv, id: 'network', name: 'Local Network Access', command: null, live_view: null, requires_image_model: false,
     setup: { state: 'not_required', detail: null }, setup_label: null, enabled: true, panel: true,
-    settings: { label: 'Network access' }, service_error: null, description: 'Lets other devices open BossMod.',
+    settings: { label: 'Network access', missing: [] }, service_error: null, description: 'Lets other devices open BossMod.',
     summary: 'Open BossMod from other devices on your network.', category: 'networking',
 });
 // The real menu-select's shape: a span holding the trigger, which carries the
@@ -390,7 +405,7 @@ global.apiFetch = async (url, init) => {
             ? ok(r.body)
             : { ok: false, status: r.status, json: async () => ({ detail: { error: r.code, message: r.message } }) });
         if (url.endsWith('/enabled')) return reply(networkEnabled(body.enabled));
-        if (url.endsWith('/panel') || url.endsWith('/panel/actions')) return reply(networkPanel(body));
+        if (url.endsWith('/panel')) return reply(networkPanel());
         if (url.endsWith('/settings')) return method === 'GET' ? ok(JSON.parse(JSON.stringify(networkSettings))) : reply(networkSettingsPut(body));
     }
     if (url.endsWith("/open-folder")) {
@@ -1654,7 +1669,7 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && startDemo().getAttribute('class') === 'btn btn-sm' && startDemo().parentNode.classList.contains('ext-panel-actions');
     closeLayer(demoLayer);
 
-    // ── 25. The Status section: a panel extension's message, facts and actions.
+    // ── 25. The Status section: a panel extension's message, then titled groups of facts with hints.
     const clipboardWrites = [];
     Object.defineProperty(global, 'navigator', {
         configurable: true, value: { clipboard: { writeText: async (value) => { clipboardWrites.push(value); } } },
@@ -1663,19 +1678,34 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     let netLayer = await openExtensions();
     await openCard(netLayer, "Local Network Access");
     const netButton = (label) => [...panelOf(netLayer).querySelectorAll('button')].find(b => b.textContent === label);
-    const factInput = (index) => netLayer.body.querySelector(`#ext-panel-fact-${index}`);
-    const codeField = factInput(1);
-    verdict.panelShowsMessageFactsAndAction = text().includes('Use this only on a network you trust')
-        && factInput(0).textContent === 'http://192.168.1.20:38472' && codeField.value === 'ABCD2345'
-        && !factInput(0).classList.contains('bm-secret-masked') && codeField.classList.contains('bm-secret-masked')
-        && codeField.getAttribute('readonly') !== null && factInput(0).getAttribute('role') === 'textbox'
-        && netLayer.body.querySelector('label[for="ext-panel-fact-1"]').textContent === 'Access code'
-        && sameJson(panelOf(netLayer).querySelectorAll('button').map((b) => b.textContent), ['Copy', 'Show', 'Copy', 'Generate new code'])
-        && panelOf(netLayer).querySelectorAll('button').every((b) => b.classList.contains('btn'));
+    // Group g's fact f, and the hint its value names as its description.
+    const factInput = (g, f) => netLayer.body.querySelector(`#ext-panel-fact-${g}-${f}`);
+    const hintOf = (field) => byId(field.getAttribute('aria-describedby'));
+    const codeField = factInput(0, 1);
+    const netGroups = panelOf(netLayer).querySelectorAll('section');
+    const netTitles = panelOf(netLayer).querySelectorAll('h4');
+    verdict.panelGroupsHaveTitlesAndHints = netGroups.length === 2
+        && sameJson(netTitles.map((t) => t.textContent), ['Connect another device', 'If a device can’t connect'])
+        && netGroups.every((group, g) => group.classList.contains('ext-panel-group') && group.contains(netTitles[g])
+            && netTitles[g].id === `ext-panel-group-${g}` && group.getAttribute('aria-labelledby') === netTitles[g].id)
+        && netGroups[1].children[1].textContent.startsWith('Check that both devices are on the same network.')
+        && netGroups[0].contains(codeField) && netGroups[1].contains(factInput(1, 0)) && !netGroups[0].contains(factInput(1, 0))
+        && factInput(0, 0).textContent === 'http://192.168.1.20:38472' && codeField.value === 'ABCD2345'
+        && !factInput(0, 0).classList.contains('bm-secret-masked') && codeField.classList.contains('bm-secret-masked')
+        && codeField.getAttribute('readonly') !== null && factInput(0, 0).getAttribute('role') === 'textbox'
+        && netLayer.body.querySelector('label[for="ext-panel-fact-0-1"]').textContent === 'Access code'
+        && hintOf(factInput(0, 0)).textContent === 'Open this in a web browser on the other device.'
+        && hintOf(codeField).textContent === 'Enter it when the other device asks. You can change it in Settings.'
+        && hintOf(factInput(1, 0)).textContent === 'If your firewall is ufw, the one Ubuntu uses, run this in a terminal.'
+        && hintOf(codeField).classList.contains('field-hint') && hintOf(codeField).parentNode === codeField.parentNode;
+    // Show and Copy are the only buttons: what the operator changes lives in Settings.
+    verdict.panelHasNoActionButtons = sameJson(panelOf(netLayer).querySelectorAll('button').map((b) => b.textContent), ['Copy', 'Show', 'Copy', 'Copy'])
+        && panelOf(netLayer).querySelectorAll('button').every((b) => b.classList.contains('btn'))
+        && !panelOf(netLayer).querySelector('.ext-panel-actions');
     // The sentence is ordinary state in the page's ink, not the amber note.
     const netMessage = panelOf(netLayer).querySelector('.ext-message');
     verdict.statusMessageIsNeutral = Boolean(netMessage) && netMessage.getAttribute('aria-live') === 'polite'
-        && netMessage.textContent.startsWith('Other devices can open BossMod')
+        && netMessage.textContent === 'Other devices on your network can open BossMod.'
         && !panelOf(netLayer).querySelector('.market-card-note')
         && verdict.accountShowsWhoAndConnectedPill === true;
     verdict.panelMasksTheSecretUntilShown = netButton('Show').getAttribute('aria-pressed') === 'false';
@@ -1685,28 +1715,10 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     const copyButtons = [...panelOf(netLayer).querySelectorAll('button')].filter(b => b.textContent === 'Copy');
     copyButtons[1].click();
     await drain();
-    verdict.panelCopyWritesTheValue = copyButtons.length === 2 && clipboardWrites.join('|') === 'ABCD2345'
+    verdict.panelCopyWritesTheValue = copyButtons.length === 3 && clipboardWrites.join('|') === 'ABCD2345'
         && copyButtons[1].textContent === 'Copied' && copyButtons[1].getAttribute('aria-label') === 'Copy access code';
     await advance(2000);
     verdict.panelCopyFeedbackFadesBack = copyButtons[1].textContent === 'Copy';
-
-    // An action posts, then the refreshed panel replaces the old one, and the
-    // keyboard is back in the section.
-    networkCode = 'ZZZZ9999';
-    networkPanel = (body) => ({ ok: true, body: networkStatus(networkCode) });
-    netButton('Generate new code').click();
-    await drain();
-    const post = networkCalls.filter(call => call.url.endsWith('/panel/actions')).pop();
-    verdict.panelActionPostsAndRerenders = Boolean(post) && post.method === 'POST' && sameJson(post.body, { action: 'new_code', values: {} })
-        && factInput(1).value === 'ZZZZ9999' && !netButton('Generate new code').disabled
-        && document.activeElement === panelOf(netLayer);
-    // A refusal is an alert and leaves the panel in place.
-    networkPanel = () => ({ ok: false, status: 409, code: 'PANEL_FAILED', message: 'Couldn’t save the new code: disk full.' });
-    netButton('Generate new code').click();
-    await drain();
-    const alerts = [...netLayer.body.querySelectorAll('[role="alert"]')].map(el => el.textContent);
-    verdict.panelActionRefusalIsAnAlert = alerts.includes('Couldn’t save the new code: disk full.')
-        && factInput(1).value === 'ZZZZ9999';
     // A command-less service: its switch in the hero, no command anywhere.
     await openTab(netLayer, 'Tech info');
     verdict.panelHasNoCommandLineAndShowsTheServiceSwitch = Boolean(byId('ext-enabled'))
@@ -1733,12 +1745,25 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     const liveFailedLine = panelOf(netLayer).querySelector('[role="alert"]');
     verdict.panelLoadFailureShowsTheReasonAndRetry = Boolean(liveFailedLine)
         && liveFailedLine.textContent === 'The panel could not be read.'
-        && Boolean(byId('ext-live-retry')) && byId('ext-live-retry').textContent === 'Try again' && !factInput(0);
+        && Boolean(byId('ext-live-retry')) && byId('ext-live-retry').textContent === 'Try again' && !factInput(0, 0);
     networkPanel = () => ({ ok: true, body: networkStatus(networkCode) });
     byId('ext-live-retry').click();
     await drain();
-    verdict.panelRetryRereads = Boolean(factInput(0)) && !byId('ext-live-retry');
+    verdict.panelRetryRereads = Boolean(factInput(0, 0)) && !byId('ext-live-retry');
     closeLayer(netLayer);
+
+    // Off, with settings it cannot start without: the Status section says what to fill in first.
+    const offStatusText = async (missing) => {
+        listReply = [{ ...networkItem(), enabled: false, settings: { label: 'Network access', missing } }];
+        const layer = await openExtensions();
+        await openCard(layer, "Local Network Access");
+        const said = panelOf(layer).textContent;
+        closeLayer(layer);
+        return said;
+    };
+    verdict.offStatusNamesMissingSettings = await offStatusText(['Access code']) === 'Fill in “Access code” in Settings, then turn it on.'
+        && await offStatusText(['Port', 'Access code']) === 'Fill in “Port” and “Access code” in Settings, then turn it on.'
+        && await offStatusText([]) === 'Turn it on to see its status.';
 
     // ── 26. The Settings section: the shared form, inline, whether it is on or off.
     networkCalls.length = 0;
@@ -1763,6 +1788,19 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && inlineSave.parentNode.classList.contains('ext-config-actions')
         && inlineSave.closest('form') === panelOf(netLayer).querySelector('form')
         && netLayer.body.querySelector('.actions').children.length === 0;
+    // Each field's hint sits under it (a secret's under its input-and-Show row)
+    // as the input's description.
+    const codeInput = byId('ext-settings-access_code');
+    const portHint = byId('ext-settings-port-hint');
+    const codeHint = byId('ext-settings-access_code-hint');
+    verdict.settingsFieldHintsDescribeEachField = Boolean(portHint) && Boolean(codeHint) && Boolean(codeInput)
+        && portInput.getAttribute('aria-describedby') === 'ext-settings-port-hint'
+        && codeInput.getAttribute('aria-describedby') === 'ext-settings-access_code-hint'
+        && portHint.textContent === 'Change it only if another program already uses this port.'
+        && codeHint.textContent === 'At least 6 characters. Capital letters don’t matter. Changing it signs every device out.'
+        && portHint.classList.contains('field-hint') && codeHint.classList.contains('field-hint')
+        && portHint.parentNode === portInput.parentNode
+        && codeInput.parentNode.classList.contains('ext-config-secret') && codeHint.parentNode === codeInput.parentNode.parentNode;
     // Typing survives a tab switch: the form is one node for as long as the detail is open.
     portInput.value = '5555';
     await openTab(netLayer, 'Tech info');
@@ -1772,12 +1810,14 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && portInput.value === '5555' && settingsGets() === 1;
     // Save stays in place: the saved values, "Saved." in the status line, the list re-read.
     portInput.value = '41000';
+    codeInput.value = 'boss-2026';
     const listBeforeSettings = listCalls;
     await byId('ext-settings-save').dispatchClick();
     await drain();
     const settingsPut = networkCalls.filter(call => call.method === 'PUT' && call.url.endsWith('/settings')).pop();
     const statusLineOf = () => panelOf(netLayer).querySelector('.ext-config-status');
-    verdict.settingsSavesInPlaceAndSaysSaved = Boolean(settingsPut) && sameJson(settingsPut.body, { values: { port: '41000' } })
+    verdict.settingsSavesInPlaceAndSaysSaved = Boolean(settingsPut)
+        && sameJson(settingsPut.body, { values: { port: '41000', access_code: 'boss-2026' } })
         && statusLineOf().textContent === 'Saved.' && statusLineOf().getAttribute('role') === 'status'
         && byId('ext-settings-port').value === '41000' && !byId('ext-settings-done') && !byId('ext-settings-save').disabled
         && listCalls === listBeforeSettings + 1 && layers.length === layersBeforeSettings;
@@ -1838,7 +1878,7 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     networkEnabled = (enabled) => ({ ok: true, body: { ...networkItem(), enabled } });
     byId('ext-enabled').click();
     await drain();
-    verdict.serviceSwitchOnLoadsThePanel = Boolean(factInput(0)) && byId('ext-enabled').getAttribute('aria-checked') === 'true'
+    verdict.serviceSwitchOnLoadsThePanel = Boolean(factInput(0, 0)) && byId('ext-enabled').getAttribute('aria-checked') === 'true'
         && !netLayer.body.querySelector('.market-error');
     closeLayer(netLayer);
 

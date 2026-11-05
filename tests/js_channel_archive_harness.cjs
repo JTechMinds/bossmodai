@@ -34,7 +34,7 @@ const NAMES = [
     "BossModFormat", "BossModGates", "BossModConsentCard",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton",
     "BossModEmptyState", "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
-    "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts",
+    "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposerHistory", "BossModMentionDraft", "BossModComposer", "BossModSystemReceipts",
     "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource",
     "BossModAgentSource", "BossModConversationFocus", "BossModConversationWindow", "BossModConversation",
 ];

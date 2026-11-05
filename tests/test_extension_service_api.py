@@ -1,5 +1,5 @@
 """Extensions API for command-less service extensions: the enable toggle and its rollback,
-extension-wide settings (off: stored unverified; on: verified first, secrets masked) and the panel routes."""
+extension-wide settings (off: stored unverified; on: verified first, secrets masked) and the panel route."""
 
 from __future__ import annotations
 
@@ -24,8 +24,8 @@ from core.extensions.service_host import ExtensionServiceHost
 _COUNTER = iter(range(1, 100_000))
 
 _STUB = '''
-from core.extensions.contract import ConfigError, PanelError, ServiceStartError
-from core.extensions.panel import PanelAction, PanelFact, PanelStatus
+from core.extensions.contract import ConfigError, ServiceStartError
+from core.extensions.panel import PanelFact, PanelGroup, PanelStatus
 
 EVENTS = []
 
@@ -43,13 +43,10 @@ class _Ext:
     def panel(self):
         return PanelStatus(
             message="Running.",
-            facts=[PanelFact(label="Code", value="ABCD2345", copyable=True, secret=True)],
-            actions=[PanelAction(key="new_code", label="Generate new code")],
+            groups=[PanelGroup(title="Sign in", facts=[
+                PanelFact(label="Code", value="ABCD2345", copyable=True, secret=True, hint="Type it on the other device."),
+            ])],
         )
-    def panel_action(self, key, values):
-        EVENTS.append(("action", key, dict(values)))
-        if key == "boom":
-            raise PanelError("That didn’t work.")
     def verify_settings(self, values):
         EVENTS.append(("verify", dict(values)))
         if values.get("port") == "2000":
@@ -73,6 +70,15 @@ _WITH_SECRET = {
     "fields": [
         *_NUMBERS_ONLY["fields"],
         {"key": "token", "label": "Token", "kind": "secret", "required": False},
+    ],
+}
+# A required field with no default: the service cannot start until it is saved.
+_WITH_REQUIRED_TOKEN = {
+    "label": "Svc settings",
+    "help": "Pick a port and a token.",
+    "fields": [
+        *_NUMBERS_ONLY["fields"],
+        {"key": "token", "label": "Token", "kind": "secret", "required": True},
     ],
 }
 
@@ -162,7 +168,7 @@ def test_the_list_item_of_a_command_less_service_names_its_surfaces(client, monk
     svc = _install(client, monkeypatch, tmp_path)
     item = _item(client, svc.id)
     assert item["command"] is None
-    assert item["panel"] is True and item["settings"] == {"label": "Svc settings"}
+    assert item["panel"] is True and item["settings"] == {"label": "Svc settings", "missing": []}
     assert item["service_error"] is None and item["valid"] is True
 
 
@@ -194,6 +200,21 @@ def test_a_failed_start_rolls_the_switch_back_and_says_why(client, monkeypatch, 
     assert runtime.calls == ["extensions_reconcile"], "the worker is told the final state once"
 
 
+def test_turning_on_a_service_whose_required_setting_is_unset_asks_for_it_and_rolls_back(
+    client, monkeypatch, tmp_path, runtime,
+) -> None:
+    svc = _install(client, monkeypatch, tmp_path, settings=_WITH_REQUIRED_TOKEN)
+    assert _item(client, svc.id)["settings"] == {"label": "Svc settings", "missing": ["Token"]}
+
+    refused = client.put(f"/api/extensions/{svc.id}/enabled", json={"enabled": True})
+
+    assert refused.status_code == 409
+    assert _error(refused) == {"error": "SERVICE_START_FAILED", "message": "Fill in “Token” in Settings to start it."}
+    assert _item(client, svc.id)["enabled"] is False, "the flag is rolled back"
+    assert json.loads(config.get_live("extensions_enabled")) == []
+    assert not svc.host.is_running(svc.id)
+
+
 def test_a_service_that_failed_at_boot_is_on_but_shows_its_error(client, monkeypatch, tmp_path) -> None:
     import asyncio
 
@@ -217,7 +238,7 @@ def test_settings_before_anything_is_stored_read_as_defaults(client, monkeypatch
     assert got.status_code == 200
     assert got.json() == {
         "label": "Svc settings", "help": "Pick a port.", "configured": False,
-        "fields": [{"key": "port", "label": "Port", "kind": "number", "required": False,
+        "fields": [{"key": "port", "label": "Port", "kind": "number", "required": False, "hint": None,
                     "min": 1024, "max": 65535, "default": "40000", "value": "40000"}],
     }
 
@@ -300,7 +321,7 @@ def test_secret_settings_are_masked_and_a_blank_keeps_the_stored_one(client, mon
     assert first.status_code == 200
     assert "hunter2" not in first.text
     token = next(field for field in first.json()["fields"] if field["key"] == "token")
-    assert token == {"key": "token", "label": "Token", "kind": "secret", "required": False, "set": True}
+    assert token == {"key": "token", "label": "Token", "kind": "secret", "required": False, "hint": None, "set": True}
     assert "hunter2" not in client.get(f"/api/extensions/{svc.id}/settings").text
 
     client.put(f"/api/extensions/{svc.id}/settings", json={"values": {"port": "41004", "token": ""}})
@@ -329,37 +350,10 @@ def test_the_panel_is_read_from_an_enabled_extension(client, monkeypatch, tmp_pa
     assert response.status_code == 200
     assert response.json() == {
         "message": "Running.", "error": None,
-        "facts": [{"label": "Code", "value": "ABCD2345", "copyable": True, "secret": True}],
-        "actions": [{"key": "new_code", "label": "Generate new code", "values": {}}],
+        "groups": [{"title": "Sign in", "intro": None, "facts": [
+            {"label": "Code", "value": "ABCD2345", "copyable": True, "secret": True, "hint": "Type it on the other device."},
+        ]}],
     }
-
-
-def test_a_panel_action_runs_then_returns_the_refreshed_panel_and_announces_it(client, monkeypatch, tmp_path) -> None:
-    from api.websocket import manager
-
-    announced: list[list[str]] = []
-
-    async def record(surfaces):
-        announced.append(surfaces)
-
-    monkeypatch.setattr(manager, "broadcast_operator_invalidate", record)
-    svc = _install(client, monkeypatch, tmp_path)
-    client.put(f"/api/extensions/{svc.id}/enabled", json={"enabled": True})
-    svc.events.clear()
-
-    response = client.post(f"/api/extensions/{svc.id}/panel/actions", json={"action": "new_code", "values": {"a": "b"}})
-
-    assert response.status_code == 200 and response.json()["message"] == "Running."
-    assert svc.events == [("action", "new_code", {"a": "b"})]
-    assert announced == [["extensions"]]
-
-
-def test_a_failed_panel_action_is_a_conflict_with_the_extensions_message(client, monkeypatch, tmp_path) -> None:
-    svc = _install(client, monkeypatch, tmp_path)
-    client.put(f"/api/extensions/{svc.id}/enabled", json={"enabled": True})
-    response = client.post(f"/api/extensions/{svc.id}/panel/actions", json={"action": "boom"})
-    assert response.status_code == 409
-    assert _error(response) == {"error": "PANEL_FAILED", "message": "That didn’t work."}
 
 
 def test_an_extension_without_a_panel_refuses_the_panel_routes(client, monkeypatch, tmp_path) -> None:

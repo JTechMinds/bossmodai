@@ -14,9 +14,11 @@ into an extension that may block on the network run in a worker thread.
 
 Extension-wide settings (manifest ``settings``) use the same field rules
 (``core.extensions.config_values``) and are editable whether or not the
-extension is on. A ``service`` extension is started and stopped in this
-process by ``core.extensions.service_host`` on the enable toggle; a ``panel``
-extension's status and actions are served generically under ``/panel``.
+extension is on; the list item names any field still unset, so the card can
+say what to fill in before the operator turns it on. A ``service`` extension
+is started and stopped in this process by ``core.extensions.service_host`` on
+the enable toggle; a ``panel`` extension's status is served generically
+(read-only) under ``/panel``.
 """
 
 from __future__ import annotations
@@ -36,7 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 import db
 from api.routes._shared import _open_in_file_explorer
 from api.websocket import manager
-from core.extensions.config_values import ConfigValueError, masked_fields, resolve_values
+from core.extensions.config_values import ConfigValueError, masked_fields, resolve_values, unset_fields
 from core.extensions.contract import (
     AgentViewError,
     ConfigError,
@@ -93,15 +95,6 @@ class SettingsBody(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     values: dict[str, str]
-
-
-class PanelActionBody(BaseModel):
-    """``POST /extensions/{id}/panel/actions`` body."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    action: str
-    values: dict[str, str] = Field(default_factory=dict)
 
 
 def _conflict(code: str, message: str) -> HTTPException:
@@ -196,7 +189,12 @@ def _item(entry: ExtensionEntry, enabled: frozenset[str]) -> dict[str, Any]:
             "views": [{"key": view.key, "label": view.label} for view in manifest.agent_view.views],
         } if manifest.agent_view else None,
         "panel": manifest.panel,
-        "settings": {"label": manifest.settings.label} if manifest.settings else None,
+        # ``missing``: the fields the extension cannot start without, so the
+        # card says so before the operator tries.
+        "settings": {
+            "label": manifest.settings.label,
+            "missing": list(unset_fields(manifest.settings, db.get_extension_settings(entry.id))),
+        } if manifest.settings else None,
         "service_error": extension_services.error(entry.id),
         "setup": entry_setup_status(entry).model_dump(),
         "setup_label": manifest.setup.label,
@@ -802,8 +800,8 @@ async def put_extension_settings(ext_id: str, body: SettingsBody) -> dict[str, A
     return {**_settings_payload(entry), "verified": verified}
 
 
-async def _panel_call(ext_id: str, action: str | None = None, values: dict[str, str] | None = None):
-    """Run an optional panel action, then read the panel, for an enabled panel extension.
+async def _panel_call(ext_id: str):
+    """Read the panel of an enabled panel extension.
 
     Raises:
         HTTPException: 404 unknown; 409 ``INVALID_EXTENSION`` /
@@ -816,31 +814,16 @@ async def _panel_call(ext_id: str, action: str | None = None, values: dict[str, 
     instance = _load(entry)
     if not isinstance(instance, SupportsPanel):
         raise _conflict("INVALID_EXTENSION", "the extension has no panel() method")
-
-    def run():
-        if action is not None:
-            instance.panel_action(action, values or {})
-        return instance.panel()
-
     try:
-        status = await asyncio.to_thread(run)
+        return await asyncio.to_thread(instance.panel)
     except PanelError as exc:
         raise _conflict("PANEL_FAILED", str(exc)) from exc
-    if action is not None:
-        await manager.broadcast_operator_invalidate(["extensions"])
-    return status
 
 
 @router.get("/extensions/{ext_id}/panel")
 async def extension_panel(ext_id: str):
-    """Read what an enabled panel extension's card shows (message, error, facts, actions)."""
+    """Read what an enabled panel extension's card shows (message, error, titled groups of facts)."""
     return await _panel_call(ext_id)
-
-
-@router.post("/extensions/{ext_id}/panel/actions")
-async def extension_panel_action(ext_id: str, body: PanelActionBody):
-    """Run one panel action the extension offered, then return the refreshed panel."""
-    return await _panel_call(ext_id, body.action, body.values)
 
 
 class ProviderActionBody(BaseModel):

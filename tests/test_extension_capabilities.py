@@ -18,8 +18,9 @@ from core.bm_cli.command_registry import CORE_COMMAND_NAMES
 from core.extensions import loader, prompt_blocks
 from core.extensions.cli_bridge import enabled_extension_command_meta, extension_command_meta, extension_handlers
 from core.extensions.config_values import ConfigValueError, masked_fields, resolve_values
+from core.extensions.contract import SettingsIncompleteError
 from core.extensions.loader import ExtensionLoadError, load_extension
-from core.extensions.manifest import ConfigSpec, ExtensionManifest, ManifestError, config_value, load_manifest
+from core.extensions.manifest import ConfigField, ConfigSpec, ExtensionManifest, ManifestError, config_value, load_manifest
 from core.extensions.registry import discover, set_enabled
 from core.extensions.service_host import ExtensionServiceHost
 
@@ -129,6 +130,29 @@ def test_config_value_reads_a_settings_default_and_refuses_an_undeclared_key() -
         config_value(spec, {}, "nope")
 
 
+def test_a_field_hint_and_min_length_are_declared_on_text_and_secret_fields() -> None:
+    for kind in ("text", "secret"):
+        field = ConfigField.model_validate(
+            {"key": "code", "label": "Code", "kind": kind, "min_length": 6, "hint": "At least 6 characters."},
+        )
+        assert (field.min_length, field.hint) == (6, "At least 6 characters.")
+    number = ConfigField.model_validate(
+        {"key": "port", "label": "Port", "kind": "number", "default": "1", "hint": "Any free port."},
+    )
+    assert number.hint == "Any free port." and number.min_length is None
+
+
+@pytest.mark.parametrize("field, problem", [
+    ({"key": "port", "label": "Port", "kind": "number", "default": "1", "min_length": 2}, "min_length applies only"),
+    ({"key": "mail", "label": "Mail", "kind": "email", "min_length": 2}, "min_length applies only"),
+    ({"key": "code", "label": "Code", "kind": "text", "min_length": 0}, "greater than or equal to 1"),
+    ({"key": "code", "label": "Code", "kind": "text", "hint": ""}, "at least 1 character"),
+])
+def test_a_misdeclared_min_length_or_hint_is_refused(field: dict[str, Any], problem: str) -> None:
+    with pytest.raises(ValueError, match=problem):
+        ConfigField.model_validate(field)
+
+
 # ─── loader contract checks ───
 
 _FULL = '''
@@ -144,8 +168,6 @@ class _Ext:
     async def stop_service(self):
         return None
     def panel(self):
-        return None
-    def panel_action(self, key, values):
         return None
     def verify_settings(self, values):
         return "ok"
@@ -218,12 +240,14 @@ def test_the_context_reads_settings_with_defaults_and_seals_secrets(tmp_path: Pa
     load_extension(entry)
     ctx = loader.import_package(entry).CAPTURED[-1]
 
-    # A field with neither a stored value nor a default raises; one with a default reads as it.
-    with pytest.raises(KeyError):
+    # Fields with neither a stored value nor a default are named; one with a default reads as it.
+    with pytest.raises(SettingsIncompleteError) as nothing_stored:
         ctx.read_settings()
+    assert nothing_stored.value.labels == ("Token", "Name")
     db.set_extension_settings(ext_id, {"name": "x"})
-    with pytest.raises(KeyError):
+    with pytest.raises(SettingsIncompleteError) as token_unset:
         ctx.read_settings()
+    assert token_unset.value.labels == ("Token",)
     db.set_extension_settings(ext_id, {"token": "t", "name": "x"})
     assert ctx.read_settings() == {"port": "40000", "token": "t", "name": "x"}, "port reads as its declared default"
     db.set_extension_settings(ext_id, {"port": "41000", "token": "s3", "name": "n"})
@@ -454,10 +478,10 @@ def test_a_blank_secret_keeps_the_stored_one() -> None:
 
 def test_masked_fields_hide_secrets_and_read_old_configs_as_defaults() -> None:
     assert masked_fields(_AGENT_SPEC, None) == [
-        {"key": "tenant", "label": "Tenant ID", "kind": "text", "required": True, "value": ""},
-        {"key": "secret", "label": "Client secret", "kind": "secret", "required": True, "set": False},
-        {"key": "mailbox", "label": "Mailbox address", "kind": "email", "required": True, "value": ""},
-        {"key": "every", "label": "Check every", "kind": "number", "required": False,
+        {"key": "tenant", "label": "Tenant ID", "kind": "text", "required": True, "hint": None, "value": ""},
+        {"key": "secret", "label": "Client secret", "kind": "secret", "required": True, "hint": None, "set": False},
+        {"key": "mailbox", "label": "Mailbox address", "kind": "email", "required": True, "hint": None, "value": ""},
+        {"key": "every", "label": "Check every", "kind": "number", "required": False, "hint": None,
          "min": 15, "max": 3600, "default": "90", "value": "90"},
     ]
     stored = {"tenant": "t1", "secret": "hunter2", "mailbox": "a@b.co"}

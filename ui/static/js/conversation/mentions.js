@@ -185,10 +185,18 @@ const BossModMentions = (() => {
     }
 
     /**
-     * Write `insertText` back onto an input.
-     * @param {HTMLElement} input
-     * @param {string} name
-     * @returns {{text: string, caret: number}}
+     * Write `insertText` back onto a composer field as one undoable edit.
+     *
+     * The `@query` before the caret (or the caret itself) becomes `@Name `,
+     * written through the field's `editValue`: one undo step that paints the
+     * pill, puts the caret after the token and dispatches `input`. A plain
+     * `.value` write would start a fresh history and lose the operator's
+     * undo, so a field without `editValue` is refused.
+     *
+     * @param {HTMLElement} input  A field bound by BossModMentionDraft.bindEditable.
+     * @param {string} name  The live agent's name, or `everyone`.
+     * @returns {{text: string, caret: number}}  The text written and its caret.
+     * @throws {Error} When `input` is missing or has no `editValue`.
      */
     function insertAtCaret(input, name) {
         const value = String(input && input.value != null ? input.value : '');
@@ -197,17 +205,10 @@ const BossModMentions = (() => {
             : (input && Number.isInteger(input.selectionStart)
                 ? input.selectionStart : value.length);
         const next = insertText(value, caret, name);
-        if (input) {
-            input.value = next.text;
-            if (typeof input.setSelectionRange === 'function') {
-                input.setSelectionRange(next.caret, next.caret);
-            } else if (typeof BossModMentionDraft !== 'undefined') {
-                BossModMentionDraft.placeCaret(input, next.caret);
-            } else {
-                input.selectionStart = next.caret;
-                input.selectionEnd = next.caret;
-            }
+        if (!input || typeof input.editValue !== 'function') {
+            throw new Error('[mentions] insertAtCaret needs a field bound by BossModMentionDraft.bindEditable');
         }
+        input.editValue(next.text, next.caret);
         return next;
     }
 

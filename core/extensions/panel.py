@@ -1,13 +1,15 @@
 """BossMod AI — the status panel an extension shows on its Extensions card.
 
 A manifest ``panel: true`` extension implements ``contract.SupportsPanel`` and
-returns a :class:`PanelStatus`; the card renders it generically, so core never
-knows what the extension is. These are plain data models with no behaviour.
+returns a :class:`PanelStatus`: a sentence, an optional error, then titled
+groups of facts. The card renders it generically, so core never knows what
+the extension is. These are plain data models with no behaviour beyond their
+own validation.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Strict(BaseModel):
@@ -22,26 +24,42 @@ class PanelFact(_Strict):
         value: The value shown, verbatim.
         copyable: The card offers a Copy button for the value.
         secret: The card masks the value until the operator reveals it.
+        hint: One plain sentence shown under the value saying what it is
+            for or where it goes; ``None`` for a value that needs no
+            explanation.
     """
 
     label: str = Field(min_length=1)
     value: str = Field(min_length=1)
     copyable: bool = False
     secret: bool = False
+    hint: str | None = Field(default=None, min_length=1)
 
 
-class PanelAction(_Strict):
-    """One button on the panel; the host passes ``key`` and ``values`` back unchanged.
+class PanelGroup(_Strict):
+    """A titled run of facts the card shows together, apart from the other groups.
 
     Attributes:
-        key: The action name ``SupportsPanel.panel_action`` receives.
-        label: The button text.
-        values: Fixed parameters the extension wants back with the action.
+        title: The group's heading.
+        intro: Plain sentences shown under the heading, before the facts;
+            ``None`` when the facts speak for themselves.
+        facts: The group's facts, in display order.
+
+    Raises:
+        pydantic.ValidationError: The group has neither an intro nor a fact
+            (an extension bug, refused at construction rather than shown as
+            a bare heading).
     """
 
-    key: str = Field(min_length=1)
-    label: str = Field(min_length=1)
-    values: dict[str, str] = Field(default_factory=dict)
+    title: str = Field(min_length=1)
+    intro: str | None = Field(default=None, min_length=1)
+    facts: list[PanelFact] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _has_content(self) -> "PanelGroup":
+        if self.intro is None and not self.facts:
+            raise ValueError(f"panel group {self.title!r} needs an intro or at least one fact")
+        return self
 
 
 class PanelStatus(_Strict):
@@ -51,11 +69,10 @@ class PanelStatus(_Strict):
         message: One plain sentence about the current state.
         error: A plain sentence about a problem, shown as an alert; ``None``
             when nothing is wrong. Never carries a secret.
-        facts: Labelled values, in display order.
-        actions: Buttons, in display order.
+        groups: Titled groups of facts, in display order; empty when the
+            sentence says everything (e.g. not running).
     """
 
     message: str = Field(min_length=1)
     error: str | None = None
-    facts: list[PanelFact] = Field(default_factory=list)
-    actions: list[PanelAction] = Field(default_factory=list)
+    groups: list[PanelGroup] = Field(default_factory=list)

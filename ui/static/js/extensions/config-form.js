@@ -14,6 +14,9 @@
  *     says a blank keeps it), `email` as type=email, `number` as type=number
  *     with the server's min/max and its default as placeholder (and value
  *     until one is saved), `text` as text;
+ *   - a field's `hint`, when the server gives one, as a line under its input
+ *     (under the input and its Show button, for a secret) that the input
+ *     names as its description; a field without one has nothing there;
  *   - Save verifies on the server before anything is stored. While it runs
  *     the status line says "Checking…"; a refusal shows the server's message
  *     verbatim and keeps the typing; success shows the extension's own
@@ -118,12 +121,15 @@ const BossModConfigForm = (() => {
         function fieldControl(field) {
             const id = `${idPrefix}-${field.key}`;
             const label = h('label', { class: 'field-label', for: id }, field.label);
+            const hintId = field.hint ? `${id}-hint` : null;
+            const hint = field.hint ? h('p', { class: 'field-hint', id: hintId }, field.hint) : null;
             if (field.kind === 'secret') {
                 const input = h('input', {
                     class: 'field-input bm-secret-masked', id, type: 'text', autocomplete: 'off', spellcheck: 'false',
                     autocapitalize: 'off', 'data-kind': 'secret',
                     placeholder: field.set ? COPY.keepSecret : null,
                     required: field.required && !field.set ? true : null,
+                    'aria-describedby': hintId,
                 });
                 BossModSecretField.bind(input);
                 const reveal = h('button', {
@@ -132,7 +138,7 @@ const BossModConfigForm = (() => {
                     onclick: (event) => BossModSecretField.toggle(input, event.currentTarget),
                 }, COPY.show);
                 inputs[field.key] = { field, input };
-                return h('div', { class: 'field' }, label, h('div', { class: 'ext-config-secret' }, input, reveal));
+                return h('div', { class: 'field' }, label, h('div', { class: 'ext-config-secret' }, input, reveal), hint);
             }
             if (field.kind === 'number') {
                 const input = h('input', {
@@ -140,18 +146,20 @@ const BossModConfigForm = (() => {
                     min: field.min === null || field.min === undefined ? null : String(field.min),
                     max: field.max === null || field.max === undefined ? null : String(field.max),
                     placeholder: field.default, required: field.required ? true : null,
+                    'aria-describedby': hintId,
                 });
                 input.value = field.value || '';
                 inputs[field.key] = { field, input };
-                return h('div', { class: 'field' }, label, input);
+                return h('div', { class: 'field' }, label, input, hint);
             }
             const input = h('input', {
                 class: 'field-input', id, type: field.kind === 'email' ? 'email' : 'text',
                 autocomplete: 'off', spellcheck: 'false', required: field.required ? true : null,
+                'aria-describedby': hintId,
             });
             input.value = field.value || '';
             inputs[field.key] = { field, input };
-            return h('div', { class: 'field' }, label, input);
+            return h('div', { class: 'field' }, label, input, hint);
         }
 
         function renderForm() {

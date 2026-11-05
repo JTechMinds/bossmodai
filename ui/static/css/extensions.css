@@ -141,10 +141,18 @@ span.ext-live-url { text-decoration: none; }
 
 /* ─── An extension's status panel (extensions/extension-panel.js) ───
 
-   A fact is its label with Show / Copy on the same line, and its value in a
-   read-only field under them at the card's full width: a card is narrow, and
-   an address clipped beside its buttons would hide the port. Actions sit in
-   one row at their own width. */
+   Titled groups under the status sentence, each a heading, an optional intro
+   and its facts; a hairline and some air between groups, so two groups never
+   read as one undifferentiated list. A fact is its label
+   with Show / Copy on the same line, its value in a read-only field under
+   them at the card's full width (a card is narrow, and an address clipped
+   beside its buttons would hide the port), and its hint, if any, under the
+   value. A panel has no action buttons of its own; .ext-panel-actions below
+   is the provider sections' row. */
+
+.ext-panel-group { display: flex; flex-direction: column; gap: 8px; }
+.ext-panel-group + .ext-panel-group { padding-top: 16px; border-top: 1px solid var(--line); }
+.ext-panel-group-title { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
 
 .ext-fact { display: flex; flex-direction: column; gap: 4px; }
 

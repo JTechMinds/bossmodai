@@ -17,7 +17,7 @@ from typing import Callable
 
 from starlette.types import ASGIApp
 
-from core.extensions.contract import ServiceStartError, SupportsService
+from core.extensions.contract import ServiceStartError, SettingsIncompleteError, SupportsService
 from core.extensions.loader import ExtensionLoadError, load_extension, unload_extension
 from core.extensions.registry import Discovery, ExtensionEntry, enabled_ids, get_discovery
 
@@ -149,6 +149,11 @@ class ExtensionServiceHost:
         except ExtensionLoadError as exc:
             logger.error("Extension %s could not load to start its service: %s", entry.id, exc)
             message = str(exc)
+        except SettingsIncompleteError as exc:
+            # An operator state (settings not filled in yet), not a fault:
+            # no traceback. The error line below still records it is not running.
+            logger.info("Extension %s has unset settings and cannot start: %s", entry.id, ", ".join(exc.labels))
+            message = f"Fill in {_quoted(exc.labels)} in Settings to start it."
         except Exception:
             logger.exception("Extension %s failed to start its service", entry.id)
             message = f"Couldn’t start {entry.manifest.name}. The details are in the log."
@@ -184,6 +189,11 @@ class ExtensionServiceHost:
         except Exception:
             logger.exception("Extension %s failed to shut down", ext_id)
         unload_extension(ext_id)
+
+
+def _quoted(labels: tuple[str, ...]) -> str:
+    """Return field labels as the operator reads them, e.g. “Port” and “Token”."""
+    return " and ".join(f"“{label}”" for label in labels)
 
 
 extension_services = ExtensionServiceHost()

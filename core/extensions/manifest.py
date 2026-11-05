@@ -96,6 +96,12 @@ class ConfigField(_Strict):
         default: A ``number`` field's value when left blank, and its value
             in a config saved before the field existed. Required for a
             ``number`` field; not allowed on any other kind.
+        hint: One plain sentence the form shows under the field, saying
+            what it is for or what it accepts; ``None`` for none.
+        min_length: The fewest characters a non-empty value may have, for a
+            ``text`` or ``secret`` field (e.g. a credential); ``None`` for
+            no minimum. Checked by the host on save, so it holds even for
+            values saved while the extension is off.
     """
 
     key: str = Field(pattern=r"^[a-z][a-z0-9_]{0,31}$")
@@ -106,6 +112,14 @@ class ConfigField(_Strict):
     min: int | None = None
     max: int | None = None
     default: str | None = None
+    hint: str | None = Field(default=None, min_length=1)
+    min_length: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _min_length_only_on_text_or_secret(self) -> "ConfigField":
+        if self.min_length is not None and self.kind not in ("text", "secret"):
+            raise ValueError(f"field {self.key}: min_length applies only to a text or secret field")
+        return self
 
     @model_validator(mode="after")
     def _number_bounds_and_default(self) -> "ConfigField":

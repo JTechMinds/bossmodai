@@ -2,51 +2,34 @@
 
 A command-less service extension (manifest ``service`` + ``panel`` +
 ``settings``). While it is on, the app process runs a second listener on the
-chosen port, serving the same app behind an access-code gate (see ``gate``).
-The operator sees the address and the access code on the extension's card.
+chosen port, serving the same app behind the access code the operator chose
+in Settings (see ``gate``). The extension's Status section shows the address
+and the code; its wording lives in ``status``.
 
-``create`` is inert: nothing binds a port, reads a file or touches the
+``create`` is inert: nothing binds a port, reads settings or touches the
 network until the host calls ``start_service``.
 """
 
 from __future__ import annotations
 
 import logging
-import threading
+import sys
+from dataclasses import dataclass
 from typing import Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from starlette.types import ASGIApp
 
-from core.extensions.contract import ConfigError, ExtensionContext, PanelError, ServiceStartError
-from core.extensions.panel import PanelAction, PanelFact, PanelStatus
+from core.extensions.contract import ConfigError, ExtensionContext, ServiceStartError
+from core.extensions.panel import PanelStatus
 
-from .access import AccessCodeStore, LoginThrottle
+from . import status
+from .access import LoginThrottle, canonical_code
 from .addresses import lan_urls
 from .gate import LanGateMiddleware
 from .server import LanServer, bind_socket
 
 logger = logging.getLogger(__name__)
-
-_CODE_FILE = "access_code"
-_NEW_CODE_ACTION = "new_code"
-
-# Copy-ready firewall commands shown while the service runs, by label; each is
-# formatted with the running port when the panel is built.
-_FIREWALL_COMMANDS = {
-    "Linux (ufw)": "sudo ufw allow {port}/tcp",
-    "Windows (Command Prompt as administrator)": (
-        'netsh advfirewall firewall add rule name="BossMod" dir=in action=allow protocol=TCP localport={port}'
-    ),
-}
-_TRUST_SENTENCE = (
-    "Other devices can open BossMod at the address below. Use this only on a network you trust: "
-    "the connection isn’t encrypted."
-)
-_FIREWALL_SENTENCES = (
-    "If other devices can’t connect, your firewall may be blocking port {port}. Allow it with one of these.",
-    "On a Mac, choose Allow if it asks about incoming connections.",
-)
 
 
 class NetworkDefaults(BaseModel):
@@ -57,9 +40,17 @@ class NetworkDefaults(BaseModel):
     bind_host: str = Field(min_length=1)
     login_max_failures: int = Field(ge=1)
     login_lockout_seconds: int = Field(ge=1)
-    code_length: int = Field(ge=4)
     stop_timeout_seconds: int = Field(ge=1)
     route_probe_address: str = Field(min_length=1)
+
+
+@dataclass(frozen=True)
+class _Running:
+    """The live listener and the settings it was started with."""
+
+    server: LanServer
+    port: int
+    code: str
 
 
 class NetworkExtension:
@@ -68,24 +59,24 @@ class NetworkExtension:
     Args:
         ctx: The host context.
         defaults: The validated manifest tunables.
+        platform: This computer's ``sys.platform`` value; it picks the
+            firewall help the Status section shows.
     """
 
-    def __init__(self, ctx: ExtensionContext, defaults: NetworkDefaults) -> None:
+    def __init__(self, ctx: ExtensionContext, defaults: NetworkDefaults, platform: str) -> None:
         self._ctx = ctx
         self._defaults = defaults
-        self._store = AccessCodeStore(ctx.data_dir / _CODE_FILE, ctx.seal, ctx.unseal, defaults.code_length)
+        self._platform = platform
         self._throttle = LoginThrottle(defaults.login_max_failures, defaults.login_lockout_seconds)
-        # The code is read by the listener on every request (loop thread) and
-        # replaced by a panel action (a worker thread).
-        self._code_lock = threading.Lock()
-        self._code: str | None = None
-        self._server: LanServer | None = None
-        self._port: int | None = None
+        # panel() reads this from a worker thread while the loop starts and
+        # stops the listener. It is replaced in one assignment, never edited,
+        # so a reader always sees one consistent listener, port and code.
+        self._running: _Running | None = None
 
     # ─── service ───
 
     async def start_service(self, app: ASGIApp) -> None:
-        """Start the network listener on the configured port.
+        """Start the network listener on the configured port, behind the configured access code.
 
         Idempotent: does nothing when it is already running.
 
@@ -93,16 +84,18 @@ class NetworkExtension:
             app: The app process's ASGI application.
 
         Raises:
+            core.extensions.contract.SettingsIncompleteError: The access code
+                was never set; the host tells the operator to fill it in.
             ServiceStartError: The port is unavailable (the message says why).
-            OSError: The access code file cannot be read or written.
         """
-        if self._server is not None:
+        if self._running is not None:
             return
-        port = int(self._ctx.read_settings()["port"])
-        self._ensure_code()
+        settings = self._ctx.read_settings()
+        port = int(settings["port"])
+        code = settings["access_code"]
         gate = LanGateMiddleware(
             app,
-            code_provider=self._current_code,
+            code=code,
             throttle=self._throttle,
             protected_prefix=f"/api/extensions/{self._ctx.manifest.id}",
         )
@@ -110,15 +103,15 @@ class NetworkExtension:
             gate, host=self._defaults.bind_host, port=port, stop_timeout_seconds=self._defaults.stop_timeout_seconds,
         )
         await server.start()
-        self._server, self._port = server, port
+        self._running = _Running(server=server, port=port, code=code)
         logger.info("Network access is listening on port %d", port)
 
     async def stop_service(self) -> None:
         """Stop the listener. Idempotent."""
-        server, self._server, self._port = self._server, None, None
-        if server is None:
+        running, self._running = self._running, None
+        if running is None:
             return
-        await server.stop()
+        await running.server.stop()
         logger.info("Network access stopped")
 
     def shutdown(self) -> None:
@@ -128,89 +121,57 @@ class NetworkExtension:
         this holds nothing else, so a listener still running here means the
         host skipped it, which is logged rather than hidden.
         """
-        if self._server is not None:
+        if self._running is not None:
             logger.warning("Network access was shut down while its listener was still running")
 
     # ─── panel ───
 
     def panel(self) -> PanelStatus:
-        """Return the card's status while running: address, access code, firewall commands and the new-code action."""
-        if self._server is None or self._port is None:
-            return PanelStatus(message="Network access isn’t running.")
-        urls = lan_urls(self._port, self._defaults.route_probe_address)
-        facts = [PanelFact(label="Address", value=url, copyable=True) for url in urls]
-        facts.append(PanelFact(label="Access code", value=self._current_code(), copyable=True, secret=True))
-        if urls:
-            facts.extend(
-                PanelFact(label=label, value=template.format(port=self._port), copyable=True)
-                for label, template in _FIREWALL_COMMANDS.items()
-            )
-            message = " ".join([_TRUST_SENTENCE, *(sentence.format(port=self._port) for sentence in _FIREWALL_SENTENCES)])
-        else:
-            message = "No network connection found. Connect this computer to a network to share BossMod."
-        return PanelStatus(
-            message=message,
-            facts=facts,
-            actions=[PanelAction(key=_NEW_CODE_ACTION, label="Generate new code")],
-        )
-
-    def panel_action(self, key: str, values: Mapping[str, str]) -> None:
-        """Run a panel action.
-
-        ``new_code`` replaces the access code, which signs every device out.
-
-        Raises:
-            PanelError: The action is unknown, or the new code could not be saved.
-        """
-        if key != _NEW_CODE_ACTION:
-            raise PanelError("That action isn’t available.")
-        try:
-            with self._code_lock:
-                self._code = self._store.rotate()
-        except OSError as exc:
-            logger.error("Could not save a new network access code", exc_info=True)
-            raise PanelError(f"Couldn’t save the new code: {exc.strerror or exc}.") from exc
-        logger.info("A new network access code was generated")
+        """Return the Status section: not running, no network, or how another device connects (see ``status``)."""
+        running = self._running
+        if running is None:
+            return status.stopped()
+        urls = lan_urls(running.port, self._defaults.route_probe_address)
+        if not urls:
+            return status.offline()
+        return status.running(urls[0], running.code, running.port, self._platform)
 
     # ─── settings ───
 
     def verify_settings(self, values: Mapping[str, str]) -> str:
-        """Check that the chosen port is free before it is stored.
+        """Check that the chosen port is free before it is stored, and say what the save changes.
 
         The port this extension is already serving on counts as available to
         itself, so saving without changing it does not fail.
 
+        Args:
+            values: Every declared field's value (``port``, ``access_code``).
+
         Returns:
-            A one-line success detail.
+            A one-line success detail: "Port N is available." when it is not
+            running or the port changed; then "Signed-in devices will need
+            the new code." when it is running and the code changed (case
+            aside); "Saved." when neither applies.
 
         Raises:
             ConfigError: The port is in use or not allowed.
         """
         port = int(values["port"])
-        if self._server is not None and port == self._port:
-            return f"Keeping port {port}."
-        try:
-            bind_socket(self._defaults.bind_host, port).close()
-        except ServiceStartError as exc:
-            raise ConfigError(str(exc)) from exc
-        return f"Port {port} is available."
-
-    # ─── code ───
-
-    def _ensure_code(self) -> None:
-        with self._code_lock:
-            if self._code is None:
-                self._code = self._store.load_or_create()
-
-    def _current_code(self) -> str:
-        with self._code_lock:
-            if self._code is None:
-                raise RuntimeError("the access code was read before the service started")
-            return self._code
+        running = self._running
+        details: list[str] = []
+        if running is None or port != running.port:
+            try:
+                bind_socket(self._defaults.bind_host, port).close()
+            except ServiceStartError as exc:
+                raise ConfigError(str(exc)) from exc
+            details.append(f"Port {port} is available.")
+        if running is not None and canonical_code(values["access_code"]) != canonical_code(running.code):
+            details.append("Signed-in devices will need the new code.")
+        return " ".join(details) if details else "Saved."
 
 
 def create(ctx: ExtensionContext) -> NetworkExtension:
-    """Create the extension (inert: no file, port or thread is touched).
+    """Create the extension (inert: no settings, port or thread is touched).
 
     Raises:
         ValueError: The manifest's ``defaults`` are not valid.
@@ -219,4 +180,4 @@ def create(ctx: ExtensionContext) -> NetworkExtension:
         defaults = NetworkDefaults.model_validate(ctx.manifest.defaults)
     except ValidationError as exc:
         raise ValueError(f"network manifest defaults are invalid: {exc}") from exc
-    return NetworkExtension(ctx, defaults)
+    return NetworkExtension(ctx, defaults, platform=sys.platform)

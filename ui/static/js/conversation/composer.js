@@ -9,6 +9,9 @@
  * The composer is built once per Chat mount and reused across conversations.
  * Rebuilding it on every switch would kill the draft and the caret, which is
  * why `open()` reconfigures it instead of replacing it.
+ *
+ * The field owns its undo history (mention-draft.js): paste and pills
+ * rewrite it in code, and the browser's own undo cannot follow that.
  */
 const BossModComposer = (() => {
     const { h } = BossModDom;
@@ -59,6 +62,9 @@ const BossModComposer = (() => {
             throw new Error('[composer] deps.disabledReason is required');
         }
         if (typeof deps.mentionScope !== 'function') throw new Error('[composer] deps.mentionScope is required');
+        if (typeof BossModMentionDraft === 'undefined') {
+            throw new Error('[composer] mention-draft.js must load before composer.js');
+        }
 
         const sendGate = BossModGates.createComposerSendGate();
         const disposers = [];
@@ -106,13 +112,8 @@ const BossModComposer = (() => {
                 range.deleteContents();
             }
             const current = input.value;
-            // Without the pill-aware field there is no caret to read, so the
-            // plain shim's only defined position, the end, is used.
-            const draft = typeof BossModMentionDraft !== 'undefined' ? BossModMentionDraft : null;
-            const at = draft ? draft.caretIn(input) : current.length;
-            input.value = current.slice(0, at) + text + current.slice(at);
-            if (draft) draft.placeCaret(input, at + text.length);
-            input.dispatchEvent(new Event('input', { bubbles: true }));
+            const at = BossModMentionDraft.caretIn(input);
+            input.editValue(current.slice(0, at) + text + current.slice(at), at + text.length);
         }
 
         /**
@@ -187,19 +188,7 @@ const BossModComposer = (() => {
             get() { return input.getAttribute('data-placeholder') || ''; },
             set(text) { input.setAttribute('data-placeholder', String(text == null ? '' : text)); },
         });
-        if (typeof BossModMentionDraft !== 'undefined') {
-            BossModMentionDraft.bindEditable(input);
-        } else {
-            Object.defineProperty(input, 'value', {
-                configurable: true,
-                get() { return String(input.textContent || ''); },
-                set(text) {
-                    const raw = String(text == null ? '' : text);
-                    input.replaceChildren();
-                    if (raw) input.append(document.createTextNode(raw));
-                },
-            });
-        }
+        BossModMentionDraft.bindEditable(input);
         // Icon-only send, so the control is named twice over: for the label
         // association and for the button itself.
         const label = h('label', { class: 'visually-hidden', for: INPUT_ID }, 'Message');

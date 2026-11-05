@@ -250,26 +250,17 @@ const BossModExtensionsApi = (() => {
     }
 
     /**
-     * Read an enabled panel extension's status, or run one of its actions and
-     * read the refreshed status.
+     * Read an enabled panel extension's status.
      *
      * @param {string} id
-     * @param {string|null} [action]  An action `key` from the last status; omit to read.
-     * @param {Object<string, string>} [values]  That action's `values`, unchanged.
      * @returns {Promise<{message: string, error: string|null,
-     *   facts: Array<{label: string, value: string, copyable: boolean, secret: boolean}>,
-     *   actions: Array<{key: string, label: string, values: Object<string, string>}>}>}
+     *   groups: Array<{title: string, intro: string|null,
+     *     facts: Array<{label: string, value: string, copyable: boolean, secret: boolean, hint: string|null}>}>}>}
      * @throws {Error} `code` is `EXTENSION_DISABLED`, `NO_PANEL`,
      *   `INVALID_EXTENSION` or `PANEL_FAILED` (the extension's own sentence).
      */
-    async function panelRequest(id, action = null, values = {}) {
-        const base = `/api/extensions/${enc(id)}/panel`;
-        const options = { method: action === null ? 'GET' : 'POST', cache: 'no-store' };
-        if (action !== null) {
-            options.headers = { 'Content-Type': 'application/json' };
-            options.body = JSON.stringify({ action, values });
-        }
-        const res = await apiFetch(action === null ? base : `${base}/actions`, options);
+    async function getPanel(id) {
+        const res = await apiFetch(`/api/extensions/${enc(id)}/panel`, { cache: 'no-store' });
         if (!res.ok) throw await failure(res, 'Couldn’t update this extension.');
         return res.json();
     }
@@ -309,7 +300,7 @@ const BossModExtensionsApi = (() => {
     }
 
     return {
-        providerRequest, panelRequest, getSettings, putSettings, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
+        providerRequest, getPanel, getSettings, putSettings, listExtensions, setEnabled, startSetup, liveView, openLiveFolder,
         extensionAgents, agentExtensions, getAgentConfig, saveAgentConfig, deleteAgentConfig, agentView, agentViewItem,
     };
 })();

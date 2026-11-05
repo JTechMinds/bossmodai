@@ -39,6 +39,9 @@ const BossModExtensionDetail = (() => {
         sectionsLabel: 'Extension sections',
         loading: 'Loading…',
         offStatus: 'Turn it on to see its status.',
+        // While it is off with settings it cannot start without (the
+        // server's `settings.missing`), say what to fill in first.
+        offNeedsSettings: (labels) => `Fill in ${labels.map((l) => `“${l}”`).join(' and ')} in Settings, then turn it on.`,
         offAccount: 'Turn it on to sign in.',
         offModels: 'Turn it on to see its models.',
         offAgents: 'Turn it on to set it up for each agent.',
@@ -120,12 +123,11 @@ const BossModExtensionDetail = (() => {
     }
 
     function statusBody(item, state, handlers) {
-        if (!item.enabled) return h('p', { class: 'market-status' }, COPY.offStatus);
-        if (state.panel) {
-            return BossModExtensionPanel.render(state.panel, {
-                idPrefix: 'ext-panel', busy: state.busy, onAction: handlers.onPanelAction,
-            });
+        if (!item.enabled) {
+            const needs = item.settings && item.settings.missing.length;
+            return h('p', { class: 'market-status' }, needs ? COPY.offNeedsSettings(item.settings.missing) : COPY.offStatus);
         }
+        if (state.panel) return BossModExtensionPanel.render(state.panel, { idPrefix: 'ext-panel' });
         if (state.liveError) return liveFailed(state, handlers);
         return h('p', { class: 'market-status', role: 'status' }, COPY.loading);
     }
@@ -205,7 +207,7 @@ const BossModExtensionDetail = (() => {
      *   reads the Status section and a provider's Account and Models
      *   sections show.
      * @param {object} handlers  onToggle, onSetupAsk, onSetupConfirm,
-     *   onSetupCancel, onSection, onPanelAction, onProviderAction, onRetryLive.
+     *   onSetupCancel, onSection, onProviderAction, onRetryLive.
      * @param {{id: string, settings: ({element: HTMLElement}|null),
      *   agents: ({element: HTMLElement}|null)}|null} live  The controller's
      *   persistent nodes for the open extension.

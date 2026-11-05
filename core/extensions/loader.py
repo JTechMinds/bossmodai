@@ -14,9 +14,11 @@ import threading
 from types import ModuleType
 from typing import Callable
 
+from core.extensions.config_values import unset_fields
 from core.extensions.contract import (
     Extension,
     ExtensionContext,
+    SettingsIncompleteError,
     SupportsAgentConfig,
     SupportsAgentView,
     SupportsCommand,
@@ -163,7 +165,12 @@ def _agent_config_reader(ext_id: str) -> Callable[[str], dict[str, str] | None]:
 
 
 def _settings_reader(ext_id: str, manifest: ExtensionManifest) -> Callable[[], dict[str, str]]:
-    """Bind ``db.get_extension_settings`` and the manifest's declared defaults to one extension."""
+    """Bind ``db.get_extension_settings`` and the manifest's declared defaults to one extension.
+
+    The bound reader raises :class:`SettingsIncompleteError` naming every
+    field with no stored value and no default, ``RuntimeError`` when the
+    manifest declares no settings, and ``ValueError`` on a corrupt row.
+    """
 
     def read() -> dict[str, str]:
         spec = manifest.settings
@@ -173,6 +180,9 @@ def _settings_reader(ext_id: str, manifest: ExtensionManifest) -> Callable[[], d
         import db
 
         stored = db.get_extension_settings(ext_id)
+        unset = unset_fields(spec, stored)
+        if unset:
+            raise SettingsIncompleteError(unset)
         if stored is None:
             stored = {}
         return {item.key: config_value(spec, stored, item.key) for item in spec.fields}
@@ -224,7 +234,7 @@ def _broken_contract(manifest: ExtensionManifest, instance: object) -> str | Non
     if manifest.service and not isinstance(instance, SupportsService):
         return "manifest declares service but the extension has no start_service()/stop_service() methods"
     if manifest.panel and not isinstance(instance, SupportsPanel):
-        return "manifest declares panel but the extension has no panel()/panel_action() methods"
+        return "manifest declares panel but the extension has no panel() method"
     if manifest.settings is not None and not isinstance(instance, SupportsSettings):
         return "manifest declares settings but the extension has no verify_settings() method"
     return None

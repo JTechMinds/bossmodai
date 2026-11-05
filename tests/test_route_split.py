@@ -187,7 +187,6 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/extensions/{ext_id}/settings", "get_extension_settings"),
     (("PUT",), "/api/extensions/{ext_id}/settings", "put_extension_settings"),
     (("GET",), "/api/extensions/{ext_id}/panel", "extension_panel"),
-    (("POST",), "/api/extensions/{ext_id}/panel/actions", "extension_panel_action"),
 }
 
 

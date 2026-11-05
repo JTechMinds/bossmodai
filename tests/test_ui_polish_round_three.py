@@ -501,6 +501,8 @@ CONTEXT_MODULES = [
     JS / "conversation" / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
     JS / "conversation" / "composer-attachments.js",
+    JS / "conversation" / "composer-history.js",
+    JS / "conversation" / "mention-draft.js",
     JS / "conversation" / "composer.js",
     JS / "conversation" / "system-receipts.js",
     JS / "needs" / "need-shape.js",

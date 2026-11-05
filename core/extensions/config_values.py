@@ -30,7 +30,9 @@ def resolve_values(
     """Validate a submitted config and fill blank secrets from the stored one.
 
     A blank secret while a config is stored means "keep the stored secret"
-    (the dialog says so); with nothing stored it is a missing value.
+    (the dialog says so); with nothing stored it is a missing value. A kept
+    secret is not checked against ``min_length`` again: it passed when it
+    was saved.
 
     Args:
         spec: The declared form.
@@ -41,8 +43,9 @@ def resolve_values(
         Every declared field's trimmed, validated value.
 
     Raises:
-        ConfigValueError: An unknown key, a missing required value, a bad
-            email, or a number outside its bounds (the first problem).
+        ConfigValueError: An unknown key, a missing required value, a value
+            shorter than its ``min_length``, a bad email, or a number outside
+            its bounds (the first problem).
     """
     declared = {item.key for item in spec.fields}
     unknown = sorted(set(submitted) - declared)
@@ -51,10 +54,13 @@ def resolve_values(
     resolved: dict[str, str] = {}
     for item in spec.fields:
         value = submitted.get(item.key, "").strip()
-        if item.kind == "secret" and not value and stored is not None and stored.get(item.key):
+        kept = item.kind == "secret" and not value and stored is not None and bool(stored.get(item.key))
+        if kept:
             value = stored[item.key]
         if item.required and not value:
             raise ConfigValueError(f"{item.label} is required.")
+        if item.min_length is not None and value and not kept and len(value) < item.min_length:
+            raise ConfigValueError(f"{item.label} must be at least {item.min_length} characters.")
         if item.kind == "email" and value and not _EMAIL_RE.match(value):
             raise ConfigValueError(f"{item.label} is not an email address.")
         if item.kind == "number":
@@ -92,6 +98,27 @@ def range_text(item: ConfigField) -> str:
     return ""
 
 
+def unset_fields(spec: ConfigSpec, stored: Mapping[str, str] | None) -> tuple[str, ...]:
+    """Return the labels of declared fields a stored config cannot answer for.
+
+    A field is unset when its key is absent from ``stored`` and it has no
+    manifest ``default``: exactly the fields
+    :func:`core.extensions.manifest.config_value` would refuse. That happens
+    when nothing was ever saved, or a save predates the field.
+
+    Args:
+        spec: The declared form.
+        stored: The values stored now; ``None`` (nothing stored) counts as
+            an empty mapping.
+
+    Returns:
+        The unset fields' labels, in declared order; empty when every field
+        has a value or a default.
+    """
+    present: Mapping[str, str] = stored if stored is not None else {}
+    return tuple(item.label for item in spec.fields if item.key not in present and item.default is None)
+
+
 def masked_fields(spec: ConfigSpec, stored: Mapping[str, str] | None) -> list[dict[str, Any]]:
     """Return the form's fields as the UI sees them: a secret only says whether it is set.
 
@@ -101,13 +128,16 @@ def masked_fields(spec: ConfigSpec, stored: Mapping[str, str] | None) -> list[di
 
     Returns:
         One dict per field, in declared order: ``key``, ``label``, ``kind``,
-        ``required`` and, by kind, ``set`` (secret) or ``value`` (the stored
-        value; a number field with nothing stored, or stored before the
-        field existed, reads as its declared default).
+        ``required``, ``hint`` (a sentence, or ``None``) and, by kind,
+        ``set`` (secret) or ``value`` (the stored value; a number field with
+        nothing stored, or stored before the field existed, reads as its
+        declared default).
     """
     fields = []
     for item in spec.fields:
-        field: dict[str, Any] = {"key": item.key, "label": item.label, "kind": item.kind, "required": item.required}
+        field: dict[str, Any] = {
+            "key": item.key, "label": item.label, "kind": item.kind, "required": item.required, "hint": item.hint,
+        }
         if item.kind == "secret":
             field["set"] = bool(stored and stored.get(item.key))
         elif item.kind == "number":

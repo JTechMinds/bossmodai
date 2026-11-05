@@ -24,7 +24,7 @@ const NAMES = [
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
-    "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
+    "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposerHistory", "BossModMentionDraft", "BossModComposer", "BossModSystemReceipts", "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive",
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
@@ -1325,6 +1325,50 @@ async function main() {
         throw new Error(`the greeting must send through the composer: ${JSON.stringify(activations)}`);
     }
 
+    // ─── sendCutsHistory / switchCutsHistory ───
+    // The field owns its undo, and a send or a switch starts a fresh history:
+    // Ctrl+Z must never bring back a line already sent, or carry one
+    // conversation's draft into another. Each draft is typed as two steps, so
+    // a history that survived would have something to restore.
+    const typeIntoComposer = (text) => {
+        const kids = composerInput.childNodes;
+        const last = kids[kids.length - 1];
+        const node = last && last.nodeType === 3 ? last : documentStub.createTextNode("");
+        if (node !== last) composerInput.append(node);
+        node.textContent += text;
+        global.window._setSelection(node, node.textContent.length);
+        composerInput.dispatchEvent({ type: "input", inputType: "insertText", data: text });
+    };
+    const pressUndo = () => {
+        const event = {
+            type: "keydown", key: "z", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false,
+            prevented: false, preventDefault() { this.prevented = true; },
+        };
+        composerInput.dispatchEvent(event);
+        return event;
+    };
+    typeIntoComposer("one more");
+    typeIntoComposer(" thing");
+    await conversation.element.querySelector(".composer-send").dispatchClick();
+    for (let i = 0; i < 5; i += 1) await tick();
+    const sentUndo = pressUndo();
+    const sendCutsHistory = activations.length === 2
+        && activations[1].body.content === "one more thing"
+        && sentUndo.prevented && composerInput.value === "";
+    if (!sendCutsHistory) {
+        throw new Error(`Ctrl+Z after a send must change nothing: "${composerInput.value}" ${JSON.stringify(activations[1])}`);
+    }
+    typeIntoComposer("hello Di");
+    typeIntoComposer(" again");
+    await conversation.open("b", "agent");
+    const draftOnB = composerInput.value;
+    pressUndo();
+    const switchCutsHistory = composerInput.value === draftOnB && !composerInput.value.includes("Di");
+    if (!switchCutsHistory) {
+        throw new Error(`Ctrl+Z after a switch must not bring Di's draft back: "${composerInput.value}"`);
+    }
+    global.window._setSelection(null);
+
     // ─── attachmentsFollowTheirConversation ───
     // Pending uploads are scoped to one conversation on the server, so they
     // are stashed and restored with that conversation's text draft.
@@ -1423,6 +1467,8 @@ async function main() {
     if (!pasteReadsItems) throw new Error(`an items-only image paste must upload: "${chips().join("|")}"`);
 
     composerInput.value = "say ";
+    // The paste goes in at the caret, so park one at the end of "say ".
+    global.window._setSelection(composerInput.childNodes[0], 4);
     const textPaste = pasteWith({
         items: [{ kind: "string", type: "text/html" }],
         files: [],
@@ -1434,16 +1480,19 @@ async function main() {
 
     // ─── pasteReplacesSelection ───
     // A prevented paste gets no native replace, so the composer must delete
-    // the selected text itself. The selection here runs to the end of the
-    // draft, which is where the plain field shim (no caret) inserts.
+    // the selected text itself. The selection here runs from offset 4 to the
+    // end of the draft, so once it is gone the caret, and the paste, sit at 4.
     composerInput.value = "say hello";
     const draftText = composerInput.childNodes[0];
     const realGetSelection = global.window.getSelection;
     global.window.getSelection = () => ({
         rangeCount: 1,
+        anchorNode: draftText,
         getRangeAt: () => ({
             collapsed: false,
             commonAncestorContainer: draftText,
+            startContainer: draftText,
+            startOffset: 4,
             deleteContents() { draftText.textContent = draftText.textContent.slice(0, 4); },
         }),
     });
@@ -1451,6 +1500,37 @@ async function main() {
     global.window.getSelection = realGetSelection;
     const pasteReplacesSelection = composerInput.value === "say bye";
     if (!pasteReplacesSelection) throw new Error(`a paste must replace the selection: "${composerInput.value}"`);
+
+    // ─── composerUndoAfterPaste ───
+    // A paste rebuilds the field, which used to take the native undo with it.
+    // Ctrl+Z now gives back the text the paste replaced, and the typing from
+    // before the paste is still there to undo.
+    composerInput.value = "keep ";
+    typeIntoComposer("this");
+    const typedNode = composerInput.childNodes[0];
+    global.window.getSelection = () => ({
+        rangeCount: 1,
+        anchorNode: typedNode,
+        getRangeAt: () => ({
+            collapsed: false,
+            commonAncestorContainer: typedNode,
+            startContainer: typedNode,
+            startOffset: 5,
+            deleteContents() { typedNode.textContent = typedNode.textContent.slice(0, 5); },
+        }),
+    });
+    pasteWith({ items: [], files: [], getData: (type) => (type === "text/plain" ? "that" : "") });
+    global.window.getSelection = realGetSelection;
+    const pastedOver = composerInput.value;
+    const pasteUndo = pressUndo();
+    const beforePaste = composerInput.value;
+    pressUndo();
+    const composerUndoAfterPaste = pastedOver === "keep that" && pasteUndo.prevented
+        && beforePaste === "keep this" && composerInput.value === "keep ";
+    if (!composerUndoAfterPaste) {
+        throw new Error(`Ctrl+Z must undo a paste, then the typing: "${pastedOver}" -> "${beforePaste}" -> "${composerInput.value}"`);
+    }
+    global.window._setSelection(null);
 
     const emptyPaste = pasteWith({ items: [], files: [], getData: () => "" });
     const pasteOfNothingSaysSo = emptyPaste.prevented
@@ -1615,6 +1695,8 @@ async function main() {
         receiptsNodeSurvivesReopen,
         emptyConversationOffersActions,
         greetingWentThroughTheComposer,
+        sendCutsHistory,
+        switchCutsHistory,
         attachmentsFollowTheirConversation,
         inFlightSendKeepsNewerChips,
         structuredRefusalShowsItsError,
@@ -1624,6 +1706,7 @@ async function main() {
         pasteTextIsPlain,
         pasteOfNothingSaysSo,
         pasteReplacesSelection,
+        composerUndoAfterPaste,
         desktopPasteReadsTheShellClipboard,
         desktopPasteRefusalShowsReason,
         thumbnailUsesAuthenticatedBlob,

@@ -47,6 +47,8 @@ CONVERSATION_MODULES = [
     CONVERSATION / "chrome.js",
     JS / "core" / "desktop-clipboard.js",
     CONVERSATION / "composer-attachments.js",
+    CONVERSATION / "composer-history.js",
+    CONVERSATION / "mention-draft.js",
     CONVERSATION / "composer.js",
     CONVERSATION / "system-receipts.js",
     JS / "needs" / "need-shape.js",
@@ -351,6 +353,10 @@ def test_conversation_harness() -> None:
         "subtitleIsWithTheActions": True,
         "emptyConversationOffersActions": True,
         "greetingWentThroughTheComposer": True,
+        # The field owns its undo; a send or a conversation switch starts a
+        # fresh history, so Ctrl+Z never brings back a sent or foreign draft.
+        "sendCutsHistory": True,
+        "switchCutsHistory": True,
         # A draft is its text plus its pending uploads, and a send drops only
         # the uploads it linked.
         "attachmentsFollowTheirConversation": True,
@@ -368,6 +374,8 @@ def test_conversation_harness() -> None:
         "pasteOfNothingSaysSo": True,
         # The prevented paste still replaces a selection, as a native one did.
         "pasteReplacesSelection": True,
+        # A paste is one undo step, and the typing before it survives it.
+        "composerUndoAfterPaste": True,
         # In the desktop shell, a paste with neither file nor text is read
         # from the native clipboard; a refused read says why.
         "desktopPasteReadsTheShellClipboard": True,

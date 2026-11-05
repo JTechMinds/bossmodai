@@ -24,6 +24,7 @@ MENTION_MODULES = [
     JS / "core" / "menu.js",
     CONVERSATION / "mentions.js",
     CONVERSATION / "mention-pill.js",
+    CONVERSATION / "composer-history.js",
     CONVERSATION / "mention-draft.js",
     CONVERSATION / "mention-picker.js",
 ]
@@ -181,6 +182,9 @@ def test_mention_harness_filters_inserts_and_runs_menu_actions() -> None:
         # A mouse pick blurs the composer before the option's click handler
         # runs. The caret shim must still replace the typed "@jo".
         "insertSurvivesBlur": "@Joey ",
+        # A pick is one undo step of the field's own history: Ctrl+Z gives
+        # back the half-typed @query.
+        "pickIsOneUndoStep": "tip @hu",
         "filterEmpty": ["joey", "hugh", "debra", "auditor"],
         "filterQuery": ["joey"],
         "filterRole": ["hugh"],

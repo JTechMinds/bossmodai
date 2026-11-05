@@ -30,8 +30,8 @@ refuses an instance that lacks the Protocol its manifest declares:
 - ``service`` → :class:`SupportsService` (something long-lived the app process
   runs while the extension is on, started and stopped by
   ``core.extensions.service_host``);
-- ``panel`` → :class:`SupportsPanel` (a status and actions the card renders,
-  see ``core.extensions.panel``);
+- ``panel`` → :class:`SupportsPanel` (a status the card renders, see
+  ``core.extensions.panel``);
 - ``settings`` → :class:`SupportsSettings` (extension-wide values the host
   stores wrapped at rest and verifies through the extension on save; the
   extension reads them only through ``ExtensionContext.read_settings``);
@@ -106,9 +106,10 @@ class ExtensionContext:
         model_provider: Host services for a ``model_provider`` extension;
             ``None`` for any other.
         read_settings: Returns every declared ``settings`` field's stored
-            value (decrypted), else its manifest default. Raises ``KeyError``
-            for a field with neither, and ``ValueError`` on a corrupt stored
-            row. Bound by the loader so the extension never imports ``db``.
+            value (decrypted), else its manifest default. Raises
+            :class:`SettingsIncompleteError` naming every field with
+            neither, and ``ValueError`` on a corrupt stored row. Bound by the
+            loader so the extension never imports ``db``.
         seal: Wraps a string with the host's at-rest secret wrap, so an
             extension can protect a secret it keeps in its own data dir.
         unseal: Reverses ``seal``.
@@ -178,7 +179,26 @@ class ServiceStartError(Exception):
 
 
 class PanelError(Exception):
-    """A panel read or action failed; the message is shown to the operator verbatim."""
+    """A panel read failed; the message is shown to the operator verbatim."""
+
+
+class SettingsIncompleteError(Exception):
+    """Declared ``settings`` fields have no stored value and no manifest default.
+
+    The settings were never saved, or were saved before those fields existed.
+    Raised by ``ExtensionContext.read_settings``; the service host turns it
+    into a plain sentence that sends the operator to Settings.
+
+    Args:
+        labels: The unset fields' labels, in declared order.
+
+    Attributes:
+        labels: As given.
+    """
+
+    def __init__(self, labels: tuple[str, ...]) -> None:
+        super().__init__(f"settings have no value for: {', '.join(labels)}")
+        self.labels = labels
 
 
 @runtime_checkable
@@ -212,18 +232,10 @@ class SupportsPanel(Protocol):
     """Optional: an extension whose manifest sets ``panel`` implements this."""
 
     def panel(self) -> PanelStatus:
-        """Return what the card shows now. Cheap: local state only, no network."""
-        ...
-
-    def panel_action(self, key: str, values: Mapping[str, str]) -> None:
-        """Run one of the actions the last :meth:`panel` offered.
-
-        Args:
-            key: The chosen :class:`core.extensions.panel.PanelAction` key.
-            values: That action's ``values``, unchanged.
+        """Return what the card shows now. Cheap: local state only, no network.
 
         Raises:
-            PanelError: The action failed (the operator-safe reason).
+            PanelError: The status could not be read (the operator-safe reason).
         """
         ...
 

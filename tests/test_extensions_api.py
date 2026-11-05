@@ -747,9 +747,9 @@ def test_get_config_masks_secrets(client, fake_mail) -> None:
     payload = response.json()
     assert payload["configured"] is True and payload["updated_at"]
     assert payload["fields"] == [
-        {"key": "token", "label": "Token", "kind": "secret", "required": True, "set": True},
-        {"key": "address", "label": "Address", "kind": "email", "required": True, "value": "reports@contoso.com"},
-        {"key": "note", "label": "Note", "kind": "text", "required": False, "value": "hi"},
+        {"key": "token", "label": "Token", "kind": "secret", "required": True, "hint": None, "set": True},
+        {"key": "address", "label": "Address", "kind": "email", "required": True, "hint": None, "value": "reports@contoso.com"},
+        {"key": "note", "label": "Note", "kind": "text", "required": False, "hint": None, "value": "hi"},
     ]
 
 
@@ -975,7 +975,7 @@ def test_a_blank_number_field_stores_its_default(client, fake_wake_mail) -> None
     assert db.get_extension_agent_config(fake_wake_mail.id, fake_wake_mail.agent.id)["every"] == "90"
     field = next(item for item in response.json()["fields"] if item["key"] == "every")
     assert field == {
-        "key": "every", "label": "Check every (seconds)", "kind": "number", "required": False,
+        "key": "every", "label": "Check every (seconds)", "kind": "number", "required": False, "hint": None,
         "min": 15, "max": 3600, "default": "90", "value": "90",
     }
     assert _save(client, fake_wake_mail, every=" 120 ").status_code == 200
@@ -1028,3 +1028,66 @@ def test_a_wake_without_desk_status_shows_no_wake_line(client, monkeypatch, tmp_
     db.record_wake_check(fake.id, fake.agent.id, ok=True, error=None, new_count=1)
     [item] = client.get(f"/api/agents/{fake.agent.id}/extensions").json()
     assert item["wakes"] is False and item["wake"] is None
+
+
+# ─── the shared form rules: min_length, hints and unset fields ───
+
+_CODE_SPEC = {
+    "label": "Access", "help": "h",
+    "fields": [
+        {"key": "port", "label": "Port", "kind": "number", "required": False, "default": "38472",
+         "hint": "Change it only if another program already uses this port."},
+        {"key": "code", "label": "Access code", "kind": "secret", "min_length": 6, "hint": "At least 6 characters."},
+        {"key": "name", "label": "Name", "kind": "text", "required": False, "min_length": 3},
+    ],
+}
+
+
+def _code_spec():
+    from core.extensions.manifest import ConfigSpec
+
+    return ConfigSpec.model_validate(_CODE_SPEC)
+
+
+@pytest.mark.parametrize("submitted, message", [
+    ({"code": "abc12"}, "Access code must be at least 6 characters."),
+    ({"code": "  abc12  "}, "Access code must be at least 6 characters."),
+    ({"code": "abc123", "name": "ab"}, "Name must be at least 3 characters."),
+])
+def test_resolve_values_refuses_a_value_shorter_than_its_min_length(submitted, message) -> None:
+    from core.extensions.config_values import ConfigValueError, resolve_values
+
+    with pytest.raises(ConfigValueError) as caught:
+        resolve_values(_code_spec(), submitted, None)
+    assert str(caught.value) == message
+
+
+def test_resolve_values_accepts_min_length_values_a_blank_optional_one_and_a_kept_secret() -> None:
+    from core.extensions.config_values import resolve_values
+
+    assert resolve_values(_code_spec(), {"code": " abc123 "}, None) == {"port": "38472", "code": "abc123", "name": ""}
+    # A blank secret keeps the stored one, which is not checked again (it
+    # was stored before the rule existed, or under it).
+    kept = resolve_values(_code_spec(), {"code": "", "name": "Ada"}, {"port": "40000", "code": "old"})
+    assert kept == {"port": "38472", "code": "old", "name": "Ada"}
+
+
+def test_masked_fields_carry_each_fields_hint() -> None:
+    from core.extensions.config_values import masked_fields
+
+    fields = masked_fields(_code_spec(), None)
+    assert [(field["key"], field["hint"]) for field in fields] == [
+        ("port", "Change it only if another program already uses this port."),
+        ("code", "At least 6 characters."),
+        ("name", None),
+    ]
+
+
+def test_unset_fields_names_the_fields_a_stored_config_cannot_answer_for() -> None:
+    from core.extensions.config_values import unset_fields
+
+    spec = _code_spec()
+    assert unset_fields(spec, None) == ("Access code", "Name"), "nothing stored: every field without a default"
+    assert unset_fields(spec, {}) == ("Access code", "Name")
+    assert unset_fields(spec, {"name": ""}) == ("Access code",), "a stored blank is a value"
+    assert unset_fields(spec, {"code": "abc123", "name": "x"}) == (), "port reads as its default"

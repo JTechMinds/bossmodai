@@ -14,7 +14,7 @@ const documentStub = installDom();
 const paths = process.argv.slice(2);
 const NAMES = [
     "BossModDom", "BossModAvatar", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu",
-    "BossModMentions", "BossModMentionPills", "BossModMentionDraft",
+    "BossModMentions", "BossModMentionPills", "BossModComposerHistory", "BossModMentionDraft",
     "BossModMentionPicker",
 ];
 if (paths.length !== NAMES.length) {
@@ -504,9 +504,25 @@ async function main() {
     const afterBlur = Mentions.insertAtCaret(blurred, "Joey");
     if (afterBlur.text !== "@Joey ") fail("insertAfterBlur", JSON.stringify(afterBlur.text));
 
+    // A pick rebuilds the field to paint its pill, which used to take the
+    // native undo with it. It is one step of the field's own history now:
+    // Ctrl+Z gives back the half-typed @query.
+    const undoField = field("");
+    const undoPicker = bindPicker(undoField, { everyone: false, memberIds: null });
+    typed(undoPicker, undoField, "tip @hu");
+    undoPicker.handleKeyDown({ key: "Enter", shiftKey: false, preventDefault() {} });
+    if (undoField.value !== "tip @Hugh ") fail("pickBeforeUndo", undoField.value);
+    undoField.dispatchEvent({
+        type: "keydown", key: "z", ctrlKey: true, metaKey: false, shiftKey: false, altKey: false,
+        preventDefault() {},
+    });
+    const pickIsOneUndoStep = undoField.value;
+    undoPicker.destroy();
+
     console.log(JSON.stringify({
         ok: true,
         insertSurvivesBlur: afterBlur.text,
+        pickIsOneUndoStep,
         filterEmpty: filterAll,
         filterQuery: filterJo,
         filterRole: filterQa,

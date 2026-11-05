@@ -176,7 +176,7 @@ const BossModExtensionsDialog = (() => {
             let provider = null;
             let error = '';
             try {
-                if (item.panel && item.enabled) panel = await API.panelRequest(item.id);
+                if (item.panel && item.enabled) panel = await API.getPanel(item.id);
                 if (item.model_provider && item.enabled) provider = await API.providerRequest(item.id);
             } catch (err) {
                 error = message(err);
@@ -348,13 +348,6 @@ const BossModExtensionsDialog = (() => {
                 state.confirming = false;
                 state.focusRequest = '#ext-enabled';
                 render();
-            },
-            onPanelAction(action) {
-                const id = state.selectedId;
-                void runAction('#ext-section-panel', '#ext-section-panel', async () => {
-                    const panel = await API.panelRequest(id, action.key, action.values);
-                    if (state.selectedId === id) state.panel = panel;
-                });
             },
             onProviderAction(key, values) {
                 const id = state.selectedId;

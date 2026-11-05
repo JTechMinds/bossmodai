@@ -4,13 +4,17 @@
  * provider's Account and Models sections (provider-sections.js) share.
  *
  * The server describes what to show and this knows nothing about any one
- * extension: a plain sentence, an error as an alert, labelled facts (each may
- * be copied, or masked until revealed) and action buttons. The sentence is
- * ordinary state in the page's own ink, not a warning: only an error is
- * coloured, as an alert. Every control is a `btn btn-sm`; a fact's value
- * sits in a read-only box (wrapping text; a secret in the masked field the
- * settings form uses, so Show / Hide is BossModSecretField's), with its
- * buttons on the label's line so a long value keeps the full width.
+ * extension: a plain sentence, an error as an alert, then titled groups. A
+ * group is a heading (h4: the hero's title is the h3), an optional intro and
+ * its labelled facts; each fact may be copied, or masked until revealed, and
+ * may carry a one-line hint under its value, which the value names as its
+ * description. The sentence is ordinary state in the page's own ink, not a
+ * warning: only an error is coloured, as an alert. Every control is a
+ * `btn btn-sm`; a fact's value sits in a read-only box (wrapping text; a
+ * secret in the masked field the settings form uses, so Show / Hide is
+ * BossModSecretField's), with its buttons on the label's line so a long
+ * value keeps the full width. A panel has no buttons of its own beyond Show
+ * and Copy: what the operator changes lives in the Settings section.
  *
  * States the caller shows around it: loading and load failed (the detail's
  * own line and retry) and — because a status always carries a message —
@@ -68,14 +72,16 @@ const BossModExtensionPanel = (() => {
     }
 
     /**
-     * One labelled fact: its label with Show (secrets) and Copy beside it, and its
-     * value in a read-only field under them.
+     * One labelled fact: its label with Show (secrets) and Copy beside it, its
+     * value in a read-only field under them, and its hint (if any) under that.
      *
-     * @param {{label: string, value: string, copyable: boolean, secret: boolean}} fact
-     * @param {string} id  A unique element id for the field.
+     * @param {{label: string, value: string, copyable: boolean, secret: boolean,
+     *   hint: (string|null)}} fact
+     * @param {string} id  A unique element id for the field; the hint is `${id}-hint`.
      * @returns {HTMLElement}
      */
     function factRow(fact, id) {
+        const hintId = fact.hint ? `${id}-hint` : null;
         // A secret stays in a masked field (BossModSecretField). Any other
         // value is text that wraps, so a long command is fully visible and
         // selectable instead of clipped in a one-line field.
@@ -83,10 +89,11 @@ const BossModExtensionPanel = (() => {
             ? h('input', {
                 class: 'field-input field-mono bm-secret-masked',
                 id, type: 'text', readonly: true, autocomplete: 'off', spellcheck: 'false',
+                'aria-describedby': hintId,
             })
             : h('div', {
                 class: 'field-input field-mono ext-fact-value', id, role: 'textbox', 'aria-readonly': 'true',
-                'aria-labelledby': `${id}-label`, tabindex: '0',
+                'aria-labelledby': `${id}-label`, 'aria-describedby': hintId, tabindex: '0',
             }, fact.value);
         if (fact.secret) input.value = fact.value;
         const tools = [];
@@ -108,28 +115,42 @@ const BossModExtensionPanel = (() => {
             h('div', { class: 'ext-fact-head' },
                 h('label', { class: 'field-label-sm', id: `${id}-label`, for: fact.secret ? id : null }, fact.label),
                 tools.length ? h('div', { class: 'ext-fact-tools' }, tools) : null),
-            input);
+            input,
+            fact.hint ? h('p', { class: 'field-hint', id: hintId }, fact.hint) : null);
     }
 
     /**
-     * Render a whole panel: message, error, facts, then actions.
+     * One titled group: a section named by its heading, its intro, then its facts.
+     *
+     * @param {{title: string, intro: (string|null), facts: object[]}} group
+     * @param {number} g  The group's position; numbers its ids.
+     * @param {string} idPrefix
+     * @returns {HTMLElement} `section.ext-panel-group`.
+     */
+    function groupSection(group, g, idPrefix) {
+        const titleId = `${idPrefix}-group-${g}`;
+        return h('section', { class: 'ext-panel-group', 'aria-labelledby': titleId },
+            h('h4', { class: 'ext-panel-group-title', id: titleId }, group.title),
+            group.intro ? h('p', { class: 'field-hint' }, group.intro) : null,
+            group.facts.map((fact, f) => factRow(fact, `${idPrefix}-fact-${g}-${f}`)));
+    }
+
+    /**
+     * Render a whole panel: message, error, then one section per group.
      *
      * @param {object} status  A `PanelStatus` as the server returns it.
      * @param {object} options
-     * @param {string} options.idPrefix  Prefix of the facts' element ids.
-     * @param {boolean} options.busy  Disables the action buttons while a request runs.
-     * @param {(action: object) => void} options.onAction  Called with the chosen action.
+     * @param {string} options.idPrefix  Prefix of the groups' and facts' element
+     *   ids: `${idPrefix}-group-${g}` titles group g, `${idPrefix}-fact-${g}-${f}`
+     *   is its fact f.
      * @returns {HTMLElement[]}
      */
     function render(status, options) {
-        const { idPrefix, busy, onAction } = options;
+        const { idPrefix } = options;
         return [
             ...messageRows(status),
-            ...status.facts.map((fact, index) => factRow(fact, `${idPrefix}-fact-${index}`)),
-            status.actions.length
-                ? h('div', { class: 'ext-panel-actions' }, actionButtons(status.actions, busy, onAction))
-                : null,
-        ].filter(Boolean);
+            ...status.groups.map((group, g) => groupSection(group, g, idPrefix)),
+        ];
     }
 
     return { render, messageRows, actionButtons };
