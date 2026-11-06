@@ -10,6 +10,10 @@
  * floor's pixels depend on — builds a fresh layer. It also proves name tags are
  * a pass of their own, painted after every body with the full name on a pill,
  * and that a room label sits on the room's first row rather than its midpoint.
+ * Last, the sizing: the canvas fits its container's content box, stops
+ * shrinking at MIN_SCALE (the wrap scrolls past that), and draws its backing
+ * store at the device pixel ratio while its CSS size and hit testing stay in
+ * CSS pixels.
  *
  * argv: canvas-sprites.js, canvas-motion.js, agent-status.js, office-canvas.js
  */
@@ -63,9 +67,16 @@ global.document = {
         return fakeCanvas();
     },
 };
+// places.css pads .office-canvas-wrap by 12px on every side.
+const WRAP_PADDING = 12;
 global.window = {
     // Every palette token resolves; the value is irrelevant to a recorder.
-    getComputedStyle: () => ({ getPropertyValue: () => "#123456" }),
+    // The padding is what the canvas subtracts to find the content box.
+    getComputedStyle: () => ({
+        getPropertyValue: () => "#123456",
+        paddingLeft: `${WRAP_PADDING}px`, paddingRight: `${WRAP_PADDING}px`,
+        paddingTop: `${WRAP_PADDING}px`, paddingBottom: `${WRAP_PADDING}px`,
+    }),
     addEventListener() {},
     removeEventListener() {},
 };
@@ -107,8 +118,9 @@ const named = (ctx, name) => ctx.calls.filter((call) => call.name === name);
 (async () => {
     const visible = fakeCanvas();
     const container = { clientWidth: 400, clientHeight: 300 };
+    const clicked = [];
     const controller = BossModOfficeCanvas.createOfficeCanvas({
-        canvas: visible, container, api, onAgentClick() {},
+        canvas: visible, container, api, onAgentClick(id) { clicked.push(id); },
     });
     await controller.init();
 
@@ -174,6 +186,56 @@ const named = (ctx, name) => ctx.calls.filter((call) => call.name === name);
     if (after.length !== 2) fail(`a resize must rebuild the layer exactly once, got ${after.length - 1}`);
     if (after[1].width !== visible.width) fail("the rebuilt layer must match the resized canvas");
     const resizeRebuildsTheLayer = true;
+
+    // ─── Sizing: content box, zoom floor, device pixel ratio ───
+    const MAP_W = MAP.width * TILE_SIZE;   // 112
+    const MAP_H = MAP.height * TILE_SIZE;  // 84
+    const MIN_SCALE = 0.75;                // office-canvas.js
+
+    // The wrap scrolls, so the canvas fits its CONTENT box: 98px of content
+    // is a 0.875 zoom, exactly 98px wide, where sizing to the 122px client
+    // box would overflow the padding and scroll on a pane the floor fits.
+    container.clientWidth = 98 + 2 * WRAP_PADDING;
+    container.clientHeight = 300;
+    controller.resize();
+    if (visible.style.width !== "98px") fail(`the canvas must fit the content box: ${visible.style.width}`);
+
+    // Smaller than the floor at MIN_SCALE: the zoom stops there and the wrap
+    // scrolls, rather than shrinking 11px labels to unreadable.
+    container.clientWidth = 40;
+    container.clientHeight = 40;
+    controller.resize();
+    const minW = Math.floor(MAP_W * MIN_SCALE);
+    const minH = Math.floor(MAP_H * MIN_SCALE);
+    if (visible.style.width !== `${minW}px` || visible.style.height !== `${minH}px`) {
+        fail(`a small pane must hold the zoom at ${MIN_SCALE}: ${visible.style.width} x ${visible.style.height}`);
+    }
+    if (visible.width !== minW || visible.height !== minH) {
+        fail(`at a device pixel ratio of 1 the backing store is the CSS size: ${visible.width} x ${visible.height}`);
+    }
+
+    // A dense screen: the backing store doubles, the CSS box does not, and
+    // both layers draw under scale x DPR so a sprite lands at the same size.
+    global.window.devicePixelRatio = 2;
+    controller.resize();
+    if (visible.width !== 2 * minW || visible.height !== 2 * minH) {
+        fail(`at DPR 2 the backing store must be twice the CSS size: ${visible.width} x ${visible.height}`);
+    }
+    if (visible.style.width !== `${minW}px`) fail(`the CSS size must not follow the DPR: ${visible.style.width}`);
+    const dprLayer = canvases[canvases.length - 1];
+    if (dprLayer === visible || dprLayer.width !== visible.width) fail("the DPR layer must match the backing store");
+    const lastScale = (ctx) => named(ctx, "scale").slice(-1)[0];
+    for (const [name, ctx] of [["visible", visible.context], ["layer", dprLayer.context]]) {
+        const call = lastScale(ctx);
+        if (!call || call.args[0] !== MIN_SCALE * 2 || call.args[1] !== MIN_SCALE * 2) {
+            fail(`the ${name} canvas must draw at scale x DPR, got ${call && call.args}`);
+        }
+    }
+    // Hit testing stays in CSS pixels: Ada stands on tile (2, 1).
+    visible.listeners.click.forEach((fn) => fn({
+        clientX: 2.5 * TILE_SIZE * MIN_SCALE, clientY: 1.5 * TILE_SIZE * MIN_SCALE,
+    }));
+    if (clicked.join() !== "a1") fail(`a click on Ada at DPR 2 must find her, got ${JSON.stringify(clicked)}`);
 
     controller.destroy();
     process.stdout.write(JSON.stringify({ ok: true, staticLayerDrawnOnce, resizeRebuildsTheLayer }));

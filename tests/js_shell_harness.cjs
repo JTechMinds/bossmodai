@@ -76,15 +76,25 @@ BossModPlaces.register("tasks", {
 // The desk modal every place reaches as ctx.openDesk; required, so a place
 // can never render a desk door that fails only at the click.
 const openDesk = () => {};
+// The roster drawer, the same way: Chat's empty state offers it as a button.
+const openRoster = () => {};
 let refusedWithoutDesk = false;
 try {
-    BossModNavigator.createNavigator({ store, bus, container, api: () => {} });
+    BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openRoster });
 } catch (err) {
     refusedWithoutDesk = /openDesk is required/.test(String(err && err.message));
 }
 if (!refusedWithoutDesk) throw new Error("createNavigator must refuse a missing openDesk");
-const shell = BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openDesk });
+let refusedWithoutRoster = false;
+try {
+    BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openDesk });
+} catch (err) {
+    refusedWithoutRoster = /openRoster is required/.test(String(err && err.message));
+}
+if (!refusedWithoutRoster) throw new Error("createNavigator must refuse a missing openRoster");
+const shell = BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openDesk, openRoster });
 if (shell.getCtx().openDesk !== openDesk) throw new Error("ctx.openDesk must be the injected opener");
+if (shell.getCtx().openRoster !== openRoster) throw new Error("ctx.openRoster must be the injected opener");
 
 shell.navigate("chat");
 shell.navigate("tasks");
@@ -144,4 +154,5 @@ process.stdout.write(JSON.stringify({
     noBusLeakAfter20Swaps: true,
     containsMountErrors: true,
     handsEveryPlaceTheDeskOpener: true,
+    handsEveryPlaceTheRosterOpener: refusedWithoutRoster,
 }));

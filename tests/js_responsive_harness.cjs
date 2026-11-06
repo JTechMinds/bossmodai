@@ -47,8 +47,8 @@ const contextMark = documentStub.createElement("p");
 contextMark.className = "context-mark";
 context.append(contextMark);
 
-const store = BossModStore.createStore({ place: "chat" });
-const destroy = BossModResponsive.mount({
+const store = BossModStore.createStore({ place: "chat", conversationId: null, conversationKind: null });
+const mounted = BossModResponsive.mount({
     headerEl: header,
     layoutEl: layout,
     rosterEl: roster,
@@ -56,6 +56,12 @@ const destroy = BossModResponsive.mount({
     contextEl: context,
     store,
 });
+// The drawer's opener is handed back so the shell can give it to a place;
+// the disposer travels beside it rather than being the whole return.
+if (typeof mounted.destroy !== "function" || typeof mounted.openRoster !== "function") {
+    throw new Error(`mount() must return { destroy, openRoster }, got ${Object.keys(mounted)}`);
+}
+const { destroy } = mounted;
 
 const menu = header.querySelector(".responsive-menu-btn");
 // The context column holds the office summary and nothing else, so its
@@ -143,7 +149,34 @@ const widenClosesThePanel =
     && layout.children.map((c) => c.className).join("|") === "app-roster|app-place|app-context";
 if (!widenClosesThePanel) throw new Error("crossing the breakpoint must return the column to the grid");
 
-// ─── 5. The Office button is only offered where a context column exists ───
+// ─── 5. openRoster() is the ☰'s own door ───
+
+mounted.openRoster();
+const rosterPanel = documentStub.body.querySelector(".responsive-panel");
+const openRosterPresentsTheRoster = Boolean(rosterPanel) && rosterPanel.contains(roster)
+    && rosterPanel.getAttribute("aria-label") === "People and threads"
+    && rosterPanel.querySelectorAll(".roster-mark").length === 1;
+if (!openRosterPresentsTheRoster) throw new Error("openRoster() must present the live roster");
+
+// ─── 6. Picking a conversation closes the drawer; the context panel stays ───
+
+store.setState({ conversationKind: "agent", conversationId: "a1" });
+const conversationClosesTheRoster =
+    documentStub.body.querySelectorAll(".responsive-panel").length === 0
+    && layout.children.map((c) => c.className).join("|") === "app-roster|app-place|app-context";
+if (!conversationClosesTheRoster) {
+    throw new Error("choosing a conversation must close the drawer and restore the roster");
+}
+await_(desk.dispatchClick());
+store.setState({ conversationKind: "thread", conversationId: "t1" });
+const contextPanels = documentStub.body.querySelectorAll(".responsive-panel");
+const conversationLeavesTheContext = contextPanels.length === 1 && contextPanels[0].contains(context);
+if (!conversationLeavesTheContext) {
+    throw new Error("a conversation change must not close the office summary");
+}
+contextPanels[0].querySelector(".modal-close").click();
+
+// ─── 7. The Office button is only offered where a context column exists ───
 
 if (!desk.classList.contains("is-available")) throw new Error("Chat has a context column");
 const noContextPlace = BossModPlaces.PLACE_IDS.find(
@@ -169,6 +202,9 @@ process.stdout.write(JSON.stringify({
     restoresColumnOrder,
     widenClosesThePanel,
     hiddenWhereThereIsNoContext,
+    openRosterPresentsTheRoster,
+    conversationClosesTheRoster,
+    conversationLeavesTheContext,
 }));
 
 /** The fake DOM's click handlers are async; this harness is straight-line. */

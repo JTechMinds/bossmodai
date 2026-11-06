@@ -62,8 +62,29 @@ const SettingsView = (() => {
         for (const listener of viewListeners) listener(open);
     }
 
+    // Whether a phone shows the section list or one section ('nav'|'section'),
+    // written onto the head and the body; its one owner, as setView is
+    // data-view's. shell.css reads it below 768px only. Throws on missing markup.
+    function setPane(pane) {
+        for (const id of ['settings-body', 'settings-head']) {
+            const el = document.getElementById(id);
+            if (!el) throw new Error(`[settings-view] index.html is missing #${id}`);
+            el.dataset.pane = pane;
+        }
+    }
+
+    /**
+     * Open the takeover.
+     *
+     * @param {string} [sectionId]  A direct opener's section (agent-form, host-roots),
+     *   which a phone lands on; without one (the gear) a phone lands on the list.
+     * @param {object} [options]  Handed to that section's next render, once.
+     * @returns {void}
+     * @throws {Error} When index.html lacks the takeover's head or body.
+     */
     function open(sectionId, options) {
-        if (typeof sectionId === 'string' && sectionId) {
+        const direct = typeof sectionId === 'string' && sectionId;
+        if (direct) {
             activeSection = sectionId;
         }
         sectionOptions = options && typeof options === 'object' ? options : null;
@@ -72,6 +93,7 @@ const SettingsView = (() => {
 
         renderNav();
         switchSection(activeSection);
+        setPane(direct ? 'section' : 'nav');  // after switchSection's 'section'
     }
 
     function close() {
@@ -160,6 +182,7 @@ const SettingsView = (() => {
         sectionOptions = null;
         ensureInvalidateRegistration();
         renderNav();
+        setPane('section');
 
         const content = document.getElementById('settings-content');
 
@@ -191,5 +214,5 @@ const SettingsView = (() => {
         }
     }
 
-    return { open, close, isOpen: () => isOpen, onViewChange, bindRepaint };
+    return { open, close, showNav: () => setPane('nav'), isOpen: () => isOpen, onViewChange, bindRepaint };
 })();

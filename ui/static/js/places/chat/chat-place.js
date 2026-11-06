@@ -12,11 +12,10 @@ const BossModChatPlace = (() => {
     const { h, clear } = BossModDom;
 
     const EMPTY_TITLE = 'No conversation open';
-    const EMPTY_HINT = 'Pick someone from the roster to start talking';
+    const EMPTY_HINT = 'Pick a person or thread to start talking';
 
-    let store = null;
+    let ctx = null;  // The shell's, whole: store, context column, roster drawer.
     let conversation = null;
-    let contextEl = null;
     let bodyEl = null;
     let container = null;
     let showingConversation = false;
@@ -32,9 +31,12 @@ const BossModChatPlace = (() => {
         showingConversation = false;
         openedKey = null;
         clear(bodyEl);
+        // The button shows only where the rail is hidden (conversation.css).
         bodyEl.append(h('div', { class: 'conversation-empty' },
             h('p', { class: 'conversation-empty-title' }, EMPTY_TITLE),
-            h('p', { class: 'conversation-empty-hint' }, EMPTY_HINT)));
+            h('p', { class: 'conversation-empty-hint' }, EMPTY_HINT),
+            h('button', { class: 'btn conversation-empty-browse', type: 'button',
+                onclick: () => ctx.openRoster() }, 'Choose a conversation')));
     }
 
     /**
@@ -47,7 +49,7 @@ const BossModChatPlace = (() => {
      * @returns {void}
      */
     function applyConversation() {
-        const state = store.getState();
+        const state = ctx.store.getState();
         if (!state.conversationId || !state.conversationKind) {
             renderEmpty();
             return;
@@ -70,15 +72,14 @@ const BossModChatPlace = (() => {
 
         /**
          * @param {HTMLElement} el
-         * @param {object} ctx  `{ store, bus, api, needs, contextEl, openDesk,
-         *   openMemory, navigate }` from the shell. Chat alone fills
-         *   `ctx.contextEl`, with the office summary and chatter; `openDesk` is the one desk modal.
+         * @param {object} placeCtx  `{ store, bus, api, needs, contextEl, openDesk, openMemory,
+         *   openRoster, navigate }` from the shell. Chat alone fills `contextEl`, with the office
+         *   summary and chatter; `openDesk` is the one desk modal; `openRoster` the roster drawer.
          * @returns {void}
          */
-        mount(el, ctx) {
+        mount(el, placeCtx) {
+            ctx = placeCtx;
             container = el;
-            store = ctx.store;
-            contextEl = ctx.contextEl;
             showingConversation = false;
             openedKey = null;
             clear(el);
@@ -106,18 +107,18 @@ const BossModChatPlace = (() => {
 
             // The column's two views; the desk is a modal. Their destroyers drain
             // with `disposers`, before unmount clears the column they live in.
-            clear(contextEl);
+            clear(ctx.contextEl);
             const miniOffice = BossModMiniOffice.createMiniOffice({
                 store: ctx.store, api: ctx.api, navigate: ctx.navigate, openDesk: ctx.openDesk,
             });
             const officeChatter = BossModOfficeChatter.createOfficeChatter({
                 store: ctx.store, bus: ctx.bus, api: ctx.api, openDesk: ctx.openDesk,
             });
-            contextEl.append(miniOffice.element, officeChatter.element);
+            ctx.contextEl.append(miniOffice.element, officeChatter.element);
             disposers.push(() => miniOffice.destroy(), () => officeChatter.destroy());
 
-            disposers.push(store.subscribe((s) => s.conversationId, applyConversation));
-            disposers.push(store.subscribe((s) => s.conversationKind, applyConversation));
+            disposers.push(ctx.store.subscribe((s) => s.conversationId, applyConversation));
+            disposers.push(ctx.store.subscribe((s) => s.conversationKind, applyConversation));
             applyConversation();
         },
 
@@ -134,12 +135,11 @@ const BossModChatPlace = (() => {
             if (conversation) conversation.destroy();
             conversation = null;
             if (typeof BossModMentions !== 'undefined') BossModMentions.configure(null);
-            if (contextEl) clear(contextEl);
-            contextEl = null;
+            if (ctx) clear(ctx.contextEl);
             if (container) clear(container);
             container = null;
             bodyEl = null;
-            store = null;
+            ctx = null;
             showingConversation = false;
             openedKey = null;
         },

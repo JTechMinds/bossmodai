@@ -264,7 +264,7 @@ def test_modal_frame_is_the_chat_chrome() -> None:
     assert "width: 80vw" in panel and "height: 85vh" in panel
     assert "min-width: min(640px, calc(100vw - 32px))" in panel
     takeover = css.split('.modal-panel[data-size="takeover"] {', 1)[1].split("}", 1)[0]
-    assert "width: 95vw" in takeover and "height: 95vh" in takeover
+    assert "width: 95vw" in takeover and "height: 95dvh" in takeover
     assert 'data-size="medium"' not in css and 'data-size="wide"' not in css
     assert ":is(p, li) { max-width" not in css
     assert "li.floor-move-line { max-width: none; }" not in css

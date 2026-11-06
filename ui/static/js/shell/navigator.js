@@ -29,12 +29,18 @@ const BossModNavigator = (() => {
      *   Opens that desk with its Memory layer on one memory
      *   (context/desk-dialog.js); handed on as `ctx.openMemory` for Chat's
      *   memory lines, which render as plain text without it.
+     * @param {() => void} options.openRoster  Presents the roster drawer
+     *   (shell/responsive.js); handed on as `ctx.openRoster`, so Chat's empty
+     *   state opens the same drawer the ☰ does where the rail is hidden.
      * @returns {{ navigate: (id: string, params?: object) => void, getCtx: () => object }}
-     * @throws {Error} When openDesk is not a function: a place would otherwise
-     *   render a desk door that fails only when clicked.
+     * @throws {Error} When openDesk or openRoster is not a function: a place
+     *   would otherwise render a door that fails only when clicked.
      */
-    function createNavigator({ store, bus, container, api, needs, contextEl, openDesk, openMemory }) {
+    function createNavigator({
+        store, bus, container, api, needs, contextEl, openDesk, openMemory, openRoster,
+    }) {
         if (typeof openDesk !== 'function') throw new Error('[navigator] openDesk is required');
+        if (typeof openRoster !== 'function') throw new Error('[navigator] openRoster is required');
         let current = null;
 
         const ctx = {
@@ -45,6 +51,7 @@ const BossModNavigator = (() => {
             contextEl,
             openDesk,
             openMemory,
+            openRoster,
             navigate: (id, params) => navigate(id, params),
         };
 

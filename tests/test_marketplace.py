@@ -1158,12 +1158,12 @@ def test_the_takeover_has_a_height_not_only_a_ceiling() -> None:
     # Anchored to the start of its own line. `height:` is a SUBSTRING of
     # `max-height:`, so a bare `in` here passed with the height deleted — the
     # exact bug this test exists to catch, sitting inside the test itself.
-    assert "\n  height: 95vh;" in block
+    assert "\n  height: 95dvh;" in block
     assert "\n  width: 95vw;" in block
     # The ceiling is the base panel's, and it still caps the takeover on a
     # short window: a height with no ceiling would overflow the viewport.
     base = _read(OVERLAYS).split("\n.modal-panel {", 1)[1].split("}", 1)[0]
-    assert "\n  max-height: calc(100vh - 32px);" in base
+    assert "\n  max-height: calc(100dvh - 32px);" in base
 
 
 def test_the_marketplace_owns_its_own_stylesheet() -> None:
@@ -1221,7 +1221,9 @@ def test_both_tabs_are_one_grid() -> None:
         ROOT / "ui" / "static" / "css" / "controls.css").split(".search-field {", 1)[1].split("}", 1)[0]
     # And they fold together on a narrow window, at the Marketplace's breakpoint.
     narrow = overlays.split("@media (max-width: 700px) {", 1)[1].split("}\n}", 1)[0]
-    assert ".picker-body { grid-template-columns: minmax(0, 1fr); }" in narrow
+    # The rule goes on to pack the rows to the top (align-content), so the
+    # fold is asserted as the rule's first declaration.
+    assert ".picker-body { grid-template-columns: minmax(0, 1fr);" in narrow
     assert "@media (max-width: 700px) {" in market
 
 

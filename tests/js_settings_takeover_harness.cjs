@@ -66,10 +66,21 @@ function element(tag, id, className) {
 
 const mainLayout = element("div", "main-layout");
 const settingsLayout = element("div", "settings-layout");
+// The head and the body both carry `data-pane`: which of the list and the
+// section a phone shows (shell.css reads it below 768px).
+const settingsHead = element("div", "settings-head", "settings-head");
+const settingsBody = element("div", "settings-body", "settings-body");
 const nav = element("div", "settings-nav");
 const content = element("div", "settings-content");
-settingsLayout.append(nav, content);
+settingsBody.append(nav, content);
+settingsLayout.append(settingsHead, settingsBody);
 documentStub.body.append(settingsLayout, mainLayout);
+/** The pane both elements carry, or a mismatch report if they disagree. */
+function pane() {
+    const head = settingsHead.dataset.pane;
+    const body = settingsBody.dataset.pane;
+    return head === body ? head : `head ${head} / body ${body}`;
+}
 
 // The one nav button. renderNav binds every `[data-section]` it finds, so this
 // is the harness's click path into switchSection — the only way to reach it a
@@ -117,6 +128,9 @@ async function main() {
     // ─── 2. Opening writes 'settings' and renders the default section ───
 
     SettingsView.open();
+    // The gear lands on the section list, not on whatever section it renders.
+    const gearOpensOnTheList = pane() === "nav";
+    if (!gearOpensOnTheList) throw new Error(`open() with no section left the pane at ${pane()}`);
     const openSetsTheView = documentStub.body.dataset.view === "settings";
     if (!openSetsTheView) {
         throw new Error(`open() left data-view at ${documentStub.body.dataset.view}`);
@@ -154,6 +168,11 @@ async function main() {
     // ─── 4. Section options reach the section once, and once only ───
 
     SettingsView.open("cli-policy", { rule: "x" });
+    // A direct opener (host-roots, agent-form) lands on its section.
+    const directOpenLandsOnTheSection = pane() === "section";
+    if (!directOpenLandsOnTheSection) {
+        throw new Error(`open('cli-policy') left the pane at ${pane()}`);
+    }
     const cliCalls = callsFor("CliPolicySection");
     if (cliCalls.length !== 1) throw new Error(`CLI policy rendered ${cliCalls.length} times`);
     const optionsReachTheSection =
@@ -168,7 +187,13 @@ async function main() {
     // anything. renderNav re-binds on every call and the button is never
     // replaced, so the click fires one handler per render — and every one of
     // them must find the options already spent.
+    // The ‹ goes back to the list; tapping a section in it shows that section.
+    SettingsView.showNav();
+    const backShowsTheList = pane() === "nav";
+    if (!backShowsTheList) throw new Error(`showNav() left the pane at ${pane()}`);
     await navButton.dispatchClick();
+    const switchShowsTheSection = pane() === "section";
+    if (!switchShowsTheSection) throw new Error(`switchSection left the pane at ${pane()}`);
     const spent = callsFor("CliPolicySection").slice(1);
     const optionsAreOneShot =
         spent.length > 0 && spent.every((call) => call.options === null);
@@ -201,6 +226,10 @@ async function main() {
         closeRefreshesModelAvailability,
         optionsReachTheSection,
         optionsAreOneShot,
+        gearOpensOnTheList,
+        directOpenLandsOnTheSection,
+        backShowsTheList,
+        switchShowsTheSection,
     }));
 }
 

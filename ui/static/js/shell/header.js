@@ -107,10 +107,15 @@ const BossModHeader = (() => {
         const nav = h('nav', { class: 'place-nav', 'aria-label': 'Places' });
         BossModPlaces.PLACE_IDS.forEach((id) => {
             const place = BossModPlaces.get(id);
+            // Named twice over, the way Pause is: under 1200px shell.css hides
+            // the visible label, and the button must keep its name (SC 4.1.2)
+            // and give a pointer the word back in the shared tooltip.
             const button = h('button', {
                 class: 'place-nav-item',
                 type: 'button',
                 'data-place': id,
+                'aria-label': place.label,
+                'data-tooltip': place.label,
                 onclick: () => navigate(id),
             },
                 h('i', { 'data-lucide': place.icon, 'aria-hidden': 'true' }),

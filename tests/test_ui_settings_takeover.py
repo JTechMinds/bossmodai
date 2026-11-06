@@ -252,28 +252,39 @@ def test_the_view_swap_is_one_attribute_write() -> None:
     assert "classList" not in source, "settings-view.js writes a class onto a panel again"
 
 
-def test_the_tab_bar_height_is_one_token_in_three_places() -> None:
-    """Below 768px the place nav is a fixed bottom bar over both frames.
+def test_the_tab_bar_runway_is_reserved_once() -> None:
+    """Below 768px the place nav is a fixed bottom bar, and <body> pads for it.
 
-    Both frames that scroll under it pad for it, and the bar itself is sized by
-    it: one number, three rules. Asserting they are EQUAL would pass on three
-    copies of `56px`, which is the shape `--bar` in tokens.css exists to
-    remember — it was three copies of `48px` that drifted apart. So what is
-    asserted is that none of the three is a literal at all.
+    This replaced a test that required BOTH frames to pad by --tabbar, on the
+    premise that the frames scroll under the bar. They do not: the footer sits
+    in the flow between the frames and the bar, and it padded a literal 60px
+    for the bar as well. So the runway was reserved twice, and the frames' copy
+    was a blank 56px band above the footer on every phone screen. That test
+    enforced the bug; this one enforces the fix: one owner (<body>, the flex
+    column all three sit in), sized by the token the bar itself is sized by,
+    and no second copy anywhere in the block.
     """
     assert re.search(r"--tabbar:\s*[0-9.]+px", (CSS / "tokens.css").read_text(
         encoding="utf-8")), "tokens.css names no --tabbar"
 
     narrow = _block("@media (max-width: 767px) {")
-    for selector, prop in (("#settings-layout", "padding-bottom"),
-                           ("#main-layout", "padding-bottom"),
-                           (".place-nav", "min-height")):
+    for selector, prop in (("body", "padding-bottom"), (".place-nav", "min-height")):
         value = re.search(rf"(?<![\w-]){prop}\s*:\s*([^;]+)",
                           _declarations(narrow, selector))
         assert value, f"{selector} sets no {prop} at this width"
         assert value.group(1).strip() == "var(--tabbar)", (
             f"{selector} {prop} is {value.group(1).strip()}, not var(--tabbar)"
         )
+
+    # No second runway: no frame and not the footer pads for the bar again.
+    for selector_list, declarations in _rules(narrow):
+        selectors = [part.strip() for part in selector_list.split(",")]
+        for owner in ("#main-layout", "#settings-layout", ".app-footer"):
+            if any(_subject(selector).startswith(owner) for selector in selectors):
+                assert not re.search(r"(?<![\w-])padding-bottom\s*:", declarations), (
+                    f"{selector_list} pads for the tab bar a second time"
+                )
+    assert "60px" not in narrow, "the footer's literal runway is back"
 
 
 def test_open_and_close_write_the_view_and_nothing_else() -> None:
@@ -297,6 +308,47 @@ def test_open_and_close_write_the_view_and_nothing_else() -> None:
     assert payload["listenerSeesOpen"] is True
     assert payload["listenerSeesClose"] is True
     assert payload["disposerStopsTheListener"] is True
+
+
+def test_a_phone_shows_the_list_or_one_section() -> None:
+    """Below 768px the 224px section list left a section 194px, one word a
+    line. The list and the section take turns at full width instead, and which
+    is up is `data-pane` on the head and the body, written by settings-view.js
+    alone: the gear opens on the list, a direct opener on its section, a tap
+    in the list shows that section, and the ‹ goes back.
+    """
+    payload = _harness()
+    assert payload["gearOpensOnTheList"] is True
+    assert payload["directOpenLandsOnTheSection"] is True
+    assert payload["switchShowsTheSection"] is True
+    assert payload["backShowsTheList"] is True
+
+    # The two columns are the takeover's own classes now, not Tailwind's
+    # fixed `w-56` and `p-6`, so the stylesheet can change their shape.
+    html = HTML.read_text(encoding="utf-8")
+    body = re.search(r'<div id="settings-body" class="settings-body">(.*?)\n        </div>', html, re.S)
+    assert body, "index.html no longer declares the takeover's body"
+    assert "w-56" not in body.group(1) and "p-6" not in body.group(1), body.group(1)
+    assert '<div class="settings-nav-col">' in body.group(1)
+    assert '<div id="settings-content" class="settings-content"></div>' in body.group(1)
+    back = re.search(r"<button[^>]*id=\"settings-back\"[^>]*>", html, re.S)
+    assert back and 'aria-label="Back to all settings"' in back.group(0)
+
+    css = _shell_css()
+    assert "var(--settings-nav)" in _declarations(css, ".settings-nav-col")
+    narrow = _block("@media (max-width: 767px) {")
+    assert re.search(r"display\s*:\s*none", _declarations(
+        narrow, '.settings-body[data-pane="nav"] .settings-content'))
+    assert re.search(r"display\s*:\s*none", _declarations(
+        narrow, '.settings-body[data-pane="section"] .settings-nav-col'))
+    assert re.search(r"display\s*:\s*inline-flex", _declarations(
+        narrow, '.settings-head[data-pane="section"] .settings-back'))
+    # The CLI rules table is wider than a phone and scrolls in its own wrap.
+    assert re.search(r"overflow-x\s*:\s*auto", _declarations(css, ".bm-rules-table-wrap"))
+
+    # The ‹ is wired by the shell to the view's own door.
+    shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
+    assert "requireElement('settings-back').addEventListener('click', SettingsView.showNav);" in shell
 
 
 def test_the_takeover_carries_its_own_title_and_exit() -> None:

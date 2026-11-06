@@ -121,6 +121,67 @@ def test_three_breakpoints_exist() -> None:
         assert "Swipe up to expand" not in source
 
 
+def _hides(block: str, selector: str) -> bool:
+    """Whether any rule in `block` that names `selector` alone hides it."""
+    rules = re.finditer(rf"(?:^|\n)\s*{re.escape(selector)}\s*\{{([^}}]*)\}}", block)
+    return any(re.search(r"display:\s*none", rule.group(1)) for rule in rules)
+
+
+def test_the_phone_header_sheds_controls_and_keeps_the_logo() -> None:
+    """<768px: a shrink order by removal, not by squeezing everything.
+
+    The audit found two ☰s, "BossMod" clipped, and the floor icon drawn over
+    the brand at 360/390. The rail toggle has no rail to toggle there, the
+    word gives way, and the floor switcher drops its decorative icon to pay
+    for the logo — which stays, at full size (Jordan: "We need at least our
+    icon logo"), so `.brand` stops shrinking rather than being hidden.
+    """
+    narrow = _media_block(_shell_css(), BREAKPOINTS[1])
+    for selector in (".header-rail-toggle", ".brand-name", ".floor-switcher-icon"):
+        assert _hides(narrow, selector), f"{selector} is still shown under 768px"
+    assert re.search(r"\.brand\s*\{\s*flex:\s*none;\s*\}", narrow), "the logo can still be squeezed"
+    for kept in (".brand", ".brand-mark"):
+        assert not _hides(narrow, kept), f"{kept} is hidden: the logo must stay"
+        assert not _hides(_shell_css(), kept), f"{kept} is hidden: the logo must stay"
+    # The icon the rule hides is classed by the switcher; without the class
+    # the rule above would match nothing.
+    switcher = (JS / "shell" / "floor-switcher.js").read_text(encoding="utf-8")
+    assert "'data-lucide': 'layers', class: 'floor-switcher-icon'" in switcher
+
+
+def test_the_tablet_header_drops_the_nav_labels_but_not_the_names() -> None:
+    """768–1199px: the labelled nav (~466px) overflowed the header and clipped
+    the brand to "Bc". The places go icon-only, the tab bar below 768px gets
+    its words back, and each button keeps its name for assistive tech and its
+    tooltip for a pointer.
+    """
+    css = _shell_css()
+    medium = _media_block(css, BREAKPOINTS[0])
+    narrow = _media_block(css, BREAKPOINTS[1])
+    assert _hides(medium, ".place-nav-label")
+    # The context opener's "Office" repeated the Office place's name. Hidden
+    # here, which every narrower width matches too.
+    assert _hides(medium, ".responsive-btn-label")
+    assert re.search(r"\.place-nav-label\s*\{\s*display:\s*inline;\s*\}", narrow), (
+        "the bottom tab bar lost its labels"
+    )
+    # The <768 block comes later, so it wins at equal specificity.
+    assert css.index(BREAKPOINTS[1]) > css.index(BREAKPOINTS[0])
+
+    header = (JS / "shell" / "header.js").read_text(encoding="utf-8")
+    nav_button = header.split("class: 'place-nav-item',", 1)[1].split("onclick:", 1)[0]
+    assert "'aria-label': place.label," in nav_button
+    assert "'data-tooltip': place.label," in nav_button
+
+
+def test_the_dead_full_width_drawer_rule_is_gone() -> None:
+    """`.responsive-panel { width: 100vw; }` lost to the panel size in
+    overlays.css on specificity, so it never applied. The full-screen sheet is
+    overlays.css's <768px rule now; a copy here would be dead again.
+    """
+    assert not re.search(r"\.responsive-panel\s*\{[^}]*\bwidth", _shell_css())
+
+
 def test_no_gesture_only_controls() -> None:
     """SC 2.1.1. Everything the grid hides is reachable from a real button.
 
@@ -138,6 +199,11 @@ def test_no_gesture_only_controls() -> None:
     assert payload["restoresColumnOrder"] is True
     assert payload["widenClosesThePanel"] is True
     assert payload["hiddenWhereThereIsNoContext"] is True
+    # mount() hands back the drawer's door, so Chat's empty state opens the
+    # same one; choosing a conversation closes the drawer, and only the drawer.
+    assert payload["openRosterPresentsTheRoster"] is True
+    assert payload["conversationClosesTheRoster"] is True
+    assert payload["conversationLeavesTheContext"] is True
 
     # No module may bind a gesture at all, let alone as a sole opener. The
     # settings resize handle is the one exception and is documented as such:

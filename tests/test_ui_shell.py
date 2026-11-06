@@ -33,6 +33,9 @@ def test_navigate_lifecycle_and_leak_guard() -> None:
         # Every place gets the one desk modal as ctx.openDesk, and the
         # navigator refuses to exist without it.
         "handsEveryPlaceTheDeskOpener": True,
+        # The same for the roster drawer as ctx.openRoster (Chat's empty
+        # state): a missing opener throws at construction, not at the click.
+        "handsEveryPlaceTheRosterOpener": True,
     }
 
 

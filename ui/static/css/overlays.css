@@ -42,7 +42,7 @@
   display: flex;
   flex-direction: column;
   width: min(440px, calc(100vw - 32px));
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
   border: 1px solid var(--line-strong);
   border-radius: var(--r-lg);
   background: var(--panel);
@@ -74,7 +74,7 @@
   width: 80vw;
   min-width: min(640px, calc(100vw - 32px));
   height: 85vh;
-  max-height: calc(100vh - 32px);
+  max-height: calc(100dvh - 32px);
 }
 
 /* The takeover: a browse-and-read surface wants nearly all of the window, and
@@ -82,7 +82,7 @@
    app behind it and that Esc belongs to the thing on top. */
 .modal-panel[data-size="takeover"] {
   width: 95vw;
-  height: 95vh;
+  height: 95dvh;
 }
 
 /* The head: the conversation header's row, floated. --bar is the app's rhythm
@@ -437,7 +437,10 @@
    around them, which is this pane's. A media query cannot read a custom
    property, so the width is the number marketplace.css states. */
 @media (max-width: 700px) {
-  .picker-body { grid-template-columns: minmax(0, 1fr); }
+  /* `start`: stretched auto rows split the leftover height and open an empty
+     band between the filters and the cards. marketplace.css's detail view
+     carries the same fix for the same bug. */
+  .picker-body { grid-template-columns: minmax(0, 1fr); align-content: start; }
   .picker-rail-host { position: static; }
 }
 
@@ -1116,6 +1119,19 @@
     right: 16px;
     min-width: 0;
     max-width: none;
+  }
+
+  /* A panel or takeover is a full-screen sheet here. Their 16px margins and
+     rounded corners left a 358px card floating on a 390px phone, with nothing
+     behind it worth showing. The compact size stays a centred dialog: it asks
+     one thing and should read as a question over the page. */
+  .modal-panel[data-size="panel"],
+  .modal-panel[data-size="takeover"] {
+    width: 100vw;
+    min-width: 0;
+    height: 100dvh;
+    max-height: none;
+    border-radius: 0;
   }
 }
 

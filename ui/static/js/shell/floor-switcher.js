@@ -59,7 +59,9 @@ const BossModFloorSwitcher = (() => {
             'aria-expanded': 'false',
             onclick: () => toggle(),
         },
-            h('i', { 'data-lucide': 'layers', 'aria-hidden': 'true' }),
+            // Classed so the phone header can drop it (shell.css): the
+            // painter carries the class onto the <svg>, as .brand-mark's is.
+            h('i', { 'data-lucide': 'layers', class: 'floor-switcher-icon', 'aria-hidden': 'true' }),
             nameEl,
             h('i', { 'data-lucide': 'chevron-down', 'aria-hidden': 'true' }));
         // Positioned (shell.css): THE host the panel hangs off.

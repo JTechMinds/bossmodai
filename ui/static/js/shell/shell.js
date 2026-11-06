@@ -103,6 +103,9 @@ const BossModShell = (() => {
             contextEl: contextElement,
             openDesk: desk.open,
             openMemory: desk.openMemory,
+            // Resolved at call time, as the desk's navigate is: the drawer
+            // mounts below, after the header it inserts its buttons into.
+            openRoster: () => responsive.openRoster(),
         });
         const navigate = (placeId, params) => shell.navigate(placeId, params);
 
@@ -177,10 +180,13 @@ const BossModShell = (() => {
         // The third door out of the takeover. Same function as the gear and
         // Escape, so the three cannot disagree about what closing means.
         requireElement('settings-dismiss').addEventListener('click', closeSettings);
+        // The takeover's way back to its section list, which only a phone
+        // shows (shell.css); it changes the pane, not the view.
+        requireElement('settings-back').addEventListener('click', SettingsView.showNav);
         // Below 1200px the grid sheds a column; these are the buttons that
         // open what it shed (spec 10). Mounted after the header so they can be
         // inserted into it.
-        BossModResponsive.mount({
+        const responsive = BossModResponsive.mount({
             headerEl: requireElement('app-header'),
             layoutEl: layoutElement,
             rosterEl: rosterElement,

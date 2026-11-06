@@ -145,6 +145,15 @@
   --chatter-min-height: 240px;
   /* The wall between rooms on the office summary's floor plan. */
   --mini-office-wall-gap: 2px;
+  /* The Log row's trailing cell (pill and meta). A cap, not a width: it is
+   * the `auto` track's ceiling, so an ordinary meta ("Activity Log ·
+   * decision_applied", 31ch) stays on one line and a diagnostic one wraps
+   * inside it instead of widening every row past the pane. */
+  --log-meta-max: 40ch;
+  /* The Settings takeover's section list beside its content: the width the
+   * Tailwind `w-56` it replaced gave it (14rem at base.css's 14px root, not
+   * 16px), so the desktop takeover's columns stay where they were. */
+  --settings-nav: 196px;
 
   /* The two horizontal rules that cross the whole window.
    *
@@ -170,8 +179,8 @@
 
   /* The third horizontal, and the only one that is not always there: below
    * 768px the place nav leaves the header and becomes a fixed bottom bar, so
-   * every frame that scrolls under it has to pad for it and the bar itself is
-   * sized by it. Derived rather than chosen — a 48px item, comfortably over
+   * <body> pads for it, once, and the bar itself is sized by it. Derived
+   * rather than chosen — a 48px item, comfortably over
    * the 24px floor (SC 2.5.8), inside 4px of nav padding top and bottom.
    * It is a token for the reason --bar above is one: this was three copies of
    * the same number, and three copies are how they drift apart. */

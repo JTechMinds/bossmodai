@@ -42,9 +42,12 @@ const BossModResponsive = (() => {
      *   are restored around.
      * @param {HTMLElement} deps.contextEl  #app-context.
      * @param {object} deps.store           Application store; the Office
-     *   button is offered only where a context column exists (Chat).
-     * @returns {() => void} disposer — closes anything open, restores both
-     *   columns to the grid, and drains every listener.
+     *   button is offered only where a context column exists (Chat), and a
+     *   conversation change closes the roster drawer.
+     * @returns {{ destroy: () => void, openRoster: () => void }} `destroy`
+     *   closes anything open, restores both columns to the grid, and drains
+     *   every listener. `openRoster` presents the roster drawer — the ☰'s own
+     *   door, handed on so a place can offer the same one.
      * @throws {Error} When any dependency is missing. A drawer button with no
      *   drawer behind it is worse than no button.
      */
@@ -113,11 +116,16 @@ const BossModResponsive = (() => {
             open = { close: panel.close, column };
         }
 
+        /** The one door into the roster drawer: the ☰ and Chat's empty state. */
+        function openRoster() {
+            present(rosterEl, 'People and threads');
+        }
+
         const menuButton = h('button', {
             class: 'responsive-menu-btn',
             type: 'button',
             'aria-label': 'Open people and threads',
-            onclick: () => present(rosterEl, 'People and threads'),
+            onclick: openRoster,
         }, h('i', { 'data-lucide': 'menu', 'aria-hidden': 'true' }));
 
         const contextButton = h('button', {
@@ -146,6 +154,17 @@ const BossModResponsive = (() => {
         const startPlace = BossModPlaces.get(store.getState().place);
         contextButton.classList.toggle('is-available', startPlace.hasContext === true);
 
+        // Picking someone is what the drawer was opened for, so a new
+        // conversation closes it rather than leaving it over the one just
+        // chosen. One key, because the id and the kind change together. A desk
+        // opened from the drawer changes no conversation, so it still layers
+        // on top; an open context panel is not the drawer and stays.
+        disposers.push(store.subscribe(
+            (s) => `${s.conversationKind}:${s.conversationId}`,
+            () => {
+                if (open && open.column === rosterEl) closeOpen();
+            }));
+
         // Widening the window puts the column back in the grid. Leaving the
         // modal up over a layout that already has room for it would show the
         // same column twice.
@@ -161,12 +180,14 @@ const BossModResponsive = (() => {
             disposers.push(() => query.removeEventListener('change', onChange));
         });
 
-        return function destroy() {
+        function destroy() {
             closeOpen();
             disposers.splice(0).forEach((off) => off());
             menuButton.remove();
             contextButton.remove();
-        };
+        }
+
+        return { destroy, openRoster };
     }
 
     return { mount, NARROW, MEDIUM };

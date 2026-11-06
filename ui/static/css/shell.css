@@ -68,6 +68,35 @@ body[data-view="settings"] #main-layout { display: none; }
   overflow: hidden;
 }
 
+/* The section list and the section, side by side. These were Tailwind's
+   `w-56 … p-3` and `p-6`; as classes of the takeover's own they can change
+   shape on a phone, which the <768px block does. */
+.settings-nav-col {
+  flex: none;
+  width: var(--settings-nav);
+  border-right: 1px solid var(--line);
+  background: var(--panel);
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.settings-content {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 24px;
+  background: var(--bg);
+}
+
+/* The ‹ back to the section list exists only where the list and the section
+   take turns (<768px). Scoped to the head so it outranks .header-icon-btn's
+   `display`, which comes later in this file. */
+.settings-head .settings-back { display: none; }
+
+/* The CLI rules table is wider than a phone; it scrolls inside its own
+   section rather than being cut off at the content's edge. */
+.bm-rules-table-wrap { overflow-x: auto; }
+
 .app-place {
   min-width: 0;
   overflow: auto;
@@ -696,6 +725,15 @@ body[data-view="settings"] #main-layout { display: none; }
   #main-layout > .app-context { display: none; }
 
   .responsive-context-btn.is-available { display: inline-flex; }
+
+  /* The labelled nav alone is ~466px, so beside the brand, the floor and the
+     actions it overflowed the header at every width under 1200 and clipped
+     both names. The places go icon-only instead: each button keeps its name
+     in aria-label and its tooltip (header.js), and the context opener keeps
+     its aria-label. Every narrower width matches this query too, so the
+     opener's label stays hidden in the <768 layout without a second rule. */
+  .place-nav-label { display: none; }
+  .responsive-btn-label { display: none; }
 }
 
 /* ─── <768px — one column, a roster drawer, and a bottom tab bar ─── */
@@ -704,22 +742,55 @@ body[data-view="settings"] #main-layout { display: none; }
   #main-layout,
   #main-layout[data-context="on"] {
     grid-template-columns: minmax(0, 1fr);
-    /* Room for the fixed tab bar, so the last row of a place is reachable. */
-    padding-bottom: var(--tabbar);
   }
-
-  /* The takeover replaces the grid above rather than living inside it, so it
-     needs the same runway: the place nav is `position: fixed` at this width and
-     the takeover's last row would sit under it. Same token as the grid above
-     and as the bar itself, so there is nothing here to keep in step by hand. */
-  #settings-layout { padding-bottom: var(--tabbar); }
 
   #main-layout > .app-roster { display: none; }
 
   .responsive-menu-btn { display: inline-flex; }
 
   .app-header { gap: 8px; padding: 6px 10px; }
+
+  /* The header gets a shrink order by losing what means nothing at this
+     width, not by squeezing everything. The rail is not in the grid, so its
+     toggle has nothing to toggle. The word gives way and the logo stays, at
+     full size: `flex: none`, because .brand's `min-width: 0` is what let the
+     row squeeze the mark to nothing. */
+  .header-rail-toggle { display: none; }
+  .brand { flex: none; }
+  .brand-name { display: none; }
   .brand-company { display: none; }
+
+  /* The floor switcher becomes the bar's flexible title and ellipsizes in the
+     room it has; the full name is in the floor menu. The layers glyph is
+     decoration (the chevron still says "menu", and still turns --alert on a
+     load error), and dropping it, the trigger's padding and the actions' gap
+     is what pays for the logo. */
+  .floor-switcher { flex: 1 1 auto; margin-left: 0; }
+  .floor-switcher-name { max-width: none; }
+  .floor-switcher-trigger { padding: 6px 8px; }
+  .floor-switcher-icon { display: none; }
+  .header-actions { gap: 4px; }
+
+  /* Settings: the section list and one section take turns at full width
+     rather than squeezing the section into what a 224px list leaves. Which is
+     showing is `data-pane`, written onto the body and the head alike by
+     settings-view.js, so each rule reads its own element rather than reaching
+     across the document for it. */
+  .settings-nav-col { width: 100%; border-right: 0; }
+  .settings-content { padding: 16px; }
+  .settings-body[data-pane="nav"] .settings-content,
+  .settings-body[data-pane="section"] .settings-nav-col { display: none; }
+  .settings-head[data-pane="section"] .settings-back { display: inline-flex; }
+  /* The title takes the row's slack, so with ‹ showing it reads `‹ Title … ✕`,
+     left-aligned like the modal heads, rather than centring between them. */
+  .settings-title { flex: 1 1 auto; }
+
+  /* The tab bar's runway, reserved once. The bar is fixed over the bottom of
+     the viewport and <body> is the flex column both frames and the footer sit
+     in, so padding it ends that column exactly on the bar. A frame padding for
+     it as well left a blank band: the footer sits between the frames and the
+     bar, so no frame ever scrolls under it. */
+  body { padding-bottom: var(--tabbar); }
 
   /* The place nav becomes the bottom tab bar. Same buttons, same DOM order,
      same aria-current — a second nav implementation would be a second thing
@@ -751,16 +822,12 @@ body[data-view="settings"] #main-layout { display: none; }
     font-size: 11px;
   }
 
+  /* The bar has the room the header lacked, so its items keep their words. */
+  .place-nav-label { display: inline; }
+
   /* The footer keeps the connection status visible above the bar rather than
      being hidden behind it — "am I still connected" is the one thing a narrow
-     screen must not lose. */
-  .app-footer {
-    flex-wrap: wrap;
-    row-gap: 4px;
-    padding-bottom: 60px;
-  }
-
-  /* Full-screen rather than a 420px drawer: at this width there is nothing
-     behind it worth showing. */
-  .responsive-panel { width: 100vw; }
+     screen must not lose. The copyright is what gives way, so the footer is
+     one line rather than two. */
+  .footer-copyright { display: none; }
 }

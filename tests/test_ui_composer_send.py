@@ -76,9 +76,21 @@ def test_thread_send_surfaces_error_and_keeps_draft() -> None:
     assert "console.error" not in send
 
 
+# The order tests/js_composer_send_harness.cjs evaluates its modules in: the
+# gate, then the real composer and what it needs at construction.
+HARNESS_MODULES = [
+    JS / "core" / "gates.js",
+    JS / "core" / "dom.js",
+    JS / "conversation" / "composer-attachments.js",
+    JS / "conversation" / "composer-history.js",
+    JS / "conversation" / "mention-draft.js",
+    JS / "conversation" / "composer.js",
+]
+
+
 def test_composer_send_harness_keeps_draft_and_blocks_double_submit() -> None:
     result = subprocess.run(
-        ["node", str(HARNESS), str(JS / "core" / "gates.js")],
+        ["node", str(HARNESS)] + [str(path) for path in HARNESS_MODULES],
         check=False,
         capture_output=True,
         text=True,
@@ -93,6 +105,18 @@ def test_composer_send_harness_keeps_draft_and_blocks_double_submit() -> None:
         "queuedSecondSend": True,
         "stayedEnabled": True,
         "surfacedError": True,
+        # A soft keyboard has no Shift+Enter. On a coarse pointer Enter is left
+        # to the browser (a newline), Send sends, and the placeholder stops
+        # naming a key combo that is not there.
+        "touchEnterInsertsNewline": True,
+        "touchPlaceholderHasNoShiftEnter": True,
+        "touchSendButtonSends": True,
+        # With a mouse and keyboard nothing changed.
+        "pointerEnterSends": True,
+        "pointerPlaceholderKeepsShiftEnter": True,
+        # A new placeholder is new content for the empty field, so applyState
+        # re-measures it; the wrapped ready hint was clipped to one line.
+        "placeholderChangeRemeasures": True,
     }
 
 

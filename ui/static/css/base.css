@@ -11,6 +11,12 @@ html, body {
   line-height: 1.45;
 }
 
+/* The visible viewport, not the largest one. Mobile browsers size `vh` as if
+   their toolbar were collapsed, and this body never scrolls, so the toolbar
+   never collapses and a 100vh frame puts the footer and the composer under
+   it. `dvh` follows the toolbar. */
+body { height: 100dvh; }
+
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; padding: 0; }
 input, select, textarea { font: inherit; }
 
@@ -54,6 +60,14 @@ button, [role="button"], a { min-height: 24px; min-width: 24px; }
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+/* iOS Safari zooms the whole page when a field under 16px takes focus, and
+   leaves it zoomed. A device floor rather than a size: `!important`, as the
+   reduced-motion block above, because it must beat every component's own
+   field size (the composer, the search fields, Tailwind's text-sm). */
+@media (pointer: coarse) {
+  input, select, textarea, [contenteditable="true"] { font-size: 16px !important; }
 }
 
 .visually-hidden {

@@ -796,7 +796,10 @@
    beside the grid and the section labels stop being a column beside their
    bodies. */
 @media (max-width: 700px) {
-  .market-body { grid-template-columns: minmax(0, 1fr); }
+  /* `start`, for the reason .market-detail-read gives below: the rail row and
+     the grid row would otherwise split the leftover height between them and
+     open an empty band under the filters. */
+  .market-body { grid-template-columns: minmax(0, 1fr); align-content: start; }
   .market-rail { position: static; }
   .market-rail-list { flex-direction: row; flex-wrap: wrap; }
   .market-rail-item { width: auto; }

@@ -201,6 +201,11 @@
   text-align: center;
 }
 
+/* The empty state's way into the roster drawer (chat-place.js). Hidden where
+   the rail is on screen, because there the roster is the way in; the narrow
+   block at the end of this file shows it. */
+.conversation-empty-browse { display: none; margin-top: 12px; }
+
 /* ─── Transcript ─── */
 
 .transcript-wrap {
@@ -1186,3 +1191,16 @@ span.mention-pill { cursor: default; }
 
 .composer-attach:hover:not(:disabled) { color: var(--ink); }
 .composer-attach:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ─── <768px (shell.css's narrow layout) ─── */
+
+@media (max-width: 767px) {
+  /* The rail is behind ☰ here, so the empty state carries the door to it.
+     Here rather than in shell.css: that sheet loads before this one, and at
+     equal specificity the `display: none` above would win. */
+  .conversation-empty-browse { display: inline-flex; }
+
+  /* 72% is a desktop reading measure; on a phone it left about 225px of text.
+     92% is the measure system turns already use. */
+  .msg-turn { max-width: 92%; }
+}

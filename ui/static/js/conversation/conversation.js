@@ -2,7 +2,7 @@
 const BossModConversation = (() => {
     const { h } = BossModDom;
 
-    const NO_CONVERSATION_REASON = 'Pick someone from the roster to start talking.';
+    const NO_CONVERSATION_REASON = 'Pick a person or thread to start talking.';
 
     /** @param {object} deps store, bus, api, navigate, needs, drafts (Map), cache (a transcript
      *   cache); optional openDesk `(agentId, path?) => void` (the desk modal), openMemory

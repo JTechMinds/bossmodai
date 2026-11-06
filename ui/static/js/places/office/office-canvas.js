@@ -16,6 +16,13 @@ const BossModOfficeCanvas = (() => {
 
     const TILE_SIZE = 28;
     const MAX_SCALE = 1.5;
+    /**
+     * The smallest zoom at which canvas-sprites.js's 11px room and name labels
+     * stay readable. A floor wider than its pane at this scale scrolls sideways
+     * (places.css) rather than shrinking past it. Render geometry, like a CSS
+     * breakpoint, not an operator setting.
+     */
+    const MIN_SCALE = 0.75;
     /** Below this the container is hidden or collapsed; sizing would yield 0. */
     const MIN_CONTAINER_PX = 8;
     const HIT_RADIUS_TILES = 0.6;
@@ -83,6 +90,7 @@ const BossModOfficeCanvas = (() => {
         let agents = [];
         let hoveredId = null;
         let scale = 1;
+        let dpr = 1;
         let destroyed = false;
         // The floor — tiles, room labels, desks — never moves, so it is painted
         // once into an offscreen canvas and copied per frame. Before this, every
@@ -96,16 +104,45 @@ const BossModOfficeCanvas = (() => {
             getAgents: () => agents,
         });
 
+        /**
+         * The container's content box. The container scrolls (places.css),
+         * and clientWidth/Height include its padding, so a canvas sized to
+         * them would overflow it, and scroll, on a window the floor fits.
+         *
+         * @returns {{w: number, h: number}}
+         * @throws {Error} When the padding does not resolve to pixels.
+         */
+        function contentBox() {
+            const style = window.getComputedStyle(container);
+            const pad = ['paddingLeft', 'paddingRight', 'paddingTop', 'paddingBottom']
+                .map((side) => parseFloat(style[side]));
+            if (pad.some((px) => !Number.isFinite(px))) {
+                throw new Error('[office-canvas] the container\'s padding is unreadable');
+            }
+            return { w: container.clientWidth - pad[0] - pad[1], h: container.clientHeight - pad[2] - pad[3] };
+        }
+
+        /**
+         * Size the canvas to its container: fit the floor, never above
+         * MAX_SCALE nor below MIN_SCALE. The backing store is drawn at the
+         * device pixel ratio and the CSS box stays in CSS pixels, so the labels
+         * are sharp on a dense screen and hit testing is unchanged.
+         *
+         * @returns {void}
+         */
         function sizeCanvas() {
             if (!mapData) return;
-            const boxW = container.clientWidth;
-            const boxH = container.clientHeight;
-            if (boxW < MIN_CONTAINER_PX || boxH < MIN_CONTAINER_PX) return;
+            const box = contentBox();
+            if (box.w < MIN_CONTAINER_PX || box.h < MIN_CONTAINER_PX) return;
             const pixelW = mapData.width * TILE_SIZE;
             const pixelH = mapData.height * TILE_SIZE;
-            scale = Math.min(boxW / pixelW, boxH / pixelH, MAX_SCALE);
-            canvas.width = Math.floor(pixelW * scale);
-            canvas.height = Math.floor(pixelH * scale);
+            scale = Math.max(MIN_SCALE, Math.min(box.w / pixelW, box.h / pixelH, MAX_SCALE));
+            // Absent outside a browser; the one place a `||` default is right.
+            dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.floor(pixelW * scale * dpr);
+            canvas.height = Math.floor(pixelH * scale * dpr);
+            canvas.style.width = `${Math.floor(pixelW * scale)}px`;
+            canvas.style.height = `${Math.floor(pixelH * scale)}px`;
             ctx2d.imageSmoothingEnabled = false;
         }
 
@@ -119,14 +156,14 @@ const BossModOfficeCanvas = (() => {
          *   so copying it is a 1:1 blit with no resampling.
          */
         function staticFloor(opts) {
-            const key = `${canvas.width}x${canvas.height}@${scale}`;
+            const key = `${canvas.width}x${canvas.height}@${scale * dpr}`;
             if (staticLayer && key === staticKey) return staticLayer;
             const layer = document.createElement('canvas');
             layer.width = canvas.width;
             layer.height = canvas.height;
             const layerCtx = layer.getContext('2d');
             layerCtx.imageSmoothingEnabled = false;
-            layerCtx.scale(scale, scale);
+            layerCtx.scale(scale * dpr, scale * dpr);
             SPRITES.drawTiles(layerCtx, mapData, opts);
             SPRITES.drawRoomLabels(layerCtx, mapData.rooms, opts);
             SPRITES.drawDesks(layerCtx, mapData.desks, opts);
@@ -141,7 +178,7 @@ const BossModOfficeCanvas = (() => {
             ctx2d.clearRect(0, 0, canvas.width, canvas.height);
             ctx2d.drawImage(staticFloor(opts), 0, 0);
             ctx2d.save();
-            ctx2d.scale(scale, scale);
+            ctx2d.scale(scale * dpr, scale * dpr);
             SPRITES.drawAgents(ctx2d, agents, {
                 ...opts, hoveredId, statusColor: BossModAgentStatus.getStatusColor,
             });

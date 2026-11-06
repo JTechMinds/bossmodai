@@ -1808,12 +1808,65 @@ def test_log_rows_are_a_monospace_grid() -> None:
     assert "display: grid" in head
     assert "grid-template-columns: 96px 120px minmax(0, 1fr) auto" in head
 
+    # A narrow PANE restacks the head — time and agent, then the message at
+    # full width, then the meta — or the `auto` tail starves the message track
+    # to 0px and the text breaks after every character. A container query on
+    # the scroller, because the rail and the context column change the pane
+    # at one window width. After the cell rules it overrides.
+    scroller = css.split(".log-scroll {", 1)[1].split("}", 1)[0]
+    assert "container-type: inline-size" in scroller
+    narrow = css.split("@container (max-width: 640px) {", 1)[1].split("\n}", 1)[0]
+    assert ".log-row-head { grid-template-columns: auto minmax(0, 1fr);" in narrow
+    assert "grid-column: 1 / -1" in narrow
+    assert css.index("@container (max-width: 640px)") > css.index(".log-row-meta {")
+    # One long diagnostic meta must not widen every row past the pane: the
+    # tail is capped by a token and its meta wraps inside the cap.
+    assert re.search(r"--log-meta-max:\s*\d+ch;", _read(CSS / "tokens.css"))
+    tail = css.split(".log-row-tail {", 1)[1].split("}", 1)[0]
+    assert "max-width: var(--log-meta-max)" in tail
+    meta = css.split(".log-row-meta {", 1)[1].split("}", 1)[0]
+    assert "white-space: nowrap" not in meta and "overflow-wrap: anywhere" in meta
+
     # The whole error row is tinted, not one edge of it.
     assert '.log-row[data-type="error"] { color: var(--alert); }' in css
     # …which only works if the row's own children stop overriding it.
     assert ".log-row-toggle,\n.log-row-static {\n  display: block;\n  width: 100%;" in css
     toggle = css.split(".log-row-toggle,\n.log-row-static {", 1)[1].split("}", 1)[0]
     assert "color: inherit" in toggle
+
+
+def test_the_tasks_board_folds_with_its_pane() -> None:
+    """Four 210px floors made the board scroll sideways on every phone and
+    tablet. It folds to two columns, then one, where the floors stop fitting
+    the PANE (a container query on .tasks-body), in the same column order.
+    """
+    css = _read(CSS / "places.css")
+    body = css.split(".tasks-body {", 1)[1].split("}", 1)[0]
+    assert "container-type: inline-size" in body
+    # The desktop board is unchanged: the base track list is first.
+    columns = css.split(".tasks-columns {", 1)[1].split("}", 1)[0]
+    assert "grid-template-columns: repeat(4, minmax(210px, 1fr))" in columns
+    # Each threshold is the floors it can no longer hold, less a pixel, in the
+    # content box a container query measures: 4 x 210 + 3 x 16 gaps = 888 and
+    # 2 x 210 + 16 = 436.
+    two = css.split("@container (max-width: 887px) {", 1)[1].split("\n}", 1)[0]
+    assert ".tasks-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }" in two
+    one = css.split("@container (max-width: 435px) {", 1)[1].split("\n}", 1)[0]
+    assert ".tasks-columns { grid-template-columns: minmax(0, 1fr); }" in one
+
+
+def test_the_folded_card_grids_pack_to_the_top() -> None:
+    """At <=700px the Marketplace and Add agent grids drop the rail onto its
+    own row. Stretched auto rows split the leftover height between the rail
+    and the cards and opened a blank band between them; `align-content:
+    start` packs them, the fix .market-detail-read already carried.
+    """
+    market = _read(CSS / "marketplace.css").split("@media (max-width: 700px) {", 1)[1]
+    market_body = market.split(".market-body {", 1)[1].split("}", 1)[0]
+    assert "align-content: start" in market_body
+    picker = _read(CSS / "overlays.css").split("@media (max-width: 700px) {", 1)[1]
+    picker_body = picker.split(".picker-body {", 1)[1].split("}", 1)[0]
+    assert "align-content: start" in picker_body
 
 
 def test_the_log_row_keeps_everything_it_carried() -> None:

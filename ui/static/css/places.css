@@ -154,16 +154,21 @@
 .office-pane { height: 100%; min-height: 0; overflow: auto; }
 .office-pane[hidden] { display: none !important; }
 
+/* Scrolls when the floor is wider or taller than the pane at office-canvas.js's
+   MIN_SCALE, so a phone gets a readable map to pan rather than a shrunken one.
+   Centred by auto margins, not by justify/align-content: those centre an
+   overflowing child too, and push its far edge out of scroll reach. */
 .office-canvas-wrap {
   position: relative;
   display: flex;
-  align-items: center;
-  justify-content: center;
   height: 100%;
   min-height: 0;
   padding: 12px;
+  overflow: auto;
   background: var(--bg);
 }
+
+.office-canvas { margin: auto; }
 
 .office-stage.is-paused .office-canvas { opacity: 0.35; }
 
@@ -345,9 +350,25 @@
    the destructive one. */
 .tasks-danger { border-color: var(--alert); color: var(--alert-ink); background: var(--alert-bg); }
 
-.tasks-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; }
+/* The query container for the board below: the columns answer to this pane,
+   which the rail and the context column narrow, not to the window. */
+.tasks-body { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 14px 16px; container-type: inline-size; }
 
 .tasks-columns { display: grid; grid-template-columns: repeat(4, minmax(210px, 1fr)); gap: 16px; align-items: start; }
+
+/* Four 210px floors stopped fitting and the board scrolled sideways, so it
+   folds to two columns and then to one, in the same Backlog, Working, Needs
+   you, Done order. Each threshold is the floors it can no longer hold, less a
+   pixel: 4 × 210 + 3 × 16 = 888, and 2 × 210 + 16 = 436. Without .tasks-body's
+   padding, because a container query measures the content box. Literal,
+   because a container query cannot read var(). */
+@container (max-width: 887px) {
+  .tasks-columns { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@container (max-width: 435px) {
+  .tasks-columns { grid-template-columns: minmax(0, 1fr); }
+}
 .tasks-column { min-width: 0; }                                       /* unboxed: no border, ground or padding */
 .tasks-column.is-skeleton { min-height: 180px; border-radius: var(--r); background: var(--line); }
 
@@ -409,6 +430,8 @@
    Absolutely placed, so a resting card spends no gutter on it. */
 .task-card-select { position: absolute; top: 6px; right: 6px; opacity: 0; }
 .task-card:hover .task-card-select, .task-card:focus-within .task-card-select, .task-card.is-selected .task-card-select { opacity: 1; }
+/* A touch screen has no hover to reveal it with, so there it is always shown. */
+@media (hover: none) { .task-card-select { opacity: 1; } }
 
 .task-card-open { display: flex; flex-direction: column; gap: 4px; min-width: 0; text-align: left; }
 .task-card-title { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
@@ -1063,7 +1086,9 @@ svg.file-entry-kind { flex: none; width: 14px; height: 14px; }
   min-height: 0;
 }
 
-.log-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* The query container for the row restack below: a row's room is this pane's
+   width, which the rail and the context column change, not the window's. */
+.log-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; container-type: inline-size; }
 .log-body { display: flex; flex-direction: column; gap: 6px; padding-bottom: 10px; }
 
 /* The record, in the typeface a record is read in. The monospace and the type
@@ -1133,8 +1158,27 @@ svg.file-entry-kind { flex: none; width: 14px; height: 14px; }
 .log-row-time { color: var(--hint); white-space: nowrap; }
 .log-row-agent { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
 .log-row-text { min-width: 0; overflow-wrap: anywhere; }
-.log-row-tail { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 8px; }
-.log-row-meta { color: var(--muted); font-size: 11px; white-space: nowrap; }
+/* Capped, so one long diagnostic meta cannot size the `auto` track for every
+   row: a grid item's max-width bounds what it asks of the track. An ordinary
+   meta still fits on one line; a longer one wraps inside the cap. */
+.log-row-tail { display: inline-flex; align-items: baseline; justify-content: flex-end; gap: 8px;
+  max-width: var(--log-meta-max); }
+.log-row-meta { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; text-align: right; }
+
+/* A narrow pane restacks the row: time and agent on one line, the message at
+   full width under them, then the meta. Without it the `auto` tail took its
+   meta's width first and the message track resolved to 0, so the text broke
+   after every character. 640 = 96 + 120 + ~240 of tail + 3 × 12 gaps + 32 of
+   row padding, plus ~150 left for the message; written out because a
+   container query cannot read var(). After the cell rules, which it
+   overrides at equal specificity. */
+@container (max-width: 640px) {
+  .log-row-head { grid-template-columns: auto minmax(0, 1fr); row-gap: 2px; }
+  .log-row-text,
+  .log-row-tail { grid-column: 1 / -1; }
+  .log-row-tail { justify-content: flex-start; max-width: none; }
+  .log-row-meta { text-align: left; }
+}
 
 /* Inside a tinted row the greys would fight the tint, so they step aside and
    let the row's colour through. */

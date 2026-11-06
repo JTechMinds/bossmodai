@@ -17,6 +17,10 @@ const BossModComposer = (() => {
     const { h } = BossModDom;
 
     const READY_PLACEHOLDER = 'Type a message... (Shift+Enter for new line)';
+    // A soft keyboard has no Shift+Enter, so on a touch screen Enter is the
+    // newline, Send sends, and the placeholder stops naming the key combo.
+    const TOUCH_QUERY = '(pointer: coarse)';
+    const TOUCH_PLACEHOLDER = 'Type a message...';
     const NO_MODEL_PLACEHOLDER = 'Connect a model in Settings to send messages';
     const NO_MODEL_TITLE = 'Connect a model in Settings to send';
     const SEND_TITLE = 'Send message';
@@ -150,8 +154,13 @@ const BossModComposer = (() => {
             input.style.height = `${Math.min(input.scrollHeight, MAX_HEIGHT_PX)}px`;
         }
 
+        // Read when used, never cached: a convertible follows its current pointer.
+        const isTouch = () => window.matchMedia(TOUCH_QUERY).matches;
+        const readyPlaceholder = () => (isTouch() ? TOUCH_PLACEHOLDER : READY_PLACEHOLDER);
+
         function onKeyDown(event) {
             if (mentions && mentions.handleKeyDown(event)) return;
+            if (isTouch()) return;  // the browser inserts the newline
             if (event.key !== 'Enter' || event.shiftKey) return;
             event.preventDefault();
             void submit();
@@ -179,7 +188,7 @@ const BossModComposer = (() => {
             'aria-multiline': 'true',
             contenteditable: 'true',
             tabindex: '0',
-            'data-placeholder': READY_PLACEHOLDER,
+            'data-placeholder': readyPlaceholder(),
             oninput: onComposerInput,
             onkeydown: onKeyDown,
         });
@@ -263,7 +272,8 @@ const BossModComposer = (() => {
             sendBtn.setAttribute('title', hasUsableModel ? SEND_TITLE : NO_MODEL_TITLE);
             if (!hasUsableModel) input.placeholder = NO_MODEL_PLACEHOLDER;
             else if (!allowed) input.placeholder = disabledReason();
-            else input.placeholder = READY_PLACEHOLDER;
+            else input.placeholder = readyPlaceholder();
+            grow();  // a new placeholder can change the empty field's height
         }
 
         /**

@@ -83,7 +83,7 @@
          tuned against that cascade. -->
     <link rel="stylesheet" href="{{ static_url('css/tailwind.generated.css') }}">
 </head>
-<body class="bg-bm-bg text-bm-text h-screen flex flex-col overflow-hidden" data-view="app">
+<body class="bg-bm-bg text-bm-text flex flex-col overflow-hidden" data-view="app">
 
     <!-- ═══════════════ HEADER ═══════════════ -->
     <!-- Brand, place nav, bell, Pause, and gear are rendered by shell/header.js. -->
@@ -119,20 +119,27 @@
              marketplace.js states for its own takeover, and the one Settings
              obeyed neither half of. The gear and Escape still close it; this is
              the door you can see. -->
-        <div class="settings-head">
+        <!-- A phone shows the section list or one section, never both
+             (shell.css reads data-pane, which settings-view.js writes onto
+             the head and the body); the ‹ is the way back to the list. -->
+        <div id="settings-head" class="settings-head">
+            <button type="button" id="settings-back" class="header-icon-btn settings-back"
+                    aria-label="Back to all settings">
+                <i data-lucide="chevron-left" aria-hidden="true"></i>
+            </button>
             <h2 class="settings-title">Settings</h2>
             <button type="button" id="settings-dismiss" class="header-icon-btn"
                     aria-label="Close settings">
                 <i data-lucide="x" aria-hidden="true"></i>
             </button>
         </div>
-        <div class="settings-body">
+        <div id="settings-body" class="settings-body">
             <!-- Settings nav -->
-            <div class="w-56 shrink-0 bg-bm-surface border-r border-bm-border p-3 overflow-y-auto">
+            <div class="settings-nav-col">
                 <div id="settings-nav" class="space-y-1"></div>
             </div>
             <!-- Settings content -->
-            <div id="settings-content" class="flex-1 overflow-y-auto p-6 bg-bm-bg"></div>
+            <div id="settings-content" class="settings-content"></div>
         </div>
     </div>
 
