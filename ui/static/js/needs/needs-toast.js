@@ -89,7 +89,10 @@ const BossModNeedsToast = (() => {
                         // place and discards the transcript cache and the
                         // composer draft; the store alone switches the
                         // conversation (shell/roster.js documents the rule).
-                        if (store.getState().place !== 'chat') navigate('chat');
+                        // A Chat covered by the Settings takeover is not
+                        // there: navigating uncovers it without a remount.
+                        const state = store.getState();
+                        if (state.place !== 'chat' || state.settingsOpen === true) navigate('chat');
                         dismiss(toast, timer);
                     },
                 }, 'Open'));

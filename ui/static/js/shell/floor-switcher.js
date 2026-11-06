@@ -17,6 +17,10 @@
  * LIVE. A floor created, renamed or deleted in one window reaches every other
  * one: the server broadcasts the whole list as `floors_updated` after each
  * change, and a `resync` (a reconnect that may have missed some) re-reads it.
+ *
+ * Choosing another floor, or creating one, leaves the Settings takeover,
+ * because the operator asked to see that floor. The fallback to Lobby when
+ * their floor was deleted is not a choice, and leaves Settings up.
  */
 const BossModFloorSwitcher = (() => {
     const { h, clear } = BossModDom;
@@ -40,12 +44,20 @@ const BossModFloorSwitcher = (() => {
      * @param {Function} deps.apiFetch  The shell's authenticated fetch.
      * @param {object} deps.bus  Topic bus. `floors_updated` replaces the list;
      *   `resync` re-reads it.
+     * @param {{close: () => void}} deps.takeover  The Settings takeover.
+     *   Moving the operator to another floor leaves it, because they asked to
+     *   see that floor; only `close()` is used.
      * @returns {{element: HTMLElement, destroy: () => void}}
      * @throws {Error} When `bus` is missing — without it a floor renamed in
-     *   another window would stay stale here until a reload.
+     *   another window would stay stale here until a reload. When `takeover`
+     *   is missing or has no `close()` — a floor move would happen under a
+     *   Settings view that stays up.
      */
-    function mount({ store, apiFetch, bus }) {
+    function mount({ store, apiFetch, bus, takeover }) {
         if (!bus) throw new Error('[floor-switcher] deps.bus is required');
+        if (!takeover || typeof takeover.close !== 'function') {
+            throw new Error('[floor-switcher] deps.takeover is required');
+        }
         const floorApi = BossModFloorApi.createFloorApi({ apiFetch });
 
         const nameEl = h('span', { class: 'floor-switcher-name' });
@@ -170,7 +182,11 @@ const BossModFloorSwitcher = (() => {
                 'aria-label': `${floor.name}, ${agentsLabel(count)}`,
                 onclick: () => {
                     close();
-                    if (!current) store.setState({ currentFloorId: floor.id });
+                    // The floor you are on changes nothing, Settings included.
+                    if (!current) {
+                        store.setState({ currentFloorId: floor.id });
+                        takeover.close();
+                    }
                 },
             },
                 // The slot is always there so every name starts on one edge;
@@ -270,6 +286,7 @@ const BossModFloorSwitcher = (() => {
             }
             store.setState({ currentFloorId: created.id });
             close();
+            takeover.close();
         }
 
         function toggle() {

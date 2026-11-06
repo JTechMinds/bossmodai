@@ -46,14 +46,21 @@ def test_floor_switcher_behaviour() -> None:
     assert payload == {
         "ok": True,
         "mountRequiresABus": True,
+        "mountRequiresATakeover": True,
         "triggerNamesTheCurrentFloor": True,
         "floorsLoadIntoTheStore": True,
         "panelHangsOffTheSwitcherHost": True,
         "everyFloorIsARowWithItsCount": True,
         "everyRowHasANamedSettingsButton": True,
         "pickingARowSetsTheCurrentFloor": True,
+        # Moving to another floor, or creating one, leaves the Settings
+        # takeover; re-picking the floor you are on, or a fallback to Lobby
+        # because the floor was deleted elsewhere, does not.
+        "pickingAFloorLeavesTheTakeover": True,
+        "pickingTheCurrentFloorKeepsTheTakeover": True,
         "escInTheFieldReturnsToTheDoor": True,
         "newFloorCreatesAndMovesThere": True,
+        "newFloorLeavesTheTakeover": True,
         "floorSettingsPrefillTheNameAndOfferDelete": True,
         "deleteLayerWaitsForTheAgentsChoice": True,
         "deleteLayerSaysTheFilesAreArchived": True,
@@ -61,6 +68,7 @@ def test_floor_switcher_behaviour() -> None:
         "choosingEnablesDelete": True,
         "aRenameElsewhereRepaintsTheTrigger": True,
         "aDeleteElsewhereMovesTheOperatorToLobby": True,
+        "aDeleteElsewhereLeavesTheTakeoverUp": True,
         "aMalformedBroadcastIsNotAdopted": True,
         "resyncReReadsTheFloors": True,
         "destroyDrainsTheBus": True,

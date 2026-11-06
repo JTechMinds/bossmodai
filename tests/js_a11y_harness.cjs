@@ -220,6 +220,7 @@ function apiFetch(url) {
     const disposers = [
         BossModHeader.mount(headerEl, {
             store: s, apiFetch, bus: b, navigate: noop, openSettings: noop,
+            takeover: { isOpen: () => false, close: () => {} },
             // Shaped stub: this harness names controls, it never opens the queue.
             needs: {
                 refresh: () => Promise.resolve(),

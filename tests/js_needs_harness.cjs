@@ -25,6 +25,10 @@ documentStub.removeEventListener = (type, fn) => {
 const pressKey = (key, shiftKey) => {
     [...(docListeners.keydown || [])].forEach((fn) => fn({ key, shiftKey: shiftKey === true, preventDefault() {} }));
 };
+// The popover's press-outside rule lives on a document mousedown listener too.
+const pressDown = (target) => {
+    [...(docListeners.mousedown || [])].forEach((fn) => fn({ target }));
+};
 
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 const [
@@ -563,6 +567,50 @@ async function main() {
         throw new Error(`Show me from another place must navigate, got ${navigatedTo.join(",")}`);
     }
 
+    // A Chat covered by the Settings takeover is not "already there": Show me
+    // navigates, which is what leaves Settings (the navigator only uncovers).
+    navigatedTo.length = 0;
+    const popover5 = BossModNeedsPopover.openPopover({
+        store, needs, anchor: bell,
+        navigate: (placeId) => navigatedTo.push(placeId),
+        onClose: () => { closes += 1; },
+    });
+    await drain();
+    store.setState({ place: "chat", settingsOpen: true });
+    await popover5.element.querySelector(".popover-show-me").dispatchClick();
+    const showMeLeavesSettings = navigatedTo.join(",") === "chat";
+    store.setState({ settingsOpen: false });
+
+    // ─── 9a'. A press outside closes it; on the panel or the bell it does not ───
+    // Mirrors core/menu.js. The bell is excluded because it toggles: closing
+    // on its press would make its own click re-open the panel.
+
+    const listenersBefore = (docListeners.mousedown || []).length;
+    let pressCloses = 0;
+    const pressPopover = BossModNeedsPopover.openPopover({
+        store, needs, anchor: bell, navigate: () => {},
+        onClose: () => { pressCloses += 1; },
+    });
+    await drain();
+    const ownListeners = (docListeners.mousedown || []).slice(listenersBefore);
+    pressDown(pressPopover.element.querySelector(".popover-title"));
+    pressDown(pressPopover.element.querySelector("#needs-bar-toggle"));
+    const bellChild = documentStub.createElement("span");
+    bell.append(bellChild);
+    pressDown(bell);
+    pressDown(bellChild);
+    bellChild.remove();
+    const pressOnPanelOrBellKeepsIt = ownListeners.length === 1 && pressCloses === 0
+        && pressPopover.element.parent === documentStub.body;
+    const outside = documentStub.createElement("div");
+    documentStub.body.append(outside);
+    pressDown(outside);
+    // A second press finds nothing to close: onClose fires once.
+    pressDown(outside);
+    outside.remove();
+    const pressOutsideCloses = pressCloses === 1 && !pressPopover.element.parent
+        && (docListeners.mousedown || []).every((fn) => !ownListeners.includes(fn));
+
     // ─── 9b. Clear dismisses an error locally ───
     // An error need is client-held: the server list never contained it, so
     // its Clear is a local dismissal and makes no request at all.
@@ -736,6 +784,25 @@ async function main() {
     }
     const nudgeCancelDoesNothing = true;
 
+    // While the note dialog is up the popover is hidden in its place, so a
+    // press in the dialog is outside it. Closing on it would orphan the ask.
+    const closesBeforeAsking = closes;
+    const askForNote = global.BossModNeedNoteDialog.ask;
+    let pressedWhileAsking = false;
+    global.BossModNeedNoteDialog.ask = () => {
+        const dialogNode = documentStub.createElement("div");
+        documentStub.body.append(dialogNode);
+        pressDown(dialogNode);
+        dialogNode.remove();
+        pressedWhileAsking = true;
+        return Promise.resolve(null);
+    };
+    await nudgeButton().dispatchClick();
+    await drain();
+    global.BossModNeedNoteDialog.ask = askForNote;
+    const pressWhileAskingKeepsIt = pressedWhileAsking && closes === closesBeforeAsking
+        && popover4.element.parent === documentStub.body && popover4.element.hidden === false;
+
     // Sent: the note travels as the JSON body of the server's resume route.
     askAnswer = (askedAction) => Object.assign({}, askedAction, { body: { note: "x" } });
     queue = [];
@@ -758,6 +825,29 @@ async function main() {
     await drain();
     await needs.resolve(errored, errored.actions[0]);
     await drain();
+
+    // ─── 9e. A toast's Open over Settings navigates to Chat ───
+    // A Chat covered by the takeover is not on screen, so the store write
+    // alone would switch a conversation nobody can see.
+
+    const settingsStore = BossModStore.createStore({
+        place: "chat", settingsOpen: true, conversationId: null, conversationKind: null,
+    });
+    let deliverArrivals = null;
+    const toastNavigations = [];
+    const settingsToasts = BossModNeedsToast.createToastHost({
+        store: settingsStore,
+        needs: { subscribeArrivals(fn) { deliverArrivals = fn; return () => { deliverArrivals = null; }; } },
+        navigate: (placeId) => toastNavigations.push(placeId),
+    });
+    deliverArrivals([{ id: "o1", title: "Jim is blocked", sub: "Ship it", conversationId: "a9", agentId: "a9" }]);
+    const openAction = documentStub.body.querySelectorAll(".toast-action")
+        .find((node) => node.textContent === "Open");
+    if (!openAction) throw new Error("a toast for a conversation must offer Open");
+    await openAction.dispatchClick();
+    const toastOpenLeavesSettings = toastNavigations.join(",") === "chat"
+        && settingsStore.getState().conversationId === "a9";
+    settingsToasts.destroy();
 
     // ─── 10. Toast and bar are mutually exclusive, per need ───
     // Spec 5.5. Enforced here rather than left to judgement: if you are
@@ -1391,6 +1481,11 @@ async function main() {
         barWithoutNeedActionsUnchanged,
         needActionsSitBeforeShowMe,
         acknowledgeClearsErrorNeed,
+        pressOutsideCloses,
+        pressOnPanelOrBellKeepsIt,
+        pressWhileAskingKeepsIt,
+        showMeLeavesSettings,
+        toastOpenLeavesSettings,
     }));
 }
 

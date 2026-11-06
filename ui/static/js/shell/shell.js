@@ -103,6 +103,11 @@ const BossModShell = (() => {
             navigate: (placeId, params) => shell.navigate(placeId, params),
             openDesk: desk.open,
         });
+        // The one exit every door that is not the gear uses: navigation and
+        // floor moves, alongside ✕ and Escape. It goes through
+        // SettingsView.close(), which refreshes model availability, so
+        // connecting a model and then choosing Chat updates the banner and Send.
+        const settingsTakeover = { isOpen: () => SettingsView.isOpen(), close: closeSettings };
         const shell = BossModNavigator.createNavigator({
             store,
             bus,
@@ -115,6 +120,7 @@ const BossModShell = (() => {
             // Resolved at call time, as the desk's navigate is: the drawer
             // mounts below, after the header it inserts its buttons into.
             openRoster: () => responsive.openRoster(),
+            takeover: settingsTakeover,
         });
         const navigate = (placeId, params) => shell.navigate(placeId, params);
 
@@ -126,6 +132,13 @@ const BossModShell = (() => {
 
         function closeSettings() {
             if (SettingsView.isOpen()) SettingsView.close();
+        }
+
+        // The banner's door, open-only: it lands on AI Connections, the section
+        // it names, even when Settings is already open on another, and a phone
+        // lands on that section because open() is given one.
+        function openModelSettings() {
+            SettingsView.open('connections');
         }
 
         // The gear announces whether the takeover is open, and it cannot learn
@@ -146,6 +159,7 @@ const BossModShell = (() => {
             needs,
             attention,
             openSettings: toggleSettings,
+            takeover: settingsTakeover,
         });
         BossModRoster.mount(rosterElement, {
             store,
@@ -157,7 +171,8 @@ const BossModShell = (() => {
             // being the only door when templates got a library. Chat first,
             // because a successful create opens the new agent's conversation.
             onHire: () => {
-                if (store.getState().place !== 'chat') navigate('chat');
+                const state = store.getState();
+                if (state.place !== 'chat' || state.settingsOpen === true) navigate('chat');
                 addAgent.toggle();
             },
         });
@@ -185,7 +200,7 @@ const BossModShell = (() => {
             navigate,
             onEscape: closeSettings,
         });
-        requireElement('no-model-banner-settings').addEventListener('click', toggleSettings);
+        requireElement('no-model-banner-settings').addEventListener('click', openModelSettings);
         // The third door out of the takeover. Same function as the gear and
         // Escape, so the three cannot disagree about what closing means.
         requireElement('settings-dismiss').addEventListener('click', closeSettings);

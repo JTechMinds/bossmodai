@@ -18,6 +18,8 @@ MODULES = [
     ("shell", "places.js"), ("shell", "navigator.js"),
     # The agent `⋯` the navigator hands every place, built from the real module.
     ("context", "agent-menu.js"),
+    # The one door into a conversation, driven for its Settings-aware guard.
+    ("shell", "agent-routes.js"),
 ]
 
 
@@ -41,6 +43,19 @@ def test_navigate_lifecycle_and_leak_guard() -> None:
         # And the page's one agent menu as ctx.agentMenu (a DM header's rows,
         # a memory line's Memory), refused at construction when missing.
         "handsEveryPlaceTheAgentMenu": True,
+        # The Settings takeover is injected (and refused when missing).
+        # Choosing a place while it is up leaves it; the place already mounted
+        # under it, asked for with no params, is uncovered rather than
+        # remounted, so Chat keeps its draft. Params still remount, an
+        # uncovered re-choice still resets, and an unknown id throws first.
+        "navigationLeavesTheTakeover": True,
+        "revealsTheCoveredPlaceWithoutRemount": True,
+        "paramsStillRemountUnderTheTakeover": True,
+        "uncoveredRenavigationUnchanged": True,
+        "unknownPlaceLeavesTheTakeoverUp": True,
+        # A Chat covered by Settings is not "already there", so opening a
+        # conversation navigates (which uncovers it).
+        "openConversationLeavesTheTakeover": True,
     }
 
 

@@ -14,7 +14,9 @@
  * Navigation is only how the operator REACHES Chat; the store is what switches
  * the conversation. Navigating while already there would remount the place
  * and take the transcript cache, the composer draft, and the caret with it on
- * every click.
+ * every click. A Chat covered by the Settings takeover is not on screen.
+ * Navigating uncovers it, and the navigator does not remount a place it only
+ * uncovers, so the draft rule still holds.
  */
 const BossModAgentRoutes = (() => {
     /**
@@ -46,7 +48,8 @@ const BossModAgentRoutes = (() => {
             throw new Error(`[agent-routes] unknown conversation kind "${kind}"`);
         }
         store.setState({ conversationId: id, conversationKind: kind });
-        if (store.getState().place !== 'chat') navigate('chat');
+        const state = store.getState();
+        if (state.place !== 'chat' || state.settingsOpen === true) navigate('chat');
     }
 
     /**

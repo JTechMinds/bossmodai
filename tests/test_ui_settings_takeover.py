@@ -395,6 +395,60 @@ def test_the_exit_shares_the_gear_and_escape_entry_point() -> None:
     )
 
 
+def test_navigation_and_floor_moves_leave_through_the_shared_exit() -> None:
+    """Choosing a place or another floor leaves Settings by the ✕'s own door.
+
+    The header stays on screen over the takeover, so its place nav, the
+    shortcuts, the bell's Show me, a toast's Open and the floor switcher could
+    all change what was underneath while Settings stayed up. They now leave it
+    through one injected object whose close is the shared closeSettings, so
+    leaving by navigation means exactly what the ✕ means, model refresh
+    included. Only shell.js names SettingsView; the navigator, the header and
+    the switcher load before it and receive the object.
+    """
+    shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
+    declared = re.search(r"const settingsTakeover = \{([^}]*)\};", shell)
+    assert declared, "shell.js declares no shared settingsTakeover"
+    assert re.search(r"\bclose:\s*closeSettings\b", declared.group(1)), declared.group(0)
+    for call in ("BossModNavigator.createNavigator(", "BossModHeader.mount("):
+        args = shell.split(call, 1)[1].split("});", 1)[0]
+        assert "takeover: settingsTakeover" in args, f"{call} is not handed the shared exit"
+
+    header = (JS / "shell" / "header.js").read_text(encoding="utf-8")
+    assert re.search(r"BossModFloorSwitcher\.mount\(\{[^}]*\btakeover\b[^}]*\}\)", header), (
+        "the header does not hand the takeover on to the floor switcher"
+    )
+
+    # Add agent opens its menu over Chat; a Chat under Settings is not on screen.
+    on_hire = shell.split("onHire: () => {", 1)[1].split("},", 1)[0]
+    assert "settingsOpen" in on_hire, on_hire
+
+
+def test_the_banner_door_only_opens() -> None:
+    """"Connect a model in Settings" lands on AI Connections, every time.
+
+    The banner sits outside the takeover, so it stays visible while Settings
+    is up, and it used to share the gear's toggle: pressed then, it closed
+    Settings, the opposite of what it says. It is open-only now and names its
+    section, so it also lands there on a phone and over another section. The
+    gear keeps the toggle.
+    """
+    shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
+    wiring = re.search(
+        r"requireElement\('no-model-banner-settings'\)\s*\.addEventListener\('click',\s*(\w+)\)",
+        shell)
+    assert wiring, "shell.js never wires #no-model-banner-settings to anything"
+    assert wiring.group(1) == "openModelSettings", (
+        f"the banner calls {wiring.group(1)} rather than the open-only openModelSettings"
+    )
+    body = shell.split("function openModelSettings() {", 1)[1].split("\n        }", 1)[0]
+    assert "SettingsView.open('connections')" in body, body
+    assert "close" not in body, f"the banner's door must never close Settings: {body}"
+
+    header_args = shell.split("BossModHeader.mount(", 1)[1].split("});", 1)[0]
+    assert "openSettings: toggleSettings" in header_args, "the gear lost its toggle"
+
+
 def test_the_gear_reports_whether_the_takeover_is_open() -> None:
     """The rail toggle already announces its state; the gear did not.
 

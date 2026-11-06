@@ -189,6 +189,7 @@ function apiFetch(url, init) {
         navigate: (id) => navigated.push(id),
         needs: needsStub,
         openSettings: () => { settingsOpened += 1; },
+        takeover: { isOpen: () => false, close: () => {} },
     });
     if (typeof dispose !== "function") throw new Error("mount must return a disposer");
     // The company-name load is a two-promise chain (request, then json()).

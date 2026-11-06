@@ -51,6 +51,7 @@ eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModBus = BossModB
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModNavigator = BossModNavigator;\n`);
 eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModAgentMenu = BossModAgentMenu;\n`);
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModAgentRoutes = BossModAgentRoutes;\n`);
 
 const store = BossModStore.createStore({ place: "chat" });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
@@ -83,28 +84,45 @@ const openRoster = () => {};
 // from the real module as the shell builds it, with the desk as its door.
 const api = () => {};
 const agentMenu = BossModAgentMenu.create({ api, store, navigate: () => {}, openDesk });
+// The Settings takeover, injected so the navigator never names it. `open` is
+// what isOpen() reports; close() counts, so a case can tell it was left.
+const takeover = {
+    open: false,
+    closes: 0,
+    isOpen() { return this.open; },
+    close() { this.open = false; this.closes += 1; },
+};
 let refusedWithoutDesk = false;
 try {
-    BossModNavigator.createNavigator({ store, bus, container, api, agentMenu, openRoster });
+    BossModNavigator.createNavigator({ store, bus, container, api, agentMenu, openRoster, takeover });
 } catch (err) {
     refusedWithoutDesk = /openDesk is required/.test(String(err && err.message));
 }
 if (!refusedWithoutDesk) throw new Error("createNavigator must refuse a missing openDesk");
 let refusedWithoutRoster = false;
 try {
-    BossModNavigator.createNavigator({ store, bus, container, api, openDesk, agentMenu });
+    BossModNavigator.createNavigator({ store, bus, container, api, openDesk, agentMenu, takeover });
 } catch (err) {
     refusedWithoutRoster = /openRoster is required/.test(String(err && err.message));
 }
 if (!refusedWithoutRoster) throw new Error("createNavigator must refuse a missing openRoster");
 let refusedWithoutAgentMenu = false;
 try {
-    BossModNavigator.createNavigator({ store, bus, container, api, openDesk, openRoster });
+    BossModNavigator.createNavigator({ store, bus, container, api, openDesk, openRoster, takeover });
 } catch (err) {
     refusedWithoutAgentMenu = /agentMenu is required/.test(String(err && err.message));
 }
 if (!refusedWithoutAgentMenu) throw new Error("createNavigator must refuse a missing agentMenu");
-const shell = BossModNavigator.createNavigator({ store, bus, container, api, openDesk, agentMenu, openRoster });
+let refusedWithoutTakeover = false;
+try {
+    BossModNavigator.createNavigator({ store, bus, container, api, openDesk, agentMenu, openRoster });
+} catch (err) {
+    refusedWithoutTakeover = /takeover is required/.test(String(err && err.message));
+}
+if (!refusedWithoutTakeover) throw new Error("createNavigator must refuse a missing takeover");
+const shell = BossModNavigator.createNavigator({
+    store, bus, container, api, openDesk, agentMenu, openRoster, takeover,
+});
 if (shell.getCtx().openDesk !== openDesk) throw new Error("ctx.openDesk must be the injected opener");
 if (shell.getCtx().openRoster !== openRoster) throw new Error("ctx.openRoster must be the injected opener");
 if (shell.getCtx().agentMenu !== agentMenu) throw new Error("ctx.agentMenu must be the injected menu");
@@ -160,6 +178,81 @@ if (!container.textContent.toLowerCase().includes("could not")) {
 shell.navigate("tasks");
 if (store.getState().place !== "tasks") throw new Error("nav wedged after an error");
 
+// ─── The Settings takeover ───
+// Choosing a place while it covers the centre column leaves it. The place
+// already mounted under it is uncovered, not remounted: a remount would drop
+// Chat's draft, transcript cache and caret.
+
+// Covered, another place: the takeover closes once, the swap is the usual one.
+order.length = 0;
+takeover.open = true;
+takeover.closes = 0;
+shell.navigate("chat");
+const navigationLeavesTheTakeover = takeover.closes === 1 && takeover.open === false
+    && order.join(",") === "unmount:tasks,mount:chat"
+    && store.getState().place === "chat";
+
+// Covered, the mounted place with no params (the header passes none, a Chat
+// need target passes {}): uncovered only, focus on its heading, params kept.
+shell.navigate("tasks", { taskId: "keep" });
+const keptParams = store.getState().placeParams;
+order.length = 0;
+takeover.closes = 0;
+const reveals = [undefined, {}].map((params) => {
+    activeElement = null;
+    takeover.open = true;
+    shell.navigate("tasks", params);
+    return takeover.open === false
+        && order.length === 0
+        && activeElement !== null && activeElement === container.querySelector("h1")
+        && store.getState().placeParams === keptParams
+        && store.getState().place === "tasks";
+});
+const revealsTheCoveredPlaceWithoutRemount = reveals.every((ok) => ok) && takeover.closes === 2;
+
+// Covered, the same place WITH params: they are something to show, so it remounts.
+order.length = 0;
+takeover.open = true;
+takeover.closes = 0;
+shell.navigate("tasks", { taskId: "x" });
+const paramsStillRemountUnderTheTakeover = takeover.closes === 1
+    && order.join(",") === "unmount:tasks,mount:tasks"
+    && store.getState().placeParams.taskId === "x";
+
+// Not covered, the same place: today's behaviour, a remount that resets it.
+order.length = 0;
+takeover.closes = 0;
+shell.navigate("tasks");
+const uncoveredRenavigationUnchanged = takeover.closes === 0
+    && order.join(",") === "unmount:tasks,mount:tasks"
+    && Object.keys(store.getState().placeParams).length === 0;
+
+// Covered, an unknown id: it throws before the takeover is touched.
+takeover.open = true;
+takeover.closes = 0;
+let unknownThrew = false;
+try { shell.navigate("nowhere"); } catch (err) { unknownThrew = /unknown place/.test(String(err && err.message)); }
+const unknownPlaceLeavesTheTakeoverUp = unknownThrew && takeover.open === true && takeover.closes === 0
+    && store.getState().place === "tasks";
+takeover.open = false;
+
+// ─── openConversation: a Chat under the takeover is not on screen ───
+const routesStore = BossModStore.createStore({
+    place: "chat", settingsOpen: false, conversationId: null, conversationKind: null,
+});
+const routedTo = [];
+const routes = { store: routesStore, navigate: (placeId) => routedTo.push(placeId) };
+BossModAgentRoutes.openConversation(routes, "a1", "agent");
+const stayedInChat = routedTo.length === 0 && routesStore.getState().conversationId === "a1";
+routesStore.setState({ settingsOpen: true });
+BossModAgentRoutes.openConversation(routes, "a2", "agent");
+const leftSettings = routedTo.join(",") === "chat" && routesStore.getState().conversationId === "a2";
+routesStore.setState({ place: "office", settingsOpen: false });
+BossModAgentRoutes.openConversation(routes, "t1", "thread");
+const cameFromOffice = routedTo.join(",") === "chat,chat"
+    && routesStore.getState().conversationKind === "thread";
+const openConversationLeavesTheTakeover = stayedInChat && leftSettings && cameFromOffice;
+
 process.stdout.write(JSON.stringify({
     ok: true,
     unmountsBeforeMount: true,
@@ -169,4 +262,10 @@ process.stdout.write(JSON.stringify({
     handsEveryPlaceTheDeskOpener: true,
     handsEveryPlaceTheRosterOpener: refusedWithoutRoster,
     handsEveryPlaceTheAgentMenu: refusedWithoutAgentMenu,
+    navigationLeavesTheTakeover,
+    revealsTheCoveredPlaceWithoutRemount,
+    paramsStillRemountUnderTheTakeover,
+    uncoveredRenavigationUnchanged,
+    unknownPlaceLeavesTheTakeoverUp,
+    openConversationLeavesTheTakeover,
 }));

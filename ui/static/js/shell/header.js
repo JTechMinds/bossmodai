@@ -61,12 +61,15 @@ const BossModHeader = (() => {
      *   Optional: a browser session and the header harness have no tray. When
      *   present, tray click opens the popover without toggling it shut.
      * @param {() => void} deps.openSettings Opens the Settings takeover.
+     * @param {{isOpen: () => boolean, close: () => void}} deps.takeover
+     *   Handed to the floor switcher, because moving to another floor leaves
+     *   the Settings takeover.
      * @returns {() => void} disposer — drains every subscription.
      * @throws {Error} When deps.needs is missing — a bell with no queue behind
      *   it would report "nothing needs you" forever.
      */
     function mount(el, deps) {
-        const { store, apiFetch, bus, navigate, needs, openSettings, attention } = deps;
+        const { store, apiFetch, bus, navigate, needs, openSettings, attention, takeover } = deps;
         if (!needs) throw new Error('[header] deps.needs is required');
         const disposers = [];
 
@@ -133,7 +136,7 @@ const BossModHeader = (() => {
 
         // The floor switcher sits in the empty band. shell/floor-switcher.js
         // owns it so this file stays the brand, nav, bell, and pause.
-        const floors = BossModFloorSwitcher.mount({ store, apiFetch, bus });
+        const floors = BossModFloorSwitcher.mount({ store, apiFetch, bus, takeover });
         disposers.push(floors.destroy);
 
         // ─── Needs bell ───

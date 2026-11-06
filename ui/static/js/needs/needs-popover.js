@@ -8,6 +8,9 @@
  *
  * The bell is the one guaranteed path and is never suppressible. The footer
  * toggle below turns off the composer bar only (spec 5.5).
+ *
+ * A press anywhere outside the panel and the bell closes it, as core/menu.js's
+ * panels close.
  */
 const BossModNeedsPopover = (() => {
     const { h, clear } = BossModDom;
@@ -61,8 +64,9 @@ const BossModNeedsPopover = (() => {
      * @param {HTMLElement} deps.anchor The bell. Focus returns here on close.
      * @param {(placeId: string, params?: object) => void} deps.navigate
      * @param {() => void} [deps.onClose]  Notified however the popover closed —
-     *   Esc, a "Show me", or the bell again — so the bell can toggle rather
-     *   than stack a second panel. Same contract as overlays.createModal.
+     *   Esc, a "Show me", a press outside it, or the bell again — so the bell
+     *   can toggle rather than stack a second panel. Same contract as
+     *   overlays.createModal.
      * @returns {{ close: () => void, element: HTMLElement }}
      * @throws {Error} When any dependency is missing. A bell that opened an
      *   inert panel would be worse than one that failed loudly.
@@ -145,8 +149,11 @@ const BossModNeedsPopover = (() => {
             // cache and a caret to lose, and its target carries no params — so
             // arriving there is a store change, and a navigation only when the
             // operator is somewhere else. Tasks and Log carry the thing to show
-            // IN their params, so they are navigated to either way.
-            const alreadyThere = store.getState().place === target.place;
+            // IN their params, so they are navigated to either way. A place
+            // covered by the Settings takeover is not on screen, so it counts
+            // as somewhere else; navigating uncovers Chat without remounting it.
+            const state = store.getState();
+            const alreadyThere = state.place === target.place && state.settingsOpen !== true;
             // Closed before navigating, so focus ends on the new place's
             // heading rather than being pulled back here.
             close();
@@ -282,10 +289,24 @@ const BossModNeedsPopover = (() => {
             nodes[next].focus();
         }
 
+        // A press anywhere else dismisses it, as core/menu.js's panels do:
+        // mousedown rather than click, so it is gone before whatever is under
+        // the pointer reacts. Not while asking — the note dialog stands in its
+        // place, and a press there must not orphan the pending action — and
+        // not on the bell, which toggles: closing here would re-open it.
+        function onPressOutside(event) {
+            if (asking) return;
+            const target = event.target;
+            if (element.contains(target)) return;
+            if (anchor === target || anchor.contains(target)) return;
+            close();
+        }
+
         function close() {
             if (closed) return;
             closed = true;
             document.removeEventListener('keydown', onKeydown);
+            document.removeEventListener('mousedown', onPressOutside);
             disposers.splice(0).forEach((off) => off());
             element.remove();
             if (anchor.focus) anchor.focus();
@@ -298,6 +319,9 @@ const BossModNeedsPopover = (() => {
         render();
         document.addEventListener('keydown', onKeydown);
         document.body.append(element);
+        // Bound at once: the bell opens this from its click, after that
+        // press's mousedown has already fired, so it cannot close itself.
+        document.addEventListener('mousedown', onPressOutside);
         heading.focus();
 
         // Opening re-reads the queue, so the bell is authoritative rather than

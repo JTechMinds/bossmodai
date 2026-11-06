@@ -122,6 +122,16 @@ def test_needs_harness() -> None:
         "barWithoutNeedActionsUnchanged": True,
         "needActionsSitBeforeShowMe": True,
         "acknowledgeClearsErrorNeed": True,
+        # A press outside the bell's popover closes it, as core/menu.js's
+        # panels close; a press on the panel or the bell does not, and neither
+        # does one in the note dialog standing in its place.
+        "pressOutsideCloses": True,
+        "pressOnPanelOrBellKeepsIt": True,
+        "pressWhileAskingKeepsIt": True,
+        # A Chat covered by the Settings takeover is not "already there", so
+        # Show me and the toast's Open both navigate, which leaves Settings.
+        "showMeLeavesSettings": True,
+        "toastOpenLeavesSettings": True,
     }
 
 
@@ -424,16 +434,19 @@ def test_reaching_a_conversation_never_remounts_chat() -> None:
     place and takes the transcript cache, the composer draft, and the caret
     with it. The roster has always known this; the popover's "Show me" and the
     toast's "Open" are two more ways in, and both would have remounted.
+
+    A Chat covered by the Settings takeover is not "already there": it is not
+    on screen. Both doors navigate then, and the navigator uncovers the
+    mounted Chat rather than remounting it, so the draft rule still holds.
     """
     assert _harness()["showMeKeepsShell"] is True
 
     toast = _read(NEEDS / "needs-toast.js")
-    assert "store.getState().place !== 'chat'" in toast, (
-        "needs-toast.js navigates to Chat without checking whether it is already open"
+    toast_guard = "if (state.place !== 'chat' || state.settingsOpen === true) navigate('chat');"
+    assert toast_guard in toast, (
+        "needs-toast.js navigates to Chat without checking whether it is on screen"
     )
-    assert "navigate('chat');\n" not in toast.replace(
-        "if (store.getState().place !== 'chat') navigate('chat');", ""
-    )
+    assert "navigate('chat');\n" not in toast.replace(toast_guard, "")
 
     # Phase 3B generalised the popover: a need now leads to its own place, so
     # the check is no longer spelled against the literal 'chat'. The property is
@@ -442,7 +455,10 @@ def test_reaching_a_conversation_never_remounts_chat() -> None:
     # Tasks and Log carry what to show in their params and so always are.
     popover = _read(NEEDS / "needs-popover.js")
     go_to = popover.split("function goTo(target) {", 1)[1].split("\n        }", 1)[0]
-    assert "const alreadyThere = store.getState().place === target.place;" in go_to
+    assert (
+        "const alreadyThere = state.place === target.place && state.settingsOpen !== true;"
+        in go_to
+    )
     assert "if (alreadyThere && target.place === 'chat') return;" in go_to
     assert "navigate(target.place, target.params);" in go_to
     assert "navigate('chat')" not in popover

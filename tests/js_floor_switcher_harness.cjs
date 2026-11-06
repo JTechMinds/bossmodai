@@ -110,7 +110,17 @@ async function submit(form) {
     let mountWithoutBusThrows = false;
     try { BossModFloorSwitcher.mount({ store, apiFetch }); } catch (err) { mountWithoutBusThrows = true; }
     verdict.mountRequiresABus = mountWithoutBusThrows;
-    const switcher = BossModFloorSwitcher.mount({ store, apiFetch, bus });
+    // The Settings takeover: moving to another floor leaves it. Always "open"
+    // here, so every close() a floor move makes is counted.
+    const takeover = { closes: 0, isOpen: () => true, close() { this.closes += 1; } };
+    let mountWithoutTakeoverThrows = false;
+    try {
+        BossModFloorSwitcher.mount({ store, apiFetch, bus });
+    } catch (err) {
+        mountWithoutTakeoverThrows = /deps\.takeover is required/.test(String(err && err.message));
+    }
+    verdict.mountRequiresATakeover = mountWithoutTakeoverThrows;
+    const switcher = BossModFloorSwitcher.mount({ store, apiFetch, bus, takeover });
     header.append(switcher.element);
     await drain();
 
@@ -147,6 +157,15 @@ async function submit(form) {
     verdict.pickingARowSetsTheCurrentFloor = store.getState().currentFloorId === "fin"
         && !switcher.element.querySelector(".menu")
         && trigger.getAttribute("aria-label") === "Floor: Finance";
+    verdict.pickingAFloorLeavesTheTakeover = takeover.closes === 1;
+
+    // ─── Picking the floor you are on changes nothing, Settings included ───
+    await trigger.dispatchClick();
+    const pressed = switcher.element.querySelector(".menu").querySelector('[aria-pressed="true"]');
+    await pressed.dispatchClick();
+    verdict.pickingTheCurrentFloorKeepsTheTakeover = takeover.closes === 1
+        && store.getState().currentFloorId === "fin"
+        && !switcher.element.querySelector(".menu");
 
     // ─── + New floor: a field in place; Esc goes back to the door only ───
     await trigger.dispatchClick();
@@ -169,6 +188,7 @@ async function submit(form) {
         && store.getState().currentFloorId === "ops"
         && store.getState().floors.some((floor) => floor.id === "ops")
         && !switcher.element.querySelector(".menu");
+    verdict.newFloorLeavesTheTakeover = takeover.closes === 2;
 
     // ─── Floor settings, then the Delete layer ───
     store.setState({ currentFloorId: "fin" });
@@ -233,6 +253,8 @@ async function submit(form) {
     verdict.aDeleteElsewhereMovesTheOperatorToLobby = store.getState().currentFloorId === "lobby"
         && store.getState().floors.every((floor) => floor.id !== "fin")
         && trigger.getAttribute("aria-label") === "Floor: Lobby";
+    // Falling back to Lobby is not the operator choosing to go somewhere.
+    verdict.aDeleteElsewhereLeavesTheTakeoverUp = takeover.closes === 2;
 
     // ─── A malformed broadcast is shown and logged, never adopted ───
     const floorsBefore = store.getState().floors;
@@ -258,7 +280,7 @@ async function submit(form) {
     switcher.destroy();
     verdict.destroyDrainsTheBus = bus.subscriberCount() === 0;
     failFloors = true;
-    const broken = BossModFloorSwitcher.mount({ store, apiFetch, bus });
+    const broken = BossModFloorSwitcher.mount({ store, apiFetch, bus, takeover });
     const originalError = console.error;
     const logged = [];
     console.error = (...args) => { logged.push(args.join(" ")); };
