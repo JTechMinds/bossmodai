@@ -1,15 +1,18 @@
 """Transient provider failures retry in the client, with backoff.
 
 Timeouts and permanent errors are not retried here. An empty completion is
-a provider failure, never a reply.
+a provider failure, never a reply. A request whose images the provider
+refuses is re-sent once without them, which is not a retry.
 """
 
 from __future__ import annotations
 
 import os
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import httpx
 import litellm
 import pytest
 
@@ -17,6 +20,7 @@ import db
 from core import config
 from core.bm_cli.policy_engine import policy_engine
 from core.llm import client
+from core.llm.attachment_parts import IMAGE_NOT_SUPPORTED_TEXT
 from core.llm.call_budget import budget
 from core.llm.client import (
     LLMEmptyResponseError,
@@ -25,9 +29,21 @@ from core.llm.client import (
     LLMTimeoutError,
     completion,
 )
+from core.runtime.events import NullRuntimeEventSink, runtime_events
 from db.settings import get_seed_setting_default
 
 _MESSAGES = [{"role": "user", "content": "hi"}]
+# Already expanded: no private keys, so expansion passes it through unchanged.
+_IMAGE_MESSAGES = [
+    {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": "look"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+        ],
+    },
+]
+_TEXT_ONLY = "messages.content.type is invalid, allowed values: ['text']"
 
 
 def setup_function() -> None:
@@ -323,3 +339,143 @@ def test_transient_classification_excludes_timeouts_and_permanent_errors() -> No
     assert not client._is_transient_provider_error(
         litellm.exceptions.ContextWindowExceededError(message="too long", model="test/mock", llm_provider="openai")
     )
+
+
+# ─── A refused image: one re-send without it ───
+
+
+class _ActivitySink(NullRuntimeEventSink):
+    """Records activity broadcasts; every other runtime event is dropped."""
+
+    def __init__(self) -> None:
+        self.activities: list[dict[str, Any]] = []
+
+    async def broadcast_activity(
+        self,
+        event: str,
+        detail: str,
+        agent_name: str | None = None,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
+        self.activities.append({"event": event, "detail": detail, "agent_name": agent_name, "extra": extra})
+
+
+@pytest.fixture
+def activities() -> Iterator[list[dict[str, Any]]]:
+    sink = _ActivitySink()
+    runtime_events.set_sink(sink)
+    try:
+        yield sink.activities
+    finally:
+        runtime_events.set_sink(NullRuntimeEventSink())
+
+
+def _connection() -> str:
+    """A real connection row: a failure is recorded only for a connection that exists."""
+    return db.create_connection(
+        name="Vision", api_base_url="http://127.0.0.1:9/v1", api_key="sk-test", model="test/mock",
+    ).id
+
+
+def _response(status: int) -> httpx.Response:
+    return httpx.Response(status, request=httpx.Request("POST", "http://127.0.0.1:9/v1/chat/completions"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "refusal",
+    [
+        litellm.exceptions.BadRequestError(message=_TEXT_ONLY, model="test/mock", llm_provider="openai"),
+        litellm.exceptions.UnprocessableEntityError(
+            message=_TEXT_ONLY, model="test/mock", llm_provider="openai", response=_response(422),
+        ),
+    ],
+    ids=["400", "422"],
+)
+async def test_a_refused_image_is_replaced_by_a_notice_and_sent_once_more(
+    monkeypatch: pytest.MonkeyPatch, activities: list[dict[str, Any]], refusal: Exception,
+) -> None:
+    connection_id = _connection()
+    calls = _script(monkeypatch, [refusal, _ok_stream()])
+    sleeps = _record_sleeps(monkeypatch)
+
+    result = await completion(model="test/mock", messages=_IMAGE_MESSAGES, connection_id=connection_id)
+
+    assert result.content == "ok"
+    assert len(calls) == 2
+    assert calls[0]["messages"] == _IMAGE_MESSAGES
+    assert calls[1]["messages"] == [
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "look"}, {"type": "text", "text": IMAGE_NOT_SUPPORTED_TEXT}],
+        },
+    ]
+    # A different request, not a transient retry: no backoff.
+    assert sleeps == []
+    # The call succeeded, so nothing counts against the connection.
+    assert db.get_connection_health(connection_id) is None
+    assert activities == [
+        {
+            "event": "model_images_refused",
+            "detail": (
+                "“test/mock” didn't accept an image, so it was sent without it. If this model "
+                "can't read images, turn off “Supports images” for it in Settings → AI Connections."
+            ),
+            "agent_name": None,
+            "extra": {"model": "test/mock", "connection_id": connection_id},
+        },
+    ]
+    assert _IMAGE_MESSAGES[0]["content"][1]["type"] == "image_url"
+
+
+@pytest.mark.asyncio
+async def test_a_resend_refused_too_raises_and_records_its_own_error(
+    monkeypatch: pytest.MonkeyPatch, activities: list[dict[str, Any]],
+) -> None:
+    connection_id = _connection()
+    second = litellm.exceptions.BadRequestError(
+        message="refused without images too", model="test/mock", llm_provider="openai",
+    )
+    calls = _script(
+        monkeypatch,
+        [litellm.exceptions.BadRequestError(message=_TEXT_ONLY, model="test/mock", llm_provider="openai"), second],
+    )
+    sleeps = _record_sleeps(monkeypatch)
+
+    with pytest.raises(LLMError) as raised:
+        await completion(model="test/mock", messages=_IMAGE_MESSAGES, connection_id=connection_id)
+
+    assert raised.value.__cause__ is second
+    assert raised.value.connection_failure == "rejected"
+    assert len(calls) == 2
+    assert IMAGE_NOT_SUPPORTED_TEXT in str(calls[1]["messages"])
+    assert sleeps == []
+    assert activities == []
+    # The images were not the cause: the re-send's failure is what counts.
+    health = db.get_connection_health(connection_id)
+    assert health.failure_count == 1
+    assert "refused without images too" in health.last_error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        litellm.exceptions.ContextWindowExceededError(message="too long", model="test/mock", llm_provider="openai"),
+        litellm.exceptions.ContentPolicyViolationError(message="policy", model="test/mock", llm_provider="openai"),
+    ],
+    ids=["context_window", "content_policy"],
+)
+async def test_a_context_window_or_content_policy_error_with_an_image_is_not_resent(
+    monkeypatch: pytest.MonkeyPatch, activities: list[dict[str, Any]], error: Exception,
+) -> None:
+    calls = _script(monkeypatch, [error])
+    sleeps = _record_sleeps(monkeypatch)
+
+    with pytest.raises(LLMError) as raised:
+        await completion(model="test/mock", messages=_IMAGE_MESSAGES, connection_id="test-connection")
+
+    assert raised.value.__cause__ is error
+    assert len(calls) == 1
+    assert sleeps == []
+    assert activities == []

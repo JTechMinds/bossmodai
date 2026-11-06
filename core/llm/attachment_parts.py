@@ -51,6 +51,15 @@ context does not grow by one image per command:
   context does not grow by a full result per command. Each new image
   therefore changes exactly one earlier message.
 
+The image flag can be wrong: the endpoint may accept text only. When the
+provider refuses a request that carries image parts (a 400 or 422 that is
+not a context-window or content-policy error),
+``core.llm.client.completion`` re-sends it once through
+:func:`drop_image_parts`. Every ``image_url`` part becomes
+:data:`IMAGE_NOT_SUPPORTED_TEXT`, so the agent sees only that images are not
+supported and can still answer in words. The flag itself is never changed
+here; it stays the operator's.
+
 Parts use the OpenAI chat content format, which litellm translates for each
 provider.
 """
@@ -80,6 +89,8 @@ CLI_IMAGE_PATHS_KEY = "bm_cli_image_paths"
 SUMMARY_KEY = "bm_cli_summary"
 IMAGE_SUPERSEDED_TEXT = "[image not resent — superseded by a newer image]"
 IMAGE_MISSING_TEXT = "[image unavailable: its file no longer exists]"
+# Stands in for each image part of a request the provider refused.
+IMAGE_NOT_SUPPORTED_TEXT = "[Image not shown: images are not supported.]"
 # Appended to a history manifest naming a model-viewable image.
 _VIEW_HINT = " — run `view <path>` to see an image again"
 _PRIVATE_KEYS = frozenset({ATTACHMENT_IDS_KEY, CLI_IMAGE_PATHS_KEY, SUMMARY_KEY})
@@ -158,6 +169,60 @@ def expand_attachment_messages(
         copy["content"] = parts
         expanded.append(copy)
     return expanded
+
+
+def count_image_parts(messages: list[dict[str, Any]]) -> int:
+    """Count the ``image_url`` content parts across ``messages``.
+
+    Pure: reads only. A message whose ``content`` is a string (or anything
+    but a list of parts) carries no image part and counts 0.
+
+    Args:
+        messages: Chat messages as sent to the model, i.e. after
+            :func:`expand_attachment_messages`.
+
+    Returns:
+        The number of parts whose ``type`` is ``"image_url"``.
+    """
+    return sum(
+        1
+        for message in messages
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+        if _is_image_part(part)
+    )
+
+
+def drop_image_parts(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return a copy of ``messages`` with every image part replaced by a notice.
+
+    Each ``image_url`` part becomes ``{"type": "text", "text":
+    IMAGE_NOT_SUPPORTED_TEXT}`` in the same position, so the text around it
+    keeps its order. Text parts, string contents and every other message key
+    are unchanged. The input list and its dicts are not modified (the same
+    contract as :func:`expand_attachment_messages`). Used by
+    ``core.llm.client.completion`` to re-send a request whose images the
+    provider refused (see the module doc).
+
+    Args:
+        messages: Chat messages as sent to the model, i.e. after
+            :func:`expand_attachment_messages`.
+
+    Returns:
+        A new list of new message dicts with no ``image_url`` part.
+    """
+    dropped: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            dropped.append(dict(message))
+            continue
+        parts = [
+            {"type": "text", "text": IMAGE_NOT_SUPPORTED_TEXT} if _is_image_part(part) else part
+            for part in content
+        ]
+        dropped.append({**message, "content": parts})
+    return dropped
 
 
 def mark_trigger_attachments(
@@ -249,6 +314,10 @@ def format_attachment_manifest(atts: list[Attachment]) -> str:
 
 def _model_viewable(att: Attachment) -> bool:
     return att.preview_tier == "image" and att.mime_type in MODEL_IMAGE_MIME_TYPES
+
+
+def _is_image_part(part: dict[str, Any]) -> bool:
+    return part.get("type") == "image_url"
 
 
 def _human_size(size: int) -> str:

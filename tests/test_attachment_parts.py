@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import copy
 import os
 from pathlib import Path
 
@@ -13,7 +14,10 @@ from tests._connections import model_connection
 from core import config
 from core.llm.attachment_parts import (
     ATTACHMENT_IDS_KEY,
+    IMAGE_NOT_SUPPORTED_TEXT,
     AttachmentUnavailableError,
+    count_image_parts,
+    drop_image_parts,
     expand_attachment_messages,
 )
 from db import attachments as db_att
@@ -150,6 +154,57 @@ def test_missing_file_raises(tmp_path):
 def test_missing_row_raises():
     with pytest.raises(AttachmentUnavailableError):
         expand_attachment_messages(_trigger("no-such-id"), model="m")
+
+
+# ─── a refused image: counting image parts and dropping them for the re-send ───
+
+
+_IMAGE_PART = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+
+
+def test_count_image_parts_counts_only_image_parts_across_messages():
+    assert count_image_parts([{"role": "user", "content": "plain text"}]) == 0
+    assert count_image_parts([{"role": "user", "content": [{"type": "text", "text": "only words"}]}]) == 0
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": [{"type": "text", "text": "look"}, _IMAGE_PART, _IMAGE_PART]},
+        {"role": "assistant", "content": "seen"},
+        {"role": "user", "content": [_IMAGE_PART, {"type": "text", "text": "and this"}]},
+    ]
+
+    assert count_image_parts(messages) == 3
+
+
+def test_drop_image_parts_replaces_each_image_in_place_and_leaves_the_input_untouched():
+    messages = [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "look"}, _IMAGE_PART, {"type": "text", "text": "after"}],
+            "name": "boss",
+        },
+        {"role": "user", "content": [_IMAGE_PART]},
+    ]
+    before = copy.deepcopy(messages)
+
+    out = drop_image_parts(messages)
+
+    notice = {"type": "text", "text": "[Image not shown: images are not supported.]"}
+    assert notice["text"] == IMAGE_NOT_SUPPORTED_TEXT
+    assert out == [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "user",
+            "content": [{"type": "text", "text": "look"}, notice, {"type": "text", "text": "after"}],
+            "name": "boss",
+        },
+        {"role": "user", "content": [notice]},
+    ]
+    assert count_image_parts(out) == 0
+    # The input is untouched: new message dicts and new part lists.
+    assert messages == before
+    assert all(new is not old for new, old in zip(out, messages))
+    assert out[1]["content"] is not messages[1]["content"]
 
 
 # ─── context_builder: the trigger names its files, history shows a manifest ───

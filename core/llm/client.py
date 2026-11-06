@@ -17,7 +17,7 @@ import openai
 
 from core import config
 from core.llm import connection_health
-from core.llm.attachment_parts import expand_attachment_messages
+from core.llm.attachment_parts import count_image_parts, drop_image_parts, expand_attachment_messages
 from core.llm.call_budget import budget, current_turn_lane
 from core.models import ConnectionFailureKind
 
@@ -152,6 +152,35 @@ def _is_transient_provider_error(exc: BaseException) -> bool:
     return isinstance(exc, _TRANSIENT_PROVIDER_ERRORS)
 
 
+def _refuses_request(exc: BaseException) -> bool:
+    """Return whether the provider refused the shape of the request itself.
+
+    A 400 (``openai.BadRequestError``) or 422
+    (``openai.UnprocessableEntityError``) is the provider saying it will not
+    take this request as sent, which is what a text-only endpoint answers
+    to an image part. ``completion()`` uses this to decide whether a request
+    carrying images is worth one re-send without them; the images are blamed
+    only if that re-send then succeeds.
+
+    ``ContextWindowExceededError`` and ``ContentPolicyViolationError`` both
+    subclass ``BadRequestError`` (litellm 1.82.5) but are excluded: they are
+    about the request's length or content, and existing repair paths own
+    them. Classified by exception class only, never by message text.
+
+    Args:
+        exc: The provider's own exception.
+
+    Returns:
+        ``True`` for a 400 or 422 refusal other than the two exclusions.
+    """
+    if isinstance(
+        exc,
+        (litellm.exceptions.ContextWindowExceededError, litellm.exceptions.ContentPolicyViolationError),
+    ):
+        return False
+    return isinstance(exc, (openai.BadRequestError, openai.UnprocessableEntityError))
+
+
 def classify_connection_failure(exc: BaseException) -> ConnectionFailureKind | None:
     """Say what a failed model call's exception means for its AI connection.
 
@@ -229,6 +258,38 @@ def _settle_failed_call(
         connection_health.record_failure(connection_id, kind=kind, error=str(failure))
     elif admission.probe:
         connection_health.end_undecided_test(connection_id, lease_until=admission.lease_until)
+
+
+async def _report_image_refusal(*, model: str, connection_id: str) -> None:
+    """Tell the operator a model refused images and the call went through without them.
+
+    Broadcast once per ``completion()`` call whose image-less re-send
+    succeeded, as a ``model_images_refused`` activity. The model is named,
+    not the connection, because "Supports images" is keyed by model name;
+    nothing is looked up, so a missing row cannot fail the report.
+
+    Args:
+        model: The raw model name whose request was refused.
+        connection_id: The AI connection the call was for, carried in
+            ``extra`` for the activity's record.
+
+    Raises:
+        Exception: Whatever the runtime event sink raises. Not caught: a
+            broken event pipe is surfaced the same way the dispatcher's
+            ``ai_connection_suspended`` broadcast surfaces it.
+    """
+    # Imported here: a module-level import cycles through core/runtime/__init__.py.
+    from core.runtime.events import runtime_events
+
+    await runtime_events.broadcast_activity(
+        event="model_images_refused",
+        detail=(
+            f"“{model}” didn't accept an image, so it was sent without it. "
+            "If this model can't read images, turn off “Supports images” for it "
+            "in Settings → AI Connections."
+        ),
+        extra={"model": model, "connection_id": connection_id},
+    )
 
 
 def _transient_retry_policy() -> tuple[int, float]:
@@ -540,6 +601,18 @@ async def completion(
     retry. The call-budget slot is held across retries: a retry is the same
     logical call. Timeouts and permanent errors are not retried here.
 
+    A request that carries image parts and is refused by the provider (a
+    400 or 422 that is not a context-window or content-policy error,
+    ``_refuses_request``) is re-sent once with every image part replaced by
+    ``attachment_parts.IMAGE_NOT_SUPPORTED_TEXT``. The model may be flagged
+    image-capable while its endpoint accepts text only, and the reply can
+    still happen without the image. The re-send is a different request,
+    not a retry, so it does not use up a transient retry. When it
+    succeeds, the call counts as a success and one ``model_images_refused``
+    activity tells the operator; when it fails too, its own failure is
+    raised and recorded, since the images were not the cause. The
+    operator's "Supports images" flag is never changed here.
+
     A paused AI connection is never contacted. Immediately before the
     provider call, ``connection_health.admit`` decides whether this call may
     go ahead; afterwards the outcome is recorded once, after the transient
@@ -556,6 +629,8 @@ async def completion(
         Chat messages in OpenAI format (role + content). A message may name
         attachments under ``attachment_parts.ATTACHMENT_IDS_KEY``; they are
         expanded into content parts for this ``model`` before the call.
+        Image parts the provider refuses are replaced by a text notice for
+        the one re-send (see above).
     temperature : float | None
         Sampling temperature. Read from settings if not provided.
     max_tokens : int | None
@@ -596,6 +671,7 @@ async def completion(
     # see the expanded list.
     from db.managed_connections import routed_images
     messages = expand_attachment_messages(messages, model=model, image_capable=routed_images(model, api_base))
+    image_parts = count_image_parts(messages)
 
     if temperature is None:
         temperature = config.get_float("default_temperature") or 0.7
@@ -702,6 +778,9 @@ async def completion(
         # test the paused connection in parallel. So the lease covers every
         # attempt plus every wait.
         lease_seconds = max_attempts * backstop_seconds + retry_backoff_seconds * (2 ** transient_retries - 1)
+        if image_parts > 0:
+            # Plus the one image-less re-send a refused image may cost.
+            lease_seconds += backstop_seconds
         # Checked with the lane held, immediately before the first attempt;
         # the finally below still releases the lane when it is refused.
         admission = connection_health.admit(connection_id, lease_seconds=lease_seconds)
@@ -717,6 +796,9 @@ async def completion(
             # The backstop bounds each model attempt, not the wait for a free slot
             # or the backoff between attempts.
             attempt = 1
+            # The provider's refusal of the request with its images, once the
+            # image-less re-send was made; None until then. At most one re-send.
+            refused_images: BaseException | None = None
             while True:
                 try:
                     response = await _attempt_completion(
@@ -749,6 +831,19 @@ async def completion(
                         await asyncio.sleep(delay)
                         attempt += 1
                         continue
+                    if refused_images is None and image_parts and _refuses_request(exc):
+                        # A different request, not a retry of the same one, so
+                        # ``attempt`` is not advanced: transient retries stay
+                        # bounded by the same counter.
+                        refused_images = exc
+                        messages = drop_image_parts(messages)
+                        kwargs["messages"] = messages
+                        logger.warning(
+                            "Model %s refused image input; re-sending once without images: %s",
+                            model,
+                            exc,
+                        )
+                        continue
                     logger.error("LLM call failed (model=%s): %s", model, exc)
                     provider_failure = exc
                     failure_kind = classify_connection_failure(exc)
@@ -762,6 +857,8 @@ async def completion(
             _settle_failed_call(connection_id, admission, provider_failure, failure_kind)
             raise
         connection_health.record_success(connection_id)
+        if refused_images is not None:
+            await _report_image_refusal(model=model, connection_id=connection_id)
         return response
     finally:
         if owned is not None:
