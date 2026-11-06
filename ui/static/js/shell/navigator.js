@@ -25,21 +25,22 @@ const BossModNavigator = (() => {
      * @param {(agentId: string, path?: string) => void} options.openDesk  Opens
      *   one agent's desk modal (context/desk-dialog.js). Handed to every place
      *   as `ctx.openDesk`, so each door into a desk is the same one.
-     * @param {(agentId: string, memoryId: number) => void} [options.openMemory]
-     *   Opens that desk with its Memory layer on one memory
-     *   (context/desk-dialog.js); handed on as `ctx.openMemory` for Chat's
-     *   memory lines, which render as plain text without it.
+     * @param {{actions: Function, openMemory: Function}} options.agentMenu
+     *   The page's agent `⋯` (context/agent-menu.js): a DM header's agent
+     *   rows, and a memory line's Memory dialog. Handed on as `ctx.agentMenu`.
      * @param {() => void} options.openRoster  Presents the roster drawer
      *   (shell/responsive.js); handed on as `ctx.openRoster`, so Chat's empty
      *   state opens the same drawer the ☰ does where the rail is hidden.
      * @returns {{ navigate: (id: string, params?: object) => void, getCtx: () => object }}
-     * @throws {Error} When openDesk or openRoster is not a function: a place
-     *   would otherwise render a door that fails only when clicked.
+     * @throws {Error} When openDesk or openRoster is not a function, or
+     *   agentMenu is missing: a place would otherwise render a door that
+     *   fails only when clicked.
      */
     function createNavigator({
-        store, bus, container, api, needs, contextEl, openDesk, openMemory, openRoster,
+        store, bus, container, api, needs, contextEl, openDesk, agentMenu, openRoster,
     }) {
         if (typeof openDesk !== 'function') throw new Error('[navigator] openDesk is required');
+        if (!agentMenu) throw new Error('[navigator] agentMenu is required');
         if (typeof openRoster !== 'function') throw new Error('[navigator] openRoster is required');
         let current = null;
 
@@ -50,7 +51,7 @@ const BossModNavigator = (() => {
             needs,
             contextEl,
             openDesk,
-            openMemory,
+            agentMenu,
             openRoster,
             navigate: (id, params) => navigate(id, params),
         };

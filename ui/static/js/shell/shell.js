@@ -94,6 +94,15 @@ const BossModShell = (() => {
             api: apiFetch,
             navigate: (placeId, params) => shell.navigate(placeId, params),
         });
+        // The chat's agent `⋯` rows and memory links, page-lifetime like the
+        // desk: one instance serves every DM, taking the agent on each call.
+        // Its navigate resolves `shell` at call time, as the desk's does.
+        const agentMenu = BossModAgentMenu.create({
+            api: apiFetch,
+            store,
+            navigate: (placeId, params) => shell.navigate(placeId, params),
+            openDesk: desk.open,
+        });
         const shell = BossModNavigator.createNavigator({
             store,
             bus,
@@ -102,7 +111,7 @@ const BossModShell = (() => {
             needs,
             contextEl: contextElement,
             openDesk: desk.open,
-            openMemory: desk.openMemory,
+            agentMenu,
             // Resolved at call time, as the desk's navigate is: the drawer
             // mounts below, after the header it inserts its buttons into.
             openRoster: () => responsive.openRoster(),

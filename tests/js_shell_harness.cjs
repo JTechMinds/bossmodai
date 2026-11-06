@@ -50,6 +50,7 @@ eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModStore = BossMo
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModBus = BossModBus;\n`);
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModPlaces = BossModPlaces;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModNavigator = BossModNavigator;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModAgentMenu = BossModAgentMenu;\n`);
 
 const store = BossModStore.createStore({ place: "chat" });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
@@ -78,23 +79,35 @@ BossModPlaces.register("tasks", {
 const openDesk = () => {};
 // The roster drawer, the same way: Chat's empty state offers it as a button.
 const openRoster = () => {};
+// The page's agent `⋯` (a DM header's rows, a memory line's Memory), built
+// from the real module as the shell builds it, with the desk as its door.
+const api = () => {};
+const agentMenu = BossModAgentMenu.create({ api, store, navigate: () => {}, openDesk });
 let refusedWithoutDesk = false;
 try {
-    BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openRoster });
+    BossModNavigator.createNavigator({ store, bus, container, api, agentMenu, openRoster });
 } catch (err) {
     refusedWithoutDesk = /openDesk is required/.test(String(err && err.message));
 }
 if (!refusedWithoutDesk) throw new Error("createNavigator must refuse a missing openDesk");
 let refusedWithoutRoster = false;
 try {
-    BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openDesk });
+    BossModNavigator.createNavigator({ store, bus, container, api, openDesk, agentMenu });
 } catch (err) {
     refusedWithoutRoster = /openRoster is required/.test(String(err && err.message));
 }
 if (!refusedWithoutRoster) throw new Error("createNavigator must refuse a missing openRoster");
-const shell = BossModNavigator.createNavigator({ store, bus, container, api: () => {}, openDesk, openRoster });
+let refusedWithoutAgentMenu = false;
+try {
+    BossModNavigator.createNavigator({ store, bus, container, api, openDesk, openRoster });
+} catch (err) {
+    refusedWithoutAgentMenu = /agentMenu is required/.test(String(err && err.message));
+}
+if (!refusedWithoutAgentMenu) throw new Error("createNavigator must refuse a missing agentMenu");
+const shell = BossModNavigator.createNavigator({ store, bus, container, api, openDesk, agentMenu, openRoster });
 if (shell.getCtx().openDesk !== openDesk) throw new Error("ctx.openDesk must be the injected opener");
 if (shell.getCtx().openRoster !== openRoster) throw new Error("ctx.openRoster must be the injected opener");
+if (shell.getCtx().agentMenu !== agentMenu) throw new Error("ctx.agentMenu must be the injected menu");
 
 shell.navigate("chat");
 shell.navigate("tasks");
@@ -155,4 +168,5 @@ process.stdout.write(JSON.stringify({
     containsMountErrors: true,
     handsEveryPlaceTheDeskOpener: true,
     handsEveryPlaceTheRosterOpener: refusedWithoutRoster,
+    handsEveryPlaceTheAgentMenu: refusedWithoutAgentMenu,
 }));

@@ -1197,7 +1197,11 @@ def test_the_chrome_descriptor_grew_rather_than_the_view_reaching_out() -> None:
 
     agent = _read(CONVERSATION / "sources/agent-source.js")
     assert "avatar: { name:" in agent
-    assert "icon: 'lamp-desk'" in agent
+    assert "icon: view.icon," in agent
+    # The DM's agent rows reach the descriptor as data too: the agent menu
+    # names Open desk's glyph, and the source passes its rows through.
+    assert "icon: 'lamp-desk'" in _read(JS / "context" / "agent-menu.js")
+    assert "actions.push(...menu.actions);" in agent
     # The adapter names an icon; it never builds one.
     for forbidden in ("document.", "innerHTML", "BossModDom"):
         assert forbidden not in agent

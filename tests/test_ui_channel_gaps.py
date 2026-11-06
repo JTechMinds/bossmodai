@@ -79,6 +79,9 @@ CONVERSATION_STACK = [
     JS / "conversation" / "conversation-focus-invalidate.js",
     JS / "conversation" / "conversation-window.js",
     JS / "conversation" / "conversation.js",
+    # The agent `⋯` every conversation is handed; a thread never paints its
+    # rows, so the menu alone (it names nothing else until a row is picked).
+    JS / "context" / "agent-menu.js",
 ]
 
 

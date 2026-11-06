@@ -213,7 +213,7 @@ const BossModEventCards = (() => {
      *   Created/Accepted notes render a task glyph and blue-link text only
      *   when this arrives.
      * @param {(agentId: string, memoryId: number) => void} [ctx.openMemory]
-     *   The author's desk with its Memory layer on one memory. A note that
+     *   That agent's Memory dialog, on that memory. A note that
      *   carries `memoryId` (an agent saved or updated a memory) renders the
      *   brain glyph and blue-links its text only when this arrives and the
      *   note has an author; a removed memory's note carries none and stays

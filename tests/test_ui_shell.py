@@ -16,6 +16,8 @@ HARNESS = Path(__file__).resolve().parent / "js_shell_harness.cjs"
 MODULES = [
     ("core", "dom.js"), ("core", "store.js"), ("core", "bus.js"),
     ("shell", "places.js"), ("shell", "navigator.js"),
+    # The agent `⋯` the navigator hands every place, built from the real module.
+    ("context", "agent-menu.js"),
 ]
 
 
@@ -36,6 +38,9 @@ def test_navigate_lifecycle_and_leak_guard() -> None:
         # The same for the roster drawer as ctx.openRoster (Chat's empty
         # state): a missing opener throws at construction, not at the click.
         "handsEveryPlaceTheRosterOpener": True,
+        # And the page's one agent menu as ctx.agentMenu (a DM header's rows,
+        # a memory line's Memory), refused at construction when missing.
+        "handsEveryPlaceTheAgentMenu": True,
     }
 
 

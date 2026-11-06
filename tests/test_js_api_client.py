@@ -96,7 +96,10 @@ API_BY_INJECTION = {
     "context/desk-pack.js",
     "context/desk-memory.js",
     "context/desk-tasks.js",
-    "context/desk-actions.js",
+    "context/desk-details.js",
+    # The agent menu takes the desk's or the shell's `api` and hands it to
+    # the Memory layer; its own requests are context/agent-api.js's.
+    "context/agent-menu.js",
     # The desk's Schedules section and its layer take the desk's `api` and
     # hand it to the schedules transport, which names the routes.
     "context/desk-schedules.js",

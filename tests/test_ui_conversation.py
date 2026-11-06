@@ -67,6 +67,13 @@ CONVERSATION_MODULES = [
     CONVERSATION / "chat-rewind.js",
     CONVERSATION / "consent-activity.js",
     CONVERSATION / "conversation.js",
+    # The agent `⋯` every conversation is handed (the shell builds the real
+    # one after these load): its rows' requests, the store write a removal
+    # makes, the Memory dialog, and the menu itself.
+    JS / "context" / "agent-api.js",
+    JS / "shell" / "agent-routes.js",
+    JS / "context" / "desk-memory.js",
+    JS / "context" / "agent-menu.js",
 ]
 
 
@@ -119,16 +126,23 @@ def test_one_renderer_two_sources() -> None:
 
 def test_agent_source_mention_scope_is_the_full_roster_without_everyone() -> None:
     """A direct chat has no group: no Everyone, and no member filter."""
+    # The source requires the page's agent `⋯`; it is the real module, which
+    # names nothing else until a row is picked.
     script = (
         "const fs = require('fs');"
         "eval(fs.readFileSync(process.argv[2], 'utf8') + ';global.BossModAgentRequests = BossModAgentRequests;');"
         "eval(fs.readFileSync(process.argv[1], 'utf8') + ';global.BossModAgentSource = BossModAgentSource;');"
+        "eval(fs.readFileSync(process.argv[3], 'utf8') + ';global.BossModAgentMenu = BossModAgentMenu;');"
+        "const api = async () => ({ ok: true });"
+        "const store = { getState: () => ({ roster: [] }) };"
+        "const agentMenu = BossModAgentMenu.create({ api, store, navigate: () => {} });"
         "const source = BossModAgentSource.createAgentSource('joey', {"
-        " api: async () => ({ ok: true }), bus: {}, store: { getState: () => ({ roster: [] }) }, presence: {} });"
+        " api, bus: {}, store, presence: {}, agentMenu });"
         "console.log(JSON.stringify(source.mentionScope()));"
     )
     result = subprocess.run(
-        ["node", "-e", script, str(SOURCES / "agent-source.js"), str(SOURCES / "agent-requests.js")],
+        ["node", "-e", script, str(SOURCES / "agent-source.js"), str(SOURCES / "agent-requests.js"),
+         str(JS / "context" / "agent-menu.js")],
         check=False,
         capture_output=True,
         text=True,
@@ -321,6 +335,32 @@ def test_conversation_harness() -> None:
         # upload, is back on the next one, and both deps are required.
         "draftSurvivesDestroy": True,
         "requiresDraftsAndCache": True,
+        # ...and the agent `⋯`, whole: a DM header's rows and a memory line's
+        # Memory both come from it.
+        "requiresAgentMenu": True,
+        # The DM's `⋯` is the agent menu's rows with the chat's between them:
+        # Agent (Open desk, Memory, Edit role, auto-approve), Chat (Rewind…,
+        # system notifications), Manage (Diagnostics, Reset runtime, Remove
+        # agent, the last two danger-toned) and Advanced (Yolo mode), both
+        # switches saying whom they cover. Every row acts from the chat:
+        # Diagnostics leaves for the agent's Log, Memory opens its dialog, a
+        # Reset that fails after its confirm says so on the composer, Yolo
+        # asks first (Cancel writes nothing; confirming PATCHes once, badges
+        # the header and greys auto-approve with Yolo's hint; off never asks),
+        # and Remove DELETEs and leaves the DM. Edit role and Remove wait for
+        # the roster row, the switches for the record; a menu with no desk
+        # door has no Open desk.
+        "dmMenuIsSectioned": True,
+        "diagnosticsLeavesForTheAgentsLog": True,
+        "dmMemoryOpensItsDialog": True,
+        "dmResetFailureIsSaid": True,
+        "dmYoloCancelWritesNothing": True,
+        "dmYoloConfirmPatchesBadgesAndGreys": True,
+        "dmYoloOffNeverAsks": True,
+        "dmRemoveDeletesAndLeavesTheDm": True,
+        "dmRowsWaitForTheRosterAndTheRecord": True,
+        "dmRowsArriveWithThem": True,
+        "dmWithoutDeskHasNoDoor": True,
         "staleLoadDropped": True,
         "cacheSkipsLoading": True,
         "composerSurvivesSwitch": True,
@@ -433,8 +473,8 @@ def test_conversation_harness() -> None:
         # asks before it goes on — Cancel sends nothing, confirming PATCHes —
         # while off never asks. While it applies the header wears the badge and
         # the auto-approve switch greys out with Yolo's hint, which wins over
-        # Global's. A DM has no Yolo switch; the desk's flag reaches it through
-        # operator_invalidate(chat) as the same badge and greyed switch.
+        # Global's. An agent's flag set from its desk reaches an open DM
+        # through operator_invalidate(chat) as the same badge and greyed switch.
         "threadYoloSwitchIsInAdvanced": True,
         "yoloCancelSendsNothing": True,
         "yoloConfirmPatchesTheThread": True,

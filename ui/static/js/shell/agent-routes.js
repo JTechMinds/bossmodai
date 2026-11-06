@@ -49,5 +49,28 @@ const BossModAgentRoutes = (() => {
         if (store.getState().place !== 'chat') navigate('chat');
     }
 
-    return { openConversation };
+    /**
+     * Leave a conversation whose subject is gone — an agent just removed
+     * through its `⋯` (context/agent-menu.js) — when it is the one Chat has
+     * open, so Chat shows its empty state rather than a deleted agent.
+     *
+     * @param {object} store  Application store.
+     * @param {string} id  The agent's or the thread's id.
+     * @param {'agent'|'thread'} kind
+     * @returns {void}  Nothing changes when another conversation, or none,
+     *   is open: only the one that lost its subject is left.
+     * @throws {Error} On a missing store, an empty id, or an unknown kind.
+     */
+    function closeConversation(store, id, kind) {
+        if (!store) throw new Error('[agent-routes] closeConversation needs the store');
+        if (!id) throw new Error('[agent-routes] a conversation needs an id');
+        if (kind !== 'agent' && kind !== 'thread') {
+            throw new Error(`[agent-routes] unknown conversation kind "${kind}"`);
+        }
+        const state = store.getState();
+        if (state.conversationId !== id || state.conversationKind !== kind) return;
+        store.setState({ conversationId: null, conversationKind: null });
+    }
+
+    return { openConversation, closeConversation };
 })();

@@ -132,8 +132,8 @@ const BossModScheduleView = (() => {
     }
 
     /**
-     * The danger confirmation before a delete (context/desk-actions.js's
-     * pattern): nothing is called until the operator confirms, and Cancel,
+     * The danger confirmation before a delete (context/agent-menu.js
+     * `confirmDestructive`'s pattern): nothing is called until the operator confirms, and Cancel,
      * last, is the focused default.
      *
      * @param {{title: string, agentName: string, onConfirm: () => void}} options

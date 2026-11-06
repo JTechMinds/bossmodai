@@ -5,11 +5,11 @@ const BossModConversation = (() => {
     const NO_CONVERSATION_REASON = 'Pick a person or thread to start talking.';
 
     /** @param {object} deps store, bus, api, navigate, needs, drafts (Map), cache (a transcript
-     *   cache); optional openDesk `(agentId, path?) => void` (the desk modal), openMemory
-     *   `(agentId, memoryId) => void` (that desk's Memory layer on one memory), liveViews.
-     *   drafts/cache are the caller's so a draft outlives destroy(). */
+     *   cache), agentMenu (the shell's agent `⋯`: a DM's rows, and a memory line's Memory);
+     *   optional openDesk `(agentId, path?) => void` (the desk modal), liveViews.
+     *   drafts/cache/agentMenu are the caller's, so they outlive destroy(). */
     function createConversation(deps) {
-        const { store, bus, api, navigate, needs, openDesk, openMemory, liveViews, drafts, cache } = deps || {};
+        const { store, bus, api, navigate, needs, openDesk, agentMenu, liveViews, drafts, cache } = deps || {};
         if (!store) throw new Error('[conversation] deps.store is required');
         if (!bus) throw new Error('[conversation] deps.bus is required');
         if (typeof api !== 'function') throw new Error('[conversation] deps.api is required');
@@ -17,6 +17,8 @@ const BossModConversation = (() => {
         if (!needs) throw new Error('[conversation] deps.needs is required');
         if (!(drafts instanceof Map)) throw new Error('[conversation] deps.drafts (a Map) is required');
         if (!cache || typeof cache.recall !== 'function') throw new Error('[conversation] deps.cache is required');
+        if (!agentMenu || typeof agentMenu.actions !== 'function'
+            || typeof agentMenu.openMemory !== 'function') throw new Error('[conversation] deps.agentMenu is required');
 
         const generation = BossModGates.createLoadGeneration();
         const presence = BossModGates.createChannelPresenceController();
@@ -34,7 +36,7 @@ const BossModConversation = (() => {
             return undefined;
         }
         cardCtx.openDeliverable = openDeliverable;
-        cardCtx.openMemory = openMemory;
+        cardCtx.openMemory = (agentId, memoryId) => agentMenu.openMemory(agentId, memoryId);
         cardCtx.notesDisclosure = BossModConversationWindow.createDisclosure();
 
         let source = null;
@@ -258,7 +260,7 @@ const BossModConversation = (() => {
         function buildSource(id, kind) {
             if (kind === 'agent') {
                 return BossModConversationWindow.attach(api, 'human_dm', BossModAgentSource.createAgentSource(id, {
-                    api, bus, store, presence, openDesk, liveViews,
+                    api, bus, store, presence, agentMenu, liveViews,
                 }));
             }
             if (kind === 'thread') {

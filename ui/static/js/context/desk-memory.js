@@ -5,13 +5,14 @@
  * preferences it saved with `remember` on a reply, or with `memory add` while
  * working. It lives outside every agent
  * path (core/agent_loop/standing_prefs.py), so the desk's Files and Notes
- * cannot reach it; GET /api/agents/{id}/memory is its one read. The desk
- * head's Memory tool (context/desk-panel.js) opens this as a LAYER in the
- * modal frame, so the trail reads `‹ <Agent> › Memory` and ‹ comes back to
- * the desk. A chat line about a memory the agent saved or updated
- * (conversation/event-cards.js, through context/desk-dialog.js `openMemory`)
- * opens the same layer over that agent's desk with that memory's row
- * highlighted; if the agent has removed it since, a notice says so.
+ * cannot reach it; GET /api/agents/{id}/memory is its one read. The agent
+ * menu's Memory row (context/agent-menu.js) opens it. From the desk head's
+ * `⋯` it is a LAYER in the desk's modal frame, so the trail reads
+ * `‹ <Agent> › Memory` and ‹ comes back to the desk; from a DM's `⋯` it is a
+ * dialog of its own over the chat, and ✕ or Esc returns there. A chat line
+ * about a memory the agent saved or updated (conversation/event-cards.js)
+ * opens that same dialog over the chat with that memory's row highlighted;
+ * if the agent has removed it since, a notice says so.
  *
  * Each row is `n — text`: the number is the store's, assigned by the system
  * and never reused, which is why a remove is sent by number — a list read a

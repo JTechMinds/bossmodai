@@ -9,12 +9,14 @@
  * opening and closing — is core/menu-button.js's, the one every `⋯` shares.
  * The chrome never touches the panel; this module never reads a descriptor.
  *
- * THREE SECTIONS, each a core/menu.js `createMenuSection`: `subject` — the
+ * FOUR SECTIONS, each a core/menu.js `createMenuSection`: `subject` — the
  * agent or the thread, titled by the source's word through `setTitle` —
- * `chat`, this conversation's history and settings, and `advanced`, settings
- * that remove safeguards (Yolo mode), kept apart from the everyday ones; the
- * last two are titled by the surface's own words. Inside each, actions paint
- * above settings: the doing comes first.
+ * `chat`, this conversation's history and settings, `manage`, the
+ * operational and destructive actions on the agent (Diagnostics, Reset
+ * runtime, Remove agent), and `advanced`, settings that remove safeguards
+ * (Yolo mode), kept apart from the everyday ones; the last three are titled
+ * by the surface's own words (`LABELS`, which the desk head's `⋯` reads too).
+ * Inside each, actions paint above settings: the doing comes first.
  *
  * Every node is STABLE, owned here and built once, rather than handed to the
  * menu at open time, which is what lets a repaint that happens while the
@@ -28,10 +30,14 @@ const BossModChromeMenu = (() => {
     const MENU_LABEL = 'More actions';
     /** The chat section's heading: the surface's word, not any source's. */
     const CHAT_LABEL = 'Chat';
+    /** The manage section's heading, the surface's word like CHAT_LABEL. */
+    const MANAGE_LABEL = 'Manage';
     /** The advanced section's heading, the surface's word like CHAT_LABEL. */
     const ADVANCED_LABEL = 'Advanced';
     /** The sections, in panel order; `place` accepts exactly these. */
-    const SECTIONS = Object.freeze(['subject', 'chat', 'advanced']);
+    const SECTIONS = Object.freeze(['subject', 'chat', 'manage', 'advanced']);
+    /** Every section's heading but the subject's, which the source names. */
+    const LABELS = Object.freeze({ chat: CHAT_LABEL, manage: MANAGE_LABEL, advanced: ADVANCED_LABEL });
     /**
      * The subject heading until the first apply() names it. Never seen: the
      * section shows only with an action in it, and chrome.js refuses a
@@ -49,7 +55,8 @@ const BossModChromeMenu = (() => {
      * @param {HTMLElement[]} [deps.viewOptions]  The surface's preference
      *   controls, placed once, last in the chat section's settings.
      * @returns {{ button: HTMLElement,
-     *             place: (section: 'subject'|'chat'|'advanced', kind: string, node: HTMLElement) => void,
+     *             place: (section: 'subject'|'chat'|'manage'|'advanced', kind: string,
+     *               node: HTMLElement) => void,
      *             setTitle: (text: string) => void, settle: () => void,
      *             close: () => void, paint: () => void }}
      *   `button` is the `⋯` the chrome places in its row. `place` appends a
@@ -79,6 +86,7 @@ const BossModChromeMenu = (() => {
         const bodies = {
             subject: { actions: h('div', { class: 'menu-actions' }), settings: h('div', { class: 'menu-actions' }) },
             chat: { actions: h('div', { class: 'menu-actions' }), settings: h('div', { class: 'menu-actions' }) },
+            manage: { actions: h('div', { class: 'menu-actions' }), settings: h('div', { class: 'menu-actions' }) },
             advanced: { actions: h('div', { class: 'menu-actions' }), settings: h('div', { class: 'menu-actions' }) },
         };
         const sections = {
@@ -92,6 +100,11 @@ const BossModChromeMenu = (() => {
                 label: CHAT_LABEL,
                 children: [bodies.chat.actions, bodies.chat.settings],
             }),
+            manage: BossModMenu.createMenuSection({
+                id: 'conversation-menu-manage',
+                label: MANAGE_LABEL,
+                children: [bodies.manage.actions, bodies.manage.settings],
+            }),
             advanced: BossModMenu.createMenuSection({
                 id: 'conversation-menu-advanced',
                 label: ADVANCED_LABEL,
@@ -100,7 +113,11 @@ const BossModChromeMenu = (() => {
         };
         const subjectLabel = sections.subject.querySelector('.menu-label');
         /** Stable rules, keyed by the section each one precedes. */
-        const dividers = { chat: h('hr', { class: 'menu-divider' }), advanced: h('hr', { class: 'menu-divider' }) };
+        const dividers = {
+            chat: h('hr', { class: 'menu-divider' }),
+            manage: h('hr', { class: 'menu-divider' }),
+            advanced: h('hr', { class: 'menu-divider' }),
+        };
         /** What the panel holds: the sections in view, settled after each apply. */
         const content = h('div', { class: 'menu-sections' });
         // The surface's preferences are the chat's settings, and they are the
@@ -125,7 +142,7 @@ const BossModChromeMenu = (() => {
          * A chat switch goes in ahead of the view options rather than after
          * them, so they stay last without being moved on every apply().
          *
-         * @param {'subject'|'chat'|'advanced'} section
+         * @param {'subject'|'chat'|'manage'|'advanced'} section
          * @param {string} kind  `'switch'` for a setting; anything else is an
          *   action.
          * @param {HTMLElement} node
@@ -193,5 +210,5 @@ const BossModChromeMenu = (() => {
         return { button: menu.button, place, setTitle, settle, close: menu.close, paint };
     }
 
-    return { createChromeMenu, SECTIONS };
+    return { createChromeMenu, SECTIONS, LABELS };
 })();

@@ -37,6 +37,7 @@ const NAMES = [
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposerHistory", "BossModMentionDraft", "BossModComposer", "BossModSystemReceipts",
     "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource",
     "BossModAgentSource", "BossModConversationFocus", "BossModConversationWindow", "BossModConversation",
+    "BossModAgentMenu",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -92,9 +93,11 @@ const needsStub = {
     destroy: () => {},
 };
 
+// The agent `⋯` the shell hands every conversation, built from the real module.
+const agentMenu = BossModAgentMenu.create({ api, store, navigate() {} });
 const conversation = BossModConversation.createConversation({
     store, bus, api, navigate() {}, needs: needsStub,
-    drafts: new Map(), cache: BossModTranscriptCache.createCache(),
+    drafts: new Map(), cache: BossModTranscriptCache.createCache(), agentMenu,
 });
 documentStub.body.append(conversation.element);
 

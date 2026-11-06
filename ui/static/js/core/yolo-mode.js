@@ -5,11 +5,12 @@
  * a System AI review (core/bm_cli/approval_gate/gate.py `approval_mode`).
  * Never-allowed rules, the path jail and every consent card still apply.
  *
- * It is switched in two places — a thread's `⋯` → Advanced
- * (conversation/approval-controls.js) and an agent's desk `⋯` → Advanced
- * (context/desk-menu.js) — and both name it, explain it and warn before it
- * goes on in the same words. That is the second occurrence, so the words and
- * the warning live here once rather than drifting apart in two menus.
+ * It is switched in two places — a thread's `⋯` → Advanced and an agent's
+ * `⋯` → Advanced, on the agent's DM header and its desk head alike (both built
+ * by conversation/approval-controls.js) — and both name it, explain it and
+ * warn before it goes on in the same words. That is the second occurrence,
+ * so the words and the warning live here once rather than drifting apart in
+ * two menus.
  *
  * Turning it OFF never asks: that puts the safeguards back.
  */
@@ -45,7 +46,7 @@ const BossModYoloMode = (() => {
      *
      * A modal layer (core/overlays.js) whose body holds nothing focusable, so
      * focus lands on its LAST action — Cancel, the safe default, as in the
-     * desk's other confirms (context/desk-actions.js `confirmThen`).
+     * agent `⋯`'s other confirms (context/agent-menu.js `confirmDestructive`).
      *
      * @param {'thread'|'agent'} scope  What is being switched: a thread, or
      *   an agent's DM and its work with no origin thread. Picks the body copy.

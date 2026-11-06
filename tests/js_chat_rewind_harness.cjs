@@ -24,6 +24,8 @@ const NAMES = [
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
+    // The agent `⋯` the conversation is handed, built from the real module.
+    "BossModAgentApi", "BossModAgentRoutes", "BossModDeskMemory", "BossModAgentMenu",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -389,8 +391,12 @@ async function conversationCases() {
         subscribeError: () => () => {},
         destroy: () => {},
     };
+    // The agent `⋯` the shell hands every conversation, built from the real
+    // module; Rewind sits beside its rows.
+    const agentMenu = global.BossModAgentMenu.create({ api, store, navigate() {} });
     const conversation = global.BossModConversation.createConversation({
         store, bus, api, navigate() {}, needs, drafts: new Map(), cache: global.BossModTranscriptCache.createCache(),
+        agentMenu,
     });
     documentStub.body.append(conversation.element);
 

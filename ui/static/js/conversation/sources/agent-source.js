@@ -3,10 +3,11 @@
  *
  * Adapts `/api/agents/{id}/messages` and `/api/agents/{id}/activate` plus the
  * `chat_*` and `meeting_message` broadcasts to the one Message shape, and
- * `/api/agents/{id}` (plus its `/cli-auto-approve`) to the DM's auto-approve
- * switch and Yolo badge, and exports the Rewind calls (`/messages`, `/chat-rewind`; see
- * agent-requests.js). Like every source it is a data adapter and never
- * touches the DOM.
+ * `/api/agents/{id}` to the record the agent `⋯` reads — its rows come from
+ * the injected `ctx.agentMenu` (context/agent-menu.js), which owns every
+ * operation on the agent — and exports the Rewind calls (`/messages`,
+ * `/chat-rewind`; see agent-requests.js). Like every source it is a data
+ * adapter and never touches the DOM.
  *
  * An agent's meeting turns render inline in their conversation rather than in a
  * separate sub-view: the operator asked one person a question and the answer is
@@ -23,8 +24,8 @@ const BossModAgentSource = (() => {
      * @param {object} ctx.bus  Topic bus.
      * @param {object} ctx.store  Read for the roster, which names the agent.
      * @param {object} ctx.presence  Shared presence controller.
-     * @param {(agentId: string, path?: string) => void} [ctx.openDesk]
-     *   Optional: the desk modal, which the header's lamp opens on this agent.
+     * @param {{actions: Function}} ctx.agentMenu  The page's agent menu: the
+     *   `⋯`'s Agent, Manage and Advanced rows, and their operations.
      * @param {object} [ctx.liveViews]  Optional `{views, subscribe, open}`:
      *   one screen button per live-view extension this agent has a view in.
      * @returns {object} ConversationSource (spec 4.1).
@@ -39,12 +40,16 @@ const BossModAgentSource = (() => {
         if (!bus) throw new Error('[agent-source] ctx.bus is required');
         if (!store) throw new Error('[agent-source] ctx.store is required');
         if (!presence) throw new Error('[agent-source] ctx.presence is required');
+        if (!ctx.agentMenu || typeof ctx.agentMenu.actions !== 'function') {
+            throw new Error('[agent-source] ctx.agentMenu is required');
+        }
 
         /**
-         * The agent as `GET /api/agents/{id}` last answered: its DM
-         * auto-approve flag and whether Global auto-approve is on. Read on
-         * every load, so a Settings save (which refetches the open
-         * conversation) repaints the switch. Null until the first load.
+         * The agent as `GET /api/agents/{id}` last answered: its approval
+         * flags and whether Global auto-approve is on. Read on every load, so
+         * a Settings save (which refetches the open conversation) repaints
+         * the switches, and replaced by a flag save's answer (`adopt`). Null
+         * until the first load.
          */
         let record = null;
         let signals = null;
@@ -146,27 +151,13 @@ const BossModAgentSource = (() => {
         }
 
         /**
-         * Opt this DM in or out of System AI auto-approve.
-         *
-         * Off is the default. The request writes only the agent's DM flag,
-         * which also covers its work with no origin thread. The switch then
-         * repaints from the agent the server answered with.
-         *
-         * @param {boolean} enabled
-         * @returns {Promise<void>}
-         * @throws {Error} With the server's reason on any non-2xx, so chrome's
-         *   onError says so and the pill goes back.
+         * Take the agent a flag save answered with, and repaint the header
+         * from it.
+         * @param {object} agent
+         * @returns {void}
          */
-        async function setCliAutoApprove(enabled) {
-            const res = await api(`/api/agents/${agentId}/cli-auto-approve`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ enabled: enabled === true }),
-            });
-            if (!res.ok) {
-                throw new Error(await refusal(res, 'Could not update auto-approve for this DM.'));
-            }
-            record = await res.json();
+        function adopt(agent) {
+            record = agent;
             if (signals) signals.chrome();
         }
 
@@ -303,22 +294,18 @@ const BossModAgentSource = (() => {
         }
 
         /**
-         * Face, name, role, and — when the desk modal is injected — Open desk,
-         * in the `⋯`'s Agent section (`menuTitle`).
+         * Face, name, role, the live-view screens, and the agent `⋯`'s rows.
          *
          * `avatar` and `icon` are DATA: a name, a colour, and a glyph name. The
          * adapter still builds nothing, which is what keeps the conversation
          * from having to read the roster from inside its view.
          *
-         * `ctx.openDesk` is an optional, documented capability (spec 4.1), and
-         * the action renders only when it is injected. A control that renders
-         * but does nothing is worse than one that is absent, which is the same
-         * rule event-cards.js follows for the origin note link.
-         *
-         * The DM's auto-approve switch sits in the `⋯`'s Chat section once the
-         * agent has loaded, the same switch a thread carries. While the
-         * agent's Yolo mode (its desk's) is on it is greyed with a hint, and
-         * the header's badge says so (approval-controls.js).
+         * The `⋯`'s Agent, Manage and Advanced rows — the door to the desk,
+         * Memory, Edit role, the approval switches, Diagnostics, Reset runtime,
+         * Remove agent, Yolo mode — are `ctx.agentMenu`'s, the same rows the
+         * desk head shows; this hands it the record and the setter. The
+         * switches appear once the record has loaded, and while the agent's
+         * Yolo mode is on the header's badge says so (approval-controls.js).
          *
          * @returns {{title: string, subtitle: string, avatar: object,
          *            menuTitle: string, actions: object[], badge: object|null}}
@@ -326,18 +313,8 @@ const BossModAgentSource = (() => {
         function chrome() {
             const who = agent();
             const actions = [];
-            if (typeof ctx.openDesk === 'function') {
-                actions.push({
-                    id: 'conversation-open-desk',
-                    label: 'Open desk',
-                    icon: 'lamp-desk',
-                    slot: 'menu',
-                    section: 'subject',
-                    onSelect: () => ctx.openDesk(agentId),
-                });
-            }
-            // Same optional-capability rule as Desk, one per extension with a
-            // latest screenshot of this agent's: a screen with nothing on it is
+            // An optional capability, one per extension with a latest
+            // screenshot of this agent's: a screen with nothing on it is
             // absent. The label and icon are the extension's own for its view.
             if (ctx.liveViews) {
                 ctx.liveViews.views(agentId).forEach((view) => actions.push({
@@ -349,17 +326,15 @@ const BossModAgentSource = (() => {
                     onSelect: () => ctx.liveViews.open(view.extensionId, agentId, who.name),
                 }));
             }
-            const approvals = record
-                ? BossModApprovalControls.forAgent(record, { onAutoApprove: setCliAutoApprove })
-                : null;
-            if (approvals) actions.push(...approvals.actions);
+            const menu = ctx.agentMenu.actions(agentId, { agent: record, onAgentSaved: adopt });
+            actions.push(...menu.actions);
             return {
                 title: who.name,
                 subtitle: who.role || '',
                 avatar: { name: who.name, color: who.color || null },
-                menuTitle: 'Agent',
+                menuTitle: menu.menuTitle,
                 actions,
-                badge: approvals ? approvals.badge : null,
+                badge: menu.badge,
             };
         }
 

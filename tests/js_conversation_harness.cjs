@@ -28,6 +28,8 @@ const NAMES = [
     "BossModThreadSeat",
     "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource", "BossModAgentRequests", "BossModAgentSource",
     "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation",
+    // The agent `⋯` the conversation is handed, built from the real module.
+    "BossModAgentApi", "BossModAgentRoutes", "BossModDeskMemory", "BossModAgentMenu",
 ];
 if (paths.length !== NAMES.length) {
     throw new Error(`expected ${NAMES.length} module paths, got ${paths.length}`);
@@ -65,10 +67,19 @@ const THREADS = {
 let autoApproveGlobal = false;
 const agentAutoApprove = {};
 const autoApprovePatches = [];
-// Each agent's Yolo flag (set from its desk, never from the DM), and every
-// PATCH a thread's Yolo switch sends.
+// Each agent's Yolo flag, every PATCH a thread's Yolo switch sends, and
+// every one the agent `⋯`'s Yolo switch sends.
 const agentYolo = {};
 const yoloPatches = [];
+const agentYoloPatches = [];
+// What the agent `⋯`'s other rows reach: each agent's memory, every reset
+// and every delete, a reset that fails while `resetFails` is set, and a
+// record GET held open while `heldRecord` is (the switches wait for it).
+const AGENT_MEMORIES = { a: [{ id: 1, text: "Ada writes in plain English." }] };
+const resets = [];
+let resetFails = false;
+const deletes = [];
+let heldRecord = null;
 const agentRecord = (id) => ({
     id,
     cli_auto_approve_dm: agentAutoApprove[id] === true,
@@ -118,6 +129,21 @@ const api = async (url, init) => {
         agentAutoApprove[dmFlag[1]] = body.enabled === true;
         return { ok: true, async json() { return agentRecord(dmFlag[1]); } };
     }
+    const dmYolo = text.match(/^\/api\/agents\/([^/]+)\/cli-yolo$/);
+    if (dmYolo) {
+        const body = JSON.parse(init.body);
+        agentYoloPatches.push({ id: dmYolo[1], method: init.method, body });
+        agentYolo[dmYolo[1]] = body.enabled === true;
+        return { ok: true, async json() { return agentRecord(dmYolo[1]); } };
+    }
+    const memory = text.match(/^\/api\/agents\/([^/]+)\/memory$/);
+    if (memory) return { ok: true, async json() { return { memories: AGENT_MEMORIES[memory[1]] || [] }; } };
+    const reset = text.match(/^\/api\/agents\/([^/]+)\/reset-runtime$/);
+    if (reset && init && init.method === "POST") {
+        resets.push(reset[1]);
+        if (resetFails) return { ok: false, status: 500, async text() { return "runtime is wedged"; } };
+        return { ok: true, async json() { return { deleted_triggers: 0 }; } };
+    }
     const threadYolo = text.match(/^\/api\/channels\/([^/]+)\/cli-yolo$/);
     if (threadYolo) {
         const body = JSON.parse(init.body);
@@ -130,6 +156,11 @@ const api = async (url, init) => {
         };
     }
     const record = text.match(/^\/api\/agents\/([^/?]+)$/);
+    if (record && init && init.method === "DELETE") {
+        deletes.push(record[1]);
+        return { ok: true, async json() { return {}; } };
+    }
+    if (record && heldRecord) await heldRecord.promise;
     if (record) return { ok: true, async json() { return agentRecord(record[1]); } };
     const agent = text.match(/^\/api\/agents\/([^/]+)\/messages/);
     if (agent) {
@@ -166,6 +197,10 @@ const api = async (url, init) => {
     }
     throw new Error(`unhandled ${text}`);
 };
+
+// context/agent-api.js — the agent `⋯`'s requests — calls the GLOBAL helper,
+// as every module does in the browser; pointed at the same scripted API.
+global.apiFetch = (...args) => api(...args);
 
 // conversation.js uploads through the shared client, which the browser
 // defines in api-client.js. Scripted here: the id names the conversation it
@@ -214,6 +249,8 @@ const needsStub = {
 };
 
 const openedDesks = [];
+// Every place the agent `⋯` left for (Diagnostics).
+const navigations = [];
 // The live-view capability, as chat-place.js injects it: the views each
 // agent has (one per live-view extension, in the extension list's order),
 // change notifications, and the viewer.
@@ -229,10 +266,17 @@ const announceViews = () => viewListeners.forEach((fn) => fn());
 // Owned by the caller so they outlive one controller, as chat-place.js does.
 const drafts = new Map();
 const transcriptCache = global.BossModTranscriptCache.createCache();
+// The agent `⋯` the shell builds, once, from the real module: the desk is
+// its door, and the chrome's Open desk carries a glyph.
+const agentMenu = global.BossModAgentMenu.create({
+    api, store,
+    navigate: (placeId, params) => navigations.push({ placeId, params }),
+    openDesk: (id) => openedDesks.push(id),
+});
 const conversation = BossModConversation.createConversation({
     store, bus, api, navigate() {}, needs: needsStub, drafts, cache: transcriptCache,
-    // Injected so the chrome has an action to carry a glyph on.
     openDesk: (id) => openedDesks.push(id),
+    agentMenu,
     liveViews,
 });
 const listing = conversation.element.querySelector("[data-transcript]");
@@ -503,13 +547,18 @@ async function main() {
     const chromeAvatarNodeIsStable = chromeAvatar() === identity;
     if (!chromeAvatarNodeIsStable) throw new Error("a repaint rebuilt an unchanged avatar");
 
-    // Open desk lives behind the `⋯`, in the Agent section — one `⋯` per
-    // header, and nothing icon-only beside it. The source still hands over a
-    // glyph NAME and the view is the only thing that builds an element from
-    // it; inside the panel the label is visible text, so the row names itself.
+    // The DM's `⋯` is the agent menu's (context/agent-menu.js), with the
+    // chat's own section between its rows: Agent (the door to the desk,
+    // Memory, Edit role, then the agent's auto-approve switch with its scope
+    // line), Chat (Rewind…, then the view option — the doing first), Manage
+    // (Diagnostics and the two destructive rows, marked) and Advanced (Yolo
+    // mode), a rule between each. One `⋯` per header, and nothing icon-only
+    // beside it: the menu hands over a glyph NAME and the view is the only
+    // thing that builds an element from it; inside the panel the label is
+    // visible text, so the row names itself.
     const rowButtons = () => conversation.element
         .querySelector(".conversation-actions").querySelectorAll("button");
-    if (rowButtons().some((btn) => btn.getAttribute("id") === "conversation-open-desk")) {
+    if (rowButtons().some((btn) => btn.getAttribute("id") === "agent-open-desk")) {
         throw new Error("Open desk must not sit in the header row");
     }
     // The panel's shape: its sections (and the rule between them), their
@@ -530,7 +579,7 @@ async function main() {
     const deskDots = conversation.element.querySelector("#conversation-view-options");
     await deskDots.dispatchClick();
     const deskPanel = conversation.element.querySelector(".menu");
-    const deskBtn = deskPanel && deskPanel.querySelector("#conversation-open-desk");
+    const deskBtn = deskPanel && deskPanel.querySelector("#agent-open-desk");
     if (!deskBtn) throw new Error("an injected openDesk must produce Open desk behind the `⋯`");
     const glyph = deskBtn.querySelector("i");
     const deskSection = deskBtn.closest(".menu-section");
@@ -544,19 +593,29 @@ async function main() {
         throw new Error(`Open desk must be a glyph and its words under "Agent": `
             + `${deskBtn.textContent} / ${deskSection && deskSection.querySelector(".menu-label").textContent}`);
     }
-    // The DM's panel: Agent, one rule, then Chat — and inside Chat the action
-    // (Rewind…) comes before the settings, the doing first.
     const dmSections = panelSections(deskPanel);
-    const dmMenuIsSectioned = headingsOf(deskPanel).join("|") === "Agent|Chat"
-        && dmSections.length === 3
-        && dmSections[1].matches(".menu-divider")
-        && deskPanel.querySelectorAll(".menu-divider").length === 1
-        && sectionRows(dmSections[0]).join("|") === "Open desk"
-        && sectionRows(dmSections[2]).join("|")
-            === "Rewind…|Auto-approve safe commands|Show system notifications"
-        && sectionIsLabelled(dmSections[0]) && sectionIsLabelled(dmSections[2]);
+    const hintOf = (open, id) => {
+        const node = open.querySelector(`#${id}-hint`);
+        return node ? node.textContent : null;
+    };
+    const dmMenuIsSectioned = headingsOf(deskPanel).join("|") === "Agent|Chat|Manage|Advanced"
+        && dmSections.length === 7
+        && [1, 3, 5].every((at) => dmSections[at].matches(".menu-divider"))
+        && deskPanel.querySelectorAll(".menu-divider").length === 3
+        && sectionRows(dmSections[0]).join("|") === "Open desk|Memory|Edit role|Auto-approve safe commands"
+        && sectionRows(dmSections[2]).join("|") === "Rewind…|Show system notifications"
+        && sectionRows(dmSections[4]).join("|") === "Diagnostics|Reset runtime|Remove agent"
+        && sectionRows(dmSections[6]).join("|") === "Yolo mode"
+        && [0, 2, 4, 6].every((at) => sectionIsLabelled(dmSections[at]))
+        && deskPanel.querySelector("#agent-reset-runtime").getAttribute("data-tone") === "danger"
+        && deskPanel.querySelector("#agent-remove").getAttribute("data-tone") === "danger"
+        && deskPanel.querySelector("#agent-diagnostics").getAttribute("data-tone") === null
+        // Both of the agent's switches say whom they cover.
+        && hintOf(deskPanel, "agent-cli-auto-approve") === BossModYoloMode.HINTS.agent
+        && hintOf(deskPanel, "agent-cli-yolo") === BossModYoloMode.HINTS.agent;
     if (!dmMenuIsSectioned) {
-        throw new Error(`the DM's \`⋯\` must read Agent | Chat, got ${headingsOf(deskPanel).join("|")}: `
+        throw new Error(`the DM's \`⋯\` must read Agent | Chat | Manage | Advanced, got `
+            + `${headingsOf(deskPanel).join("|")}: `
             + dmSections.map((node) => (node.matches(".menu-divider") ? "—" : sectionRows(node).join("|"))).join(" / "));
     }
     // Choosing it puts the panel away first, then opens this agent's desk.
@@ -568,6 +627,142 @@ async function main() {
     if (!deskOpensFromTheMenu) {
         throw new Error(`Open desk must close the panel and open "a", got ${openedDesks.join("|")}`);
     }
+
+    // ─── The agent rows act from the chat, with no desk ───
+    //
+    // Diagnostics leaves for the agent's Log; Memory opens its dialog; Reset
+    // asks first and a failure after Confirm is said on the composer's error
+    // line; Yolo asks before it goes on (Cancel writes nothing), confirming
+    // PATCHes once, badges the header and greys auto-approve with Yolo's hint,
+    // and off never asks; Remove names the agent, DELETEs, and leaves its DM.
+    const dmMenu = async () => {
+        const dots = conversation.element.querySelector("#conversation-view-options");
+        if (dots.getAttribute("aria-expanded") !== "true") await dots.dispatchClick();
+        return conversation.element.querySelector(".menu");
+    };
+    const closeDmMenu = async () => {
+        const dots = conversation.element.querySelector("#conversation-view-options");
+        if (dots.getAttribute("aria-expanded") === "true") await dots.dispatchClick();
+    };
+    const settleRow = async () => { for (let i = 0; i < 6; i += 1) await tick(); };
+    const pickRow = async (id) => {
+        const open = await dmMenu();
+        await open.querySelector(`#${id}`).dispatchClick();
+        await settleRow();
+    };
+    const dialogs = () => documentStub.body.querySelectorAll(".modal-panel");
+    const dialogButton = (label) => dialogs()[dialogs().length - 1].querySelectorAll(".modal-actions")[0]
+        .querySelectorAll("button").find((btn) => btn.textContent === label);
+    const composerLine = () => conversation.element.querySelector(".composer-error").textContent;
+    const badgeText = () => conversation.element.querySelector(".conversation-badge").textContent;
+    const rowSwitch = (open, id) => open.querySelector(`#${id}`);
+
+    await pickRow("agent-diagnostics");
+    const diagnosticsLeavesForTheAgentsLog = navigations.length === 1
+        && navigations[0].placeId === "log"
+        && JSON.stringify(navigations[0].params) === JSON.stringify({ agentId: "a" });
+
+    await pickRow("agent-memory");
+    const memoryDialog = dialogs().find((node) => node.getAttribute("aria-label") === "Memory");
+    const dmMemoryOpensItsDialog = Boolean(memoryDialog) && dialogs().length === 1
+        && memoryDialog.querySelectorAll(".desk-memory-row").length === 1;
+    if (memoryDialog) {
+        await memoryDialog.querySelector(".modal-close").dispatchClick();
+        await settleRow();
+    }
+
+    resetFails = true;
+    await pickRow("agent-reset-runtime");
+    const resetAsksFirst = dialogs().length === 1 && resets.length === 0
+        && dialogs()[0].textContent.includes("Reset this agent’s runtime?");
+    await dialogButton("Reset runtime").dispatchClick();
+    await settleRow();
+    resetFails = false;
+    const dmResetFailureIsSaid = resetAsksFirst && resets.join("|") === "a" && dialogs().length === 0
+        && composerLine() === "Could not reset the runtime. Try again.";
+
+    await pickRow("agent-cli-yolo");
+    const dmYoloAsks = dialogs().length === 1
+        && dialogs()[0].textContent.includes("Turn on Yolo mode?")
+        && dialogs()[0].textContent.includes("This agent won't stop to ask before running commands in its DM");
+    await dialogButton("Cancel").dispatchClick();
+    await settleRow();
+    let open = await dmMenu();
+    const dmYoloCancelWritesNothing = dmYoloAsks && agentYoloPatches.length === 0 && dialogs().length === 0
+        && rowSwitch(open, "agent-cli-yolo").getAttribute("aria-checked") === "false" && badgeText() === "";
+    await closeDmMenu();
+    await pickRow("agent-cli-yolo");
+    await dialogButton("Turn on Yolo mode").dispatchClick();
+    await settleRow();
+    open = await dmMenu();
+    const autoUnderDmYolo = rowSwitch(open, "agent-cli-auto-approve");
+    const dmYoloConfirmPatchesBadgesAndGreys = agentYoloPatches.length === 1
+        && agentYoloPatches[0].id === "a" && agentYoloPatches[0].method === "PATCH"
+        && agentYoloPatches[0].body.enabled === true
+        && rowSwitch(open, "agent-cli-yolo").getAttribute("aria-checked") === "true"
+        && badgeText() === "Yolo mode"
+        && autoUnderDmYolo.getAttribute("aria-checked") === "true" && autoUnderDmYolo.disabled === true
+        && hintOf(open, "agent-cli-auto-approve") === BossModApprovalControls.YOLO_HINT;
+    await closeDmMenu();
+    await pickRow("agent-cli-yolo");
+    const dmYoloOffNeverAsks = dialogs().length === 0 && agentYoloPatches.length === 2
+        && agentYoloPatches[1].body.enabled === false && badgeText() === "";
+    if (!diagnosticsLeavesForTheAgentsLog || !dmMemoryOpensItsDialog || !dmResetFailureIsSaid
+        || !dmYoloCancelWritesNothing || !dmYoloConfirmPatchesBadgesAndGreys || !dmYoloOffNeverAsks) {
+        throw new Error(`the DM's agent rows: diagnostics ${diagnosticsLeavesForTheAgentsLog} `
+            + `memory ${dmMemoryOpensItsDialog} reset ${dmResetFailureIsSaid} "${composerLine()}" `
+            + `yolo cancel ${dmYoloCancelWritesNothing} confirm ${dmYoloConfirmPatchesBadgesAndGreys} `
+            + `off ${dmYoloOffNeverAsks} ${JSON.stringify(agentYoloPatches)}`);
+    }
+
+    store.setState({ conversationId: "a", conversationKind: "agent" });
+    await pickRow("agent-remove");
+    const dmRemoveNamesTheAgent = dialogs().length === 1
+        && dialogs()[0].textContent.includes("Remove this agent?")
+        && dialogs()[0].textContent.includes("Deleting Ada permanently deletes their files")
+        && deletes.length === 0;
+    await dialogButton("Remove agent").dispatchClick();
+    await settleRow();
+    const dmRemoveDeletesAndLeavesTheDm = dmRemoveNamesTheAgent && deletes.join("|") === "a"
+        && dialogs().length === 0
+        && store.getState().conversationId === null && store.getState().conversationKind === null;
+    if (!dmRemoveDeletesAndLeavesTheDm) {
+        throw new Error(`Remove from the DM must name the agent, DELETE and leave the DM, got `
+            + `${JSON.stringify(deletes)} ${store.getState().conversationKind}:${store.getState().conversationId}`);
+    }
+
+    // Edit role and Remove wait for the roster row they act on, and the
+    // switches for the record: Eve is not on the roster yet, and her record
+    // is still on its way. Memory needs neither.
+    const rosterBefore = store.getState().roster;
+    let releaseRecord = null;
+    heldRecord = { promise: new Promise((resolve) => { releaseRecord = resolve; }) };
+    const eveOpens = conversation.open("e", "agent");
+    await settleRow();
+    open = await dmMenu();
+    const dmRowsWaitForTheRosterAndTheRecord = open.querySelector("#agent-edit").disabled === true
+        && open.querySelector("#agent-remove").disabled === true
+        && open.querySelector("#agent-memory").disabled === false
+        && !rowSwitch(open, "agent-cli-auto-approve") && !rowSwitch(open, "agent-cli-yolo")
+        && badgeText() === "";
+    await closeDmMenu();
+    store.setState({ roster: rosterBefore.concat([{ id: "e", name: "Eve", role: "Tester" }]) });
+    heldRecord = null;
+    releaseRecord();
+    await eveOpens;
+    await settleRow();
+    open = await dmMenu();
+    const dmRowsArriveWithThem = open.querySelector("#agent-edit").disabled === false
+        && open.querySelector("#agent-remove").disabled === false
+        && Boolean(rowSwitch(open, "agent-cli-auto-approve")) && Boolean(rowSwitch(open, "agent-cli-yolo"));
+    await closeDmMenu();
+    store.setState({ roster: rosterBefore });
+    if (!dmRowsWaitForTheRosterAndTheRecord || !dmRowsArriveWithThem) {
+        throw new Error(`Edit role and Remove must wait for the roster row, and the switches for the `
+            + `record: before ${dmRowsWaitForTheRosterAndTheRecord} after ${dmRowsArriveWithThem}`);
+    }
+    // Back to Ada, where the header checks below start.
+    await conversation.open("a", "agent");
 
     // The live-view screens: absent until the status lists a view for this
     // agent, then one soft-green, icon-only button per view, named with the
@@ -969,8 +1164,10 @@ async function main() {
 
     // ─── Auto-approve: the DM's own switch, and Global greying both out ───
     //
-    // The DM switch is the thread switch's twin (approval-controls.js):
-    // same label, same place behind the `⋯`, its own flag on the agent.
+    // The DM switch is the thread switch's twin (approval-controls.js): same
+    // label, behind the `⋯`, its own flag on the agent — in the Agent
+    // section, saying whom it covers, since that flag is the agent's and not
+    // this chat's.
     // While Global auto-approve is on, every conversation's switch shows ON,
     // is disabled and announced so, and says where the setting that wins
     // lives — as a visible line that is also its accessible description.
@@ -1001,8 +1198,9 @@ async function main() {
         && dmOff.checked === "false"
         && dmOff.disabled === false
         && dmOff.ariaDisabled === null
-        && dmOff.describedBy === null
-        && dmOff.hint === null;
+        && dmOff.describedBy === "agent-cli-auto-approve-hint"
+        && dmOff.hint === BossModYoloMode.HINTS.agent
+        && dmOff.hintOutsideTheRow;
     if (!dmSwitchStartsOffAndLive) {
         throw new Error(`the DM switch must start off and live, got ${JSON.stringify(dmOff)}`);
     }
@@ -1062,7 +1260,7 @@ async function main() {
         && threadBack.ariaDisabled === null && threadBack.hint === null
         && threadBack.describedBy === null
         && dmBack.checked === "true" && dmBack.disabled === false
-        && dmBack.ariaDisabled === null && dmBack.hint === null;
+        && dmBack.ariaDisabled === null && dmBack.hint === BossModYoloMode.HINTS.agent;
     if (!ownFlagsComeBack) {
         throw new Error(`turning Global off must restore each flag, got `
             + `${JSON.stringify(threadBack)} / ${JSON.stringify(dmBack)}`);
@@ -1074,8 +1272,9 @@ async function main() {
     // asks first (core/yolo-mode.js): Cancel sends nothing and puts the pill
     // back; confirming PATCHes the thread, the header shows the badge, and the
     // auto-approve switch greys out with Yolo's hint, which wins over
-    // Global's. Turning it off never asks. A DM has no Yolo switch: the
-    // agent's flag (its desk's) shows as the same badge and greyed switch.
+    // Global's. Turning it off never asks. The agent's own Yolo switch is
+    // the agent menu's (above); one set from its desk reaches an open DM as
+    // the same badge and greyed switch.
     const modalPanels = () => documentStub.body.querySelectorAll(".modal-panel");
     const modalAction = (label) => modalPanels()[0].querySelectorAll(".modal-action")
         .find((btn) => btn.textLabel === label);
@@ -1149,7 +1348,7 @@ async function main() {
         && badgeState().glyph === "alert-triangle" && badgeState().pill
         && badgeState().leadsTheActions;
     const yoloGreysTheThreadAutoApprove = greyedByYolo(
-        autoUnderYolo, "channel-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.thread,
+        autoUnderYolo, "channel-cli-auto-approve", BossModApprovalControls.YOLO_HINT,
     );
     if (!yoloConfirmPatchesTheThread || !threadBadgeShowsWhileYolo || !yoloGreysTheThreadAutoApprove) {
         throw new Error(`confirming must PATCH, badge the header and grey auto-approve, got `
@@ -1163,7 +1362,7 @@ async function main() {
     const autoUnderBoth = switchState(menu.panel, "channel-cli-auto-approve");
     await menu.dotsBtn.dispatchClick();
     const yoloHintWinsOverGlobal = greyedByYolo(
-        autoUnderBoth, "channel-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.thread,
+        autoUnderBoth, "channel-cli-auto-approve", BossModApprovalControls.YOLO_HINT,
     );
     autoApproveGlobal = false;
     BossModOperatorInvalidate.notifyLocal(["advanced-system", "chat"]);
@@ -1186,7 +1385,7 @@ async function main() {
         throw new Error(`turning Yolo off must not ask and must clear the badge, got `
             + `${JSON.stringify(yoloPatches)} / ${JSON.stringify(badgeState())} / ${JSON.stringify(autoAfterYolo)}`);
     }
-    // The DM: the agent's Yolo arrives from its desk as operator_invalidate(chat).
+    // The DM: an agent's Yolo set from its desk arrives as operator_invalidate(chat).
     await conversation.open("a", "agent");
     const dmBadgeStartsOff = badgeState().text === "";
     agentYolo.a = true;
@@ -1198,8 +1397,8 @@ async function main() {
     await menu.dotsBtn.dispatchClick();
     const dmShowsYoloFromItsDesk = dmBadgeStartsOff && badgeState().text === "Yolo mode"
         && badgeState().leadsTheActions
-        && greyedByYolo(dmUnderYolo, "agent-cli-auto-approve", BossModApprovalControls.YOLO_HINTS.dm)
-        && dmHeadings === "Agent|Chat";
+        && greyedByYolo(dmUnderYolo, "agent-cli-auto-approve", BossModApprovalControls.YOLO_HINT)
+        && dmHeadings === "Agent|Chat|Manage|Advanced";
     agentYolo.a = false;
     BossModOperatorInvalidate.notifyLocal(["chat"]);
     await wait(5);
@@ -1207,7 +1406,8 @@ async function main() {
     const dmAfterYolo = switchState(menu.panel, "agent-cli-auto-approve");
     await menu.dotsBtn.dispatchClick();
     const dmYoloOffRestoresItsOwnFlag = badgeState().text === ""
-        && dmAfterYolo.checked === "true" && dmAfterYolo.disabled === false && dmAfterYolo.hint === null;
+        && dmAfterYolo.checked === "true" && dmAfterYolo.disabled === false
+        && dmAfterYolo.hint === BossModYoloMode.HINTS.agent;
     if (!dmShowsYoloFromItsDesk || !dmYoloOffRestoresItsOwnFlag) {
         throw new Error(`the DM must show the desk's Yolo as a badge and a greyed switch, got `
             + `${dmHeadings} / ${JSON.stringify(dmUnderYolo)} / ${JSON.stringify(dmAfterYolo)}`);
@@ -1249,25 +1449,27 @@ async function main() {
     await tick();
     await tick();
 
-    // A DM with no openDesk has nothing about the agent to put there: only
-    // Chat, and no rule with nothing on its other side.
+    // An agent menu built with no door to the desk has no Open desk row: its
+    // Agent section is the rest of the agent's rows, and nothing renders that
+    // would do nothing when picked.
     const bare = BossModConversation.createConversation({
         store, bus, api, navigate() {}, needs: needsStub, drafts: new Map(),
         cache: global.BossModTranscriptCache.createCache(),
+        agentMenu: global.BossModAgentMenu.create({ api, store, navigate() {} }),
     });
     await bare.open("a", "agent");
     const bareDots = bare.element.querySelector("#conversation-view-options");
     await bareDots.dispatchClick();
     const barePanel = bare.element.querySelector(".menu");
-    const dmWithoutDeskShowsOnlyChat = Boolean(barePanel)
-        && headingsOf(barePanel).join("|") === "Chat"
-        && barePanel.querySelectorAll(".menu-divider").length === 0
-        && panelSections(barePanel).length === 1
-        && !barePanel.querySelector("#conversation-open-desk");
+    const dmWithoutDeskHasNoDoor = Boolean(barePanel)
+        && headingsOf(barePanel).join("|") === "Agent|Chat|Manage|Advanced"
+        && sectionRows(panelSections(barePanel)[0]).join("|") === "Memory|Edit role|Auto-approve safe commands"
+        && !barePanel.querySelector("#agent-open-desk");
     await bareDots.dispatchClick();
     bare.destroy();
-    if (!dmWithoutDeskShowsOnlyChat) {
-        throw new Error(`a DM without openDesk must show only Chat, got ${barePanel && headingsOf(barePanel).join("|")}`);
+    if (!dmWithoutDeskHasNoDoor) {
+        throw new Error(`a DM whose menu has no desk door must offer no Open desk, got `
+            + `${barePanel && headingsOf(barePanel).join("|")}`);
     }
 
     // No unheaded fallback: a menu action must name its section, and a
@@ -1285,7 +1487,7 @@ async function main() {
         title: "x", subtitle: "",
         actions: [Object.assign({ id: "x-act", label: "X", slot: "menu", onSelect() {} }, extra)],
     });
-    const UNSECTIONED = '[chrome] menu action "x-act" needs section "subject", "chat", "advanced"';
+    const UNSECTIONED = '[chrome] menu action "x-act" needs section "subject", "chat", "manage", "advanced"';
     const applyRefusesBadMenuActions = refusalOf(menuItem({})) === UNSECTIONED
         && refusalOf(menuItem({ section: "elsewhere" })) === UNSECTIONED
         && refusalOf(menuItem({ section: "subject" }))
@@ -1631,7 +1833,7 @@ async function main() {
         throw new Error(`destroy left ${store.subscriberCount()} store subscribers`);
     }
     const rebuilt = BossModConversation.createConversation({
-        store, bus, api, navigate() {}, needs: needsStub, drafts, cache: transcriptCache,
+        store, bus, api, navigate() {}, needs: needsStub, drafts, cache: transcriptCache, agentMenu,
     });
     await rebuilt.open("a", "agent");
     const rebuiltInput = rebuilt.element.querySelector(".composer-input");
@@ -1662,6 +1864,13 @@ async function main() {
     const requiresDraftsAndCache = refusal({ cache: transcriptCache }).includes("deps.drafts")
         && refusal({ drafts: new Map() }).includes("deps.cache");
     if (!requiresDraftsAndCache) throw new Error("createConversation must refuse without drafts/cache");
+    // The agent `⋯` too: a DM header without its rows is a menu missing half
+    // of itself, and a memory line with nowhere to go.
+    const requiresAgentMenu = refusal({ drafts: new Map(), cache: transcriptCache })
+        === "[conversation] deps.agentMenu is required"
+        && refusal({ drafts: new Map(), cache: transcriptCache, agentMenu: { actions() {} } })
+            === "[conversation] deps.agentMenu is required";
+    if (!requiresAgentMenu) throw new Error("createConversation must refuse without a whole agentMenu");
     if (!listing) throw new Error("the conversation must mount a transcript");
     if (!documentStub) throw new Error("the harness needs a document");
 
@@ -1669,6 +1878,18 @@ async function main() {
         ok: true,
         draftSurvivesDestroy,
         requiresDraftsAndCache,
+        requiresAgentMenu,
+        dmMenuIsSectioned,
+        diagnosticsLeavesForTheAgentsLog,
+        dmMemoryOpensItsDialog,
+        dmResetFailureIsSaid,
+        dmYoloCancelWritesNothing,
+        dmYoloConfirmPatchesBadgesAndGreys,
+        dmYoloOffNeverAsks,
+        dmRemoveDeletesAndLeavesTheDm,
+        dmRowsWaitForTheRosterAndTheRecord,
+        dmRowsArriveWithThem,
+        dmWithoutDeskHasNoDoor,
         staleLoadDropped,
         cacheSkipsLoading,
         composerSurvivesSwitch,

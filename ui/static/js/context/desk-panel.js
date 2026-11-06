@@ -5,7 +5,7 @@
  * is context/desk-schedules.js, Processes is context/desk-processes.js, Files
  * is context/desk-files.js, Notes is context/desk-notes.js, Extensions is
  * context/desk-extensions.js (hidden while no per-agent extension is enabled)
- * and Details is context/desk-actions.js, each owning its own request and its
+ * and Details is context/desk-details.js, each owning its own request and its
  * own load generation. It never touches the modal: context/desk-dialog.js
  * owns that lifecycle and places what this returns — the body, the avatar
  * lead and the head tools.
@@ -21,12 +21,15 @@
  * the agent was hired from, and its per-agent update (context/desk-pack.js). The actions on the
  * agent are the HEAD's, as in every other modal, and all of them sit behind
  * its one `⋯` (context/desk-menu.js), so the title bar holds only the agent
- * and never accumulates icon tools. Memory is a layer (context/desk-memory.js).
+ * and never accumulates icon tools. The rows and what they do are the agent
+ * menu's (context/agent-menu.js), the same ones the agent's DM header offers;
+ * this desk builds its own instance, with Open chat as the door, and supplies
+ * the record (Details) and what a removal or a role edit means here. Memory
+ * and Edit role open as layers over the desk, so the operator comes back to
+ * the desk they opened.
  *
  * The done/fail contract is a DISCLOSURE: the agent's role contract is
- * reference material read once, not a standing alert. Editing the role opens
- * a layer over the desk (context/agent-edit.js), so the operator comes back to
- * the desk they opened.
+ * reference material read once, not a standing alert.
  *
  * A TASK ROW opens the task as a layer over the desk too
  * (context/desk-task-opener.js), so ‹ comes back here; it used to switch to
@@ -83,10 +86,11 @@ const BossModDeskPanel = (() => {
      *   `agent`) and a task layer's chat (the task's own target). The dialog
      *   hands in one that closes the desk and its layers first.
      * @returns {{ element: HTMLElement, lead: HTMLElement, tools: HTMLElement[], measure: () => void,
-     *   openMemory: (memoryId: number) => void, destroy: () => void }} `lead` is the avatar for
-     *   the title row (decorative: the name is the title). `measure` decides
-     *   the description's clamp and must be called once the body is mounted.
-     *   `destroy` also closes any task layer the desk opened.
+     *   destroy: () => void }} `lead` is the avatar for the title row
+     *   (decorative: the name is the title). `measure` decides the
+     *   description's clamp and must be called once the body is mounted.
+     *   `destroy` also closes any task layer, role form or Memory layer the
+     *   desk opened.
      * @throws {Error} When any dependency is missing.
      */
     function createDeskPanel(deps) {
@@ -119,15 +123,14 @@ const BossModDeskPanel = (() => {
         const contractEl = h('div', { class: 'callout-body desk-bar' });
         // Hidden for an agent not hired from a pack.
         const pack = BossModDeskPack.createDeskPack({ api, agentId });
-        // What the agent is shown every turn; a layer over the desk.
-        const memory = BossModDeskMemory.createDeskMemory({ api, agentId });
 
         const tasks = BossModDeskTasks.createDeskTasks({
             api, agentId, onOpenTask: (taskId) => { void taskOpener.open(taskId); },
         });
         // A row opens its task as a layer over this desk (context/desk-task-opener.js).
         const taskOpener = BossModDeskTaskOpener.create({ store, api, bus, tasks, openConversation });
-        const actions = BossModDeskActions.createDeskActions({ api, agentId, onRemoved });
+        // The workspace and model facts, and the desk's record of the agent.
+        const details = BossModDeskDetails.createDeskDetails({ api, agentId });
         // Recurring work; a run's task opens over the desk like a task row.
         const schedules = BossModDeskSchedules.createDeskSchedules({
             api, bus, agentId, agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
@@ -147,12 +150,8 @@ const BossModDeskPanel = (() => {
             agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
             onChange: () => { if (extensionsSection) extensionsSection.hidden = deskExtensions.isEmpty(); },
         });
-        /** The open role dialog, or null. One at a time. */
-        let edit = null;
         /** Server lane note. Queued replaces the status label until a lane frees. */
         let laneNote = '';
-        /** Set before teardown closes the dialog, so its onClosed does nothing. */
-        let destroyed = false;
         /** The description on screen, its clamp, and whether it may measure yet. */
         let shownDescription = null;
         let clamp = null;
@@ -161,17 +160,27 @@ const BossModDeskPanel = (() => {
         let shownName = agent() ? String(agent().name) : null;
         let seen = Boolean(agent());
 
-        // The head's one tool: the `⋯` and its sectioned rows (context/desk-menu.js).
+        // The agent's rows, the DM header's too; Open chat is this one's door.
+        const agentMenu = BossModAgentMenu.create({
+            api, store, navigate,
+            openChat: (id) => openConversation(id, 'agent'),
+            onRemoved,
+            // A role edit can rewrite who the agent is, make the contract
+            // "edited" against its pack, and move the workspace: re-read them.
+            onEditClosed: () => {
+                renderProfile();
+                void details.refresh();
+                void pack.refresh();
+                void notes.refresh();
+            },
+        });
+        // The head's one tool: the `⋯` painting those rows (context/desk-menu.js).
         const deskMenu = BossModDeskMenu.create({
-            canEdit: () => Boolean(agent()),
-            onChat: () => openConversation(agentId, 'agent'),
-            onMemory: () => memory.open(),
-            onEdit: () => openEdit(),
-            onDiagnostics: () => navigate('log', { agentId }),
-            onReset: () => actions.confirmReset(),
-            onRemove: () => actions.confirmRemove(),
-            yoloEnabled: () => actions.yoloEnabled(),
-            onYolo: (on) => { void actions.toggleYolo(on); },
+            getMenu: () => agentMenu.actions(agentId, {
+                agent: details.agent(),
+                onAgentSaved: (saved) => details.adopt(saved),
+            }),
+            onError: (message) => details.showError(message),
         });
         const tools = [deskMenu.button];
 
@@ -197,7 +206,7 @@ const BossModDeskPanel = (() => {
                                 h('i', { 'data-lucide': 'scroll-text', 'aria-hidden': 'true' }),
                                 CONTRACT_SUMMARY),
                             h('div', { class: 'callout', 'data-tone': 'warn' }, contractEl)))),
-                    section('Details', null, actions.element),
+                    section('Details', null, details.element),
                     section('Notes', null, notes.element),
                     extensionsSection = section('Extensions', null, deskExtensions.element))));
         extensionsSection.hidden = deskExtensions.isEmpty();
@@ -232,31 +241,6 @@ const BossModDeskPanel = (() => {
             }
             const bar = who.done_fail_bar ? String(who.done_fail_bar).trim() : '';
             contractEl.append(bar ? `${DONE_BAR_TITLE} ${bar}` : NO_DONE_BAR);
-        }
-
-        /**
-         * Open the role form as a layer over the desk. One at a time — a
-         * second Edit click would stack two forms over one agent.
-         * @returns {void}
-         */
-        function openEdit() {
-            if (edit) return;
-            // The row is disabled until the roster has this agent, and
-            // openAgentModal throws on a missing one rather than creating.
-            edit = BossModAgentEdit.openAgentModal({ agent: agent(), onClosed: closeEdit, onDeleted: onRemoved });
-        }
-
-        function closeEdit() {
-            edit = null;
-            // destroy() closes the dialog on its way out; refreshing sections
-            // of a desk being torn down would fire requests nothing will paint.
-            if (destroyed) return;
-            renderProfile();
-            void actions.refresh();
-            // A role edit can make the contract "edited" against its pack.
-            void pack.refresh();
-            // A role edit can rewrite the workspace; re-read it.
-            void notes.refresh();
         }
 
         disposers.push(store.subscribe((s) => s.roster, () => {
@@ -311,21 +295,17 @@ const BossModDeskPanel = (() => {
                 if (clamp) clamp.measure();
             },
 
-            openMemory: (memoryId) => memory.open(memoryId), // Memory, that row highlighted.
-
             /**
              * Drain this desk and its sections, and close what it opened.
              * @returns {void}
              */
             destroy() {
-                destroyed = true;
                 disposers.splice(0).forEach((off) => off());
                 deskMenu.destroy();
-                actions.destroy();
-                // A dialog outliving the desk that opened it would edit an
-                // agent nobody is looking at any more.
-                if (edit) edit.close();
-                edit = null;
+                // A role form or a Memory layer outliving the desk that opened
+                // it would act on an agent nobody is looking at any more.
+                agentMenu.destroy();
+                details.destroy();
                 // Nor may a task layer outlive the desk it was opened over.
                 taskOpener.destroy();
                 tasks.destroy();
@@ -335,7 +315,6 @@ const BossModDeskPanel = (() => {
                 notes.destroy();
                 deskExtensions.destroy();
                 pack.destroy();
-                memory.destroy();
             },
         };
     }

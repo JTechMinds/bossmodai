@@ -179,6 +179,44 @@ const BossModAgentApi = (() => {
     }
 
     /**
+     * Turn System AI auto-approve on or off for an agent's DM and its tasks
+     * with no origin thread (the agent `⋯`'s Auto-approve safe commands).
+     *
+     * @param {string} id
+     * @param {boolean} enabled  Anything but `true` turns it off.
+     * @returns {Promise<object>} The agent, as the server now holds it.
+     * @throws {Error} With the server's message on any non-2xx.
+     */
+    async function apiSetCliAutoApprove(id, enabled) {
+        const res = await apiFetch(`/api/agents/${id}/cli-auto-approve`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled === true }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
+    /**
+     * Turn Yolo mode on or off for the same scope. The caller confirms an ON
+     * first (core/yolo-mode.js); this only writes.
+     *
+     * @param {string} id
+     * @param {boolean} enabled  Anything but `true` turns it off.
+     * @returns {Promise<object>} The agent, as the server now holds it.
+     * @throws {Error} With the server's message on any non-2xx.
+     */
+    async function apiSetCliYolo(id, enabled) {
+        const res = await apiFetch(`/api/agents/${id}/cli-yolo`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ enabled: enabled === true }),
+        });
+        if (!res.ok) throw new Error(await res.text());
+        return res.json();
+    }
+
+    /**
      * Every agent snapshot — one per agent, deleted agents included — for
      * Add agent's Recent scope.
      *
@@ -240,6 +278,8 @@ const BossModAgentApi = (() => {
         apiUpdatePromptHistoryPolicy,
         apiClearChatHistory,
         apiResetRuntime,
+        apiSetCliAutoApprove,
+        apiSetCliYolo,
         listSnapshots,
         fetchCatalog,
     };

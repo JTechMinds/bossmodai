@@ -104,7 +104,7 @@ const NAMES = [
     "BossModConversationFocus", "BossModConversationWindow", "BossModChatRewindDialog", "BossModChatRewind", "BossModConsentActivity", "BossModConversation", "BossModPlaces",
     "BossModFileContent", "BossModFileForm", "BossModFileOps", "BossModFileViewer",
     "BossModFloorPlan", "BossModMiniOffice", "BossModOfficeChatter",
-    "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskActions",
+    "BossModDeskOpener", "BossModDeskFiles", "BossModDeskNotes", "BossModDeskTasks", "BossModDeskDetails",
     "BossModAgentApi", "BossModAgentTemplatesApi",
     "BossModAgentFields", "BossModAgentFormFields",
     "BossModAgentFormAdvanced", "BossModAgentFormChoices", "BossModAgentFormConnections",
@@ -129,8 +129,9 @@ const NAMES = [
     "BossModDeskProcesses",
     // The desk's pack line, mounted in About.
     "BossModDeskPack",
-    // The desk head's Memory layer.
-    "BossModDeskMemory",
+    // The desk head's Memory layer, then the agent menu whose rows open it:
+    // read at call time, like everything the menu names.
+    "BossModDeskMemory", "BossModAgentMenu",
     "BossModDeskMenu", "BossModDeskPanel",
     // The desk's task rows wear the Tasks place's status labels and open the
     // task as a layer over the desk through the Tasks place's own loader,
@@ -407,10 +408,15 @@ const cancels = [];
 const AGENT_DETAIL = {
     id: "a1", name: "Jim", storage_key: "jim-workspace",
     connection_id: null, thinking_social: "default", thinking_work: "default", connection: null,
-    cli_yolo_dm: false,
+    cli_yolo_dm: false, cli_auto_approve_dm: false, cli_auto_approve_global: false,
 };
 // Every PATCH /api/agents/{id}/cli-yolo the desk's Yolo switch sends, in order.
 const yoloWrites = [];
+// Every PATCH /api/agents/{id}/cli-auto-approve the desk's switch sends, in order.
+const autoApproveWrites = [];
+// What GET /api/agents/{id}/messages answers, per agent: nothing, until the
+// section about a chat line's memory link gives Jim two memory lines.
+const DM_MESSAGES = {};
 // Set by the section that clicks Remove before that read has landed: while it
 // holds a promise, every GET /api/agents/{id} waits on it.
 let heldAgentDetail = null;
@@ -609,6 +615,15 @@ function api(url, init) {
         if (mapFails) return jsonResponse({ detail: "unavailable" }, 503);
         return jsonResponse({ width: 28, height: 20, tiles: [], rooms: mapRooms, desks: MAP_DESKS });
     }
+    const agentAutoApprove = String(url).match(/^\/api\/agents\/([^/]+)\/cli-auto-approve$/);
+    if (agentAutoApprove && init && init.method === "PATCH") {
+        const body = JSON.parse(init.body);
+        autoApproveWrites.push({ agentId: agentAutoApprove[1], body });
+        AGENT_DETAIL.cli_auto_approve_dm = body.enabled === true;
+        return jsonResponse({ ...AGENT_DETAIL });
+    }
+    const dmRead = String(url).match(/^\/api\/agents\/([^/]+)\/messages\?limit=50$/);
+    if (dmRead) return jsonResponse((DM_MESSAGES[dmRead[1]] || []).map((row) => ({ ...row })));
     const agentYolo = String(url).match(/^\/api\/agents\/([^/]+)\/cli-yolo$/);
     if (agentYolo && init && init.method === "PATCH") {
         const body = JSON.parse(init.body);
@@ -697,8 +712,10 @@ async function main() {
     const navigated = [];
     const navigate = (placeId, params) => navigated.push({ placeId, params });
     // The shell builds ONE desk dialog and hands its `open` to every place as
-    // ctx.openDesk; so does this.
+    // ctx.openDesk; so does this. And ONE chat-side agent menu beside it, the
+    // real module, with the desk as its door, handed on as ctx.agentMenu.
     const desk = global.BossModDeskDialog.createDeskDialog({ store, bus, api, navigate });
+    const agentMenu = global.BossModAgentMenu.create({ api, store, navigate, openDesk: desk.open });
     const ctx = {
         store,
         bus,
@@ -706,6 +723,7 @@ async function main() {
         needs,
         contextEl,
         openDesk: desk.open,
+        agentMenu,
         navigate,
     };
 
@@ -1095,14 +1113,15 @@ async function main() {
         throw new Error(`Tasks owes its header a "See all" and Schedules a "New", got ${sectionActions.join("|")}`);
     }
     // The actions on the agent are the HEAD's, and all of them sit behind its
-    // one `⋯` (context/desk-menu.js): the "Agent" section's own doors, a
-    // divider, then the "Manage" section's operational three, the destructive
-    // two marked, then a divider and "Advanced", whose one row is the Yolo
-    // mode switch.
+    // one `⋯` — named "More actions", the chat's word for the same menu — whose
+    // rows are the agent menu's (context/agent-menu.js): the "Agent" section's
+    // own doors and its auto-approve switch, a divider, then the "Manage"
+    // section's operational three, the destructive two marked, then a divider
+    // and "Advanced", whose one row is the Yolo mode switch.
     const head = deskModal().querySelector(".modal-head");
     const headTools = head.querySelector(".modal-tools").querySelectorAll("button")
         .map((node) => node.getAttribute("aria-label"));
-    const toolsAreInTheHead = headTools.join("|") === "Desk options"
+    const toolsAreInTheHead = headTools.join("|") === "More actions"
         && deskModal().querySelector(".modal-body").querySelectorAll(".desk-action").length === 0;
     if (!toolsAreInTheHead) {
         throw new Error(`the desk's head must carry only its ⋯, got ${headTools.join("|")}`);
@@ -1111,9 +1130,10 @@ async function main() {
     await drain();
     const menuRows = head.querySelectorAll(".menu-action");
     const menuPanel = head.querySelector(".menu");
-    // Two dividers, one between each pair of titled sections: Agent (to Edit
-    // role), Manage (from Diagnostics) and Advanced (Yolo mode). Each section
-    // is a role="group" labelled by its own visible heading.
+    // Two dividers, one between each pair of titled sections: Agent (to the
+    // auto-approve switch), Manage (from Diagnostics) and Advanced (Yolo
+    // mode). No Chat section: that is the DM's. Each section is a
+    // role="group" labelled by its own visible heading.
     const menuStack = menuPanel.querySelector(".menu-sections");
     const menuParts = menuStack.children.map((node) => (node.classList.contains("menu-divider")
         ? "—" : `${node.querySelector(".menu-label").textContent}:`
@@ -1130,16 +1150,17 @@ async function main() {
             === "||||danger|danger"
         && menuPanel.querySelectorAll(".menu-divider").length === 2
         && menuParts.join("|")
-            === "Agent:Open chat,Memory,Edit role|—|Manage:Diagnostics,Reset runtime,Remove agent|—|Advanced:Yolo mode"
+            === "Agent:Open chat,Memory,Edit role,Auto-approve safe commands|—"
+                + "|Manage:Diagnostics,Reset runtime,Remove agent|—|Advanced:Yolo mode"
         && sectionsAreLabelled
-        && inDesk("#desk-edit").disabled === false
+        && inDesk("#agent-edit").disabled === false
         && optionsTrigger.classList.contains("menu-trigger")
         && optionsTrigger.getAttribute("data-size") === "header"
         && optionsTrigger.getAttribute("aria-expanded") === "true";
     if (!optionsMenuHoldsEveryAction) {
-        throw new Error(`the ⋯ must hold an Agent section (Open chat, Memory, Edit role), a divider, a `
-            + `Manage section (Diagnostics, Reset runtime, Remove agent), a divider, then Advanced (Yolo mode), `
-            + `got ${menuParts.join("|")}`);
+        throw new Error(`the ⋯ must hold an Agent section (Open chat, Memory, Edit role, auto-approve), a `
+            + `divider, a Manage section (Diagnostics, Reset runtime, Remove agent), a divider, then Advanced `
+            + `(Yolo mode), got ${menuParts.join("|")}`);
     }
     // The contract is CLOSED until the operator asks for it.
     if (inDesk(".desk-contract").hasAttribute("open")) {
@@ -1150,7 +1171,7 @@ async function main() {
     // first, because the operator asked to go somewhere else. The Log reads
     // `agentId` (as Metrics sends it); `agentFilter` is the Tasks param.
     const navigatedBefore = navigated.length;
-    await head.querySelector("#desk-diagnostics").dispatchClick();
+    await head.querySelector("#agent-diagnostics").dispatchClick();
     await drain();
     const diagnosticsNav = navigated.slice(navigatedBefore);
     const diagnosticsFiltersTheLog = diagnosticsNav.length === 1
@@ -1302,7 +1323,7 @@ async function main() {
     const openRemove = async () => {
         await inDesk("#desk-options").dispatchClick();
         await drain();
-        await deskModal().querySelector("#desk-remove").dispatchClick();
+        await deskModal().querySelector("#agent-remove").dispatchClick();
         await drain();
     };
     desk.open("a1");
@@ -1326,32 +1347,40 @@ async function main() {
     if (modals().length !== 1 || !deskModal()) {
         throw new Error("Cancel must close the Remove dialog and leave the desk");
     }
+    desk.close();
+    await drain();
 
-    // Before the detail read lands there is no name, so there is no dialog:
-    // the Details section says why and asks again, and once the name is in,
-    // Remove opens the warning that names them.
-    let releaseAgentDetail = null;
-    heldAgentDetail = { promise: new Promise((resolve) => { releaseAgentDetail = resolve; }) };
+    // The warning names whose files go, and the name is the roster row's: so
+    // until the roster has the agent, Remove is withheld (as Edit role is),
+    // and once it has, Remove opens the warning that names them. The desk is
+    // opened before the roster names the agent, as at boot.
+    store.setState({ roster: ROSTER.filter((row) => row.id !== "a1") });
+    await drain();
     desk.open("a1");
+    await drain();
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const removeIsDisabledUntilTheRosterHasTheAgent = inDesk("#agent-remove").disabled === true
+        && inDesk("#agent-edit").disabled === true;
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    if (!removeIsDisabledUntilTheRosterHasTheAgent) {
+        throw new Error("Remove and Edit role must be disabled until the roster has the agent");
+    }
+    store.setState({ roster: ROSTER });
+    await drain();
+    // Opened over that agent's DM: confirming leaves the DM too, not only the
+    // desk, since the same row behaves the same from both menus.
+    store.setState({ conversationId: "a1", conversationKind: "agent" });
     await drain();
     await openRemove();
     const detailErrors = () => inDesk(".desk-details-block")
         .querySelectorAll(".context-error").map((node) => node.textContent).join(" ");
-    const removeWaitsForTheName = modals().length === 1
-        && detailErrors().includes("haven’t loaded yet");
-    if (!removeWaitsForTheName) {
-        throw new Error(`Remove before the name loads must not open a dialog, got `
-            + `${modals().length} dialogs, details "${detailErrors()}"`);
-    }
-    heldAgentDetail = null;
-    releaseAgentDetail(jsonResponse(AGENT_DETAIL));
-    await drain();
-    await openRemove();
-    const removeOpensOnceTheNameIsIn = detailErrors() === ""
+    const removeOpensOnceTheRosterHasTheAgent = detailErrors() === ""
         && modals().length === 2
         && modals()[1].textContent.includes("Deleting Jim permanently deletes");
-    if (!removeOpensOnceTheNameIsIn) {
-        throw new Error(`Remove must open once the name loads, got ${modals().length} `
+    if (!removeOpensOnceTheRosterHasTheAgent) {
+        throw new Error(`Remove must open once the roster has the agent, got ${modals().length} `
             + `dialogs, details "${detailErrors()}"`);
     }
     // Confirmed, the DELETE lands and the desk of someone deleted closes.
@@ -1362,14 +1391,25 @@ async function main() {
     if (!removeClosesTheDesk) {
         throw new Error(`a removed agent's desk must close, got ${modals().length} dialogs`);
     }
+    const removeFromTheDeskLeavesThatDm = store.getState().conversationId === null
+        && store.getState().conversationKind === null;
+    if (!removeFromTheDeskLeavesThatDm) {
+        throw new Error(`Remove from a desk over the agent's DM must leave it, got `
+            + `${store.getState().conversationKind}:${store.getState().conversationId}`);
+    }
 
-    // ─── Yolo mode: the desk `⋯`'s Advanced switch ───
+    // ─── Yolo mode and auto-approve: the desk `⋯`'s two switches ───
     //
-    // Withheld until the agent's detail loads, like Edit role. Turning it on
-    // closes the panel and asks first: Cancel writes nothing and the next
-    // open shows the true state; confirming PATCHes the agent and tells an
-    // open DM to refetch (operator_invalidate for `chat`). Off never asks.
-    const deskYolo = () => deskModal().querySelector("#desk-yolo");
+    // Both are the agent menu's, so they appear once the agent's detail has
+    // loaded: a switch painted from no answer would claim a state nobody
+    // read. Yolo sits in Advanced. Turning it on closes the panel and asks
+    // first: Cancel writes nothing and the next open shows the true state;
+    // confirming PATCHes the agent and tells an open DM to refetch
+    // (operator_invalidate for `chat`). Off never asks. While Yolo is on,
+    // auto-approve is greyed with Yolo's hint; off again, it PATCHes its own
+    // flag, adopts the answer and tells the DM the same way.
+    const deskYolo = () => deskModal().querySelector("#agent-cli-yolo");
+    const deskAutoApprove = () => deskModal().querySelector("#agent-cli-auto-approve");
     const yoloNotices = [];
     const realNotifyLocal = BossModOperatorInvalidate.notifyLocal;
     BossModOperatorInvalidate.notifyLocal = (surfaces) => {
@@ -1382,7 +1422,8 @@ async function main() {
     await drain();
     await inDesk("#desk-options").dispatchClick();
     await drain();
-    const deskYoloWaitsForTheDetail = Boolean(deskYolo()) && deskYolo().disabled === true;
+    const deskSwitchesWaitForTheDetail = !deskYolo() && !deskAutoApprove()
+        && Boolean(inDesk("#agent-memory"));
     await inDesk("#desk-options").dispatchClick();
     await drain();
     heldAgentDetail = null;
@@ -1390,16 +1431,16 @@ async function main() {
     await drain();
     await inDesk("#desk-options").dispatchClick();
     await drain();
-    const deskYoloHint = deskModal().querySelector("#desk-yolo-hint");
-    const deskYoloIsLiveInAdvanced = deskYoloWaitsForTheDetail && deskYolo().disabled === false
+    const deskYoloHint = deskModal().querySelector("#agent-cli-yolo-hint");
+    const deskYoloIsLiveInAdvanced = deskSwitchesWaitForTheDetail && deskYolo().disabled === false
         && deskYolo().getAttribute("aria-checked") === "false"
-        && deskYolo().getAttribute("aria-describedby") === "desk-yolo-hint"
+        && deskYolo().getAttribute("aria-describedby") === "agent-cli-yolo-hint"
         && Boolean(deskYoloHint) && deskYoloHint.textContent === BossModYoloMode.HINTS.agent
         && !deskYolo().contains(deskYoloHint)
         && deskYolo().closest(".menu-section").querySelector(".menu-label").textContent === "Advanced";
     if (!deskYoloIsLiveInAdvanced) {
         throw new Error(`the desk's Yolo switch must wait for the detail, then sit live in Advanced, `
-            + `withheld ${deskYoloWaitsForTheDetail}, hint "${deskYoloHint && deskYoloHint.textContent}"`);
+            + `withheld ${deskSwitchesWaitForTheDetail}, hint "${deskYoloHint && deskYoloHint.textContent}"`);
     }
     await deskYolo().dispatchClick();
     await drain();
@@ -1433,15 +1474,54 @@ async function main() {
         && yoloWrites.length === 1 && yoloWrites[0].agentId === "a1" && yoloWrites[0].body.enabled === true
         && yoloNotices.join(",") === "chat"
         && deskYolo().getAttribute("aria-checked") === "true";
+    // Yolo decides now: auto-approve shows on, is disabled, and says why.
+    const autoUnderYolo = deskAutoApprove();
+    const autoUnderYoloHint = deskModal().querySelector("#agent-cli-auto-approve-hint");
+    const deskAutoApproveGreysUnderYolo = Boolean(autoUnderYolo)
+        && autoUnderYolo.getAttribute("aria-checked") === "true"
+        && autoUnderYolo.disabled === true
+        && autoUnderYolo.getAttribute("aria-disabled") === "true"
+        && Boolean(autoUnderYoloHint)
+        && autoUnderYoloHint.textContent === BossModApprovalControls.YOLO_HINT
+        && autoUnderYolo.closest(".menu-section").querySelector(".menu-label").textContent === "Agent";
     await deskYolo().dispatchClick();
     await drain();
     const deskYoloOffNeverAsks = modals().length === 1 && yoloWrites.length === 2
         && yoloWrites[1].body.enabled === false && yoloNotices.join(",") === "chat,chat"
         && AGENT_DETAIL.cli_yolo_dm === false;
+    if (!deskYoloConfirmPatchesAndRefetchesChat || !deskYoloOffNeverAsks || !deskAutoApproveGreysUnderYolo) {
+        throw new Error(`confirming must PATCH and refetch chat, off must not ask, and auto-approve must `
+            + `grey under Yolo, got ${JSON.stringify(yoloWrites)} ${yoloNotices.join(",")} `
+            + `greyed ${deskAutoApproveGreysUnderYolo}`);
+    }
+    // Auto-approve, live again, with its scope line: one PATCH, the answer
+    // adopted (the next open shows it on), and the DM told.
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const autoLive = deskAutoApprove();
+    const autoLiveHint = deskModal().querySelector("#agent-cli-auto-approve-hint");
+    const autoStartsLiveWithItsScope = Boolean(autoLive) && autoLive.disabled === false
+        && autoLive.getAttribute("aria-checked") === "false"
+        && Boolean(autoLiveHint) && autoLiveHint.textContent === BossModYoloMode.HINTS.agent;
+    await autoLive.dispatchClick();
+    await drain();
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
+    const deskAutoApprovePatchesAdoptsAndNotifies = autoStartsLiveWithItsScope
+        && autoApproveWrites.length === 1 && autoApproveWrites[0].agentId === "a1"
+        && autoApproveWrites[0].body.enabled === true
+        && yoloNotices.join(",") === "chat,chat,chat"
+        && deskAutoApprove().getAttribute("aria-checked") === "true"
+        && yoloWrites.length === 2;
+    await inDesk("#desk-options").dispatchClick();
+    await drain();
     BossModOperatorInvalidate.notifyLocal = realNotifyLocal;
-    if (!deskYoloConfirmPatchesAndRefetchesChat || !deskYoloOffNeverAsks) {
-        throw new Error(`confirming must PATCH and refetch chat, and off must not ask, got `
-            + `${JSON.stringify(yoloWrites)} ${yoloNotices.join(",")}`);
+    AGENT_DETAIL.cli_auto_approve_dm = false;
+    desk.close();
+    await drain();
+    if (!deskAutoApprovePatchesAdoptsAndNotifies) {
+        throw new Error(`the desk's auto-approve must PATCH once, adopt and notify chat, got `
+            + `${JSON.stringify(autoApproveWrites)} ${yoloNotices.join(",")} live ${autoStartsLiveWithItsScope}`);
     }
 
     // ─── The roster is the desk's source of truth while it is open ───
@@ -1564,7 +1644,7 @@ async function main() {
     await drain();
     let releaseMemoryRead = null;
     heldMemoryRead = { promise: new Promise((resolve) => { releaseMemoryRead = resolve; }) };
-    await openDeskMenuRow("#desk-memory");
+    await openDeskMenuRow("#agent-memory");
     await drain();
     const theMemoryToolOpensALayer = Boolean(memoryLayer()) && memoryTop() === memoryLayer()
         && deskModal().hidden === true
@@ -1630,7 +1710,7 @@ async function main() {
     await drain();
     const memoryBackReturnsToTheDesk = !memoryLayer() && deskModal().hidden === false;
     memoryReadFails = true;
-    await openDeskMenuRow("#desk-memory");
+    await openDeskMenuRow("#agent-memory");
     await drain();
     const memoryReadFailureOffersRetry = memoryLayer().querySelectorAll(".context-error")
             .some((node) => node.textContent === "Memory could not be loaded.")
@@ -1645,7 +1725,7 @@ async function main() {
     const closingTheDeskClosesTheMemoryLayer = modals().length === 0;
     desk.open("a3");
     await drain();
-    await openDeskMenuRow("#desk-memory");
+    await openDeskMenuRow("#agent-memory");
     await drain();
     const memorySaysNothingSaved = memoryLayer().querySelectorAll(".context-empty")
             .some((node) => node.textContent === "Nothing saved yet")
@@ -1666,58 +1746,102 @@ async function main() {
             + `close ${closingTheDeskClosesTheMemoryLayer} empty ${memorySaysNothingSaved}`);
     }
 
-    // ─── A chat memory line's link: desk.openMemory(agentId, memoryId) ───
+    // ─── A chat memory line's link: Memory on its own, over the chat ───
     //
-    // The desk opens with its Memory layer on top, the named row highlighted
-    // and brought into view; ‹ comes back to the desk. A number the agent has
-    // since removed opens the layer with a notice and no highlight.
+    // A DM's line about a saved memory opens that agent's Memory dialog with
+    // the named row highlighted and brought into view — alone, over the chat,
+    // with no desk under it — and ✕ comes back to the chat. A number the
+    // agent has since removed opens it with a notice and no highlight, and a
+    // number that is not one is a producer bug the menu refuses.
     MEMORIES.a1 = [
         { id: 4, text: "The boss wants plain English, not jargon." },
         { id: 5, text: "Ship on Fridays only." },
     ];
-    const focusedRows = () => memoryRows().filter((row) => row.getAttribute("class").includes("is-focused"));
-    desk.openMemory("a1", 5);
+    DM_MESSAGES.a1 = [
+        { id: "n5", from: "system", content: "Jim saved a memory", memory_id: 5, created_at: "" },
+        { id: "n9", from: "system", content: "Jim updated a memory", memory_id: 9, created_at: "" },
+    ];
+    // A fresh open, so the transcript is read with those two lines in it.
+    store.setState({ conversationId: null, conversationKind: null });
     await drain();
-    const aMemoryLinkOpensTheLayerOverTheDesk = Boolean(memoryLayer()) && memoryTop() === memoryLayer()
-        && deskModal().hidden === true
-        && memoryLayer().querySelector(".modal-trail").textContent.includes("Jim")
-        && memoryLayer().querySelector(".modal-trail").textContent.includes("Memory");
+    store.setState({ conversationId: "a1", conversationKind: "agent" });
+    await drain();
+    const memoryLinks = () => placeEl.querySelectorAll(".note")
+        .filter((note) => note.getAttribute("data-open-kind") === "memory")
+        .map((note) => note.querySelector(".note-link"));
+    const focusedRows = () => memoryRows().filter((row) => row.getAttribute("class").includes("is-focused"));
+    const chatIsMounted = () => Boolean(placeEl.querySelector(".conversation"))
+        && store.getState().conversationId === "a1";
+    if (memoryLinks().length !== 2) {
+        throw new Error(`the DM must render its two memory lines as links, got ${memoryLinks().length}`);
+    }
+    await memoryLinks()[0].dispatchClick();
+    await drain();
+    const aMemoryLinkOpensMemoryOverTheChat = Boolean(memoryLayer()) && modals().length === 1
+        && memoryTop() === memoryLayer() && !deskModal()
+        && !memoryLayer().querySelector(".modal-trail").textContent.includes("Jim")
+        && chatIsMounted();
     const aMemoryLinkHighlightsItsRow = focusedRows().length === 1
         && focusedRows()[0].getAttribute("data-memory-id") === "5"
         && JSON.stringify(focusedRows()[0].scrolledIntoView) === JSON.stringify({ block: "nearest" })
         && memoryLayer().querySelectorAll(".callout").length === 0;
-    await memoryLayer().querySelector(".modal-back").dispatchClick();
+    await memoryLayer().querySelector(".modal-close").dispatchClick();
     await drain();
-    const aMemoryLinkBackReturnsToTheDesk = !memoryLayer() && deskModal().hidden === false;
-    desk.close();
-    await drain();
-    desk.openMemory("a1", 9);
+    const aMemoryLinkCloseReturnsToTheChat = modals().length === 0 && chatIsMounted();
+    await memoryLinks()[1].dispatchClick();
     await drain();
     const aRemovedMemoryLinkSaysSo = memoryLayer().querySelectorAll(".callout")
             .some((node) => node.textContent === "That memory is no longer saved.")
         && focusedRows().length === 0
-        && memoryRows().length === 2;
-    desk.close();
+        && memoryRows().length === 2
+        && !deskModal();
+    await memoryLayer().querySelector(".modal-close").dispatchClick();
     await drain();
     let aBadMemoryNumberThrows = false;
     try {
-        desk.openMemory("a1", "5");
+        agentMenu.openMemory("a1", "5");
     } catch (err) {
         aBadMemoryNumberThrows = /focusId must be a memory number/.test(String(err && err.message));
     }
-    desk.close();
-    await drain();
-    if (!aMemoryLinkOpensTheLayerOverTheDesk || !aMemoryLinkHighlightsItsRow || !aMemoryLinkBackReturnsToTheDesk
-        || !aRemovedMemoryLinkSaysSo || !aBadMemoryNumberThrows) {
-        throw new Error(`the memory link: layer ${aMemoryLinkOpensTheLayerOverTheDesk} `
-            + `highlight ${aMemoryLinkHighlightsItsRow} back ${aMemoryLinkBackReturnsToTheDesk} `
-            + `removed ${aRemovedMemoryLinkSaysSo} badNumber ${aBadMemoryNumberThrows}`);
+    const nothingIsLeftOpen = modals().length === 0;
+    if (!aMemoryLinkOpensMemoryOverTheChat || !aMemoryLinkHighlightsItsRow || !aMemoryLinkCloseReturnsToTheChat
+        || !aRemovedMemoryLinkSaysSo || !aBadMemoryNumberThrows || !nothingIsLeftOpen) {
+        throw new Error(`the memory link: over the chat ${aMemoryLinkOpensMemoryOverTheChat} `
+            + `highlight ${aMemoryLinkHighlightsItsRow} close ${aMemoryLinkCloseReturnsToTheChat} `
+            + `removed ${aRemovedMemoryLinkSaysSo} badNumber ${aBadMemoryNumberThrows} `
+            + `left open ${modals().length}`);
     }
+
+    // ─── Edit role from the DM's `⋯`: the role form, on its own ───
+    //
+    // The DM header's `⋯` carries the same rows as the desk's; Edit role from
+    // there opens the role form as the only dialog, over the chat, and
+    // closing it comes back to the chat rather than to a desk.
+    const dmDots = () => placeEl.querySelector("#conversation-view-options");
+    await dmDots().dispatchClick();
+    await drain();
+    await placeEl.querySelector("#agent-edit").dispatchClick();
+    await drain();
+    const dmEditDialog = modals().find((node) => node.getAttribute("aria-label") === "Edit role");
+    const editFromADmOpensTheRoleFormAlone = Boolean(dmEditDialog) && modals().length === 1
+        && !deskModal() && Boolean(dmEditDialog.querySelector("#agent-form"))
+        && dmEditDialog.querySelector(".modal-back").hidden === true;
+    if (dmEditDialog) {
+        await dmEditDialog.querySelectorAll(".modal-actions")[0].querySelectorAll("button")
+            .find((btn) => btn.textContent === "Cancel").dispatchClick();
+        await drain();
+    }
+    const editFromADmClosesToTheChat = modals().length === 0 && chatIsMounted();
+    if (!editFromADmOpensTheRoleFormAlone || !editFromADmClosesToTheChat) {
+        throw new Error(`Edit role from a DM must open the role form alone and close back to the chat, `
+            + `got ${modals().length} dialogs, desk ${Boolean(deskModal())}`);
+    }
+    DM_MESSAGES.a1 = [];
 
     // ─── Chat, from the head's `⋯` ───
     desk.open("a1");
     await drain();
-    await openDeskMenuRow("#desk-chat");
+    await openDeskMenuRow("#agent-open-chat");
     await drain();
     const chatToolOpensTheConversation = modals().length === 0
         && store.getState().conversationId === "a1"
@@ -2299,7 +2423,7 @@ async function main() {
     await drain();
     await inDesk("#desk-options").dispatchClick();
     await drain();
-    const editIsWithheldBeforeTheRoster = inDesk("#desk-edit").disabled === true;
+    const editIsWithheldBeforeTheRoster = inDesk("#agent-edit").disabled === true;
     await inDesk("#desk-options").dispatchClick();
     await drain();
     store.setState({ roster: ROSTER });
@@ -2345,7 +2469,7 @@ async function main() {
 
     await inDesk("#desk-options").dispatchClick();
     await drain();
-    const editAction = inDesk("#desk-edit");
+    const editAction = inDesk("#agent-edit");
     if (!editAction) throw new Error("the desk's ⋯ must offer Edit role");
     if (!editIsWithheldBeforeTheRoster || editAction.disabled !== false) {
         throw new Error(`Edit role must be disabled until the roster has the agent: before `
@@ -2451,7 +2575,7 @@ async function main() {
     // focus trap, and two live `#agent-form`s would let one primary submit the
     // other's draft. The Hire door is the Agents dialog now; it hands back the
     // Edit dialog that holds the one-form slot and builds nothing of its own.
-    await openDeskMenuRow("#desk-edit");
+    await openDeskMenuRow("#agent-edit");
     await drain();
     const first = editModal();
     const handedBack = openAddAgent();
@@ -2668,7 +2792,7 @@ async function main() {
     connectionsFail = true;
     desk.open("a1");
     await drain();
-    await openDeskMenuRow("#desk-edit");
+    await openDeskMenuRow("#agent-edit");
     await drain();
     const degradedForm = editModal();
     const feedbackLine = degradedForm.querySelector("#agent-save-feedback");
@@ -3031,7 +3155,7 @@ async function main() {
     updates.length = 0;
     desk.open("a1");
     await drain();
-    await openDeskMenuRow("#desk-edit");
+    await openDeskMenuRow("#agent-edit");
     await drain();
     const editing = editModal();
     const editingForm = editing.querySelector("#agent-form");
@@ -3219,6 +3343,8 @@ async function main() {
         deskYoloCancelWritesNothing,
         deskYoloConfirmPatchesAndRefetchesChat,
         deskYoloOffNeverAsks,
+        deskAutoApproveGreysUnderYolo,
+        deskAutoApprovePatchesAdoptsAndNotifies,
         thePackUpdateSendsTheHashItShowed,
         anUnlinkedAgentHasNoPackLine,
         theMemoryToolOpensALayer,
@@ -3234,11 +3360,13 @@ async function main() {
         memoryRetryRecovers,
         closingTheDeskClosesTheMemoryLayer,
         memorySaysNothingSaved,
-        aMemoryLinkOpensTheLayerOverTheDesk,
+        aMemoryLinkOpensMemoryOverTheChat,
         aMemoryLinkHighlightsItsRow,
-        aMemoryLinkBackReturnsToTheDesk,
+        aMemoryLinkCloseReturnsToTheChat,
         aRemovedMemoryLinkSaysSo,
         aBadMemoryNumberThrows,
+        editFromADmOpensTheRoleFormAlone,
+        editFromADmClosesToTheChat,
         columnHoldsOfficeAndChatter,
         oneDeskAtATime,
         deskDrainsOnClose,
@@ -3335,8 +3463,9 @@ async function main() {
         deleteIsNotPinned,
         diagnosticsFiltersTheLog,
         removeWarnsWhatIsDeleted,
-        removeWaitsForTheName,
-        removeOpensOnceTheNameIsIn,
+        removeIsDisabledUntilTheRosterHasTheAgent,
+        removeOpensOnceTheRosterHasTheAgent,
+        removeFromTheDeskLeavesThatDm,
         deleteWarnsWhatIsDeleted,
         pinnedPrimarySubmitsTheForm,
         pinnedPrimaryDoesNotCloseTheDialog,

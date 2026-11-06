@@ -56,14 +56,14 @@ def test_selecting_another_agent_invalidates_the_previous_desk_loads() -> None:
     # A late callback from a desk that has closed cannot close the next one.
     assert "const closeThis = () => { if (current === entry) close(); };" in dialog
 
-    for name in ("context/desk-files.js", "context/desk-tasks.js", "context/desk-actions.js"):
+    for name in ("context/desk-files.js", "context/desk-tasks.js", "context/desk-details.js"):
         source = _read(name)
         destroy = source.split("destroy() {", 1)[1]
         assert "destroyed = true;" in destroy, f"{name} must stop painting on destroy"
         assert ".next();" in destroy, f"{name} must invalidate its generation on destroy"
 
     panel = _read("context/desk-panel.js")
-    for child in ("actions.destroy();", "tasks.destroy();", "files.destroy();"):
+    for child in ("details.destroy();", "tasks.destroy();", "files.destroy();"):
         assert child in panel, f"the desk must tear down {child}"
 
 

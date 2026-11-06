@@ -133,7 +133,7 @@ CONTEXT_MODULES = [
     JS / "context" / "desk-files.js",
     JS / "context" / "desk-notes.js",
     JS / "context" / "desk-tasks.js",
-    JS / "context" / "desk-actions.js",
+    JS / "context" / "desk-details.js",
     JS / "context" / "agent-api.js",
     JS / "context" / "agent-templates-api.js",
     JS / "context" / "agent-fields.js",
@@ -170,6 +170,7 @@ CONTEXT_MODULES = [
     JS / "context" / "desk-processes.js",
     JS / "context" / "desk-pack.js",
     JS / "context" / "desk-memory.js",
+    JS / "context" / "agent-menu.js",
     JS / "context" / "desk-menu.js",
     JS / "context" / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
@@ -674,7 +675,7 @@ def test_the_folder_buttons_are_quiet_and_the_footer_is_pinned() -> None:
     css = _read(CSS / "context.css")
     for retired in (".desk-files-link", ".desk-footer", ".desk-action"):
         assert retired not in css, retired
-    assert "onclick" not in _read(JS / "context/desk-actions.js")
+    assert "onclick" not in _read(JS / "context/desk-details.js")
 
 
 def test_an_empty_section_still_reads_as_a_section() -> None:

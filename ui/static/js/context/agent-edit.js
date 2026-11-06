@@ -1,15 +1,15 @@
 /**
  * BossMod AI — Edit role: one agent's form, in one centred dialog.
  *
- * The entry point the desk's Edit role action calls, and the dialog around the
+ * The entry point the agent `⋯`'s Edit role calls, and the dialog around the
  * form rather than the form itself: which footer it gets, and where a save or
  * a delete leaves the operator. Building the form and saving through it is
  * context/agent-form-save.js, which this hosts and calls but does not
  * re-export — nothing outside reached it through here, and a second name for
  * one function is a seam that is not there. What it owns beyond the dialog is
  * the wiring the dock-era host did: a save closes the form and leaves the
- * operator where they were, and a delete tells the host (`onDeleted`), which
- * closes the desk the agent was shown in.
+ * operator where they were, and a delete tells the host (`onDeleted`) — the
+ * agent menu, which leaves that agent's DM and closes a desk it was shown in.
  *
  * EDIT ONLY, and one step: the full form for an agent that exists. Creating
  * one is the Agents dialog's Add agent tab (context/agents-dialog.js over
@@ -20,8 +20,8 @@
  * ONE AGENT FORM AT A TIME, across both dialogs that host one —
  * context/agent-dialog-slot.js. `#agent-form` is one id for the whole
  * document, so two live forms would let one dialog's primary submit the
- * other's draft. Both doors — the rail's Add agent menu and the desk's Edit
- * role — sit behind the modal scrim and its focus trap while either dialog is
+ * other's draft. Both doors — the rail's Add agent menu and the agent `⋯`'s
+ * Edit role — sit behind the modal scrim and its focus trap while either dialog is
  * up, so the slot is defence in depth rather than a flow anyone can walk. The
  * dialog is core/overlays.js's panel modal — one trap, one Esc, the title and
  * the dismissal pinned outside a body that scrolls.
@@ -52,7 +52,8 @@ const BossModAgentEdit = (() => {
      * @param {object} deps.agent  The roster row to edit.
      * @param {() => void} [deps.onDeleted]  Called once the form's Delete has
      *   landed, before this dialog closes: whatever showed the agent — the
-     *   desk this was opened from — cannot stay open on someone deleted.
+     *   DM or the desk this was opened from — cannot stay open on someone
+     *   deleted.
      * @param {() => void} [deps.onClosed]  Called once after the dialog closes,
      *   however it closed — a save, a delete, Cancel, or Esc. Not called at
      *   all when another agent dialog already holds the slot: nothing opened.

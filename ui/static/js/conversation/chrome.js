@@ -34,11 +34,13 @@
  *   slot: 'menu'   behind the `⋯`, in the `section` it names.
  *   slot: 'title'  beside the title. Confirming an edit to the title itself.
  *
- * The `⋯` is the header's OVERFLOW, in three titled sections. `subject` is the
- * agent or the thread — Open desk, Archive — headed by the descriptor's
- * `menuTitle`, the source's word. `chat` is this conversation: Rewind, its
- * switches, and the surface's view options. `advanced` holds the settings
- * that remove safeguards (Yolo mode), apart from the everyday ones. A
+ * The `⋯` is the header's OVERFLOW, in four titled sections. `subject` is the
+ * agent or the thread — Open desk, Memory, Archive — headed by the
+ * descriptor's `menuTitle`, the source's word. `chat` is this conversation:
+ * Rewind, its switches, and the surface's view options. `manage` is the
+ * operational and destructive rows on an agent (Diagnostics, Reset runtime,
+ * Remove agent). `advanced` holds the settings that remove safeguards (Yolo
+ * mode), apart from the everyday ones. A
  * once-a-month control does not earn a permanent seat beside the title, and a
  * bordered `Archive` sitting there every time you open a thread reads as a
  * suggestion. The BADGE leads the action row, before the subtitle, and is for
@@ -193,16 +195,18 @@ const BossModConversationChrome = (() => {
          *   action row, before the subtitle, or null for none. `menuTitle` is
          *   the subject section's heading, required once any action names
          *   `section: 'subject'`. Each action is `{id, label,
-         *   icon?, iconOnly?, slot?, section?, tone?, onSelect}`, where `icon`
+         *   icon?, iconOnly?, slot?, section?, tone?, disabled?, onSelect}`, where `icon`
          *   is a Lucide glyph NAME — the source names it, this builds it —
          *   `iconOnly` shows the glyph alone with `label` as the button's
          *   accessible name instead of its text (SC 4.1.2) and as its tooltip,
          *   and `slot` is `'menu'` to put it behind the `⋯`, `'title'` to put
          *   it beside the name, or absent for the action row; a `'menu'`
-         *   action's `section` is one of BossModChromeMenu.SECTIONS. `tone` is `'live'`
-         *   (the only tone so far) for an action that marks something running
-         *   now — an extension's live view — and sets `data-tone="live"`, which
-         *   the stylesheet colours soft green. A `kind: 'switch'` menu action also
+         *   action's `section` is one of BossModChromeMenu.SECTIONS. `tone` sets
+         *   `data-tone`: `'live'` for a row action that marks something running
+         *   now — an extension's live view, coloured soft green — or `'danger'`
+         *   for a destructive menu row (Reset runtime, Remove agent), in the
+         *   alert ink. `disabled` withholds a button that cannot act yet (Edit
+         *   role before the roster has the agent). A `kind: 'switch'` menu action also
          *   takes `pressed`, and optional `disabled` and `hint` (a visible line
          *   under the switch that is also its accessible description).
          *   `onSelect` may return a promise and may reject. `onRename` is
@@ -305,7 +309,7 @@ const BossModConversationChrome = (() => {
                 btn.onclick = menuAction
                     ? () => { closeMenu(); void run(btn, action); }
                     : () => { void run(btn, action); };
-                btn.disabled = gate.busy();
+                btn.disabled = gate.busy() || action.disabled === true;
                 if (menuAction) {
                     overflow.place(action.section, 'action', btn);
                     inMenu += 1;

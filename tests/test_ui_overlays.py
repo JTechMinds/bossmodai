@@ -325,7 +325,7 @@ def test_the_trail_title_wins_and_a_compact_frame_shows_only_back_and_title() ->
 # Questions with nothing to type: an outside click is a "no", exactly like Esc.
 CONFIRMS = (
     "shell/header.js", "places/files/file-ops.js", "places/tasks/tasks-cancel.js",
-    "context/agent-recovery.js", "context/desk-actions.js",
+    "context/agent-recovery.js", "context/agent-menu.js",
     "conversation/sources/thread-archive.js", "conversation/sources/thread-seat.js",
 )
 # Dialogs that hold typing: a stray click must not throw it away.

@@ -96,7 +96,7 @@ CONTEXT_MODULES = [
     CONTEXT / "desk-files.js",
     CONTEXT / "desk-notes.js",
     CONTEXT / "desk-tasks.js",
-    CONTEXT / "desk-actions.js",
+    CONTEXT / "desk-details.js",
     CONTEXT / "agent-api.js",
     CONTEXT / "agent-templates-api.js",
     CONTEXT / "agent-fields.js",
@@ -134,6 +134,7 @@ CONTEXT_MODULES = [
     CONTEXT / "desk-processes.js",
     CONTEXT / "desk-pack.js",
     CONTEXT / "desk-memory.js",
+    CONTEXT / "agent-menu.js",
     CONTEXT / "desk-menu.js",
     CONTEXT / "desk-panel.js",
     JS / "places" / "tasks" / "tasks-columns.js",
@@ -291,9 +292,10 @@ def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
         "memoryAlreadyGoneIsANotice", "memoryFailureKeepsTheRow", "memoryBackReturnsToTheDesk",
         "memoryReadFailureOffersRetry", "memoryRetryRecovers", "closingTheDeskClosesTheMemoryLayer",
         "memorySaysNothingSaved",
-        # A chat memory line's link: the layer over the desk, its row highlighted.
-        "aMemoryLinkOpensTheLayerOverTheDesk", "aMemoryLinkHighlightsItsRow",
-        "aMemoryLinkBackReturnsToTheDesk", "aRemovedMemoryLinkSaysSo", "aBadMemoryNumberThrows",
+        # A chat memory line's link: Memory alone over the chat, its row
+        # highlighted, and ✕ back to the chat — no desk underneath.
+        "aMemoryLinkOpensMemoryOverTheChat", "aMemoryLinkHighlightsItsRow",
+        "aMemoryLinkCloseReturnsToTheChat", "aRemovedMemoryLinkSaysSo", "aBadMemoryNumberThrows",
     ):
         assert payload[key] is True, key
     assert payload["toolsAreInTheHead"] is True
@@ -305,52 +307,82 @@ def test_desk_memory_is_a_layer_with_a_confirmed_remove() -> None:
     assert "innerHTML" not in source
     panel = _read(CONTEXT / "desk-panel.js")
     assert len(panel.splitlines()) < 400
-    assert "BossModDeskMemory.createDeskMemory({ api, agentId })" in panel
-    # The desk's `⋯` rows live in context/desk-menu.js; the panel wires them.
+    # The Memory layer is the agent menu's now, the DM's and the desk's alike:
+    # rebuilt per agent asked about, destroyed with the menu.
+    menu = _read(CONTEXT / "agent-menu.js")
+    assert len(menu.splitlines()) < 400
+    assert "BossModDeskMemory.createDeskMemory({ api, agentId })" in menu
+    assert "memory.layer.destroy()" in menu
+    assert "BossModDeskMemory" not in panel
+    assert "agentMenu.destroy();" in panel
+    # The desk's `⋯` paints the agent menu's rows (context/desk-menu.js).
     desk_menu = _read(CONTEXT / "desk-menu.js")
     assert len(desk_menu.splitlines()) < 400
-    assert "onMemory: () => memory.open()," in panel
-    assert "menuRow('desk-memory', 'brain', LABELS.memory, pick(onMemory))" in desk_menu
-    assert "memory.destroy()" in panel
-    # Open chat, Memory, Edit role, the divider, then the operational rows.
-    assert (desk_menu.index("menuRow('desk-chat'") < desk_menu.index("menuRow('desk-memory'")
-            < desk_menu.index("menuRow('desk-edit'") < desk_menu.index("h('hr', { class: 'menu-divider' })")
-            < desk_menu.index("menuRow('desk-diagnostics'"))
+    assert "getMenu: () => agentMenu.actions(agentId, {" in panel
+    # The door, Memory, Edit role, then the operational rows.
+    assert (menu.index("id: 'agent-open-desk'") < menu.index("id: 'agent-memory'")
+            < menu.index("id: 'agent-edit'") < menu.index("id: 'agent-diagnostics'"))
     index = _read(ROOT / "ui" / "templates" / "index.html")
-    assert index.index("js/context/desk-memory.js") < index.index("js/context/desk-panel.js")
-    assert index.index("js/context/desk-menu.js") < index.index("js/context/desk-panel.js")
+    # The menu names BossModDeskMemory, and the desk's `⋯` and panel name it.
+    assert (index.index("js/context/desk-memory.js") < index.index("js/context/agent-menu.js")
+            < index.index("js/context/desk-menu.js") < index.index("js/context/desk-panel.js"))
 
 
 def test_desk_yolo_switch_sits_in_advanced_and_confirms_first() -> None:
-    """The agent's Yolo mode is the desk `⋯`'s, in its own Advanced section.
+    """The agent's Yolo mode is the agent menu's, in its own Advanced section.
 
-    It covers the agent's DM and its work with no origin thread. The switch is
-    withheld until the agent detail loads, turning it on asks first (Cancel
-    writes nothing), confirming PATCHes /cli-yolo and tells an open DM to
-    refetch through operator_invalidate(chat), and turning it off never asks.
+    It covers the agent's DM and its work with no origin thread, and the desk
+    `⋯` shows it as the DM's does. Both switches are withheld until the agent
+    detail loads, turning Yolo on asks first (Cancel writes nothing),
+    confirming PATCHes /cli-yolo and tells an open DM to refetch through
+    operator_invalidate(chat), and turning it off never asks. While it is on,
+    the agent's auto-approve switch is greyed with Yolo's hint; off, that
+    switch PATCHes /cli-auto-approve, adopts the answer and tells the DM too.
     """
     payload = _harness()
     for key in (
         "deskYoloIsLiveInAdvanced", "deskYoloCancelWritesNothing",
         "deskYoloConfirmPatchesAndRefetchesChat", "deskYoloOffNeverAsks",
+        "deskAutoApproveGreysUnderYolo", "deskAutoApprovePatchesAdoptsAndNotifies",
     ):
         assert payload[key] is True, key
 
     panel = _read(CONTEXT / "desk-panel.js")
-    assert "yoloEnabled: () => actions.yoloEnabled()," in panel
-    assert "onYolo: (on) => { void actions.toggleYolo(on); }," in panel
-    desk_menu = _read(CONTEXT / "desk-menu.js")
-    # Manage, a second divider, then Advanced: the safeguard-removing setting
-    # is kept apart from the everyday rows.
-    assert (desk_menu.index("menuRow('desk-remove'")
-            < desk_menu.rindex("h('hr', { class: 'menu-divider' })")
-            < desk_menu.index("id: 'desk-menu-advanced'"))
-    actions = _read(CONTEXT / "desk-actions.js")
-    toggle = actions.split("async function toggleYolo(enabled) {", 1)[1]
-    assert toggle.index("BossModYoloMode.confirmEnable('agent')") < toggle.index("/cli-yolo")
-    assert "BossModOperatorInvalidate.notifyLocal(['chat'])" in toggle
+    assert "agent: details.agent()," in panel
+    assert "onAgentSaved: (saved) => details.adopt(saved)," in panel
+    # The confirm and the switch are approval-controls.js's, for both kinds:
+    # an agent's Yolo confirms before its saver is ever called.
+    controls = _read(CONVERSATION / "approval-controls.js")
+    agent_controls = controls.split("function forAgent(record, handlers) {", 1)[1]
+    assert agent_controls.index("BossModYoloMode.confirmEnable('agent')") < agent_controls.index(
+        "await onYolo(enabled);")
+    assert "section: 'advanced'," in agent_controls
+    # The savers are the agent menu's: the agent API's PATCH, then the DM told.
+    menu = _read(CONTEXT / "agent-menu.js")
+    save = menu.split("async function saveFlag(failure, write, onAgentSaved) {", 1)[1].split("\n        }\n", 1)[0]
+    assert save.index("await attempt(failure, write)") < save.index(
+        "BossModOperatorInvalidate.notifyLocal(['chat'])")
+    assert "BossModAgentApi.apiSetCliYolo(agentId, enabled)" in menu
+    assert "BossModAgentApi.apiSetCliAutoApprove(agentId, enabled)" in menu
     index = _read(ROOT / "ui" / "templates" / "index.html")
-    assert index.index("js/core/yolo-mode.js") < index.index("js/context/desk-menu.js")
+    assert index.index("js/core/yolo-mode.js") < index.index("js/context/agent-menu.js")
+    assert index.index("js/conversation/approval-controls.js") < index.index("js/context/agent-menu.js")
+
+
+def test_edit_role_from_a_dm_opens_the_role_form_on_its_own() -> None:
+    """The DM header's `⋯` carries the agent menu's rows, Edit role included.
+
+    From a chat it opens the role form as the only dialog — no desk under it
+    — and closing the form comes back to the chat, not to a desk the operator
+    never asked for. The chat's menu is the shell's page-lifetime instance,
+    with no after-edit hook of its own.
+    """
+    payload = _harness()
+    assert payload["editFromADmOpensTheRoleFormAlone"] is True
+    assert payload["editFromADmClosesToTheChat"] is True
+    shell_boot = _read(JS / "shell" / "shell.js")
+    created = shell_boot.split("BossModAgentMenu.create({", 1)[1].split("});", 1)[0]
+    assert "onEditClosed" not in created and "onRemoved" not in created
 
 
 def test_desk_notes_read_the_workspace_not_a_column() -> None:
@@ -677,7 +709,12 @@ def test_agent_edit_modules_stay_focused() -> None:
         "agent-form-advanced.js", "agent-form-bindings.js",
         "agent-form-choices.js", "agent-form-connections.js", "agent-form-fields.js",
         "agent-form-hydrate.js", "agent-form-save.js",
-        "agent-form-template.js", "agent-form.js", "agent-recovery.js",
+        "agent-form-template.js", "agent-form.js",
+        # Not a form module: the agent `⋯`'s rows (DM header and desk head),
+        # which open this form. It shares the prefix, so it is held to the
+        # same rules — no native confirm among them.
+        "agent-menu.js",
+        "agent-recovery.js",
         "agent-save-template.js", "agent-submit.js", "agent-template-picker.js",
         "agent-templates-api.js",
     ], names
@@ -772,8 +809,10 @@ def test_the_delete_warning_says_what_is_destroyed() -> None:
     # A warning about "Deleting undefined" would not say whose files go.
     assert warnings["refusesNoName"] is True
 
-    desk = _read(CONTEXT / "desk-actions.js")
-    assert "BossModAgentApi.agentDeleteWarning(detail.name)" in desk
+    # The agent menu's Remove, from the DM and the desk alike, names the
+    # roster row's agent.
+    desk = _read(CONTEXT / "agent-menu.js")
+    assert "BossModAgentApi.agentDeleteWarning(String(row.name))" in desk
     assert "diagnostics are preserved" not in desk
     save = _read(CONTEXT / "agent-form-save.js")
     assert "BossModAgentApi.agentDeleteWarning(agent.name)" in save
@@ -785,19 +824,24 @@ def test_the_desk_and_the_form_render_the_delete_warning() -> None:
     """The warning is what the Remove and Delete dialogs actually show.
 
     Read off the rendered dialogs, because a source check passes while the
-    wrong string reaches the screen. Remove also has no dialog before the
-    agent's name has loaded: the footer says why and the read is retried.
+    wrong string reaches the screen. The warning names the roster row's
+    agent, so Remove (like Edit role) is disabled until the roster has it.
     """
     payload = _harness()
     # Diagnostics opens the Log filtered to this agent, by the Log's own
     # param name (`agentId`), not the Tasks one.
     assert payload["diagnosticsFiltersTheLog"] is True
     assert payload["removeWarnsWhatIsDeleted"] is True
-    assert payload["removeWaitsForTheName"] is True
-    assert payload["removeOpensOnceTheNameIsIn"] is True
+    assert payload["removeIsDisabledUntilTheRosterHasTheAgent"] is True
+    assert payload["removeOpensOnceTheRosterHasTheAgent"] is True
     assert payload["deleteWarnsWhatIsDeleted"] is True
-    # ...and a Remove that lands closes the desk of the agent it deleted.
+    # ...and a Remove that lands closes the desk of the agent it deleted, and
+    # leaves that agent's DM when the desk was opened over it.
     assert payload["removeClosesTheDesk"] is True
+    assert payload["removeFromTheDeskLeavesThatDm"] is True
+    routes = _read(JS / "shell" / "agent-routes.js")
+    assert "store.setState({ conversationId: null, conversationKind: null });" in routes
+    assert "BossModAgentRoutes.closeConversation(store, agentId, 'agent');" in _read(CONTEXT / "agent-menu.js")
 
 
 def test_a_desk_task_opens_as_a_layer_over_the_desk() -> None:
@@ -822,7 +866,7 @@ def test_a_desk_task_opens_as_a_layer_over_the_desk() -> None:
     panel = _read(CONTEXT / "desk-panel.js")
     assert "navigate('tasks', { taskId })" not in panel
     assert "onOpenChat" not in panel
-    assert "() => openConversation(agentId, 'agent')" in panel
+    assert "openChat: (id) => openConversation(id, 'agent')," in panel
     assert "onOpenTask: (taskId) => { void taskOpener.open(taskId); }," in panel
     opener = _read(CONTEXT / "desk-task-opener.js")
     assert "BossModTaskLayers.create({" in opener
@@ -980,53 +1024,61 @@ def test_desk_panel_keeps_role_contract_copy() -> None:
     assert "const load = BossModGates.createLoadGeneration()" in tasks
 
     # Remove and Reset runtime destroy work; neither may be a click-through.
-    footer = _read(CONTEXT / "desk-actions.js")
-    assert "BossModOverlays.createModal(" in footer
-    remove = footer.split("async function removeAgent() {", 1)[1]
-    assert "method: 'DELETE'" in remove
+    # Both are the agent menu's rows, from the DM and the desk alike.
+    menu = _read(CONTEXT / "agent-menu.js")
+    assert "BossModOverlays.createModal(" in menu
     for spec in ("REMOVE_TITLE", "RESET_TITLE"):
-        assert f"title: {spec}," in footer, f"{spec} must gate its action"
-    # The API is never reached from the click itself, only from the modal's
-    # confirm action. The desk's `⋯` rows call the two confirm runners, and
-    # this module renders no button that could reach the API another way.
-    for runner in ("function confirmReset() {", "function confirmRemove() {"):
-        assert "confirmThen({" in footer.split(runner, 1)[1].split("\n        }\n", 1)[0], runner
-    assert "onclick" not in footer
-    panel = _read(CONTEXT / "desk-panel.js")
-    assert "onReset: () => actions.confirmReset()," in panel
-    assert "onRemove: () => actions.confirmRemove()," in panel
-    desk_menu = _read(CONTEXT / "desk-menu.js")
-    assert "pick(onReset), { danger: true })" in desk_menu
-    assert "pick(onRemove), { danger: true }))" in desk_menu
-    assert "onclick: () => { void removeAgent(); }" not in footer
-    assert "onclick: () => { void resetRuntime(); }" not in footer
+        assert f"title: {spec}," in menu, f"{spec} must gate its action"
+    # The API is never reached from the click itself: each runner awaits the
+    # confirm, and returns on anything but the danger choice, before its
+    # request. This module renders no button that could reach it another way.
+    for runner, call in (("async function resetRuntime(agentId) {", "BossModAgentApi.apiResetRuntime(agentId)"),
+                         ("async function removeAgent(agentId) {", "BossModAgentApi.apiDeleteAgent(agentId)")):
+        body = menu.split(runner, 1)[1].split("\n        }\n", 1)[0]
+        assert "await confirmDestructive({" in body, runner
+        assert body.index("await confirmDestructive({") < body.index(call), runner
+    assert "onclick" not in menu
+    # Both rows are marked destructive, and the desk's `⋯` paints the mark.
+    for row in ("id: 'agent-reset-runtime'", "id: 'agent-remove'"):
+        assert "tone: 'danger'" in menu.split(row, 1)[1].split("},", 1)[0], row
+    assert "'data-tone': action.tone || null," in _read(CONTEXT / "desk-menu.js")
     # Cancel is last, so it holds focus and Esc and Enter agree.
-    confirm = footer.split("function confirmThen(spec) {", 1)[1]
+    confirm = menu.split("function confirmDestructive({ title, body, confirm }) {", 1)[1]
     assert confirm.index("tone: 'danger'") < confirm.index("label: 'Cancel'")
 
 
 def test_desk_toggle_and_open_desk_are_injected() -> None:
     """Open desk and the capability behind it ship together.
 
-    It lives in the `⋯`'s Agent section: a `subject` menu action, headed by
-    the descriptor's `menuTitle`.
+    It is the agent menu's door row (context/agent-menu.js), in the `⋯`'s
+    Agent section: a `subject` menu action, headed by the descriptor's
+    `menuTitle`, which the menu hands the source. It renders only when the
+    door is injected, and the shell injects the desk modal into the chat's
+    one agent menu, which reaches the DM source through the controller.
     """
+    menu = _read(CONTEXT / "agent-menu.js")
+    assert "id: 'agent-open-desk', label: LABELS.openDesk, icon: 'lamp-desk', open: openDesk" in menu
+    assert "openDesk: 'Open desk'," in menu
+    assert "const MENU_TITLE = 'Agent';" in menu
+    assert "section: 'subject'" in menu
+    # No door injected, no door row: a control that renders but does nothing
+    # is worse than one that is absent.
+    assert "const doorRow = door" in menu
     source = _read(CONVERSATION / "sources" / "agent-source.js")
-    assert "typeof ctx.openDesk === 'function'" in source
-    assert "id: 'conversation-open-desk'" in source
-    assert "label: 'Open desk'" in source
-    assert "section: 'subject'" in source
-    assert "menuTitle: 'Agent'" in source
-    assert "ctx.openDesk(agentId)" in source
-    # The guard comes before the action is pushed, not after.
-    chrome = source.split("function chrome() {", 1)[1]
-    assert chrome.index("typeof ctx.openDesk === 'function'") < chrome.index(
-        "id: 'conversation-open-desk'"
-    )
+    assert "ctx.agentMenu.actions(agentId, { agent: record, onAgentSaved: adopt })" in source
+    assert "menuTitle: menu.menuTitle," in source
+    assert "openDesk" not in source
+    # Load order: the conversation scripts load before the agent menu, so they
+    # never name its global; the shell, which loads last, builds it.
+    assert "BossModAgentMenu" not in source
+    shell_boot = _read(JS / "shell" / "shell.js")
+    assert "const agentMenu = BossModAgentMenu.create({" in shell_boot
+    assert "openDesk: desk.open," in shell_boot.split("BossModAgentMenu.create({", 1)[1].split("});", 1)[0]
 
-    # The capability reaches the source through the controller.
+    # The menu reaches the source through the controller.
     conversation = _read(CONVERSATION / "conversation.js")
-    assert "api, bus, store, presence, openDesk," in conversation
+    assert "api, bus, store, presence, agentMenu, liveViews," in conversation
+    assert "BossModAgentMenu" not in conversation
 
     place = _read(JS / "places" / "chat" / "chat-place.js")
     # The capability is the shell's one desk modal, handed down as ctx.openDesk

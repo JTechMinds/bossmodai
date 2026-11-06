@@ -15,7 +15,8 @@
  * schedule opens in edit mode with the Enabled switch (default on, sent
  * with the POST) and ✓ POSTs. A saved schedule has
  * Run now beside Enabled (schedule-view.js's control). Delete sits behind
- * the head's `⋯` and a danger confirm (context/desk-actions.js's pattern).
+ * the head's `⋯` and a danger confirm (context/agent-menu.js
+ * `confirmDestructive`'s pattern).
  */
 const BossModScheduleLayer = (() => {
     const { h, clear } = BossModDom;
