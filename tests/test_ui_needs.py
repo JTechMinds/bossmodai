@@ -114,6 +114,14 @@ def test_needs_harness() -> None:
         # A paused AI connection renders first, under "AI connections", with
         # Retry now and no "Show me".
         "connectionNeedRendersFirst": True,
+        # A work summary too long for the settings: its button opens Settings
+        # → System Settings → Context Window at the field, from the bell and
+        # the toast, and its failed turn's diagnostic is neither an error card
+        # nor a recovery.
+        "workSummaryTargetIsSettings": True,
+        "workSummaryDiagnosticIsNoErrorNorRecovery": True,
+        "workSummaryPopoverOpensSettings": True,
+        "workSummaryToastOpensSettings": True,
         "targetsNavigate": True,
         "openFocusNeedTableHolds": True,
         # The agent DM's Rewind rides on the error card through needActions;
@@ -484,3 +492,18 @@ def test_a_process_checkin_is_shown_by_every_need_surface() -> None:
     assert "process_checkin: 'Background processes'" in popover
     bar = _read(NEEDS / "needs-bar.js")
     assert "process_checkin: 'ask'" in bar.split("const BAR_CARDS = Object.freeze({", 1)[1].split("});", 1)[0]
+
+
+def test_the_skipped_work_summary_event_is_the_engine_name() -> None:
+    """need-shape.js skips the work-summary failure by the engine's own name.
+
+    The failed turn's diagnostic carries it as ``action_name``
+    (core/agent_loop/turn_helpers.py), and the Needs list re-reads on it; a
+    rename on either side would bring back the duplicate error card.
+    """
+    from core.agent_loop import turn_helpers
+
+    shape = _read(NEEDS / "need-shape.js")
+    names = set(re.findall(r"'(work_summary_limit_[a-z_]+)'", shape))
+    assert names == {turn_helpers.WORK_SUMMARY_LIMIT_EVENT}
+    assert f"data.action_name === '{turn_helpers.WORK_SUMMARY_LIMIT_EVENT}'" in shape

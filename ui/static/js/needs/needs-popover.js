@@ -3,8 +3,8 @@
  *
  * Everything waiting on the operator, grouped by kind, with the actions the
  * SERVER described. The client never builds a resolution URL: that is the whole
- * point of the endpoint describing them (spec 5.2), and it is why a fifth need
- * kind will need no change here.
+ * point of the endpoint describing them (spec 5.2). A new kind needs only its
+ * place in KIND_ORDER and its KIND_LABELS heading here.
  *
  * The bell is the one guaranteed path and is never suppressible. The footer
  * toggle below turns off the composer bar only (spec 5.5).
@@ -25,10 +25,11 @@ const BossModNeedsPopover = (() => {
      * other work is waiting; then decisions the operator owes, before reports.
      */
     const KIND_ORDER = Object.freeze([
-        'connection', 'consent', 'nest_git', 'approval', 'process_checkin', 'blocked', 'error',
+        'connection', 'work_summary', 'consent', 'nest_git', 'approval', 'process_checkin', 'blocked', 'error',
     ]);
     const KIND_LABELS = Object.freeze({
         connection: 'AI connections',
+        work_summary: 'Work summaries',
         consent: 'Folder access',
         nest_git: 'Nest git',
         approval: 'Command approval',
@@ -63,6 +64,8 @@ const BossModNeedsPopover = (() => {
      * @param {object} deps.needs       From createNeedsStore; owns resolve().
      * @param {HTMLElement} deps.anchor The bell. Focus returns here on close.
      * @param {(placeId: string, params?: object) => void} deps.navigate
+     * @param {(sectionId: string, options?: {tab?: string, key?: string}) => void} deps.openSettingsAt
+     *   Opens Settings on a section, tab and field: a need's Settings target.
      * @param {() => void} [deps.onClose]  Notified however the popover closed —
      *   Esc, a "Show me", a press outside it, or the bell again — so the bell
      *   can toggle rather than stack a second panel. Same contract as
@@ -72,11 +75,12 @@ const BossModNeedsPopover = (() => {
      *   inert panel would be worse than one that failed loudly.
      */
     function openPopover(deps) {
-        const { store, needs, anchor, navigate, onClose } = deps || {};
+        const { store, needs, anchor, navigate, openSettingsAt, onClose } = deps || {};
         if (!store) throw new Error('[needs-popover] deps.store is required');
         if (!needs) throw new Error('[needs-popover] deps.needs is required');
         if (!anchor) throw new Error('[needs-popover] deps.anchor is required');
         if (typeof navigate !== 'function') throw new Error('[needs-popover] deps.navigate is required');
+        if (typeof openSettingsAt !== 'function') throw new Error('[needs-popover] deps.openSettingsAt is required');
 
         const disposers = [];
         /** Need ids with a resolution in flight; their buttons stay disabled. */
@@ -133,12 +137,17 @@ const BossModNeedsPopover = (() => {
          * The destination is `need.target`, built by the ONE mapping table in
          * need-shape.js. Nothing here branches on kind, which is what stops the
          * bell, the bar and the toast forming three opinions about where a
-         * blocked task lives.
+         * blocked task lives. A Settings target opens Settings at its field.
          *
          * @param {object} target  A NeedTarget.
          * @returns {void}
          */
         function goTo(target) {
+            if (target.settings) {
+                close();
+                openSettingsAt(target.settings.section, { tab: target.settings.tab, key: target.settings.key });
+                return;
+            }
             if (target.conversationId) {
                 store.setState({
                     conversationId: target.conversationId,
@@ -167,7 +176,7 @@ const BossModNeedsPopover = (() => {
                     class: 'popover-show-me',
                     type: 'button',
                     onclick: () => goTo(need.target),
-                }, 'Show me')
+                }, need.target.label || 'Show me')
                 : null;
 
             return h('article', { class: 'popover-need', 'data-need-id': need.id },

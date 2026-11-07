@@ -25,6 +25,7 @@ const BossModNeedShape = (() => {
 
     /**
      * @typedef {object} NeedTarget  Where "Show me" takes the operator.
+     *   Either a place target, or `{settings: {section, tab, key}, label}`, which opens Settings at that field.
      * @property {string} place            A place id from the registry.
      * @property {object} params           placeParams for that place.
      * @property {string|null} conversationId   Set for a chat target only.
@@ -34,7 +35,7 @@ const BossModNeedShape = (() => {
     /**
      * @typedef {object} Need
      * @property {string} id
-     * @property {'consent'|'approval'|'blocked'|'error'|'process_checkin'|'connection'} kind
+     * @property {'consent'|'approval'|'blocked'|'error'|'process_checkin'|'connection'|'work_summary'} kind
      * @property {string|null} agentId
      * @property {string} agentName
      * @property {string} title
@@ -42,6 +43,7 @@ const BossModNeedShape = (() => {
      * @property {string} createdAt
      * @property {string|null} conversationId
      * @property {NeedAction[]} actions
+     * @property {string} settingKey  Set on a work_summary need: the setting to change.
      * @property {NeedTarget|null} target  Where to look. Null when a need has
      *   nowhere to send the operator — a consent with no conversation.
      * @property {string} [error]  Set only by a failed resolution.
@@ -92,6 +94,9 @@ const BossModNeedShape = (() => {
         approval: (need) => chatTarget(need.conversationId, need.agentId),
         // A background process check-in is about the agent that started it.
         process_checkin: (need) => chatTarget(need.conversationId, need.agentId),
+        // Both work-context settings live on System Settings → Context Window.
+        work_summary: (need) => (need.settingKey ? { settings: { section: 'system', tab: 'context',
+            key: need.settingKey }, label: 'Open Context Window settings' } : null),
     });
 
     /**
@@ -241,6 +246,9 @@ const BossModNeedShape = (() => {
         'agent_process_changed',
         'ai_connection_suspended',
         'ai_connection_resumed',
+        // A work summary over its limit, and fitting again (core/agent_loop/turn_helpers.py).
+        'work_summary_limit_error',
+        'work_summary_fits',
     ]);
 
     /**
@@ -303,6 +311,7 @@ const BossModNeedShape = (() => {
             reviewNote: raw.review_note == null ? '' : String(raw.review_note),
             // Set only on a CLI approval that offers "Always allow in <scope>".
             alwaysScopeLabel: raw.always_scope_label == null ? '' : String(raw.always_scope_label),
+            settingKey: raw.setting_key == null ? '' : String(raw.setting_key),
             actions: (Array.isArray(raw.actions) ? raw.actions : []).map(normaliseAction),
         };
         need.target = targetFor(need);
@@ -326,6 +335,8 @@ const BossModNeedShape = (() => {
         if (!data || !data.id) return null;
         const message = typeof data.error === 'string' ? data.error.trim() : '';
         if (!message) return null;
+        // The server's work_summary card covers this failure.
+        if (data.action_name === 'work_summary_limit_error') return null;
         const id = String(data.id);
         const name = String(data.agent_name || 'An agent');
         const agentId = data.agent_id == null ? null : String(data.agent_id);

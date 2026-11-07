@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import pytest
+
 import db
 from core import config
 
@@ -59,3 +61,13 @@ def test_get_live_reads_database_over_stale_cache() -> None:
         assert "not an integer" in str(exc)
     else:
         raise AssertionError("expected ConfigError")
+
+
+def test_require_non_negative_int_accepts_zero_and_refuses_negatives() -> None:
+    db.set_setting("execution_max_consecutive_repairs", "0", "advanced")
+    config.reload()
+    assert config.require_non_negative_int("execution_max_consecutive_repairs") == 0
+    db.set_setting("execution_max_consecutive_repairs", "-1", "advanced")
+    config.reload()
+    with pytest.raises(config.ConfigError, match="must not be negative"):
+        config.require_non_negative_int("execution_max_consecutive_repairs")

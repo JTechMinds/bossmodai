@@ -214,6 +214,7 @@ def _seed_footprint(ada_id: str, bob_id: str) -> dict[str, Any]:
 
     activity = _row("activities", agent_id=ada_id, kind="work", status="completed")
     _row("work_snapshots", activity_id=activity["id"], agent_id=ada_id)
+    db.record_work_summary_overflow(ada_id, model="m", summary_chars=200, limit_chars=150, budget_chars=1500)
 
     open_task = create_or_bind_task(
         title="Ship the report",
@@ -306,6 +307,7 @@ def test_delete_removes_private_rows_and_detaches_shared_history() -> None:
         "meeting_session_participants WHERE agent_id = $1",
         "activities WHERE agent_id = $1",
         "work_snapshots WHERE agent_id = $1",
+        "work_summary_overflows WHERE agent_id = $1",
         "host_path_consent_requests WHERE agent_id = $1",
         "host_path_once_grants WHERE agent_id = $1",
         "cli_approval_requests WHERE agent_id = $1",

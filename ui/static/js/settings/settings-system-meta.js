@@ -267,7 +267,7 @@ const BossModSystemSettingsMeta = (() => {
             order: 34,
             tab: 'llm',
             label: 'Repairs in a Row',
-            description: 'How many invalid replies in a row an agent may correct during one work turn before the turn fails. A valid action resets the count. Default 2.',
+            description: 'How many invalid replies in a row an agent may correct during one work turn before the turn fails, including a work summary that comes out over its size limit. A valid action resets the count. Default 2.',
         },
         decision_repair_attempts: {
             order: 35,

@@ -382,6 +382,11 @@ from db.work_snapshots import (
     save_work_snapshot,
     set_work_snapshot_checkpoints,
 )
+from db.work_summary_overflows import (
+    delete_work_summary_overflow,
+    list_work_summary_overflows,
+    record_work_summary_overflow,
+)
 
 # AI Connections
 from db.ai_connections import (
@@ -730,6 +735,10 @@ __all__ = [
     "save_step_summary",
     "save_work_snapshot",
     "set_work_snapshot_checkpoints",
+    # Work summary overflows
+    "delete_work_summary_overflow",
+    "list_work_summary_overflows",
+    "record_work_summary_overflow",
     "get_recent_activity_log_entries",
     "prune_activity_log",
     "classify_category",

@@ -25,14 +25,17 @@ const BossModNeedsToast = (() => {
      *   conversation, written when the operator opens a need.
      * @param {object} deps.needs  From createNeedsStore; the arrival source.
      * @param {(placeId: string, params?: object) => void} deps.navigate
+     * @param {(sectionId: string, options?: {tab?: string, key?: string}) => void} deps.openSettingsAt
+     *   Opens Settings on a section, tab and field: a need's Settings target.
      * @returns {{ destroy: () => void }}
-     * @throws {Error} When store, needs, or navigate is missing.
+     * @throws {Error} When store, needs, navigate, or openSettingsAt is missing.
      */
     function createToastHost(deps) {
-        const { store, needs, navigate } = deps || {};
+        const { store, needs, navigate, openSettingsAt } = deps || {};
         if (!store) throw new Error('[needs-toast] deps.store is required');
         if (!needs) throw new Error('[needs-toast] deps.needs is required');
         if (typeof navigate !== 'function') throw new Error('[needs-toast] deps.navigate is required');
+        if (typeof openSettingsAt !== 'function') throw new Error('[needs-toast] deps.openSettingsAt is required');
 
         const disposers = [];
         const timers = new Set();
@@ -96,6 +99,17 @@ const BossModNeedsToast = (() => {
                         dismiss(toast, timer);
                     },
                 }, 'Open'));
+            }
+            if (need.target && need.target.settings) {
+                const { section, tab, key } = need.target.settings;
+                actions.append(h('button', {
+                    class: 'toast-action primary',
+                    type: 'button',
+                    onclick: () => {
+                        openSettingsAt(section, { tab, key });
+                        dismiss(toast, timer);
+                    },
+                }, need.target.label));
             }
             actions.append(h('button', {
                 class: 'toast-action',

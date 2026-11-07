@@ -61,6 +61,8 @@ const BossModHeader = (() => {
      *   Optional: a browser session and the header harness have no tray. When
      *   present, tray click opens the popover without toggling it shut.
      * @param {() => void} deps.openSettings Opens the Settings takeover.
+     * @param {(sectionId: string, options?: {tab?: string, key?: string}) => void} deps.openSettingsAt
+     *   Opens Settings at a section, tab and field; handed to the bell for a need's Settings target.
      * @param {{isOpen: () => boolean, close: () => void}} deps.takeover
      *   Handed to the floor switcher, because moving to another floor leaves
      *   the Settings takeover.
@@ -69,7 +71,7 @@ const BossModHeader = (() => {
      *   it would report "nothing needs you" forever.
      */
     function mount(el, deps) {
-        const { store, apiFetch, bus, navigate, needs, openSettings, attention, takeover } = deps;
+        const { store, apiFetch, bus, navigate, needs, openSettings, openSettingsAt, attention, takeover } = deps;
         if (!needs) throw new Error('[header] deps.needs is required');
         const disposers = [];
 
@@ -183,6 +185,7 @@ const BossModHeader = (() => {
                 needs,
                 anchor: bell,
                 navigate,
+                openSettingsAt,
                 onClose: () => { popover = null; },
             });
         }

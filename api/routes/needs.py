@@ -108,6 +108,56 @@ def _connection_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     return items
 
 
+def _work_summary_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
+    """One item per agent whose latest step summary was too long for the work-context settings.
+
+    Built from the stored measurement (``db.list_work_summary_overflows``)
+    and the current settings, so the advice always reflects the settings as
+    they are now and the item disappears once they fit
+    (``work_summary_advice.advise_summary_limit`` returns ``None``). The item
+    has no action: its "Show me" target (client-side, ``need-shape.js``)
+    opens Settings at ``setting_key``.
+
+    Args:
+        cache: Agent id → name memo shared with the other aggregators.
+
+    Returns:
+        The items, oldest failure first; empty without reading settings
+        when no agent has a row.
+
+    Raises:
+        core.config.ConfigError: A work-context setting is missing or
+            invalid (``work_summary.read_summary_limits``); the Settings
+            route refuses to save such values, so this is a broken database.
+    """
+    from core.agent_loop.work_summary import read_summary_limits
+    from core.agent_loop.work_summary_advice import advise_summary_limit
+
+    rows = db.list_work_summary_overflows()
+    if not rows:
+        return []
+    limits = read_summary_limits()
+    items = []
+    for row in rows:
+        name = _agent_name(row.agent_id, cache)
+        advice = advise_summary_limit(agent_name=name, overflow=row, limits=limits)
+        if advice is None:
+            continue
+        items.append({
+            "id": f"work_summary:{row.agent_id}",
+            "kind": "work_summary",
+            "agent_id": row.agent_id,
+            "agent_name": name,
+            "title": advice.title,
+            "sub": advice.sub,
+            "setting_key": advice.setting_key,
+            "created_at": row.created_at.isoformat(),
+            "conversation_id": None,
+            "actions": [],
+        })
+    return items
+
+
 def _consent_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
     from core.bm_cli.host_roots import offers_always_allow_grant
     from core.models.host_path_consent import (
@@ -355,7 +405,8 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     Aggregates paused AI connections (first: they are why other work is
     waiting), pending consents (host path, shell executor, Nest git,
     workspace preference), pending CLI approvals, blocked/stalled tasks,
-    and background-process check-ins.
+    background-process check-ins, and work summaries too long for the
+    work-context settings (no action: "Show me" opens the field).
     Error needs are client-held (the ``diagnostic`` topic) and never listed
     here. Every action decides something — approve, deny, nudge — and none is
     a read-only inspection: "Show me" is the client's way to look. Actions
@@ -367,6 +418,7 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     cache: dict[str, str] = {}
     needs = (
         _connection_needs(cache)
+        + _work_summary_needs(cache)
         + _consent_needs(cache)
         + _approval_needs(cache)
         + _blocked_needs(cache)

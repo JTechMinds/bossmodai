@@ -7,8 +7,9 @@
  * idle-check settings, with a BossModSwitch for the idle-check flag, and a
  * refused save shows the server's message on its row. System AI lives
  * under AI Connections. Advanced renders the Global auto-approve switch,
- * which asks before it turns on and never before it turns off. Invoked by
- * tests/test_system_ai_compaction_settings.py. Not a browser bundle.
+ * which asks before it turns on and never before it turns off. Opened from
+ * a need, System Settings lands on the tab it names with that field focused.
+ * Invoked by tests/test_system_ai_compaction_settings.py. Not a browser bundle.
  */
 const fs = require("fs");
 const { FakeEl, installDom } = require("./js_fake_dom.cjs");
@@ -89,6 +90,16 @@ Object.defineProperty(FakeEl.prototype, "innerHTML", {
         this.replaceChildren(...parseFragment(String(value)));
     },
 });
+
+// settings-system.js brings the field a need names into view, focused, with
+// its value selected. Parsed fields have no document, so the fake's focus()
+// records nothing on one; these record on the field itself.
+FakeEl.prototype.select = function select() { this.selectedAll = true; };
+const fakeFocus = FakeEl.prototype.focus;
+FakeEl.prototype.focus = function focus() {
+    this.focused = true;
+    fakeFocus.call(this);
+};
 
 const fetches = [];
 const saves = [];
@@ -464,8 +475,37 @@ async function main() {
         },
     };
 
+    // ─── Opened from a need: its tab, with its field focused ───
+    // render(el, {tab, key}) is how SettingsView hands a need's target over;
+    // an unknown key is reported, never a silent miss.
+    const fieldState = (root) => root.querySelectorAll(".setting-input")
+        .filter((control) => control.focused || control.selectedAll || control.scrolledIntoView)
+        .map((control) => ({
+            key: control.dataset.settingKey,
+            focused: control.focused === true,
+            selected: control.selectedAll === true,
+            scrolled: control.scrolledIntoView || null,
+        }));
+    const needRoot = new FakeEl("div");
+    await SystemSection.render(needRoot, { tab: "context", key: "work_snapshot_summary_percent" });
+    const consoleErrors = [];
+    const realConsoleError = console.error;
+    console.error = (...args) => { consoleErrors.push(args.map(String).join(" ")); };
+    const unknownRoot = new FakeEl("div");
+    try {
+        await SystemSection.render(unknownRoot, { tab: "context", key: "no_such_setting" });
+    } finally {
+        console.error = realConsoleError;
+    }
+    const openedFromNeed = {
+        heading: needRoot.querySelector("h3") ? needRoot.querySelector("h3").textContent.trim() : "",
+        fields: fieldState(needRoot),
+        unknown: { errors: consoleErrors, fields: fieldState(unknownRoot) },
+    };
+
     process.stdout.write(JSON.stringify({
         ok: true,
+        openedFromNeed,
         openedOnSimulation,
         savesBeforeOpen,
         heading,

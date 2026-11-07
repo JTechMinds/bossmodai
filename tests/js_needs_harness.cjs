@@ -146,6 +146,23 @@ function connectionRow(connectionId) {
     };
 }
 
+/** One work summary too long for the settings, exactly as api/routes/needs.py emits it. */
+function workSummaryRow(agentId) {
+    return {
+        id: `work_summary:${agentId}`,
+        kind: "work_summary",
+        agent_id: agentId,
+        agent_name: "Eng-A",
+        title: "Eng-A's work summary is too long for your settings",
+        sub: "Its model (gpt-6.1-sol) wrote a 49,587-character summary of its earlier steps; the limit was 35,000. "
+            + "Set Work summary size to 15% or more (it is 10%).",
+        setting_key: "work_snapshot_summary_percent",
+        created_at: "2026-09-07T11:30:00Z",
+        conversation_id: null,
+        actions: [],
+    };
+}
+
 /** One pending host-path consent, exactly as api/routes/needs.py emits it. */
 function consentRow(id, conversationId) {
     return {
@@ -471,6 +488,7 @@ async function main() {
         needs,
         anchor: bell,
         navigate: (placeId) => navigatedTo.push(placeId),
+        openSettingsAt: () => {},
         onClose: () => { closes += 1; },
     });
     await drain();
@@ -558,6 +576,7 @@ async function main() {
     const popover2 = BossModNeedsPopover.openPopover({
         store, needs, anchor: bell,
         navigate: (placeId) => navigatedTo.push(placeId),
+        openSettingsAt: () => {},
         onClose: () => { closes += 1; },
     });
     await drain();
@@ -573,6 +592,7 @@ async function main() {
     const popover5 = BossModNeedsPopover.openPopover({
         store, needs, anchor: bell,
         navigate: (placeId) => navigatedTo.push(placeId),
+        openSettingsAt: () => {},
         onClose: () => { closes += 1; },
     });
     await drain();
@@ -588,7 +608,7 @@ async function main() {
     const listenersBefore = (docListeners.mousedown || []).length;
     let pressCloses = 0;
     const pressPopover = BossModNeedsPopover.openPopover({
-        store, needs, anchor: bell, navigate: () => {},
+        store, needs, anchor: bell, navigate: () => {}, openSettingsAt: () => {},
         onClose: () => { pressCloses += 1; },
     });
     await drain();
@@ -691,6 +711,32 @@ async function main() {
     await drain();
     const recoveryClearsAgentErrors = true;
 
+    // ─── 9b''. A work summary over its limit is the server's card, not an error ───
+    // Its failed turn's diagnostic is skipped, and it is no recovery either:
+    // the agent's earlier error stays.
+
+    const summaryDiagnostic = {
+        id: "ws1", agent_id: "a2", agent_name: "Laura", status: "success",
+        action_name: "work_summary_limit_error",
+        error: "Step summary failed: The step summary was 200 characters and still 170 after 2 shorter "
+            + "rewrites; the limit is 150.",
+        created_at: "2026-09-07T12:45:00Z",
+    };
+    bus.publish("diagnostic", {
+        id: "ws0", agent_id: "a2", agent_name: "Laura", status: "success",
+        error: "Model call timed out", created_at: "2026-09-07T12:44:00Z",
+    });
+    bus.publish("diagnostic", summaryDiagnostic);
+    await drain();
+    const summaryErrorIds = store.getState().needs
+        .filter((item) => item.id === "ws0" || item.id === "ws1").map((item) => item.id).join();
+    const workSummaryDiagnosticIsNoErrorNorRecovery = summaryErrorIds === "ws0"
+        && BossModNeedShape.normaliseDiagnostic(summaryDiagnostic) === null
+        && BossModNeedShape.recoveryOf(summaryDiagnostic) === null;
+    const ws0 = store.getState().needs.find((item) => item.id === "ws0");
+    await needs.resolve(ws0, ws0.actions[0]);
+    await drain();
+
     // ─── 9c. A blocked task and an error turn lead to their place ───
     // Phase 2B performed the server-described GET and refreshed, because Tasks
     // and Log did not exist. They do now. The destination comes from ONE
@@ -734,6 +780,7 @@ async function main() {
     const popover3 = BossModNeedsPopover.openPopover({
         store, needs, anchor: bell,
         navigate: (placeId, params) => wentTo.push({ placeId, params }),
+        openSettingsAt: () => {},
         onClose: () => { closes += 1; },
     });
     await drain();
@@ -759,7 +806,7 @@ async function main() {
         },
     };
     const popover4 = BossModNeedsPopover.openPopover({
-        store, needs, anchor: bell, navigate: () => {}, onClose: () => { closes += 1; },
+        store, needs, anchor: bell, navigate: () => {}, openSettingsAt: () => {}, onClose: () => { closes += 1; },
     });
     await drain();
     const nudgeButton = () => popover4.element.querySelector('[data-need-id="t1"]')
@@ -839,6 +886,7 @@ async function main() {
         store: settingsStore,
         needs: { subscribeArrivals(fn) { deliverArrivals = fn; return () => { deliverArrivals = null; }; } },
         navigate: (placeId) => toastNavigations.push(placeId),
+        openSettingsAt: () => {},
     });
     deliverArrivals([{ id: "o1", title: "Jim is blocked", sub: "Ship it", conversationId: "a9", agentId: "a9" }]);
     const openAction = documentStub.body.querySelectorAll(".toast-action")
@@ -876,7 +924,7 @@ async function main() {
     queue2 = [blockedRow("q1", "a1"), blockedRow("q2", "a1"), blockedRow("q3", "b1")];
     const needs2 = BossModNeeds.createNeedsStore({ store: store2, bus: bus2, api: api2 });
     const toastHost = BossModNeedsToast.createToastHost({
-        store: store2, needs: needs2, navigate: () => {},
+        store: store2, needs: needs2, navigate: () => {}, openSettingsAt: () => {},
     });
     const barNavigations = [];
     const bar = BossModNeedsBar.createNeedsBar({
@@ -1227,7 +1275,7 @@ async function main() {
     await nestNeeds.refresh();
     await drain();
     const nestPopover = BossModNeedsPopover.openPopover({
-        store: store3, needs: nestNeeds, anchor: nestBell, navigate: () => {},
+        store: store3, needs: nestNeeds, anchor: nestBell, navigate: () => {}, openSettingsAt: () => {},
     });
     await drain();
     const groupTitles = nestPopover.element.querySelectorAll(".popover-group-title")
@@ -1272,6 +1320,7 @@ async function main() {
     documentStub.body.append(connectionBell);
     const connectionPopover = BossModNeedsPopover.openPopover({
         store: connectionStore, needs: connectionNeeds, anchor: connectionBell, navigate: () => {},
+        openSettingsAt: () => {},
     });
     await drain();
     const connectionGroups = connectionPopover.element.querySelectorAll(".popover-group-title")
@@ -1299,6 +1348,71 @@ async function main() {
     connectionNeeds.destroy();
     offConnectionInvalidate();
     const connectionNeedRendersFirst = true;
+
+    // ─── 13j. A work-summary need's button opens Settings at its field ───
+    const summaryStore = BossModStore.createStore({ needs: [] });
+    const summaryBus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    const offSummaryInvalidate = BossModOperatorInvalidate.attach({ bus: summaryBus });
+    const summaryApi = (url) => {
+        if (url.startsWith("/api/needs")) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve([workSummaryRow("a5")]) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve("") });
+    };
+    const summaryNeeds = BossModNeeds.createNeedsStore({ store: summaryStore, bus: summaryBus, api: summaryApi });
+    await drain();
+    const summaryNeed = summaryStore.getState().needs.find((item) => item.id === "work_summary:a5");
+    if (!summaryNeed) throw new Error("a work-summary need must reach the queue");
+    const settingsTarget = JSON.stringify({
+        settings: { section: "system", tab: "context", key: "work_snapshot_summary_percent" },
+        label: "Open Context Window settings",
+    });
+    const workSummaryTargetIsSettings = JSON.stringify(summaryNeed.target) === settingsTarget;
+
+    const summaryBell = documentStub.createElement("button");
+    documentStub.body.append(summaryBell);
+    const popoverSettings = [];
+    const summaryNavigations = [];
+    let summaryCloses = 0;
+    const summaryPopover = BossModNeedsPopover.openPopover({
+        store: summaryStore, needs: summaryNeeds, anchor: summaryBell,
+        navigate: (placeId) => summaryNavigations.push(placeId),
+        openSettingsAt: (section, options) => popoverSettings.push({ section, options }),
+        onClose: () => { summaryCloses += 1; },
+    });
+    await drain();
+    const summaryEntry = summaryPopover.element.querySelector('[data-need-id="work_summary:a5"]');
+    if (!summaryEntry) throw new Error("the popover must draw the work-summary need");
+    const summaryButton = summaryEntry.querySelector(".popover-show-me");
+    if (!summaryButton || summaryButton.textContent !== "Open Context Window settings") {
+        throw new Error(`the work-summary button must name its destination, got ${summaryButton && summaryButton.textContent}`);
+    }
+    await summaryButton.dispatchClick();
+    const opened = JSON.stringify({ section: "system", options: { tab: "context", key: "work_snapshot_summary_percent" } });
+    const workSummaryPopoverOpensSettings = summaryCloses === 1 && !summaryPopover.element.parent
+        && popoverSettings.length === 1 && JSON.stringify(popoverSettings[0]) === opened
+        && summaryNavigations.length === 0;
+
+    let deliverSummary = null;
+    const toastSettings = [];
+    const summaryToasts = BossModNeedsToast.createToastHost({
+        store: BossModStore.createStore({ conversationId: null, place: "chat", settingsOpen: false }),
+        needs: { subscribeArrivals(fn) { deliverSummary = fn; return () => { deliverSummary = null; }; } },
+        navigate: () => {},
+        openSettingsAt: (section, options) => toastSettings.push({ section, options }),
+    });
+    deliverSummary([summaryNeed]);
+    const summaryToastButton = documentStub.body.querySelectorAll(".toast-action")
+        .find((node) => node.textContent === "Open Context Window settings");
+    if (!summaryToastButton) throw new Error("a work-summary toast must offer its Settings button");
+    await summaryToastButton.dispatchClick();
+    const workSummaryToastOpensSettings = toastSettings.length === 1
+        && JSON.stringify(toastSettings[0]) === opened
+        && !documentStub.body.querySelectorAll(".toast-action")
+            .some((node) => node.textContent === "Open Context Window settings");
+    summaryToasts.destroy();
+    summaryNeeds.destroy();
+    offSummaryInvalidate();
 
     // ─── 14. Suppressing the bar hides it without touching the queue ───
 
@@ -1476,6 +1590,10 @@ async function main() {
         nestGitSchemaMismatchDismisses,
         nestGitGroupIsLabeled,
         connectionNeedRendersFirst,
+        workSummaryTargetIsSettings,
+        workSummaryDiagnosticIsNoErrorNorRecovery,
+        workSummaryPopoverOpensSettings,
+        workSummaryToastOpensSettings,
         targetsNavigate,
         openFocusNeedTableHolds,
         barWithoutNeedActionsUnchanged,

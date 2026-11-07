@@ -585,6 +585,12 @@ async def _skip_turn(
 
 _WORK_ENDED_DURING_SUMMARY = "the work ended while its earlier steps were being summarized"
 
+# The name contains "error" so the activity log row is red (db/unified_feed.py);
+# it is also the failed turn's diagnostic action_name, which need-shape.js
+# skips because the server's work_summary Needs card covers the failure.
+WORK_SUMMARY_LIMIT_EVENT = "work_summary_limit_error"
+WORK_SUMMARY_FITS_EVENT = "work_summary_fits"
+
 
 async def summarize_before_restore(
     *,
@@ -616,7 +622,16 @@ async def summarize_before_restore(
       untouched, so a retry replays nothing. A failed call's chained
       ``LLMError`` is the outcome's ``cause``, so the dispatcher retries
       the turn unless that cause is permanent (a usage-limit stop); then
-      the work is stalled without a retry.
+      the work is stalled without a retry. When the summary would not fit
+      its limit (``exc.overflow`` set), the measurement is stored
+      (``db.record_work_summary_overflow``) before a
+      ``work_summary_limit_error`` event, which is also the diagnostic's
+      action name, so the Needs card says which setting to raise; any other
+      summary failure is an ``agent_error`` event.
+
+    When a fold succeeds and the agent had an over-limit row, the row is
+    deleted and a ``work_summary_fits`` event is broadcast, which clears the
+    Needs card.
 
     Args:
         agent: The agent whose work is resumed.
@@ -664,11 +679,29 @@ async def summarize_before_restore(
         )
     except WorkSummaryError as exc:
         logger.warning("Step summary failed for %s on task %s: %s", agent.name, work_activity.task_id, exc)
-        result = {
-            "event": "agent_error",
-            "detail": f"{agent.name} could not summarize its earlier steps: {exc}",
-            "agent_name": agent.name,
-        }
+        if exc.overflow is not None:
+            # Stored before the broadcast, so the Needs re-read the event triggers sees it.
+            db.record_work_summary_overflow(
+                agent.id,
+                model=model,
+                summary_chars=exc.overflow.summary_chars,
+                limit_chars=exc.overflow.limit_chars,
+                budget_chars=exc.overflow.budget_chars,
+            )
+            result = {
+                "event": WORK_SUMMARY_LIMIT_EVENT,
+                "detail": f"{agent.name} could not summarize its earlier steps: {exc} "
+                "Needs (the bell) says which setting to raise.",
+                "agent_name": agent.name,
+            }
+            action_summary = WORK_SUMMARY_LIMIT_EVENT
+        else:
+            result = {
+                "event": "agent_error",
+                "detail": f"{agent.name} could not summarize its earlier steps: {exc}",
+                "agent_name": agent.name,
+            }
+            action_summary = ""
         await manager.broadcast_activity(**result)
         return None, await _finalize_turn(
             agent=agent,
@@ -684,7 +717,7 @@ async def summarize_before_restore(
                 result=result,
                 error=f"Step summary failed: {exc}",
                 action=None,
-                action_summary="",
+                action_summary=action_summary,
                 raw_response="",
                 prompt_tokens=exc.prompt_tokens,
                 completion_tokens=exc.completion_tokens,
@@ -695,6 +728,12 @@ async def summarize_before_restore(
                 cause=exc.__cause__,
             ),
             start=start,
+        )
+    if run is not None and db.delete_work_summary_overflow(agent.id):
+        await manager.broadcast_activity(
+            event=WORK_SUMMARY_FITS_EVENT,
+            detail=f"{agent.name}'s work summary fits its limit again",
+            agent_name=agent.name,
         )
     return run, None
 

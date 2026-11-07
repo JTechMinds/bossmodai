@@ -341,12 +341,7 @@ async def _run_execution_turn(
     next_step_delta: str | None = None
     scheduled_triggers: list[dict[str, Any]] = []
     execution_repair_attempts = 0
-    max_consecutive_repairs = config.require_int("execution_max_consecutive_repairs")
-    if max_consecutive_repairs < 0:
-        raise config.ConfigError(
-            "Required setting 'execution_max_consecutive_repairs' must not be negative: "
-            f"{max_consecutive_repairs!r}"
-        )
+    max_consecutive_repairs = config.require_non_negative_int("execution_max_consecutive_repairs")
     retry_blocked = False
     step_messages: list[dict[str, str]] = []
 

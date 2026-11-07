@@ -240,6 +240,23 @@ def require_positive_int(key: str) -> int:
     return value
 
 
+def require_non_negative_int(key: str) -> int:
+    """Get a required setting as an integer of zero or more.
+
+    For counts where zero is meaningful ("none") and a negative number is
+    not (a budget of 0 repairs allows none; -1 has no meaning).
+
+    Raises
+    ------
+    ConfigError
+        If the setting is missing, not an integer, or negative.
+    """
+    value = require_int(key)
+    if value < 0:
+        raise ConfigError(f"Required setting '{key}' must not be negative: {value!r}")
+    return value
+
+
 def get_float(key: str) -> float | None:
     """Get a setting as a float, or ``None`` if missing or not a float."""
     val = get(key)

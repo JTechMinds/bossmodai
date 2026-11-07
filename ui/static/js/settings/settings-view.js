@@ -78,7 +78,7 @@ const SettingsView = (() => {
      *
      * @param {string} [sectionId]  A direct opener's section (agent-form, host-roots),
      *   which a phone lands on; without one (the gear) a phone lands on the list.
-     * @param {object} [options]  Handed to that section's next render, once.
+     * @param {object} [options]  Handed to that section's next render, once; System Settings takes `{tab, key}`.
      * @returns {void}
      * @throws {Error} When index.html lacks the takeover's head or body.
      */
@@ -191,7 +191,7 @@ const SettingsView = (() => {
                 ConnectionsSection.render(content);
                 break;
             case 'system':
-                SystemSection.render(content);
+                SystemSection.render(content, pendingOptions);
                 break;
             case 'cli-policy':
                 CliPolicySection.render(content, pendingOptions);

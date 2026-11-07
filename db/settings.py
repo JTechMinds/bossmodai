@@ -266,7 +266,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("world_state_coalesce_ms", "150", "advanced"),
     ("trigger_claim_timeout_seconds", "300", "advanced"),
     ("turn_failure_retry_limit", "2", "advanced"),
-    # Invalid execution replies in a row before the turn fails; a valid action resets it.
+    # Invalid execution replies in a row before the turn fails (a valid action resets it), and the
+    # most shorter rewrites a work step summary gets (core/agent_loop/work_summary.py).
     ("execution_max_consecutive_repairs", "2", "advanced"),
 
     # ── API limits ──

@@ -141,12 +141,24 @@ const BossModShell = (() => {
             SettingsView.open('connections');
         }
 
+        // A need's Settings target, opened on the section, tab and field it
+        // names, even when Settings is already open elsewhere.
+        function openSettingsAt(sectionId, options) {
+            SettingsView.open(sectionId, options);
+        }
+
         // The gear announces whether the takeover is open, and it cannot learn
         // that from its own click: context/agent-form.js and places/files/
         // host-roots.js both open a section directly. SettingsView notifies
         // from the one place every door funnels through, so the store cannot
         // drift from what is on screen.
-        SettingsView.onViewChange((open) => store.setState({ settingsOpen: open }));
+        // Closing also re-reads the Needs list: a saved setting can clear a
+        // need (a work-summary card hides once the settings fit), and the
+        // Needs store hears of no settings save.
+        SettingsView.onViewChange((open) => {
+            store.setState({ settingsOpen: open });
+            if (!open) void needs.refresh();
+        });
 
         // The frame is mounted for the lifetime of the page and never swapped,
         // so these disposers are deliberately not retained. Only places — which
@@ -159,6 +171,7 @@ const BossModShell = (() => {
             needs,
             attention,
             openSettings: toggleSettings,
+            openSettingsAt,
             takeover: settingsTakeover,
         });
         BossModRoster.mount(rosterElement, {
@@ -194,7 +207,7 @@ const BossModShell = (() => {
         });
         // App-wide, not Chat-only: a need whose conversation is not open is
         // exactly the one the operator would otherwise never see.
-        BossModNeedsToast.createToastHost({ store, needs, navigate });
+        BossModNeedsToast.createToastHost({ store, needs, navigate, openSettingsAt });
         BossModShortcuts.bind({
             placeIds: BossModPlaces.PLACE_IDS,
             navigate,

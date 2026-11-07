@@ -57,3 +57,26 @@ class WorkSnapshot(BaseModel):
         if isinstance(value, str):
             return json.loads(value)
         return value
+
+
+class WorkSummaryOverflow(BaseModel):
+    """An agent's latest work step summary that came out over its limit.
+
+    One row per agent (``work_summary_overflows``), written when a fold
+    fails because the summary would not fit (core/agent_loop/turn_helpers.py)
+    and deleted when a later summary fits. It is keyed by agent, not by
+    activity, so it outlives a stall that deletes the work snapshot.
+    ``summary_chars`` is the first summary the model wrote; ``limit_chars``
+    and ``budget_chars`` are the summary limit and ``work_snapshot_max_chars``
+    it was written under. The Needs card's advice is computed from these and
+    the current settings (core/agent_loop/work_summary_advice.py).
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    agent_id: str
+    model: str
+    summary_chars: int
+    limit_chars: int
+    budget_chars: int
+    created_at: datetime

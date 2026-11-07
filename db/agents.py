@@ -475,6 +475,7 @@ def delete_agent_rows(agent_id: str) -> bool:
         execute("DELETE FROM meeting_session_participants WHERE agent_id = $1", [agent_id])
         # frozen work transcripts reference activities
         execute("DELETE FROM work_snapshots WHERE agent_id = $1", [agent_id])
+        execute("DELETE FROM work_summary_overflows WHERE agent_id = $1", [agent_id])
         # activities (clear self-referential parent_activity_id first)
         execute(
             "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",

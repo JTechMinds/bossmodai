@@ -90,7 +90,17 @@ const SystemSection = (() => {
         }
     }
 
-    async function render(el) {
+    /**
+     * Render System Settings into `el`.
+     *
+     * @param {HTMLElement} el
+     * @param {{tab?: string, key?: string}} [options]  From SettingsView.open,
+     *   used once: the tab to show and the setting to focus. Repaints
+     *   (bindRepaint) and tab clicks pass none, so a repaint never moves focus.
+     * @returns {Promise<void>}
+     */
+    async function render(el, options) {
+        if (options && options.tab) activeCategory = options.tab;
         container = el;
         SettingsView.bindRepaint('system', () => render(container));
         let settings = [];
@@ -235,6 +245,26 @@ const SystemSection = (() => {
                 e.target,
             ));
         });
+        if (options && options.key) focusSetting(options.key);
+    }
+
+    /**
+     * Bring one setting's field into view, focused with its value selected.
+     * The work-context settings a need opens are text inputs.
+     *
+     * @param {string} key  Setting key.
+     * @returns {void}
+     */
+    function focusSetting(key) {
+        const control = Array.from(container.querySelectorAll('[data-setting-key]'))
+            .find(node => node.dataset.settingKey === key);
+        if (!control) {
+            console.error('[settings-system] no field for setting', key);
+            return;
+        }
+        control.scrollIntoView({ block: 'center' });
+        control.focus();
+        control.select();
     }
 
     return { render };

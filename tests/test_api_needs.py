@@ -19,7 +19,7 @@ REQUIRED_KEYS = {
     "id", "kind", "agent_id", "agent_name", "title", "sub",
     "created_at", "conversation_id", "actions",
 }
-VALID_KINDS = {"consent", "approval", "blocked", "error", "connection"}
+VALID_KINDS = {"consent", "approval", "blocked", "error", "connection", "work_summary"}
 
 
 def setup_function() -> None:
@@ -215,6 +215,70 @@ def test_retry_route_makes_the_test_call_due(client: TestClient) -> None:
     assert health.retry_at is not None and health.retry_at <= datetime.now(timezone.utc)
     admission = connection_health.admit(connection_id, lease_seconds=60)
     assert admission.allowed and admission.probe
+
+
+def _work_context(*, budget: int = 350_000, trim_percent: int = 50, summary_percent: int = 10) -> None:
+    db.set_setting("work_snapshot_max_chars", str(budget), "simulation")
+    db.set_setting("work_snapshot_trim_percent", str(trim_percent), "simulation")
+    db.set_setting("work_snapshot_summary_percent", str(summary_percent), "simulation")
+    config.reload()
+
+
+def _overflowing_agent(summary_chars: int = 49_587) -> str:
+    """Eng-A, whose gpt-6.1-sol summary did not fit a 35,000 limit at a 350,000 budget."""
+    agent = db.create_agent(name="Eng-A", role="Engineer")
+    db.record_work_summary_overflow(
+        agent.id, model="gpt-6.1-sol", summary_chars=summary_chars, limit_chars=35_000, budget_chars=350_000,
+    )
+    return agent.id
+
+
+def _work_summary_needs(client: TestClient) -> list[dict]:
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    return [n for n in res.json() if n["kind"] == "work_summary"]
+
+
+def test_a_summary_too_long_for_the_settings_says_which_setting_to_raise(client: TestClient) -> None:
+    _work_context()
+    agent_id = _overflowing_agent()
+
+    (item,) = _work_summary_needs(client)
+
+    assert REQUIRED_KEYS <= set(item), f"missing keys: {REQUIRED_KEYS - set(item)}"
+    assert item["id"] == f"work_summary:{agent_id}"
+    assert item["kind"] == "work_summary"
+    assert (item["agent_id"], item["agent_name"]) == (agent_id, "Eng-A")
+    assert item["title"] == "Eng-A's work summary is too long for your settings"
+    assert item["sub"] == (
+        "Its model (gpt-6.1-sol) wrote a 49,587-character summary of its earlier steps; the limit was 35,000. "
+        "Set Work summary size to 15% or more (it is 10%). Summaries can then use up to 52,500 characters "
+        "(about 13K tokens), and recent steps kept word for word go from 140,000 to 122,500 characters "
+        "(about 35K → 31K tokens). Total context stays the same."
+    )
+    assert item["setting_key"] == "work_snapshot_summary_percent"
+    assert item["created_at"] == db.list_work_summary_overflows()[0].created_at.isoformat()
+    assert item["conversation_id"] is None
+    assert item["actions"] == [], "no action: its button opens the setting"
+
+
+def test_the_work_summary_need_hides_once_the_settings_fit(client: TestClient) -> None:
+    _work_context()
+    _overflowing_agent()
+    assert len(_work_summary_needs(client)) == 1
+
+    _work_context(summary_percent=15)
+
+    assert _work_summary_needs(client) == []
+
+
+def test_a_summary_no_single_size_fixes_points_at_work_kept_after_summarizing(client: TestClient) -> None:
+    _work_context()
+    _overflowing_agent(summary_chars=180_000)  # needs 52%, not below the 50% trim share
+
+    (item,) = _work_summary_needs(client)
+
+    assert item["setting_key"] == "work_snapshot_trim_percent"
 
 
 def test_needs_respects_limit(client: TestClient) -> None:

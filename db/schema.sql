@@ -774,6 +774,17 @@ CREATE TABLE IF NOT EXISTS work_snapshots (
     updated_at               TIMESTAMP DEFAULT current_timestamp
 );
 
+-- One row per agent whose latest work step summary came out over its limit
+-- (core/agent_loop/turn_helpers.py). Deleted when one fits again.
+CREATE TABLE IF NOT EXISTS work_summary_overflows (
+    agent_id       VARCHAR PRIMARY KEY,
+    model          VARCHAR NOT NULL,
+    summary_chars  INTEGER NOT NULL,
+    limit_chars    INTEGER NOT NULL,
+    budget_chars   INTEGER NOT NULL,
+    created_at     TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     agent_id          VARCHAR NOT NULL REFERENCES agents(id),

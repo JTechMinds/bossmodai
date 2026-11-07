@@ -634,15 +634,96 @@ async def test_a_failed_shorter_request_records_the_first_call_tokens(monkeypatc
 
 
 class _ActivityRecorder(NullRuntimeEventSink):
-    """Keeps every broadcast activity event."""
+    """Keeps every broadcast activity event, and each one's detail."""
 
     def __init__(self) -> None:
         self.events: list[str] = []
+        self.details: list[tuple[str, str]] = []
 
     async def broadcast_activity(
         self, event: str, detail: str, agent_name: str | None = None, extra: dict[str, Any] | None = None,
     ) -> None:
         self.events.append(event)
+        self.details.append((event, detail))
+
+
+@pytest.mark.asyncio
+async def test_a_summary_over_its_limit_records_the_overflow_for_the_needs_card(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, task = _working_agent()
+    _over_budget_work(agent)  # budget 1500, summary limit 150
+    _frozen_steps(agent, _STATUS_STEP)
+    recorder = _ActivityRecorder()
+    runtime_events.set_sink(recorder)
+    # The first reply and both rewrites Repairs in a Row allows (2) stay over the limit.
+    prompts = _script_prompts(monkeypatch, ["x" * 200, "y" * 180, "z" * 170])
+
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+
+    assert outcome.trigger_status == "failed" and outcome.retryable is True
+    assert len(prompts) == 3
+    (row,) = db.list_work_summary_overflows()
+    assert (row.agent_id, row.model, row.summary_chars, row.limit_chars, row.budget_chars) == (
+        agent.id, "test/mock", 200, 150, 1500,
+    )
+    (detail,) = [text for event, text in recorder.details if event == "work_summary_limit_error"]
+    assert detail.startswith(f"{agent.name} could not summarize its earlier steps: The step summary was 200")
+    assert detail.endswith("Needs (the bell) says which setting to raise.")
+    assert "agent_error" not in recorder.events
+    assert db.get_diagnostics(agent.id, limit=1)[0]["action_name"] == "work_summary_limit_error"
+
+
+async def _fold_that_fits(monkeypatch: pytest.MonkeyPatch, agent, task) -> _ActivityRecorder:
+    """Run a resumed turn whose summary fits; a waiting message pauses it after its first step."""
+    _over_budget_work(agent)
+    _frozen_steps(agent, _STATUS_STEP)
+    recorder = _ActivityRecorder()
+    runtime_events.set_sink(recorder)
+    _queue_status_question(agent.id)
+    prompts = _script_prompts(monkeypatch, [_SUMMARY_REPLY, _BOARD_STEP])
+    await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+    assert len(prompts) == 2 and prompts[0][0]["content"].startswith(_SUMMARY_SYSTEM_HEAD)
+    return recorder
+
+
+@pytest.mark.asyncio
+async def test_a_summary_that_fits_again_clears_the_overflow(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    db.record_work_summary_overflow(agent.id, model="test/mock", summary_chars=200, limit_chars=150, budget_chars=1500)
+
+    recorder = await _fold_that_fits(monkeypatch, agent, task)
+
+    assert db.list_work_summary_overflows() == []
+    assert ("work_summary_fits", f"{agent.name}'s work summary fits its limit again") in recorder.details
+
+
+@pytest.mark.asyncio
+async def test_a_summary_that_fits_with_no_overflow_says_nothing_extra(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+
+    recorder = await _fold_that_fits(monkeypatch, agent, task)
+
+    assert "work_summary_fits" not in recorder.events
+
+
+@pytest.mark.asyncio
+async def test_a_failed_summary_call_records_no_overflow_and_reports_an_agent_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent, task = _working_agent()
+    _over_budget_work(agent)
+    _frozen_steps(agent, _STATUS_STEP)
+    recorder = _ActivityRecorder()
+    runtime_events.set_sink(recorder)
+    _script_prompts(monkeypatch, [LLMError("provider unreachable")])
+
+    outcome = await run_turn(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+
+    assert outcome.trigger_status == "failed"
+    assert db.list_work_summary_overflows() == []
+    assert "agent_error" in recorder.events and "work_summary_limit_error" not in recorder.events
+    assert db.get_diagnostics(agent.id, limit=1)[0]["action_name"] == ""
 
 
 @pytest.mark.asyncio

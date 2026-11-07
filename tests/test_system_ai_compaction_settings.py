@@ -603,6 +603,27 @@ def test_failed_save_shows_the_server_message() -> None:
     assert payload["delayErrorAfterFix"] == {"text": "", "role": "alert"}
 
 
+def test_a_need_opens_context_window_with_its_field_focused() -> None:
+    """A work-summary need's button opens System Settings on Context Window at Work summary size.
+
+    ``render(el, {tab, key})`` shows that tab and brings the field into view,
+    focused, with its value selected; an unknown key logs an error and
+    focuses nothing.
+    """
+    opened = _render_system_settings()["openedFromNeed"]
+    assert opened["heading"] == "Context Window"
+    assert opened["fields"] == [{
+        "key": "work_snapshot_summary_percent",
+        "focused": True,
+        "selected": True,
+        "scrolled": {"block": "center"},
+    }]
+    assert opened["unknown"] == {
+        "errors": ["[settings-system] no field for setting no_such_setting"],
+        "fields": [],
+    }
+
+
 _GLOBAL_AUTO_APPROVE_WARNING = (
     "Every thread and DM will let System AI approve commands that need approval, "
     "including installs, deletes inside projects, and remote actions your agents' "
