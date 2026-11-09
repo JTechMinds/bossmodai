@@ -33,7 +33,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 
 import db
 from core import config
-from core.agent_loop.conversation_notes import NOTES_ID_PREFIX, read_settings
+from core.agent_loop.conversation_notes import NOTES_ID_PREFIX
 from core.boss import boss_label
 from core.llm.client import count_tokens
 from core.llm.system_completion import complete_text, system_ai_is_configured
@@ -137,8 +137,14 @@ def compose_task_sticky_slots(
     policy: Any,
     agent_id: str,
     token_model: str | None = None,
+    budget_tokens: int,
 ) -> list[dict[str, Any]]:
-    """Inject task slots when task-thread turns fell off, then maybe queue a fill."""
+    """Inject task slots when task-thread turns fell off, then maybe queue a fill.
+
+    ``budget_tokens`` is the history budget of the window ``visible`` came
+    from (Task log on a work turn, else History); fill pressure is measured
+    against it.
+    """
     shown = visible
     try:
         if _turns_fell_off(verbatim, visible):
@@ -153,6 +159,7 @@ def compose_task_sticky_slots(
             policy,
             agent_id=agent_id,
             token_model=token_model,
+            budget_tokens=budget_tokens,
         )
     except Exception:
         logger.warning("sticky slots were not queued")
@@ -166,11 +173,13 @@ def compose_channel_sticky_slots(
     policy: Any,
     agent_id: str,
     token_model: str | None = None,
+    budget_tokens: int,
 ) -> list[dict[str, Any]]:
     """Inject slots for task-linked channel turns folded into notes or dropped.
 
     Messages with no task id do not create slots. The conversation notes
-    themselves are unchanged.
+    themselves are unchanged. ``budget_tokens`` is the turn's history budget;
+    fill pressure is measured against it.
     """
     shown = visible
     try:
@@ -185,6 +194,7 @@ def compose_channel_sticky_slots(
             policy,
             agent_id=agent_id,
             token_model=token_model,
+            budget_tokens=budget_tokens,
         )
     except Exception:
         logger.warning("sticky slots were not queued")
@@ -260,11 +270,14 @@ def _consider_task(
     *,
     agent_id: str,
     token_model: str | None,
+    budget_tokens: int,
 ) -> bool:
     token = (task_id or "").strip()
     if not token or db.get_task(token) is None:
         return False
-    prefix = _pressure_prefix(messages, policy, agent_id=agent_id, token_model=token_model)
+    prefix = _pressure_prefix(
+        messages, policy, agent_id=agent_id, token_model=token_model, budget_tokens=budget_tokens,
+    )
     if prefix is None:
         return False
     return _queue((token,))
@@ -276,8 +289,11 @@ def _consider_channel(
     *,
     agent_id: str,
     token_model: str | None,
+    budget_tokens: int,
 ) -> bool:
-    prefix = _pressure_prefix(messages, policy, agent_id=agent_id, token_model=token_model)
+    prefix = _pressure_prefix(
+        messages, policy, agent_id=agent_id, token_model=token_model, budget_tokens=budget_tokens,
+    )
     if prefix is None:
         return False
     task_ids = _task_ids_on(prefix)
@@ -471,15 +487,19 @@ def _pressure_prefix(
     *,
     agent_id: str,
     token_model: str | None,
+    budget_tokens: int,
 ) -> list[dict[str, Any]] | None:
-    """Return older turns that sit above the task-headroom line."""
+    """Return older turns that sit above the task-headroom line of ``budget_tokens``.
+
+    ``budget_tokens`` is the history budget of the window these turns sit
+    beside, so pressure and the window agree on what fits.
+    """
     if _mode() != "pressure_only":
         return None
-    budget = read_settings().budget_tokens
     headroom = _headroom_percent()
     if headroom is None:
         return None
-    keep_limit = int(budget * (100 - headroom) / 100)
+    keep_limit = int(budget_tokens * (100 - headroom) / 100)
     if keep_limit < 1:
         keep_limit = 1
     candidate = _candidate(messages)

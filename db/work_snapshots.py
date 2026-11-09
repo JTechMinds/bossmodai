@@ -31,9 +31,10 @@ def save_work_snapshot(
 ) -> WorkSnapshot:
     """Insert or replace the transcript, fingerprints and checkpoint count.
 
-    Interludes already recorded on the row are kept; only
-    ``clear_work_interludes`` removes them. The step summary and its step
-    count are kept too; only :func:`save_step_summary` writes them.
+    Interludes already recorded on the row are kept for the life of the
+    work; they go only with the row (:func:`delete_work_snapshot`). The step
+    summary and its step count are kept too; only :func:`save_step_summary`
+    writes them.
 
     Args:
         activity_id: The work activity this transcript belongs to.
@@ -144,14 +145,6 @@ def append_work_interlude(activity_id: str, entry: dict[str, Any]) -> WorkSnapsh
     interludes = [item.model_dump() for item in snapshot.interludes]
     interludes.append(interlude.model_dump())
     return _update_json_column(activity_id, "interludes", interludes)
-
-
-def clear_work_interludes(activity_id: str) -> None:
-    """Drop the interludes after a resume has rendered them."""
-    execute(
-        "UPDATE work_snapshots SET interludes = '[]', updated_at = $1 WHERE activity_id = $2",
-        [datetime.now(timezone.utc), activity_id],
-    )
 
 
 def set_work_snapshot_checkpoints(activity_id: str, count: int) -> None:

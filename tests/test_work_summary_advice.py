@@ -1,9 +1,9 @@
 """work_summary_advice: an over-limit step summary becomes a setting to raise, with numbers.
 
 Pure: no database. The measurement is the stored ``work_summary_overflows``
-row; the limits are the current work-context settings. The Eng-A case uses
-the live figures from the 11-07 stall (49,587 characters against 35,000 at a
-350,000 Work budget).
+row; the limits are the current work-context settings. Every size is in
+tokens. The Large case is the plan's: a 40,000-token summary against a
+29,280-token limit at Large's 146,400-token Work budget.
 """
 
 from __future__ import annotations
@@ -11,22 +11,26 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from core.agent_loop.work_summary import SummaryLimits
-from core.agent_loop.work_summary_advice import _tokens, advise_summary_limit
+from core.agent_loop.work_summary_advice import advise_summary_limit
 from core.models import WorkSummaryOverflow
 
+_LARGE_WORK = 146_400
 
-def _overflow(summary_chars: int, *, limit_chars: int = 35_000, budget_chars: int = 350_000) -> WorkSummaryOverflow:
+
+def _overflow(
+    summary_tokens: int, *, limit_tokens: int = 29_280, budget_tokens: int = _LARGE_WORK,
+) -> WorkSummaryOverflow:
     return WorkSummaryOverflow(
         agent_id="agent-eng-a",
         model="gpt-6.1-sol",
-        summary_chars=summary_chars,
-        limit_chars=limit_chars,
-        budget_chars=budget_chars,
+        summary_tokens=summary_tokens,
+        limit_tokens=limit_tokens,
+        budget_tokens=budget_tokens,
         created_at=datetime(2026, 11, 7, 4, 28, 51, tzinfo=timezone.utc),
     )
 
 
-def _limits(budget: int = 350_000, trim_percent: int = 50, summary_percent: int = 10) -> SummaryLimits:
+def _limits(budget: int = _LARGE_WORK, trim_percent: int = 60, summary_percent: int = 20) -> SummaryLimits:
     """The limits ``read_summary_limits`` would return for these settings."""
     return SummaryLimits(
         budget=budget,
@@ -37,49 +41,50 @@ def _limits(budget: int = 350_000, trim_percent: int = 50, summary_percent: int 
     )
 
 
-def test_the_eng_a_case_says_to_raise_work_summary_size_to_15_percent() -> None:
-    advice = advise_summary_limit(agent_name="Eng-A", overflow=_overflow(49_587), limits=_limits())
+def test_the_large_case_says_to_raise_work_summary_size_to_28_percent() -> None:
+    advice = advise_summary_limit(agent_name="Eng-A", overflow=_overflow(40_000), limits=_limits())
 
     assert advice is not None
     assert advice.setting_key == "work_snapshot_summary_percent"
     assert advice.title == "Eng-A's work summary is too long for your settings"
     assert advice.sub == (
-        "Its model (gpt-6.1-sol) wrote a 49,587-character summary of its earlier steps; the limit was 35,000. "
-        "Set Work summary size to 15% or more (it is 10%). Summaries can then use up to 52,500 characters "
-        "(about 13K tokens), and recent steps kept word for word go from 140,000 to 122,500 characters "
-        "(about 35K → 31K tokens). Total context stays the same."
+        "Its model (gpt-6.1-sol) wrote a 40,000-token summary of its earlier steps; the limit was 29,280. "
+        "Set Work summary size to 28% or more (it is 20%). Summaries can then use up to 40,992 tokens, and "
+        "recent steps kept word for word go from 58,560 to 46,848 tokens. Total context stays the same."
     )
 
 
 def test_no_advice_once_the_settings_already_fit_what_the_model_wrote() -> None:
-    assert advise_summary_limit(agent_name="Eng-A", overflow=_overflow(49_587), limits=_limits(summary_percent=15)) is None
+    assert advise_summary_limit(agent_name="Eng-A", overflow=_overflow(40_000), limits=_limits(summary_percent=28)) is None
 
 
 def test_the_percentage_comes_from_the_budget_the_summary_was_written_under() -> None:
-    # 40,390 at a 250,000 budget needs ceil(16.156) = 17%; at today's 350,000 that is 59,500.
-    overflow = _overflow(40_390, limit_chars=25_000, budget_chars=250_000)
+    # 20,000 at Medium's 69,600 needs ceil(28.74) = 29%; at today's Large 146,400 that is 42,456.
+    overflow = _overflow(20_000, limit_tokens=13_920, budget_tokens=69_600)
 
     advice = advise_summary_limit(agent_name="Scooter-Atoms", overflow=overflow, limits=_limits())
 
     assert advice is not None and advice.setting_key == "work_snapshot_summary_percent"
-    assert "Set Work summary size to 17% or more (it is 10%)." in advice.sub
-    assert "Summaries can then use up to 59,500 characters" in advice.sub
+    assert "Set Work summary size to 29% or more (it is 20%)." in advice.sub
+    assert "Summaries can then use up to 42,456 tokens" in advice.sub
 
 
 def test_when_no_single_setting_fixes_it_the_advice_points_at_work_kept_after_summarizing() -> None:
-    # 180,000 at 350,000 needs ceil(51.43) = 52%, not below the 50% trim share.
-    advice = advise_summary_limit(agent_name="Eng-A", overflow=_overflow(180_000), limits=_limits())
+    # 100,000 at 146,400 needs ceil(68.31) = 69%, not below the 60% trim share.
+    advice = advise_summary_limit(agent_name="Eng-A", overflow=_overflow(100_000), limits=_limits())
 
     assert advice is not None
     assert advice.setting_key == "work_snapshot_trim_percent"
     assert advice.title == "Eng-A's work summary is too long for your settings"
     assert advice.sub == (
-        "Its model (gpt-6.1-sol) wrote a 180,000-character summary of its earlier steps; the limit was 35,000. "
-        "That needs Work summary size of 52%, which has to stay below Work kept after summarizing (50%). "
-        "Raise Work kept after summarizing above 52% first, or give Eng-A a model that writes shorter summaries."
+        "Its model (gpt-6.1-sol) wrote a 100,000-token summary of its earlier steps; the limit was 29,280. "
+        "That needs Work summary size of 69%, which has to stay below Work kept after summarizing (60%). "
+        "Raise Work kept after summarizing above 69% first, or give Eng-A a model that writes shorter summaries."
     )
 
 
-def test_token_figures_use_four_characters_a_token() -> None:
-    assert _tokens(2000) == "500"
-    assert _tokens(52_500) == "13K"
+def test_the_advice_speaks_only_in_tokens() -> None:
+    advice = advise_summary_limit(agent_name="Eng-A", overflow=_overflow(40_000), limits=_limits())
+
+    assert advice is not None
+    assert "character" not in advice.sub

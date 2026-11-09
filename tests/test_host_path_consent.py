@@ -27,6 +27,7 @@ from core.agent_loop.notifications import (
     project_chat_notifications,
 )
 from core.agent_loop.prompt_history import build_prompt_history_view
+from core.context_budget import read_context_budget
 from core.agent_loop.runtime_core import (
     AUDIENCE_SOFT_JUDGMENT,
     CHAT_FORMATTING,
@@ -841,7 +842,9 @@ def test_consent_and_approval_resume_load_human_chat_history() -> None:
 
     for trigger_type in ("host_path_consent_resolved", "cli_approval_resolved"):
         trigger = {"type": trigger_type, "payload": {"status": "always_allowed"}}
-        history = build_prompt_history_view(agent, trigger)
+        history = build_prompt_history_view(
+            agent, trigger, budget_tokens=read_context_budget().history, work_turn=False,
+        )
         contents = [str(item.get("content") or "") for item in history.conversation_history]
         assert any(ask in content for content in contents), trigger_type
         context = context_builder.build_context(
@@ -949,6 +952,8 @@ def test_consent_resolved_loads_origin_channel_thread(tmp_path: Path) -> None:
             "channel_id": channel.id,
             "payload": {"status": "always_allowed"},
         },
+        budget_tokens=read_context_budget().history,
+        work_turn=False,
     )
     contents = [str(item.get("content") or "") for item in history.conversation_history]
     assert any(ask in content for content in contents)
@@ -990,6 +995,8 @@ def test_consent_resolved_prefers_bound_task_thread(tmp_path: Path) -> None:
             "channel_id": channel.id,
             "payload": {"status": "always_allowed"},
         },
+        budget_tokens=read_context_budget().history,
+        work_turn=False,
     )
     contents = [str(item.get("content") or "") for item in history.conversation_history]
     assert any("Task ask:" in content for content in contents)

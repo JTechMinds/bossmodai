@@ -235,6 +235,22 @@ def _apply_schema(con: SQLiteCompatConnection) -> None:
     logger.info("Schema applied from %s", _SCHEMA_PATH)
 
 
+def _drop_char_measured_work_summary_overflows(con: SQLiteCompatConnection) -> None:
+    """Drop a ``work_summary_overflows`` table still sized in characters.
+
+    The table moved from character columns (``summary_chars``) to token
+    columns (``summary_tokens``) with the context budget
+    (``core/context_budget.py``); the schema then recreates it. Dropping is
+    safe: each row only feeds a transient Needs card, and the next summary
+    that does not fit records its row again. A fresh database (no table) and
+    one already in tokens are left alone.
+    """
+    columns = {row[1] for row in con.execute("PRAGMA table_info(work_summary_overflows)").fetchall()}
+    if "summary_chars" in columns:
+        con.execute("DROP TABLE work_summary_overflows")
+        logger.info("Migration: dropped work_summary_overflows (character-sized) for its token-sized shape")
+
+
 def _apply_migrations(con: SQLiteCompatConnection) -> None:
     """Apply column migrations (mostly additive) for existing databases."""
     _ensure_source_keyed_sticky_slots(con)
@@ -419,7 +435,8 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     con.execute("DROP TABLE IF EXISTS channel_chat_fades")
     con.execute("DROP TABLE IF EXISTS chat_fade_gate")
     # The per-agent last-N / token window is replaced by the per-thread
-    # history budget setting (conversation_history_budget_tokens).
+    # history budget: History % of the usable context window
+    # (context_history_percent, core/context_budget.py).
     _drop_column_if_present(con, "agent_prompt_history_policies", "last_n_histories")
     _drop_column_if_present(con, "agent_prompt_history_policies", "max_allowed_history_tokens")
     _add_column_if_missing(
@@ -2022,6 +2039,8 @@ def close_connection() -> None:
 def init_db() -> None:
     """Initialise the database and seed default settings."""
     con = get_connection()
+    # Before the schema: its CREATE TABLE IF NOT EXISTS would keep the old shape.
+    _drop_char_measured_work_summary_overflows(con)
     _apply_schema(con)
     _apply_migrations(con)
 

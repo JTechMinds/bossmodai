@@ -14,7 +14,7 @@ class AgentPromptHistoryPolicy(BaseModel):
     from existing authored messages and runtime notifications when building the
     model-visible history for a turn. How much history a turn sees is not
     per agent: it is the per-thread history budget in Settings → Context
-    Window (``conversation_history_budget_tokens``).
+    Window (History, or Task log on a work turn; ``core/context_budget.py``).
     """
 
     model_config = ConfigDict(from_attributes=True)

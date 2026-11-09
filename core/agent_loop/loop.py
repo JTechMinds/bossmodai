@@ -37,13 +37,14 @@ from core.agent_loop.turn_context import (
 )
 from core.agent_loop.turn_request import bind_turn_request
 from core.agent_loop.work_binding import bind_turn, bound_task_id, bound_work_activity, is_detached
-from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, mark_restored, restore_work_turn
+from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, restore_work_turn
 from core.agent_loop.work_summary import StepSummaryRun
 from core.agent_loop.turn_helpers import (
     _finalize_turn,
     _skip_turn,
     summarize_before_restore,
 )
+from core.context_budget import read_context_budget
 from core.llm import context_builder, routing
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
@@ -112,7 +113,21 @@ async def _run_bound_turn(
 
     # 3. Build initial context
     is_decision_turn = _is_decision_turn(trigger)
-    prompt_history = build_prompt_history_view(agent, trigger, token_model=model)
+    # A work turn resumes frozen work: an execution resume bound to a work
+    # activity. A detached turn never replays frozen work, including a resume
+    # that a detached turn opened (``detached_origin``). Read once: it picks
+    # the history budget and drives the restore below.
+    work_activity = (
+        bound_work_activity(agent.id)
+        if not is_decision_turn and not is_detached(trigger) and trigger_type in RESUME_TRIGGER_TYPES
+        else None
+    )
+    budget = read_context_budget()
+    prompt_history = build_prompt_history_view(
+        agent, trigger, token_model=model,
+        budget_tokens=budget.task_log if work_activity is not None else budget.history,
+        work_turn=work_activity is not None,
+    )
     nearby = _get_nearby_agents(agent.id, state)
     current_task = _get_current_task(agent.id)
     current_activity = _get_current_activity(agent.id)
@@ -148,25 +163,18 @@ async def _run_bound_turn(
     )
     context = context_builder.build_context(turn_context)
     summary_run: StepSummaryRun | None = None
-    # A detached turn never replays frozen work, including a resume that a
-    # detached turn opened (``detached_origin``).
-    if not is_decision_turn and not is_detached(trigger) and trigger_type in RESUME_TRIGGER_TYPES:
+    if work_activity is not None:
         # Resuming frozen work: fresh preamble, then the agent's own steps.
-        work_activity = bound_work_activity(agent.id)
-        if work_activity is not None:
-            # Saved work over the budget is folded into the step summary
-            # first: this turn's first call needs the smaller context.
-            summary_run, ended = await summarize_before_restore(
-                agent=agent, trigger=trigger, trigger_type=trigger_type, mode=mode, model=model,
-                model_source=model_source, api_config=api_config, work_activity=work_activity,
-                context=context, start=start,
-            )
-            if ended is not None:
-                return ended
-            restored = restore_work_turn(activity=work_activity, context=context)
-            if restored is not context:
-                mark_restored(trigger, work_activity)
-            context = restored
+        # Saved work over the budget is folded into the step summary first:
+        # this turn's first call needs the smaller context.
+        summary_run, ended = await summarize_before_restore(
+            agent=agent, trigger=trigger, trigger_type=trigger_type, mode=mode, model=model,
+            model_source=model_source, api_config=api_config, work_activity=work_activity,
+            context=context, start=start,
+        )
+        if ended is not None:
+            return ended
+        context = restore_work_turn(activity=work_activity, context=context)
     initial_context_json = json.dumps(context)
 
     if is_decision_turn:

@@ -41,7 +41,7 @@ from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
 from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
 from core.agent_loop.work_binding import is_detached
-from core.agent_loop.work_snapshot import finish_restored_turn, paused_work_snapshot
+from core.agent_loop.work_snapshot import paused_work_snapshot
 from core.boss import boss_label
 from core.agent_loop.task_origin_mirrors import (
     format_origin_status_line,
@@ -1337,7 +1337,6 @@ class TurnDispatcher:
                     self._rebuild_backlog_queue(agent.id)
                 db.complete_agent_trigger(trigger_id, claim_generation=claim_generation)
                 self._enqueue_result_triggers(result)
-                finish_restored_turn(trigger)
                 self._record_work_interlude(agent.id, trigger)
                 self._ensure_live_work_continuation(agent.id)
 
@@ -1438,8 +1437,9 @@ class TurnDispatcher:
         """Record an interrupt handled while work was frozen, with the agent's reply.
 
         ``spoken_text`` is set on this same trigger dict by ``apply_decision``;
-        an empty value means the agent observed or passed. The next resume
-        renders the interlude first so the agent sees what changed.
+        an empty value means the agent observed or passed. Every resume
+        until the work ends renders it, so the agent keeps seeing what it
+        was told during the work.
         """
         if trigger.get("type") not in INTERRUPT_TRIGGER_TYPES:
             return

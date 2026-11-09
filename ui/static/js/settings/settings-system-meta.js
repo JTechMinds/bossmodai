@@ -5,6 +5,8 @@
  * order, tab and control kind. Split out of settings-system.js at the
  * data-versus-rendering seam: this module is data only, and
  * settings-system.js renders and saves it. Loaded before settings-system.js.
+ * The Context Window entries are settings-context-meta.js's, loaded first
+ * and merged in below.
  */
 
 const BossModSystemSettingsMeta = (() => {
@@ -30,7 +32,9 @@ const BossModSystemSettingsMeta = (() => {
 
     // boss_name_prompted has no entry on purpose: it is the one-time name
     // dialog's own flag (shell/boss-name-prompt.js), not a setting to edit.
+    // The Context Window entries come first; an entry here would override one.
     const SETTING_META = {
+        ...BossModContextSettingsMeta.SETTING_META,
         boss_name: {
             order: 10,
             label: 'Your name',
@@ -155,87 +159,6 @@ const BossModSystemSettingsMeta = (() => {
             order: 30,
             label: 'Proximity Radius (tiles)',
             description: 'How close agents must be on the map to count as nearby for social triggers.',
-        },
-        context_recent_work_artifacts: {
-            order: 10,
-            label: 'Recent Work Artifacts',
-            description: 'How many recent work outputs or artifacts are included as reference material in the prompt.',
-        },
-        context_recent_completed_tasks: {
-            order: 20,
-            label: 'Recent Completed Tasks',
-            description: 'How many recently completed task summaries are included as reference material in the prompt.',
-        },
-        standing_prefs_line_max_chars: {
-            order: 30,
-            label: 'Memory Line Limit (chars)',
-            description: 'Longest memory an agent can save. Agents are asked to aim for about 120 characters; this is the hard stop. Lowering it never hides existing memories: longer ones are cut in the prompt and shown whole by memory list. Default 400.',
-        },
-        standing_prefs_section_max_chars: {
-            order: 40,
-            label: 'Memory Section Limit (chars)',
-            description: 'Most characters of memory injected into one agent turn, and the most total memory text one agent can store. Memories past it are listed as \'more: N not shown\'. Must leave room for at least one full memory line. Default 4000.',
-        },
-        conversation_compaction_enabled: {
-            order: 50,
-            control: 'switch',
-            label: 'Conversation memory',
-            description: 'When a DM or thread gets long, older messages are summarized into notes in the background, so agents keep the gist without losing the recent messages.',
-        },
-        conversation_history_budget_tokens: {
-            order: 60,
-            label: 'History budget (tokens)',
-            description: 'How much conversation history one DM or thread gives an agent. Pick what fits your model: about half its context window works well. Default 16000.',
-        },
-        conversation_compaction_start_percent: {
-            order: 70,
-            label: 'Start summarizing at (% of budget)',
-            description: 'Summarizing starts in the background once history reaches this share of the budget. Must be higher than Keep recent messages. Default 80.',
-        },
-        conversation_compaction_keep_percent: {
-            order: 80,
-            label: 'Keep recent messages (% of budget)',
-            description: 'How much of the newest conversation always stays word for word. Default 50.',
-        },
-        conversation_notes_max_percent: {
-            order: 90,
-            label: 'Notes size (% of budget)',
-            description: 'Longest the notes may be. Must be lower than Keep recent messages. Default 10.',
-        },
-        conversation_history_ceiling_percent: {
-            order: 100,
-            label: 'Hard limit (% of budget)',
-            description: 'A safety net if summarizing keeps failing: older messages past this are left out of agents\' context. From 100 to 300. Default 150.',
-        },
-        // Stored under 'simulation' (db/settings.py); shown with the context settings.
-        work_snapshot_max_chars: {
-            order: 110,
-            tab: 'context',
-            label: 'Work budget (characters)',
-            description: 'How much of its own recent work an agent keeps in view during a task; past this, its older steps are summarized. About 4 characters make a token, so keep this and History budget well inside your model\'s context window. Default 120000.',
-        },
-        work_snapshot_trim_percent: {
-            order: 120,
-            tab: 'context',
-            label: 'Work kept after summarizing (% of work budget)',
-            description: 'How much recent work stays in view after summarizing, the summary included. Must be higher than Work summary size. Default 50.',
-        },
-        work_snapshot_summary_percent: {
-            order: 130,
-            tab: 'context',
-            label: 'Work summary size (% of work budget)',
-            description: 'Longest the summary of older work may be. Must be lower than Work kept after summarizing. Default 10.',
-        },
-        work_snapshot_chat_view_max_chars: {
-            order: 140,
-            tab: 'context',
-            label: 'Work shown when you ask (characters)',
-            description: 'When you message an agent in the middle of a task, how much of its latest work it sees while it answers. Default 24000.',
-        },
-        default_max_tokens: {
-            order: 10,
-            label: 'Default Max Completion Tokens',
-            description: 'Global fallback output-token budget for one model completion when no provider-specific override is supplied. Default 16384.',
         },
         default_temperature: {
             order: 20,

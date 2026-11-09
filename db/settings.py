@@ -41,13 +41,21 @@ _OBSOLETE_SETTING_KEYS = {
     # have their own conversation_* knobs (Settings → Context Window).
     "compaction_chat_budget_headroom_percent",
     # The per-agent last-N / token history window. History is budgeted per
-    # thread now (conversation_history_budget_tokens).
+    # thread now (History % of the usable context window).
     "default_prompt_history_last_n",
     "default_prompt_history_max_tokens",
     # Approvals wait for a human; no timer.
     "cli_approval_timeout_minutes",
-    # A line cap on rr, replaced by the cli_max_read_chars size budget.
+    # A line cap on rr, replaced by a size budget (now Largest command result).
     "cli_max_read_lines",
+    # Absolute budgets in characters or tokens, replaced by shares of one
+    # context window in tokens (core/context_budget.py): Work %, When you
+    # ask %, History %, Reply % and Largest command result %.
+    "work_snapshot_max_chars",
+    "work_snapshot_chat_view_max_chars",
+    "conversation_history_budget_tokens",
+    "default_max_tokens",
+    "cli_max_read_chars",
 }
 
 
@@ -79,9 +87,6 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── LLM defaults ──
     ("default_temperature", "0.7", "llm"),
-    # Output-token budget for one model completion. Prior factory default
-    # was 8192; reconcile_factory_max_tokens raises an untouched 8192 only.
-    ("default_max_tokens", "16384", "llm"),
     ("llm_request_timeout_seconds", "720", "llm"),
     # Idle silence with no streamed chunk. Not a wall-clock cap on a live
     # stream. Default 120 seconds. Each chunk resets the timer. A path that
@@ -163,6 +168,26 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("managed_writer_max_sections_per_file", "8", "llm"),
 
     # ── Context window ──
+    # One context window in tokens, shared out by core/context_budget.py.
+    # Seeded with the Medium preset; Settings → Context Window offers Small,
+    # Medium and Large. Percents are of the usable window (window minus the
+    # fixed prompt room), and a save that lets a turn outgrow it is refused.
+    # The model's context window: prompt and reply of one request together.
+    ("context_window_tokens", "128000", "context"),
+    # Room for what every turn starts with: system prompt, role, memory, task.
+    ("context_fixed_tokens", "12000", "context"),
+    # The longest reply: max_tokens of every agent model call.
+    ("context_reply_percent", "12", "context"),
+    # The most one command result may add, a file read included.
+    ("context_result_percent", "5", "context"),
+    # Chat mode: how much of a DM, thread or meeting an agent sees.
+    ("context_history_percent", "20", "context"),
+    # Chat mode: the paused-work view a working agent sees when messaged.
+    ("context_asked_percent", "25", "context"),
+    # Work mode: how much of the task's event log a work turn sees.
+    ("context_task_log_percent", "5", "context"),
+    # Work mode: saved work in view (summary, steps, what it was told).
+    ("context_work_percent", "60", "context"),
     ("context_recent_work_artifacts", "5", "context"),
     ("context_recent_completed_tasks", "3", "context"),
     # Longest pref text an agent can save, and the most of one pref's text the
@@ -185,13 +210,13 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     #   more than the budget; the ceiling% hard limit is only a safety net for
     #   repeated failure. Notes are capped at notes% and never truncated.
     # Percent rules (enforced on write): keep < start <= 100, notes < keep,
-    # ceiling 100..300. The budget has no upper cap: it is the user's choice.
+    # ceiling 100..300. The budget is context_history_percent of the usable
+    # context window, and its ceiling counts toward the never-too-big rule.
     ("conversation_compaction_enabled", "true", "context"),
-    ("conversation_history_budget_tokens", "16000", "context"),
     ("conversation_compaction_start_percent", "80", "context"),
     ("conversation_compaction_keep_percent", "50", "context"),
     ("conversation_notes_max_percent", "10", "context"),
-    ("conversation_history_ceiling_percent", "150", "context"),
+    ("conversation_history_ceiling_percent", "125", "context"),
 
     # ── Desk ──
     ("desk_preview_max_chars", "50000", "desk"),
@@ -222,24 +247,18 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("watchdog_check_interval_seconds", "30", "simulation"),
     ("watchdog_soft_ping_minutes", "15", "simulation"),
     ("watchdog_escalation_minutes", "15", "simulation"),
-    # Frozen work transcript (core/agent_loop/work_snapshot.py). Char
-    # budgets, not tokens: count_tokens is 0 with no tokenizer configured.
-    # The full transcript is restored on execution resumes; decision turns
-    # see only the most recent steps that fit the smaller chat-view budget.
-    ("work_snapshot_max_chars", "120000", "simulation"),
-    # Once saved work passes work_snapshot_max_chars, the oldest steps are
-    # folded into the step summary until it fits this percentage of it. The
-    # gap leaves room for a run of steps before the next trim. A whole number
-    # from 1 to 99 (work_summary refuses anything else).
-    ("work_snapshot_trim_percent", "50", "simulation"),
-    # The step summary's size limit, as a percentage of
-    # work_snapshot_max_chars (core/agent_loop/work_summary.py). Once saved
-    # work passes the budget, the oldest steps are folded into a summary of
-    # at most this size, and the newest steps that fit the rest of
-    # work_snapshot_trim_percent stay word for word. A whole number from 1 to
-    # work_snapshot_trim_percent - 1 (work_summary refuses anything else).
-    ("work_snapshot_summary_percent", "10", "simulation"),
-    ("work_snapshot_chat_view_max_chars", "24000", "simulation"),
+    # Frozen work transcript (core/agent_loop/work_snapshot.py), in tokens.
+    # Once saved work passes the Work budget (context_work_percent), the
+    # oldest steps are folded into the step summary until it fits this
+    # percentage of it. The gap leaves room for a run of steps before the
+    # next trim. A whole number from 1 to 99 (core/context_budget.py).
+    ("work_snapshot_trim_percent", "60", "simulation"),
+    # The step summary's size limit, as a percentage of the Work budget
+    # (core/agent_loop/work_summary.py). Once saved work passes the budget,
+    # the oldest steps are folded into a summary of at most this size, and
+    # the newest steps that fit the rest of work_snapshot_trim_percent stay
+    # word for word. A whole number from 1 to work_snapshot_trim_percent - 1.
+    ("work_snapshot_summary_percent", "20", "simulation"),
     # Checkpoints (a "you are repeating steps" resume) before a no-progress
     # trip blocks the task.
     ("guardian_no_progress_checkpoints", "1", "simulation"),
@@ -276,11 +295,6 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── CLI safety ──
     ("cli_max_write_bytes", "262144", "advanced"),
-    # The most characters one `cat` or `rr` returns, counted as rendered to
-    # the model (core/bm_cli/read_window.py). A longer read returns the whole
-    # lines that fit plus a read-on note naming the `rr` command for the rest.
-    # A quarter of work_snapshot_max_chars.
-    ("cli_max_read_chars", "30000", "advanced"),
     # Most rows `backlog list` shows (core/bm_cli/backlog_commands.py).
     ("cli_backlog_list_limit", "50", "advanced"),
 
@@ -406,7 +420,6 @@ def seed_defaults() -> None:
     ensure_local_api_token()
     reconcile_catalog_pin()
     reconcile_factory_round_cap()
-    reconcile_factory_max_tokens()
     reconcile_factory_cli_default_policy()
     reconcile_factory_watchdog_interval()
     reconcile_factory_shell_timeout()
@@ -435,11 +448,6 @@ def seed_defaults() -> None:
 # An operator who set a different cap keeps it.
 _FACTORY_ROUND_CAP = "4"
 _LAST_RESORT_ROUND_CAP = "64"
-
-# Prior shipped default_max_tokens. Only this factory value is raised to 16384.
-# An operator who set a different budget keeps it.
-_FACTORY_MAX_TOKENS = "8192"
-_DEFAULT_MAX_TOKENS = "16384"
 
 # Prior shipped cli_default_policy. Only this factory value moves to
 # approval_required, and only once. An operator who set a different policy
@@ -474,20 +482,6 @@ def reconcile_factory_round_cap() -> None:
     if row is None or str(row.get("value") or "") != _FACTORY_ROUND_CAP:
         return
     set_setting("channel_response_round_cap", _LAST_RESORT_ROUND_CAP, "llm")
-
-
-def reconcile_factory_max_tokens() -> None:
-    """Raise the untouched factory max-tokens budget from 8k to 16k.
-
-    Does not overwrite a value the operator changed away from ``8192``.
-    """
-    row = query_one(
-        "SELECT value FROM settings WHERE key = $1",
-        ["default_max_tokens"],
-    )
-    if row is None or str(row.get("value") or "") != _FACTORY_MAX_TOKENS:
-        return
-    set_setting("default_max_tokens", _DEFAULT_MAX_TOKENS, "llm")
 
 
 def reconcile_factory_cli_default_policy() -> None:

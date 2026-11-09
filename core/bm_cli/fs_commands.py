@@ -15,8 +15,9 @@ from core.bm_cli.document_tools import (
     render_markdown_outline_entries,
 )
 from core.bm_cli.host_path_consent import looks_like_command_flag
-from core.bm_cli.read_window import ReadWindow, read_on_note, take_read_window
-from core.bm_cli.results import error_result, success_result, trim
+from core.bm_cli.read_window import ReadWindow, longest_read_on_note, read_on_note, take_read_window
+from core.bm_cli.results import error_result, render_sections, success_result, trim
+from core.context_budget import read_context_budget
 from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
@@ -39,8 +40,56 @@ def _max_write_bytes() -> int:
     return config.get_int("cli_max_write_bytes")
 
 
-def _max_read_chars() -> int:
-    return config.require_positive_int("cli_max_read_chars")
+def _read_budget(
+    *,
+    command: str,
+    title: str,
+    header_lines: list[str],
+    path: str,
+    start: int,
+    first_line_chars: int,
+    requested_last: int,
+) -> int:
+    """Tokens one read may spend on file lines so its whole result fits Largest command result.
+
+    The result budget (``ContextBudget.result``) minus everything else the
+    rendered result shows: the result header with the command, the section
+    title and header lines, and the longest read-on note this read can carry
+    (``read_window.longest_read_on_note``). A read sized by this always fits
+    whole, so ``results.wrap_cli_tool_message`` never cuts it and its exact
+    ``rr`` hint survives.
+
+    Args:
+        command: The command as typed (``parsed.raw``), shown in the header.
+        title: The file section's title (``FILE: <path>`` or ``LINE RANGE``).
+        header_lines: Lines the section shows before the file lines.
+        path: The file's virtual path.
+        start: 1-based first line of the read.
+        first_line_chars: Length of that line's text.
+        requested_last: The last line requested, clamped to the file.
+
+    Returns:
+        The token budget for the file lines, at least 1.
+
+    Raises:
+        ConfigError: The Context Window settings are missing or invalid, or
+            Largest command result is too small to show any line of this read.
+    """
+    # Imported here: the client's own imports load core.bm_cli, this package.
+    from core.llm.client import count_text_tokens
+
+    limit = read_context_budget().result
+    note = longest_read_on_note(
+        path=path, start=start, first_line_chars=first_line_chars, requested_last=requested_last, max_tokens=limit,
+    )
+    scaffold = render_sections(command, [(title, [*header_lines, ""])], authoritative_note=note)
+    room = limit - count_text_tokens(scaffold)
+    if room < 1:
+        raise config.ConfigError(
+            f"Largest command result ({limit:,} tokens) is too small to show any of {path}. "
+            "Raise it in Settings → System Settings → Context Window."
+        )
+    return room
 
 
 def handle_pwd(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
@@ -121,12 +170,14 @@ def handle_ls(context: CliExecutionContext, parsed: ParsedCliCommand, content: s
 def handle_cat(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
     """Read a file from the bounded virtual filesystem.
 
-    A file within ``cli_max_read_chars`` is shown verbatim. A longer one shows
-    its leading whole lines that fit, plus a runtime note naming the ``rr``
-    command that reads on. ``data["content"]`` is exactly the text shown.
+    A file whose whole result fits Largest command result (``_read_budget``)
+    is shown verbatim. A longer one shows its leading whole lines that fit,
+    plus a runtime note naming the ``rr`` command that reads on.
+    ``data["content"]`` is exactly the text shown.
 
     Raises:
-        ConfigError: ``cli_max_read_chars`` is missing or not a positive integer.
+        ConfigError: The Context Window settings are missing or invalid, or
+            Largest command result cannot show any of the file.
     """
     if len(parsed.args) != 1:
         return error_result(parsed.raw, '"cat" requires exactly one path argument.', cwd=context.cwd)
@@ -136,19 +187,33 @@ def handle_cat(context: CliExecutionContext, parsed: ParsedCliCommand, content: 
     if target.real_path.is_dir():
         return error_result(parsed.raw, f"Cannot read directory: {parsed.args[0]}", cwd=context.cwd)
     body = target.real_path.read_text(encoding="utf-8", errors="replace")
-    max_chars = _max_read_chars()
-    if len(body) <= max_chars:
+    lines = body.splitlines()
+    note: str | None = None
+    if lines:
+        # Imported here: the client's own imports load core.bm_cli, this package.
+        from core.llm.client import count_text_tokens
+
+        max_tokens = _read_budget(
+            command=parsed.raw,
+            title=f"FILE: {target.virtual_path}",
+            header_lines=[],
+            path=target.virtual_path,
+            start=1,
+            first_line_chars=len(lines[0]),
+            requested_last=len(lines),
+        )
+        window = take_read_window(
+            lines, start=1, end=len(lines), max_tokens=max_tokens, numbered=False, count=count_text_tokens,
+        )
+        note = read_on_note(window, path=target.virtual_path, max_tokens=max_tokens)
+    if note is None:
         # Verbatim, not re-joined from lines, so a trailing newline or trailing
         # text reaches the agent exactly as read.
         shown = body
         detail = f"{context.agent.name} read {target.virtual_path}"
-        note = None
     else:
-        lines = body.splitlines()
-        window = take_read_window(lines, start=1, end=len(lines), max_chars=max_chars, numbered=False)
         shown = "\n".join(window.rendered)
         detail = f"{context.agent.name} read lines 1:{window.last} of {target.virtual_path}"
-        note = read_on_note(window, path=target.virtual_path, max_chars=max_chars)
     return success_result(
         command=parsed.raw,
         detail=detail,
@@ -203,13 +268,15 @@ def handle_outline(context: CliExecutionContext, parsed: ParsedCliCommand, conte
 def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, content: str | None = None) -> BossModCliResult:
     """Read a line range from one file with 1-based numbering.
 
-    An end past the file's last line is clamped. A range longer than
-    ``cli_max_read_chars`` returns its leading whole lines that fit, plus a
-    runtime note naming the ``rr`` command that reads on; it never fails for
-    being long. ``data["lines"]`` holds only the lines shown.
+    An end past the file's last line is clamped. A range whose whole result
+    would not fit Largest command result (``_read_budget``) returns its
+    leading whole lines that fit, plus a runtime note naming the ``rr``
+    command that reads on; it never fails for being long. ``data["lines"]``
+    holds only the lines shown.
 
     Raises:
-        ConfigError: ``cli_max_read_chars`` is missing or not a positive integer.
+        ConfigError: The Context Window settings are missing or invalid, or
+            Largest command result cannot show any of the range.
     """
     del content
     if len(parsed.args) != 2:
@@ -239,18 +306,31 @@ def handle_read_range(context: CliExecutionContext, parsed: ParsedCliCommand, co
                 f"Line {start_line} is outside the file (last line is {len(lines)}).",
                 cwd=context.cwd,
             )
-        max_chars = _max_read_chars()
+        # Imported here: the client's own imports load core.bm_cli, this package.
+        from core.llm.client import count_text_tokens
+
+        requested_last = min(end_line, len(lines))
+        max_tokens = _read_budget(
+            command=parsed.raw,
+            title="LINE RANGE",
+            header_lines=[f"path: {target.virtual_path}", f"range: {start_line}:{requested_last}"],
+            path=target.virtual_path,
+            start=start_line,
+            first_line_chars=len(lines[start_line - 1]),
+            requested_last=requested_last,
+        )
         window = take_read_window(
             lines,
             start=start_line,
-            end=min(end_line, len(lines)),
-            max_chars=max_chars,
+            end=requested_last,
+            max_tokens=max_tokens,
             numbered=True,
+            count=count_text_tokens,
         )
         actual_end = window.last
         payload_lines = _shown_lines(lines, window)
         rendered_lines = list(window.rendered)
-        note = read_on_note(window, path=target.virtual_path, max_chars=max_chars)
+        note = read_on_note(window, path=target.virtual_path, max_tokens=max_tokens)
 
     return success_result(
         command=parsed.raw,

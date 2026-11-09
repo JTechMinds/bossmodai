@@ -97,6 +97,132 @@ body[data-view="settings"] #main-layout { display: none; }
    section rather than being cut off at the content's edge. */
 .bm-rules-table-wrap { overflow-x: auto; }
 
+/* ─── Settings → System Settings → Context Window (settings-context-panel.js) ───
+   One context window shared out in tokens: the Model card, Chat mode and Work
+   mode side by side, then what is in every prompt. Prefixed .ctx-budget-
+   because context.css owns the agent context column's .context-* names. */
+.ctx-budget { display: flex; flex-direction: column; gap: 16px; }
+
+.ctx-budget-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+.ctx-budget-card-title { margin: 0; font-size: 14px; font-weight: 600; color: var(--ink); }
+.ctx-budget-purpose { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
+
+/* On --bg, like the tab row above it: the buttons reuse the tabs' white
+   face, which would vanish on the white card. */
+.ctx-budget-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border-radius: var(--r);
+  background: var(--bg);
+}
+.ctx-budget-presets-label { margin-right: 4px; font-size: 13px; font-weight: 500; color: var(--muted); }
+.ctx-budget-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: var(--amber);
+  color: var(--amber-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ctx-budget-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+/* A field is its standard row with its number under it. The row grows to the
+   grid row's height, so the numbers of one row line up. */
+.ctx-budget-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ctx-budget-field > [data-setting-slot] { display: flex; flex: 1 1 auto; flex-direction: column; }
+.ctx-budget-field > [data-setting-slot] > * { flex: 1 1 auto; }
+.ctx-budget-derived {
+  padding-left: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.ctx-budget-usable { margin: 0; font-size: 13px; color: var(--muted); }
+
+/* The two modes share their rows (subgrid), so History lines up with Task
+   log and When you ask with Work whatever each column's fine-tuning holds.
+   Five rows: head, bar, worst case, Conversation, Its work. A browser
+   without subgrid still shows both columns, only unaligned. */
+.ctx-budget-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-rows: repeat(5, auto);
+  column-gap: 16px;
+}
+.ctx-budget-mode {
+  display: grid;
+  grid-row: 1 / span 5;
+  grid-template-rows: subgrid;
+  row-gap: 12px;
+}
+
+.ctx-budget-bar {
+  display: flex;
+  height: 16px;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  background: var(--bg);
+}
+.ctx-budget-seg { display: block; height: 100%; }
+.ctx-budget-seg + .ctx-budget-seg { border-left: 1px solid var(--panel); }
+.ctx-budget-seg-fixed { background: var(--line-strong); }
+.ctx-budget-seg-reply { background: var(--pink); }
+.ctx-budget-seg-conversation { background: var(--blue); }
+.ctx-budget-seg-work { background: var(--teal); }
+.ctx-budget-seg-result { background: var(--amber); }
+.ctx-budget-seg-free { background: var(--bg); }
+
+.ctx-budget-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 8px 0 0; font-size: 12px; }
+.ctx-budget-legend-item { display: flex; align-items: center; gap: 6px; }
+.ctx-budget-legend dt { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); }
+.ctx-budget-legend dd { margin: 0; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.ctx-budget-legend-item[data-tone="reply"] dd { color: var(--pink-ink); }
+.ctx-budget-legend-item[data-tone="conversation"] dd { color: var(--blue-ink); }
+.ctx-budget-legend-item[data-tone="work"] dd { color: var(--teal-ink); }
+.ctx-budget-legend-item[data-tone="result"] dd { color: var(--amber-ink); }
+/* After .ctx-budget-seg: the swatch is a segment's colour at legend size. */
+.ctx-budget-swatch {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 2px;
+}
+
+.ctx-budget-worst { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink); }
+
+.ctx-budget-row { display: flex; flex-direction: column; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.ctx-budget-group {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.ctx-budget-details { border: 1px solid var(--line); border-radius: var(--r); background: var(--bg); }
+.ctx-budget-details > summary { padding: 8px 12px; font-size: 13px; color: var(--ink); cursor: pointer; }
+.ctx-budget-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ctx-budget-details-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+
 .app-place {
   min-width: 0;
   overflow: auto;
@@ -784,6 +910,10 @@ body[data-view="settings"] #main-layout { display: none; }
   /* The title takes the row's slack, so with ‹ showing it reads `‹ Title … ✕`,
      left-aligned like the modal heads, rather than centring between them. */
   .settings-title { flex: 1 1 auto; }
+
+  /* Context Window: Chat mode, then Work mode, one above the other. */
+  .ctx-budget-modes { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; row-gap: 16px; }
+  .ctx-budget-mode { grid-row: auto; grid-template-rows: none; }
 
   /* The tab bar's runway, reserved once. The bar is fixed over the bottom of
      the viewport and <body> is the flex column both frames and the footer sit

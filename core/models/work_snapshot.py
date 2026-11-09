@@ -26,7 +26,8 @@ class WorkSnapshot(BaseModel):
     (``{role, content}`` pairs after the preamble). ``fingerprints`` is every
     command fingerprint this activity has already run, used to tell a first
     read from a repeat. ``interludes`` are chat turns that happened while the
-    work was paused; they are rendered once on the next resume and cleared.
+    work was paused; every resume renders them, oldest first, until the work
+    ends, and they count toward the Work budget.
     ``step_summary`` is the agent's own model's summary of the oldest steps,
     folded out of ``transcript`` once the saved work passed its budget
     (core/agent_loop/work_summary.py), and ``summarized_steps`` is how many
@@ -66,17 +67,17 @@ class WorkSummaryOverflow(BaseModel):
     fails because the summary would not fit (core/agent_loop/turn_helpers.py)
     and deleted when a later summary fits. It is keyed by agent, not by
     activity, so it outlives a stall that deletes the work snapshot.
-    ``summary_chars`` is the first summary the model wrote; ``limit_chars``
-    and ``budget_chars`` are the summary limit and ``work_snapshot_max_chars``
-    it was written under. The Needs card's advice is computed from these and
-    the current settings (core/agent_loop/work_summary_advice.py).
+    ``summary_tokens`` is the first summary the model wrote; ``limit_tokens``
+    and ``budget_tokens`` are the summary limit and the Work budget it was
+    written under, all in tokens. The Needs card's advice is computed from
+    these and the current settings (core/agent_loop/work_summary_advice.py).
     """
 
     model_config = ConfigDict(from_attributes=True)
 
     agent_id: str
     model: str
-    summary_chars: int
-    limit_chars: int
-    budget_chars: int
+    summary_tokens: int
+    limit_tokens: int
+    budget_tokens: int
     created_at: datetime

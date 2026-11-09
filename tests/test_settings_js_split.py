@@ -35,6 +35,10 @@ SPLIT_HALVES = {
     "settings/settings-system-ai.js": "BossModSystemAi",
     "settings/settings-runtime-contracts-actions.js": "BossModRuntimeContractActions",
     "settings/settings-system-meta.js": "BossModSystemSettingsMeta",
+    # The Context Window tab: its catalog (merged into the system catalog)
+    # and its layout.
+    "settings/settings-context-meta.js": "BossModContextSettingsMeta",
+    "settings/settings-context-panel.js": "BossModContextPanel",
     # Phase 4: the Advanced section's Retention card.
     "settings/settings-retention.js": "BossModRetentionSettings",
 }
@@ -59,7 +63,9 @@ REQUIRED_SCRIPTS = [
     "js/settings/settings-connections-form.js",
     "js/settings/settings-system-ai.js",
     "js/settings/settings-connections.js",
+    "js/settings/settings-context-meta.js",
     "js/settings/settings-system-meta.js",
+    "js/settings/settings-context-panel.js",
     "js/settings/settings-system.js",
     "js/settings/settings-prompt-template.js",
     "js/settings/settings-retention.js",
@@ -275,6 +281,9 @@ def test_index_loads_split_scripts_in_dependency_order() -> None:
     assert (index["js/settings/settings-runtime-contracts-actions.js"]
             < index["js/settings/settings-runtime-contracts.js"])
     assert index["js/settings/settings-system-meta.js"] < index["js/settings/settings-system.js"]
+    # The system catalog merges the context catalog; the section renders the panel.
+    assert index["js/settings/settings-context-meta.js"] < index["js/settings/settings-system-meta.js"]
+    assert index["js/settings/settings-context-panel.js"] < index["js/settings/settings-system.js"]
 
 
 def test_settings_and_cli_policy_use_shared_api_client() -> None:

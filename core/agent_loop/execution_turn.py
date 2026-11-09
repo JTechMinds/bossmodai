@@ -182,13 +182,13 @@ async def _run_execution_turn(
 
     The budget boundary ends the turn after the step that crossed it, so the
     working context stays bounded (see ``work_snapshot``): the saved work
-    (step summary included) plus this turn's steps passed
-    ``work_snapshot_max_chars`` while the turn is bound to a work activity.
-    The end-of-loop freeze appends this turn's steps untrimmed; the next
-    execution turn folds the oldest steps into the step summary before its
-    first step (``work_summary``), down to ``work_snapshot_trim_percent`` of
-    ``work_snapshot_max_chars``, so it has room for a run of steps before it
-    reaches the budget again. The turn returns ``TurnOutcome.success``; the
+    (step summary and interludes included) plus this turn's steps passed the
+    Work budget, in tokens (``ContextBudget.work``), while the turn is bound
+    to a work activity. The end-of-loop freeze appends this turn's steps
+    untrimmed; the next execution turn folds the oldest steps into the step
+    summary before its first step (``work_summary``), down to
+    ``work_snapshot_trim_percent`` of the Work budget, so it has room for a
+    run of steps before it reaches the budget again. The turn returns ``TurnOutcome.success``; the
     dispatcher's live-work continuation queues the next turn for the
     still-active task. Each turn runs at least one step, so a single step
     over the budget still moves on.

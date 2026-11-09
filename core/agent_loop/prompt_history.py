@@ -13,7 +13,6 @@ from core.agent_loop.conversation_notes import (
     entry_tokens,
     load_thread_window,
     maybe_schedule_compaction,
-    read_settings,
     render_history_entry,
     window_entries,
 )
@@ -40,10 +39,40 @@ def build_prompt_history_view(
     trigger: dict[str, Any],
     *,
     token_model: str | None = None,
+    budget_tokens: int,
+    work_turn: bool,
 ) -> PromptHistoryView:
-    """Build the prompt-visible history view for one agent turn."""
+    """Build the prompt-visible history view for one agent turn.
+
+    The turn's kind picks the history budget (``core.agent_loop.loop`` decides
+    it): a work turn, an execution turn that restores a work activity, gets
+    Task log; every other turn gets History. Task and meeting history is
+    windowed to ``budget_tokens`` and its sticky-slot pressure measured
+    against it. DM and channel history is the conversation-memory window
+    (History, with its hard limit); on a work turn the consent or approval
+    fallback to that history is windowed to ``budget_tokens`` as well, so a
+    work turn never shows more than Task log.
+
+    Args:
+        agent: The agent whose turn this is.
+        trigger: The live trigger.
+        token_model: The turn's model, for sticky-slot token counts.
+        budget_tokens: The history budget for this turn, in tokens
+            (``ContextBudget.task_log`` on a work turn, else
+            ``ContextBudget.history``).
+        work_turn: Whether this is a work turn.
+
+    Returns:
+        The history and the prompt notifications.
+
+    Raises:
+        core.config.ConfigError: A conversation-memory or Context Window
+            setting is missing or invalid.
+    """
     policy = db.ensure_agent_prompt_history_policy(agent.id)
-    conversation_history = _load_conversation_history(agent, trigger, policy, token_model=token_model)
+    conversation_history = _load_conversation_history(
+        agent, trigger, policy, token_model=token_model, budget_tokens=budget_tokens, work_turn=work_turn,
+    )
     prompt_notifications: list[Notification] = []
     if policy.include_notifications:
         prompt_notifications = _load_prompt_notifications(agent.id, policy)
@@ -59,9 +88,11 @@ def _load_conversation_history(
     policy: Any,
     *,
     token_model: str | None = None,
+    budget_tokens: int,
+    work_turn: bool,
 ) -> list[dict[str, Any]]:
+    """The history this trigger shows; ``budget_tokens`` and ``work_turn`` as for :func:`build_prompt_history_view`."""
     trigger_type = trigger.get("type")
-    budget = read_settings().budget_tokens
 
     if trigger_type == "activity_resumed" and trigger.get("task_id"):
         thread = _fetch_until_budget(
@@ -70,7 +101,7 @@ def _load_conversation_history(
                 limit=limit,
                 earliest_ts=policy.earliest_ts_allowed,
             ),
-            budget,
+            budget_tokens,
             agent.id,
         )
         return _finish_history(
@@ -80,6 +111,7 @@ def _load_conversation_history(
             token_model=token_model,
             scope_kind="task",
             scope_id=str(trigger["task_id"]),
+            budget_tokens=budget_tokens,
         )
 
     if trigger_type in {"task_assigned", "task_follow_up", "task_update"} and trigger.get("task_id"):
@@ -91,7 +123,7 @@ def _load_conversation_history(
                 exclude_source_message_id=trigger.get("source_message_id"),
                 exclude_source_task_event_id=trigger.get("source_task_event_id"),
             ),
-            budget,
+            budget_tokens,
             agent.id,
         )
         return _finish_history(
@@ -101,6 +133,7 @@ def _load_conversation_history(
             token_model=token_model,
             scope_kind="task",
             scope_id=str(trigger["task_id"]),
+            budget_tokens=budget_tokens,
         )
 
     if trigger_type in ("human_chat", "watchdog_status_ping"):
@@ -128,6 +161,7 @@ def _load_conversation_history(
                 policy,
                 token_model=token_model,
                 exclude_message_id=trigger.get("source_message_id"),
+                budget_tokens=budget_tokens,
             )
 
     if trigger_type in {"session_message", "session_response"}:
@@ -139,7 +173,7 @@ def _load_conversation_history(
                     human_label=boss_label(),
                     limit=limit,
                 ),
-                budget,
+                budget_tokens,
                 agent.id,
             )
             thread = _exclude_source_message(thread, trigger.get("source_message_id"))
@@ -150,6 +184,7 @@ def _load_conversation_history(
                 token_model=token_model,
                 scope_kind="meeting",
                 scope_id=str(session_id),
+                budget_tokens=budget_tokens,
             )
 
     if trigger_type == "activity_resumed":
@@ -163,7 +198,7 @@ def _load_conversation_history(
                         human_label=boss_label(),
                         limit=limit,
                     ),
-                    budget,
+                    budget_tokens,
                     agent.id,
                 )
                 return _finish_history(
@@ -173,6 +208,7 @@ def _load_conversation_history(
                     token_model=token_model,
                     scope_kind="meeting",
                     scope_id=session.id,
+                    budget_tokens=budget_tokens,
                 )
         if active and active.kind == "conversation":
             return _thread_history(
@@ -188,6 +224,8 @@ def _load_conversation_history(
             trigger,
             policy,
             token_model=token_model,
+            budget_tokens=budget_tokens,
+            work_turn=work_turn,
         )
 
     return []
@@ -199,6 +237,8 @@ def _load_consent_or_approval_history(
     policy: Any,
     *,
     token_model: str | None = None,
+    budget_tokens: int,
+    work_turn: bool,
 ) -> list[dict[str, Any]]:
     """Load the conversation the consent/approval wake is resuming.
 
@@ -206,6 +246,11 @@ def _load_consent_or_approval_history(
     to empty history, so the execution turn had no operator ask and idled.
     Prefer the bound task thread when one exists, then the originating
     channel thread, otherwise human chat.
+
+    The task thread is windowed to ``budget_tokens``. The channel and DM
+    fallbacks are conversation-memory windows sized by History; on a work
+    turn they are windowed to ``budget_tokens`` (Task log) too, so the
+    fallback never breaks the work-turn budget.
     """
     task_id = trigger.get("task_id")
     if task_id:
@@ -215,7 +260,7 @@ def _load_consent_or_approval_history(
                 limit=limit,
                 earliest_ts=policy.earliest_ts_allowed,
             ),
-            read_settings().budget_tokens,
+            budget_tokens,
             agent.id,
         )
         if thread:
@@ -226,6 +271,7 @@ def _load_consent_or_approval_history(
                 token_model=token_model,
                 scope_kind="task",
                 scope_id=str(task_id),
+                budget_tokens=budget_tokens,
             )
 
     channel_id = trigger.get("channel_id")
@@ -236,16 +282,18 @@ def _load_consent_or_approval_history(
             policy,
             token_model=token_model,
             exclude_message_id=None,
+            budget_tokens=budget_tokens,
         )
         if history:
-            return history
+            return _apply_budget_window(history, agent.id, budget_tokens) if work_turn else history
 
-    return _thread_history(
+    history = _thread_history(
         ThreadScope.human_dm(agent.id),
         agent,
         earliest_ts=policy.earliest_ts_allowed,
         exclude_message_id=None,
     )
+    return _apply_budget_window(history, agent.id, budget_tokens) if work_turn else history
 
 
 def _thread_history(
@@ -277,13 +325,15 @@ def _channel_history(
     *,
     token_model: str | None,
     exclude_message_id: Any,
+    budget_tokens: int,
 ) -> list[dict[str, Any]]:
     """One channel's history, then task-side sticky slots.
 
     The window is the channel's notes plus its verbatim tail. Sticky slots get
     that window as ``visible`` and, as ``verbatim``, the window's rows plus up
     to ``_FETCH_STEP_ROWS`` rows before it, so a task-linked turn that was
-    folded into the notes still counts as dropped and keeps its slots.
+    folded into the notes still counts as dropped and keeps its slots. Their
+    pressure is measured against ``budget_tokens``, the turn's history budget.
     """
     scope = ThreadScope.channel(channel_id)
     exclude = str(exclude_message_id or "").strip() or None
@@ -302,6 +352,7 @@ def _channel_history(
         policy=policy,
         agent_id=agent.id,
         token_model=token_model,
+        budget_tokens=budget_tokens,
     )
 
 
@@ -331,14 +382,17 @@ def _finish_history(
     token_model: str | None,
     scope_kind: str,
     scope_id: str,
+    budget_tokens: int,
     verbatim: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
     """Apply the hard token window. Task threads then receive task-side slots.
 
     Only task and meeting history comes here: they are not compacted, so
-    they keep a hard window at the per-thread history budget.
+    they keep a hard window at ``budget_tokens``, the turn's history budget
+    (Task log on a work turn, else History). Sticky-slot pressure is
+    measured against the same budget.
     """
-    windowed = _apply_budget_window(messages, agent_id, read_settings().budget_tokens)
+    windowed = _apply_budget_window(messages, agent_id, budget_tokens)
     if scope_kind != "task" or not str(scope_id).strip():
         return windowed
     return compose_task_sticky_slots(
@@ -348,6 +402,7 @@ def _finish_history(
         policy=policy,
         agent_id=agent_id,
         token_model=token_model,
+        budget_tokens=budget_tokens,
     )
 
 

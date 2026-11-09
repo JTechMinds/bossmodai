@@ -1,7 +1,9 @@
 """Fix C — freeze the working transcript at every pause, view it, restore it.
 
 The chat turn reads a code-rendered, read-only view of the frozen steps; an
-execution resume replays them under a freshly built preamble.
+execution resume replays them under a freshly built preamble. Saved work is
+measured in tokens; tests that check the budget arithmetic count one token
+per character (``_char_tokens``) so the sizes stay exact.
 """
 
 from __future__ import annotations
@@ -23,19 +25,22 @@ from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.loop import run_turn
 from core.agent_loop.turn_context import _get_current_activity, _get_current_task
 from core.agent_loop.work_snapshot import (
-    finish_restored_turn,
     freeze_work_turn,
+    interlude_tokens,
     render_paused_work_view,
     restore_work_turn,
-    saved_chars,
+    saved_tokens,
     transcript_over_budget,
+    transcript_tokens,
 )
 from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN
 from core.llm import context_builder
 from core.llm.client import LLMError, LLMResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
+from core.llm.client import count_text_tokens
 from core.tasking import create_or_bind_task
+from tests._context_budget import set_context_budget
 
 _STATUS_STEP = '{"act":"cli","data":{"cmd":"status"},"th":"check status"}'
 _BOARD_STEP = '{"act":"cli","data":{"cmd":"my-board"},"th":"check board"}'
@@ -75,6 +80,11 @@ def _task(agent_id: str, title: str = "Execute the 9 fixes"):
         audit_author_name="Human Operator",
         audit_author_type="human",
     ).task
+
+
+def _char_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Count one token per character in work_snapshot, so budget arithmetic is exact."""
+    monkeypatch.setattr("core.agent_loop.work_snapshot.count_text_tokens", len)
 
 
 def _working_agent():
@@ -193,7 +203,8 @@ async def test_execution_turns_do_not_get_the_view(monkeypatch: pytest.MonkeyPat
     assert not any(item["content"].startswith(_VIEW_HEAD) for item in context_builder.build_context(turn))
 
 
-def test_view_shows_only_the_most_recent_steps_within_budget() -> None:
+def test_view_shows_only_the_most_recent_steps_within_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    _char_tokens(monkeypatch)
     agent, _task_row, activity = _working_agent()
     steps: list[dict[str, str]] = []
     for index in range(6):
@@ -202,13 +213,57 @@ def test_view_shows_only_the_most_recent_steps_within_budget() -> None:
     snapshot = freeze_work_turn(
         agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0
     )
-    db.set_setting("work_snapshot_chat_view_max_chars", "600", "simulation")
-    config.reload()
+    assert set_context_budget(usable=2400).asked == 600
     view = render_paused_work_view(snapshot, task_title="Execute the 9 fixes")
     assert view is not None
     assert "cat /me/f5.md" in view
     assert "cat /me/f0.md" not in view
     assert "earlier steps are not shown" in view
+    assert "Summary of your earlier steps" not in view, "no summary block without a summary"
+
+
+def test_view_shows_the_summary_first_then_the_newest_steps(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When you ask: the step summary, whole, then the newest steps that fit the rest."""
+    _char_tokens(monkeypatch)
+    agent, _task_row, activity = _working_agent()
+    steps = _steps(6, result_chars=200)
+    freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
+    )
+    summary = "- read f0 to f9; the config sets the port\n" + "- " + "s" * 300
+    snapshot = db.save_step_summary(activity.id, transcript=steps, step_summary=summary, summarized_steps=10)
+    assert set_context_budget(usable=2400).asked == 600
+
+    view = render_paused_work_view(snapshot, task_title="Execute the 9 fixes")
+
+    assert view is not None
+    head = "Summary of your earlier steps (10 steps, no longer shown word for word):\n" + summary
+    assert head in view
+    assert view.index(head) < view.index("Your newest steps:") < view.index("cat /me/f5.md")
+    # 600 tokens less the ~350 the summary takes leaves room for the newest step only.
+    assert "cat /me/f4.md" not in view
+    assert "(5 earlier steps are not shown.)" in view
+
+
+def test_the_newest_step_over_the_rest_keeps_its_leading_lines(monkeypatch: pytest.MonkeyPatch) -> None:
+    _char_tokens(monkeypatch)
+    agent, _task_row, activity = _working_agent()
+    result = "\n".join(f"line {index} " + "z" * 40 for index in range(40))
+    steps = [
+        {"role": "assistant", "content": '{"act":"cli","data":{"cmd":"cat /me/big.md"},"th":"r"}'},
+        {"role": "user", "content": result},
+    ]
+    snapshot = freeze_work_turn(
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
+    )
+    assert set_context_budget(usable=2400).asked == 600
+
+    view = render_paused_work_view(snapshot, task_title="Execute the 9 fixes")
+
+    assert view is not None
+    assert "- you ran: cat /me/big.md" in view
+    assert "line 0 " in view and "line 39 " not in view
+    assert view.endswith("(output truncated for space)")
 
 
 @pytest.mark.asyncio
@@ -285,17 +340,16 @@ async def test_approval_result_lands_after_the_restored_transcript(monkeypatch: 
     assert rejected == len(messages) - 2, "the approval result and its follow-up close the context"
 
 
-def test_freeze_only_appends_even_over_the_budget() -> None:
+def test_freeze_only_appends_even_over_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    _char_tokens(monkeypatch)
     agent, _task_row, activity = _working_agent()
-    db.set_setting("work_snapshot_max_chars", "900", "simulation")
-    db.set_setting("work_snapshot_trim_percent", "88", "simulation")
-    config.reload()
+    assert set_context_budget(usable=1500, work_trim=88).work == 900
     context = [{"role": "system", "content": "preamble"}, *_steps(5, result_chars=250)]
     snapshot = freeze_work_turn(
         agent=agent, activity=activity, initial_len=1, context=context, fingerprints=[], no_progress_checkpoints=0
     )
     assert snapshot.transcript == context[1:], "nothing is dropped at a pause, even over the budget"
-    assert saved_chars(snapshot) > 900
+    assert saved_tokens(snapshot) > 900
 
     # A later freeze appends to the stored steps and keeps the step summary as stored.
     db.save_step_summary(
@@ -439,19 +493,50 @@ async def test_a_failed_resume_renders_the_same_interludes_again(monkeypatch: py
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _claim(agent.id, "activity_resumed"))
     assert "Also fix the css." in prompts[0][-1]["content"]
     assert _replayed_once(prompts[0], _STATUS_STEP)
-    assert db.get_work_snapshot(activity.id).interludes == [], "cleared once the resumed turn completed"
+    assert len(db.get_work_snapshot(activity.id).interludes) == 1, "kept for the life of the work"
 
 
-def test_finish_restored_turn_ignores_unrestored_triggers() -> None:
+@pytest.mark.asyncio
+async def test_interludes_survive_a_completed_resume_and_show_on_the_next_two(monkeypatch: pytest.MonkeyPatch) -> None:
+    """What the operator said during the work stays in view until the work ends (D11)."""
+    agent, task, activity = _working_agent()
+    await _interrupted_step(monkeypatch, agent, task, _STATUS_STEP)
+    db.delete_queued_triggers(agent.id)
+    db.append_work_interlude(activity.id, {"from_name": "Human Operator", "content": "Use port 8080.", "reply": "Noted."})
+    db.append_work_interlude(activity.id, {"from_name": "Human Operator", "content": "Shorter summaries.", "reply": "Will do."})
+
+    for step in (_BOARD_STEP, '{"act":"cli","data":{"cmd":"pwd"},"th":"where"}', _STATUS_STEP):
+        db.create_agent_trigger(
+            agent_id=agent.id, trigger_type="activity_resumed", source_channel="work",
+            payload={"content": "Resume work."}, task_id=task.id,
+        )
+        prompts = _script(monkeypatch, [step], on_call=lambda call: _queue_interrupt(agent.id))
+        await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _claim(agent.id, "activity_resumed"))
+        resume = prompts[0][-1]["content"]
+        assert "Said to you during this work (oldest first;" in resume
+        assert resume.index("Use port 8080.") < resume.index("Shorter summaries."), "oldest first"
+        assert "You replied: Noted." in resume
+        db.delete_queued_triggers(agent.id)
+        assert len(db.get_work_snapshot(activity.id).interludes) == 2, "a completed resume keeps them"
+
+    # They go with the work: ending it deletes the snapshot.
+    activity_runtime.complete_activity(activity.id, detail="Done.")
+    assert db.get_work_snapshot(activity.id) is None
+
+
+def test_interludes_count_toward_the_saved_work(monkeypatch: pytest.MonkeyPatch) -> None:
+    _char_tokens(monkeypatch)
     agent, _task_row, activity = _working_agent()
+    steps = [{"role": "assistant", "content": "a" * 30}, {"role": "user", "content": "b" * 30}]
     freeze_work_turn(
-        agent=agent, activity=activity, initial_len=0,
-        context=[{"role": "assistant", "content": _STATUS_STEP}, {"role": "user", "content": "ok"}],
-        fingerprints=["status"], no_progress_checkpoints=0,
+        agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
     )
-    db.append_work_interlude(activity.id, {"from_name": "Human Operator", "content": "Hi", "reply": "Hello"})
-    finish_restored_turn({"type": "human_chat"})
-    assert len(db.get_work_snapshot(activity.id).interludes) == 1
+    snapshot = db.append_work_interlude(
+        activity.id, {"from_name": "Human Operator", "content": "Use port 8080.", "reply": "Noted."},
+    )
+    rendered = "[Human Operator]: Use port 8080.\nYou replied: Noted."
+    assert interlude_tokens(snapshot) == len(rendered)
+    assert saved_tokens(snapshot) == 60 + len(rendered)
 
 
 @pytest.mark.asyncio
@@ -541,10 +626,10 @@ async def test_thread_wake_with_no_live_speaker_ends_the_work_turn(monkeypatch: 
 # ─── The budget boundary and the step summary ───
 
 
-def test_the_budget_is_crossed_one_character_past_it() -> None:
+def test_the_budget_is_crossed_one_token_past_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    _char_tokens(monkeypatch)
     agent, _task_row, activity = _working_agent()
-    db.set_setting("work_snapshot_max_chars", "100", "simulation")
-    config.reload()
+    assert set_context_budget(usable=167).work == 100
     prior = freeze_work_turn(
         agent=agent, activity=activity, initial_len=0,
         context=[{"role": "assistant", "content": "a" * 30}, {"role": "user", "content": "b" * 30}],
@@ -556,16 +641,16 @@ def test_the_budget_is_crossed_one_character_past_it() -> None:
     assert transcript_over_budget(None, [{"role": "user", "content": "c" * 101}]) is True
 
 
-def test_the_step_summary_counts_toward_the_budget() -> None:
+def test_the_step_summary_counts_toward_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    _char_tokens(monkeypatch)
     agent, _task_row, activity = _working_agent()
-    db.set_setting("work_snapshot_max_chars", "100", "simulation")
-    config.reload()
+    assert set_context_budget(usable=167).work == 100
     steps = [{"role": "assistant", "content": "a" * 30}, {"role": "user", "content": "b" * 30}]
     freeze_work_turn(
         agent=agent, activity=activity, initial_len=0, context=steps, fingerprints=[], no_progress_checkpoints=0,
     )
     prior = db.save_step_summary(activity.id, transcript=steps, step_summary="s" * 20, summarized_steps=1)
-    assert saved_chars(prior) == 80
+    assert saved_tokens(prior) == 80
     assert transcript_over_budget(prior, [{"role": "user", "content": "c" * 20}]) is False
     assert transcript_over_budget(prior, [{"role": "user", "content": "c" * 21}]) is True
 
@@ -648,5 +733,18 @@ def _steps(count: int, *, result_chars: int, first: int = 0) -> list[dict[str, s
     return messages
 
 
-def test_the_trim_share_is_seeded_at_half_the_budget() -> None:
-    assert config.require_int("work_snapshot_trim_percent") == 50
+def test_the_work_shares_are_seeded_at_the_medium_preset() -> None:
+    assert config.require_int("work_snapshot_trim_percent") == 60
+    assert config.require_int("work_snapshot_summary_percent") == 20
+
+
+def test_saved_work_is_counted_with_the_shared_tokenizer() -> None:
+    """Without the test counter: transcript_tokens is the real count of each message's content."""
+    messages = [
+        {"role": "assistant", "content": '{"act":"cli","data":{"cmd":"cat /me/f0.md"},"th":"r"}'},
+        {"role": "user", "content": "def main():\n    return 42\n"},
+        {"role": "user", "content": ""},
+    ]
+    assert transcript_tokens(messages) == count_text_tokens(messages[0]["content"]) + count_text_tokens(
+        messages[1]["content"]
+    )

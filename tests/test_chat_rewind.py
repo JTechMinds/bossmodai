@@ -21,6 +21,7 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from core.agent_loop.prompt_history import build_prompt_history_view
+from core.context_budget import read_context_budget
 from core.chat_rewind import rewind_human_chat
 from core.models.message import HUMAN_SENDER_ID
 from db import attachments as db_att
@@ -475,7 +476,10 @@ async def test_k_the_prompt_no_longer_contains_the_removed_content() -> None:
     _say(agent.id, "regretted follow-up", human=True, at="2026-10-08 10:00:03")
 
     def history_text() -> str:
-        view = build_prompt_history_view(db.get_agent(agent.id), {"type": "human_chat"})
+        view = build_prompt_history_view(
+            db.get_agent(agent.id), {"type": "human_chat"},
+            budget_tokens=read_context_budget().history, work_turn=False,
+        )
         return json.dumps(view.conversation_history)
 
     before = history_text()
@@ -504,5 +508,8 @@ async def test_a_rewind_deletes_the_dm_conversation_notes() -> None:
     await rewind_human_chat(agent.id, cut.id, services=_Services())
 
     assert db.get_conversation_notes("human_dm", agent.id) is None
-    history = build_prompt_history_view(db.get_agent(agent.id), {"type": "human_chat"}).conversation_history
+    history = build_prompt_history_view(
+        db.get_agent(agent.id), {"type": "human_chat"},
+        budget_tokens=read_context_budget().history, work_turn=False,
+    ).conversation_history
     assert all("an old summary" not in item["content"] for item in history)

@@ -9,16 +9,21 @@ rebuilds the preamble and replays the frozen steps after it, so the agent
 keeps what it read. A decision turn gets a read-only, code-rendered view of
 the latest steps instead, so its status reply is grounded in what actually ran.
 
+Saved work is measured in tokens (``core.llm.client.count_text_tokens``),
+like every context budget (``core/context_budget.py``): the step summary,
+the steps, and the interludes, the messages the agent handled while the work
+was paused. Interludes are kept for the life of the work and shown, oldest
+first, on every resume until the work ends and its snapshot is deleted.
+
 One boundary keeps the saved work bounded: the budget boundary ends the
-execution turn after the step whose saved work (the step summary included)
-passed ``work_snapshot_max_chars`` (:func:`transcript_over_budget`), and the
+execution turn after the step whose saved work passed the Work budget
+(``ContextBudget.work``, :func:`transcript_over_budget`), and the
 dispatcher's live-work continuation queues the next turn, whose preamble is
 built fresh. Freezes only append; nothing is dropped at a pause. At the
 start of the next execution turn, before restore, the oldest steps are
 folded into the step summary (``core/agent_loop/work_summary.py``) until the
-saved work fits ``work_snapshot_trim_percent`` of
-``work_snapshot_max_chars``, and restore shows that summary above the steps
-that remain.
+saved work fits ``work_snapshot_trim_percent`` of the Work budget, and
+restore shows that summary above the steps that remain.
 
 Snapshot policy lives here. The table itself is ``db/work_snapshots.py``.
 """
@@ -28,29 +33,25 @@ from __future__ import annotations
 from typing import Any
 
 import db
-from core import config
 from core.agent_loop.actions import parse_action
 from core.agent_loop.liveness import command_fingerprint
 from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN, CLI_TOOL_RESULT_END
+from core.context_budget import read_context_budget
 from core.llm.attachment_parts import CLI_IMAGE_PATHS_KEY, SUMMARY_KEY
+from core.llm.client import count_text_tokens
 from core.default_prompts import render_default_prompt
 from core.models import Activity, Agent, WorkSnapshot
-
-MAX_CHARS_SETTING = "work_snapshot_max_chars"
-CHAT_VIEW_MAX_CHARS_SETTING = "work_snapshot_chat_view_max_chars"
 
 # Execution triggers that continue a frozen work activity.
 RESUME_TRIGGER_TYPES = frozenset(
     {"activity_resumed", "cli_approval_resolved", "host_path_consent_resolved"}
 )
 
-# Live-trigger key naming the activity whose frozen work a turn replayed.
-RESTORED_ACTIVITY_KEY = "restored_work_activity_id"
-
 _RESUME_PROMPT_PATHS = {"interludes", "reason"}
 _SUMMARY_PROMPT_PATHS = {"summarized_steps", "summary"}
-_VIEW_PROMPT_PATHS = {"task_title", "dropped_steps", "steps"}
+_VIEW_PROMPT_PATHS = {"task_title", "dropped_steps", "steps", "summary", "summarized_steps"}
 _UNPARSED_STEP = "(unparsed step)"
+_TRUNCATED_MARKER = "\n  (output truncated for space)"
 
 
 def freeze_work_turn(
@@ -66,7 +67,7 @@ def freeze_work_turn(
 
     Only ``context[initial_len:]`` is saved; the preamble is rebuilt on every
     resume. The new steps are appended to the stored transcript; nothing is
-    dropped here. Saved work over ``work_snapshot_max_chars`` is folded into
+    dropped here. Saved work over the Work budget is folded into
     the step summary at the start of the next execution turn
     (``core/agent_loop/work_summary.py``), so repeated pauses accumulate
     until then. The step summary stored on the row is left as it is.
@@ -96,14 +97,14 @@ def freeze_work_turn(
 
 
 def transcript_over_budget(prior: WorkSnapshot | None, new_messages: list[dict[str, Any]]) -> bool:
-    """Return whether the saved work plus this turn's steps passes the budget.
+    """Return whether the saved work plus this turn's steps passes the Work budget.
 
     The budget boundary: the execution loop ends the turn once this is true,
-    so no turn grows past ``work_snapshot_max_chars``, the point where the
-    next execution turn folds the oldest steps into the step summary (down
-    to ``work_snapshot_trim_percent`` of ``work_snapshot_max_chars``). The
-    step summary counts toward the budget: the prior work is counted with
-    :func:`saved_chars`, in content characters, the way the fold counts it.
+    so no turn grows past the Work budget (``ContextBudget.work``), the point
+    where the next execution turn folds the oldest steps into the step
+    summary (down to ``work_snapshot_trim_percent`` of it). The step summary
+    and the interludes count toward the budget: the prior work is counted
+    with :func:`saved_tokens`, the way the fold counts it.
 
     Args:
         prior: The snapshot the turn started from, or ``None`` when the work
@@ -112,33 +113,47 @@ def transcript_over_budget(prior: WorkSnapshot | None, new_messages: list[dict[s
             step that just ran.
 
     Returns:
-        ``True`` when the characters exceed ``work_snapshot_max_chars``;
-        exactly at the budget is not over it.
+        ``True`` when the tokens exceed the Work budget; exactly at the
+        budget is not over it.
 
     Raises:
-        core.config.ConfigError: ``work_snapshot_max_chars`` is missing or
-            not an integer.
+        core.config.ConfigError: The Context Window settings are missing or
+            invalid.
     """
-    prior_chars = saved_chars(prior) if prior is not None else 0
-    return prior_chars + transcript_chars(new_messages) > config.require_int(MAX_CHARS_SETTING)
+    prior_tokens = saved_tokens(prior) if prior is not None else 0
+    return prior_tokens + transcript_tokens(new_messages) > read_context_budget().work
 
 
-def saved_chars(snapshot: WorkSnapshot) -> int:
-    """Return the size of a snapshot's saved work: its step summary plus its transcript.
+def saved_tokens(snapshot: WorkSnapshot) -> int:
+    """Return the size of a snapshot's saved work: step summary, transcript and interludes.
 
     The one measure both the budget boundary (:func:`transcript_over_budget`)
-    and the fold (``work_summary.summarize_saved_work``) compare against
-    ``work_snapshot_max_chars``, so the two can never disagree about whether
-    the saved work is over the budget.
+    and the fold (``work_summary.summarize_saved_work``) compare against the
+    Work budget, so the two can never disagree about whether the saved work
+    is over it.
 
     Args:
         snapshot: The stored snapshot.
 
     Returns:
-        ``len(snapshot.step_summary)`` plus the transcript's content
-        characters (:func:`transcript_chars`).
+        The step summary's tokens plus :func:`transcript_tokens` of the
+        transcript plus :func:`interlude_tokens`.
     """
-    return len(snapshot.step_summary) + transcript_chars(snapshot.transcript)
+    summary = count_text_tokens(snapshot.step_summary) if snapshot.step_summary else 0
+    return summary + transcript_tokens(snapshot.transcript) + interlude_tokens(snapshot)
+
+
+def interlude_tokens(snapshot: WorkSnapshot) -> int:
+    """Return the tokens of a snapshot's interludes as every resume shows them.
+
+    Args:
+        snapshot: The stored snapshot.
+
+    Returns:
+        The tokens of the rendered interludes; 0 when there are none.
+    """
+    rendered = _render_interludes(snapshot)
+    return count_text_tokens(rendered) if rendered else 0
 
 
 def restore_work_turn(*, activity: Activity, context: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -149,11 +164,10 @@ def restore_work_turn(*, activity: Activity, context: list[dict[str, str]]) -> l
     trigger message (the last element) is replaced by the step summary
     message, when the snapshot has a summary (``internal_loop_execution_step_summary``,
     one user message right after the preamble), then the stored transcript,
-    then one resume message that lists the interludes and carries the
-    trigger text as the resume reason. Interludes are not
-    cleared here: a failed turn is retried and must render them again. The
-    caller marks the trigger with :func:`mark_restored`, and the dispatcher
-    clears them via :func:`finish_restored_turn` once the turn completed.
+    then one resume message that lists every interlude, oldest first, and
+    carries the trigger text as the resume reason. Interludes are shown on
+    every resume until the work ends: they are never cleared, and they go
+    only when the snapshot is deleted with the ended work.
 
     Args:
         activity: The work activity being resumed.
@@ -192,30 +206,17 @@ def restore_work_turn(*, activity: Activity, context: list[dict[str, str]]) -> l
     return [*preamble, *summary, *snapshot.transcript, {"role": "user", "content": resume}]
 
 
-def mark_restored(trigger: dict[str, Any], activity: Activity) -> None:
-    """Record on the live trigger which activity's frozen work this turn replayed."""
-    trigger[RESTORED_ACTIVITY_KEY] = activity.id
-
-
-def finish_restored_turn(trigger: dict[str, Any]) -> None:
-    """Clear the interludes a completed resume rendered.
-
-    Called only from the dispatcher's completed branch, so a failed or
-    retried turn keeps them and renders them again. One lane per agent means
-    no new interlude can arrive while the resumed turn runs.
-    """
-    activity_id = trigger.get(RESTORED_ACTIVITY_KEY)
-    if isinstance(activity_id, str) and activity_id:
-        db.clear_work_interludes(activity_id)
-
-
 def render_paused_work_view(snapshot: WorkSnapshot, *, task_title: str) -> str | None:
-    """Render the latest frozen steps as plain text for a decision turn.
+    """Render the step summary and the latest frozen steps as plain text for a decision turn.
 
-    Only the most recent steps that fit ``work_snapshot_chat_view_max_chars``
-    are shown. Each step is ``- you ran: <command>`` plus its result, never
-    the raw execution JSON, so the decision turn is not primed to answer in
-    the execution schema.
+    The view fits When you ask (``ContextBudget.asked``), in tokens: the
+    step summary first, whole (the settings rule When you ask >= Work x Work
+    summary size keeps room for it), then the most recent steps that fit
+    what is left. When the newest step alone is over that, its leading whole
+    lines that fit are shown, marked "(output truncated for space)". Each
+    step is ``- you ran: <command>`` plus its result, never the raw
+    execution JSON, so the decision turn is not primed to answer in the
+    execution schema.
 
     Args:
         snapshot: The frozen work.
@@ -223,22 +224,31 @@ def render_paused_work_view(snapshot: WorkSnapshot, *, task_title: str) -> str |
 
     Returns:
         The view text, or ``None`` when the snapshot holds no steps.
+
+    Raises:
+        core.config.ConfigError: The Context Window settings are missing or
+            invalid.
     """
     steps = [step for step in split_steps(snapshot.transcript) if step and step[0]["role"] == "assistant"]
     if not steps:
         return None
-    budget = config.require_int(CHAT_VIEW_MAX_CHARS_SETTING)
+    remaining = read_context_budget().asked
+    if snapshot.step_summary:
+        remaining -= count_text_tokens(snapshot.step_summary)
     rendered: list[str] = []
     used = 0
     for step in reversed(steps):
         block = _render_step(step)
-        if rendered and used + len(block) > budget:
+        size = count_text_tokens(block + "\n")
+        if rendered and used + size > remaining:
             break
-        if not rendered and len(block) > budget:
-            # The newest step alone is over budget: show its head, marked.
-            block = block[:budget].rstrip() + "\n  (output truncated for space)"
+        if not rendered and size > remaining:
+            # The newest step alone is over what is left: show its head, marked.
+            head = _leading_lines(block, remaining - count_text_tokens(_TRUNCATED_MARKER))
+            block = f"{head}{_TRUNCATED_MARKER}" if head else _TRUNCATED_MARKER.lstrip("\n")
+            size = count_text_tokens(block + "\n")
         rendered.append(block)
-        used += len(block)
+        used += size
     rendered.reverse()
     dropped = len(steps) - len(rendered)
     return render_default_prompt(
@@ -246,10 +256,25 @@ def render_paused_work_view(snapshot: WorkSnapshot, *, task_title: str) -> str |
         {
             "task_title": task_title,
             "dropped_steps": str(dropped) if dropped else "",
+            "summary": snapshot.step_summary,
+            "summarized_steps": str(snapshot.summarized_steps),
             "steps": "\n".join(rendered),
         },
         allowed_paths=_VIEW_PROMPT_PATHS,
     )
+
+
+def _leading_lines(text: str, max_tokens: int) -> str:
+    """The leading whole lines of ``text`` that fit ``max_tokens``; ``""`` when none does."""
+    kept: list[str] = []
+    used = 0
+    for line in text.split("\n"):
+        cost = count_text_tokens(line + "\n")
+        if used + cost > max_tokens:
+            break
+        kept.append(line)
+        used += cost
+    return "\n".join(kept)
 
 
 def paused_work_snapshot(agent_id: str) -> tuple[Activity, WorkSnapshot] | None:
@@ -371,17 +396,20 @@ def _render_interludes(snapshot: WorkSnapshot) -> str:
     return "\n".join(lines)
 
 
-def transcript_chars(messages: list[dict[str, Any]]) -> int:
-    """Return the content characters of ``messages``: the unit every work budget is counted in.
+def transcript_tokens(messages: list[dict[str, Any]]) -> int:
+    """Return the tokens of ``messages``' content: how saved steps count toward the Work budget.
+
+    Each message is counted on its own with the shared cached counter, so a
+    saved step is counted once however many turns re-measure it.
 
     Args:
         messages: ``{role, content}`` messages; only ``content`` is counted
             (image paths and summaries a CLI result carries are not).
 
     Returns:
-        The summed length of every message's content.
+        The summed tokens of every message's content.
     """
-    return sum(len(str(message.get("content") or "")) for message in messages)
+    return sum(count_text_tokens(content) for message in messages if (content := str(message.get("content") or "")))
 
 
 def _plain_message(message: dict[str, Any]) -> dict[str, Any]:

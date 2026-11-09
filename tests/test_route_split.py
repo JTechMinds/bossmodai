@@ -147,6 +147,8 @@ EXPECTED_ROUTES = {
     (("PUT",), "/api/nest-git/credentials", "put_nest_git_credentials"),
     (("GET",), "/api/settings", "get_settings"),
     (("GET",), "/api/settings/desktop-open-folder-options", "get_desktop_open_folder_options"),
+    (("GET",), "/api/settings/context-budget", "get_context_budget"),
+    (("POST",), "/api/settings/context-presets/{preset_id}", "apply_context_preset"),
     (("GET",), "/api/runtime/core", "get_runtime_core"),
     (("GET",), "/api/runtime/contracts", "get_runtime_contracts"),
     (("GET",), "/api/runtime/state", "get_runtime_state"),

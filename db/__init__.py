@@ -374,7 +374,6 @@ from db.activities import (
 )
 from db.work_snapshots import (
     append_work_interlude,
-    clear_work_interludes,
     delete_agent_work_snapshots,
     delete_work_snapshot,
     get_work_snapshot,
@@ -728,7 +727,6 @@ __all__ = [
     "update_activity",
     # Work snapshots
     "append_work_interlude",
-    "clear_work_interludes",
     "delete_agent_work_snapshots",
     "delete_work_snapshot",
     "get_work_snapshot",

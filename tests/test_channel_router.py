@@ -39,6 +39,7 @@ from core.agent_loop.channel_rounds import (
 )
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.prompt_history import build_prompt_history_view
+from core.context_budget import read_context_budget
 from core.agent_loop.standing_prefs import standing_prefs_file
 from core.bm_cli import filesystem
 from core.llm.system_completion import complete_text
@@ -1113,6 +1114,8 @@ def test_later_route_names_someone_the_first_slice_left_out(
             "channel_id": channel.id,
             "source_message_id": message.id,
         },
+        budget_tokens=read_context_budget().history,
+        work_turn=False,
     )
     heard = " ".join(str(item.get("content") or "") for item in history.conversation_history)
     assert prior in heard

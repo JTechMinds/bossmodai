@@ -684,9 +684,9 @@ async def summarize_before_restore(
             db.record_work_summary_overflow(
                 agent.id,
                 model=model,
-                summary_chars=exc.overflow.summary_chars,
-                limit_chars=exc.overflow.limit_chars,
-                budget_chars=exc.overflow.budget_chars,
+                summary_tokens=exc.overflow.summary_tokens,
+                limit_tokens=exc.overflow.limit_tokens,
+                budget_tokens=exc.overflow.budget_tokens,
             )
             result = {
                 "event": WORK_SUMMARY_LIMIT_EVENT,

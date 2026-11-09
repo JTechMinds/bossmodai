@@ -5,8 +5,9 @@ one). System AI is stubbed by patching ``complete_text`` and
 ``system_ai_is_configured`` in the module, and runs are captured through
 ``set_conversation_notes_scheduler`` and awaited here, so nothing is left in
 the background. Token counts are patched to fixed sizes so the thresholds are
-exact: with a 1000-token budget, start is 800, keep 500, the notes cap 100
-and the hard limit 1500.
+exact: with a 1000-token history budget (History 20% of a 5,000-token usable
+window), start is 800, keep 500, the notes cap 100 and, at a 150% hard limit,
+1500.
 """
 
 from __future__ import annotations
@@ -44,10 +45,12 @@ from core.agent_loop.conversation_notes import (
     set_conversation_notes_scheduler,
 )
 from core.agent_loop.prompt_history import build_prompt_history_view
+from core.context_budget import read_context_budget
 from core.llm import context_builder
 from core.models.message import HUMAN_SENDER_ID
 from core.runtime.services import RuntimeServices
 from db.crud import execute, query
+from tests._context_budget import set_context_budget
 
 ROOT = Path(__file__).resolve().parents[1]
 JS = ROOT / "ui" / "static" / "js"
@@ -63,7 +66,7 @@ def setup_function() -> None:
             candidate.unlink()
     db.init_db()
     config.reload()
-    _setting("conversation_history_budget_tokens", "1000")
+    assert set_context_budget(usable=5000, history=20, history_ceiling=150).history == 1000
     set_conversation_notes_scheduler(None)
 
 
@@ -78,6 +81,13 @@ def teardown_function() -> None:
 def _setting(key: str, value: str) -> None:
     db.set_setting(key, value, "context")
     config.reload()
+
+
+def _history_view(agent, trigger: dict[str, Any]):
+    """A chat turn's history view, at the History budget."""
+    return build_prompt_history_view(
+        agent, trigger, budget_tokens=read_context_budget().history, work_turn=False,
+    )
 
 
 def _agent(name: str = "Ada", x: int = 1):
@@ -102,7 +112,7 @@ def _flat_tokens(monkeypatch: pytest.MonkeyPatch, size: int = 100, *, long_marke
             return 500
         return size
 
-    monkeypatch.setattr(notes_mod, "_count", _count)
+    monkeypatch.setattr(notes_mod, "count_text_tokens", _count)
 
 
 def _system_ai(monkeypatch: pytest.MonkeyPatch, replies: list[Any], calls: list[list[dict[str, str]]]) -> None:
@@ -188,7 +198,7 @@ def test_a_turn_schedules_through_the_prompt_builder(monkeypatch: pytest.MonkeyP
     jobs = _capture()
     agent = _agent()
     _dm(agent.id, 8)
-    build_prompt_history_view(agent, {"type": "human_chat"})
+    _history_view(agent, {"type": "human_chat"})
     assert len(jobs) == 1
 
 
@@ -316,7 +326,7 @@ def test_the_next_view_is_the_notes_entry_then_rows_after_the_anchor(monkeypatch
     scope = ThreadScope.human_dm(agent.id)
     ids = _dm(agent.id, 10)
     _compact(scope, jobs)
-    history = build_prompt_history_view(db.get_agent(agent.id), {"type": "human_chat"}).conversation_history
+    history = _history_view(db.get_agent(agent.id), {"type": "human_chat"}).conversation_history
     head = history[0]
     assert head["id"] == f"{NOTES_ID_PREFIX}human_dm:{agent.id}"
     assert head["from_agent"] == "__system__"
@@ -594,7 +604,7 @@ def test_an_agent_dm_is_one_scope_from_both_sides(monkeypatch: pytest.MonkeyPatc
 
     def _view(me, other) -> list[dict]:
         trigger = {"type": "peer_message", "from_agent": other.id}
-        return build_prompt_history_view(db.get_agent(me.id), trigger).conversation_history
+        return _history_view(db.get_agent(me.id), trigger).conversation_history
 
     from_ada = _view(ada, bo)
     from_bo = _view(bo, ada)
@@ -649,7 +659,7 @@ def test_compaction_changes_only_the_history_segment(monkeypatch: pytest.MonkeyP
 
     def _context() -> list[dict[str, Any]]:
         current = db.get_agent(agent.id)
-        history = build_prompt_history_view(current, trigger).conversation_history
+        history = _history_view(current, trigger).conversation_history
         return context_builder.build_context(
             context_builder.TurnContext(
                 agent=current,
@@ -690,7 +700,7 @@ def test_the_window_api_agrees_with_the_prompt(monkeypatch: pytest.MonkeyPatch) 
     scope = ThreadScope.human_dm(agent.id)
     ids = _dm(agent.id, 10)
     _compact(scope, jobs)
-    history = build_prompt_history_view(db.get_agent(agent.id), {"type": "human_chat"}).conversation_history
+    history = _history_view(db.get_agent(agent.id), {"type": "human_chat"}).conversation_history
     res = _get(f"/api/conversations/human_dm/{agent.id}/window")
     assert res.status_code == 200, res.text
     body = res.json()

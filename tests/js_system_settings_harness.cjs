@@ -1,9 +1,11 @@
 /**
  * Node harness: Settings → System → AI Output renders the compaction knobs,
  * and a change saves through the existing settings PUT. Context Window
- * renders the standing-prefs limits and the work-context settings (stored
- * under simulation), and a refused work save shows the server's message on
- * its row. Threads renders the routing and
+ * renders the budget panel (settings-context-panel.js) with every slot
+ * filled by the standard row, the budget numbers from the server's
+ * payload (argv[17]: the real Medium and Large payloads), and starting
+ * points that POST and re-render; a refused work save shows the server's
+ * message on its row. Threads renders the routing and
  * idle-check settings, with a BossModSwitch for the idle-check flag, and a
  * refused save shows the server's message on its row. System AI lives
  * under AI Connections. Advanced renders the Global auto-approve switch,
@@ -103,17 +105,29 @@ FakeEl.prototype.focus = function focus() {
 
 const fetches = [];
 const saves = [];
+const posts = [];
+const budgets = JSON.parse(process.argv[17]);
 const world = {
     settings: [],
     // Setting key → the 400 detail the fake PUT refuses it with.
     reject: {},
+    // GET /api/settings/context-budget's answer; a starting point switches it.
+    budget: budgets.medium,
 };
 const invalidations = [];
 
-global.apiFetch = async (url) => {
+global.apiFetch = async (url, init) => {
     fetches.push(url);
     if (url === "/api/settings") {
         return { ok: true, status: 200, json: async () => world.settings };
+    }
+    if (url === "/api/settings/context-budget") {
+        return { ok: true, status: 200, json: async () => world.budget };
+    }
+    if (url.startsWith("/api/settings/context-presets/")) {
+        posts.push({ url, method: init && init.method });
+        world.budget = budgets.large;
+        return { ok: true, status: 200, json: async () => world.budget };
     }
     if (url === "/api/settings?category=advanced") {
         return { ok: true, status: 200, json: async () => world.advanced };
@@ -152,7 +166,9 @@ eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModSwitch = BossM
     "BossModMenu", "BossModMenuSelect"].forEach((name, index) => {
     eval(`${fs.readFileSync(process.argv[8 + index], "utf8")}\n;global.${name} = ${name};\n`);
 });
+eval(`${fs.readFileSync(process.argv[15], "utf8")}\n;global.BossModContextSettingsMeta = BossModContextSettingsMeta;\n`);
 eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModSystemSettingsMeta = BossModSystemSettingsMeta;\n`);
+eval(`${fs.readFileSync(process.argv[16], "utf8")}\n;global.BossModContextPanel = BossModContextPanel;\n`);
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.SystemSection = SystemSection;\n`);
 // The Advanced section's Retention card (settings-retention.js), last argument.
 eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModRetentionSettings = BossModRetentionSettings;\n`);
@@ -225,6 +241,35 @@ function orderedKeys(root) {
         .map((node) => node.dataset.settingKey || node.dataset.settingSelect || node.dataset.settingSwitch);
 }
 
+/** The Context Window panel as rendered: its slots, numbers, bars and starting points. */
+function contextPanel(root) {
+    const attr = (node, name) => node.getAttribute(name);
+    return {
+        panels: root.querySelectorAll("[data-ctx-budget]").length,
+        titles: root.querySelectorAll("h4").map((node) => node.textContent.trim()),
+        groups: root.querySelectorAll("h5").map((node) => node.textContent.trim()),
+        slots: root.querySelectorAll("[data-setting-slot]").map((slot) => ({
+            key: slot.dataset.settingSlot,
+            // The standard row: a card holding the label/description, the control and its error line.
+            control: (slot.querySelector("[data-setting-key]") || slot.querySelector("[data-setting-switch]")) ? "standard" : "empty",
+            error: slot.querySelectorAll("[data-setting-error]").length,
+        })),
+        derived: Object.fromEntries(root.querySelectorAll("[data-derived]")
+            .map((node) => [node.dataset.derived, node.textContent.trim()])),
+        bars: root.querySelectorAll("[role=\"img\"]").map((node) => attr(node, "aria-label")),
+        legends: root.querySelectorAll("dl").map((dl) => dl.querySelectorAll("dd").map((dd) => dd.textContent.trim())),
+        worst: root.querySelectorAll("p").map((node) => node.textContent.trim()).filter((text) => text.startsWith("Worst case")),
+        usable: root.querySelectorAll("p").map((node) => node.textContent.trim()).filter((text) => text.startsWith("Usable window")),
+        summaries: root.querySelectorAll("summary").map((node) => node.textContent.trim()),
+        presets: root.querySelectorAll("[data-context-preset]").map((button) => ({
+            id: button.dataset.contextPreset,
+            label: button.textContent.trim(),
+            pressed: attr(button, "aria-pressed"),
+        })),
+        custom: root.querySelectorAll("span").filter((node) => node.textContent.trim() === "Custom").length,
+    };
+}
+
 function errorText(root, key) {
     const line = root.querySelectorAll("[data-setting-error]")
         .find((node) => node.dataset.settingError === key);
@@ -290,17 +335,22 @@ async function main() {
         setting("context_recent_completed_tasks", "3", "context"),
         setting("standing_prefs_line_max_chars", "400", "context"),
         setting("standing_prefs_section_max_chars", "4000", "context"),
+        setting("context_window_tokens", "128000", "context"),
+        setting("context_fixed_tokens", "12000", "context"),
+        setting("context_reply_percent", "12", "context"),
+        setting("context_result_percent", "5", "context"),
+        setting("context_history_percent", "20", "context"),
+        setting("context_asked_percent", "25", "context"),
+        setting("context_task_log_percent", "5", "context"),
+        setting("context_work_percent", "60", "context"),
         setting("conversation_compaction_enabled", "true", "context"),
-        setting("conversation_history_budget_tokens", "16000", "context"),
         setting("conversation_compaction_start_percent", "80", "context"),
         setting("conversation_compaction_keep_percent", "50", "context"),
         setting("conversation_notes_max_percent", "10", "context"),
-        setting("conversation_history_ceiling_percent", "150", "context"),
+        setting("conversation_history_ceiling_percent", "125", "context"),
         // Stored under simulation (db/settings.py); shown on Context Window.
-        setting("work_snapshot_max_chars", "120000", "simulation"),
-        setting("work_snapshot_trim_percent", "50", "simulation"),
-        setting("work_snapshot_summary_percent", "10", "simulation"),
-        setting("work_snapshot_chat_view_max_chars", "24000", "simulation"),
+        setting("work_snapshot_trim_percent", "60", "simulation"),
+        setting("work_snapshot_summary_percent", "20", "simulation"),
         setting("channel_response_round_cap", "64", "llm"),
         setting("channel_router_transcript_messages", "10", "llm"),
         setting("channel_idle_check_enabled", "true", "llm"),
@@ -333,9 +383,23 @@ async function main() {
     await openAiOutput(root);
     const degraded = await snapshot(root);
 
+    const fetchesBeforeContext = fetches.slice();
     await openCategory(root, "context");
     const context = await snapshot(root);
     const contextOrder = orderedKeys(root);
+    const panel = contextPanel(root);
+    // A starting point POSTs, then the tab re-renders with the new numbers.
+    const fetchesBeforePreset = fetches.length;
+    await root.querySelectorAll("[data-context-preset]")
+        .find((button) => button.dataset.contextPreset === "large").dispatchClick();
+    await settle();
+    const afterPreset = {
+        posts: posts.slice(),
+        refetched: fetches.slice(fetchesBeforePreset),
+        panel: contextPanel(root),
+    };
+    world.budget = budgets.medium;
+    await openCategory(root, "context");
     // `saves` in the output is the AI Output / Context story; Threads saves are reported on their own.
     const outputSaves = saves.slice();
 
@@ -403,7 +467,6 @@ async function main() {
         // activity_log_retention_days left out: its field must say so.
         setting("agent_process_retention_days", "14", "advanced"),
         setting("history_prune_interval_minutes", "60", "advanced"),
-        setting("cli_max_read_chars", "30000", "advanced"),
         setting("desktop_open_folder_handler", "", "advanced"),
         setting("cli_auto_approve_global", "false", "advanced"),
     ];
@@ -432,6 +495,12 @@ async function main() {
     const globalBefore = globalSwitch()
         ? { name: globalSwitch().textContent.trim(), checked: globalSwitch().getAttribute("aria-checked") }
         : null;
+    // The CLI Read Limit is gone: reads are sized by Largest command result.
+    const readLimit = {
+        field: documentStub.getElementById("cli-read-limit") !== null,
+        labels: advancedRoot.querySelectorAll("label").map((label) => label.textContent.trim())
+            .filter((text) => /Read Limit/i.test(text)),
+    };
     const declined = await globalStep(false);
     const accepted = await globalStep(true);
     const turnedOff = await globalStep(true);
@@ -499,6 +568,9 @@ async function main() {
     }
     const openedFromNeed = {
         heading: needRoot.querySelector("h3") ? needRoot.querySelector("h3").textContent.trim() : "",
+        // The work settings sit in a collapsed fine-tuning section; the need opens it.
+        openDetails: needRoot.querySelectorAll("details").filter((node) => node.open === true)
+            .map((node) => node.querySelector("summary").textContent.trim()),
         fields: fieldState(needRoot),
         unknown: { errors: consoleErrors, fields: fieldState(unknownRoot) },
     };
@@ -511,11 +583,14 @@ async function main() {
         heading,
         intro,
         fetches: systemFetches,
+        fetchesBeforeContext,
         saves: outputSaves,
         fresh,
         degraded,
         context,
         contextOrder,
+        panel,
+        afterPreset,
         simulationOrder,
         workRefusal,
         threadsHeading,
@@ -535,6 +610,7 @@ async function main() {
         delayErrorAfterFix,
         invalidations: systemInvalidations,
         globalAutoApprove: { before: globalBefore, declined, accepted, turnedOff, refused },
+        readLimit,
         retention,
     }));
 }

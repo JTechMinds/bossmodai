@@ -12,7 +12,8 @@ One per-thread state (``conversation_notes`` table, one row per scope) is read
 by both the prompt builder and the transcript API through
 :func:`load_thread_window`, so what the operator sees is what the agent sees.
 
-Thresholds, with ``B`` = the history budget and ``T`` = rendered tokens:
+Thresholds, with ``B`` = the history budget (History % of the usable
+context window, ``core/context_budget.py``) and ``T`` = rendered tokens:
 
 * start a background run when ``T(notes) + T(tail) >= B * start%`` and no run
   is in flight for the scope (the only gate: no turn counters, no cooldowns);
@@ -31,7 +32,6 @@ is in ``db/conversation_notes.py`` and the thread readers in ``db/``.
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -44,7 +44,8 @@ import db.messages as dm_rows
 from core import config
 from core.boss import boss_label
 from core.config import ConfigError
-from core.llm.client import count_history_tokens
+from core.context_budget import read_context_budget
+from core.llm.client import count_text_tokens
 from core.llm.system_completion import complete_text, system_ai_is_configured
 from core.runtime.events import runtime_events
 
@@ -131,11 +132,12 @@ class ThreadScope:
 
 @dataclass(frozen=True, slots=True)
 class CompactionSettings:
-    """The ``conversation_*`` settings, validated, read in one place.
+    """The conversation-memory settings, validated, read in one place.
 
     Attributes:
         enabled: Whether background compaction runs.
-        budget_tokens: ``B``, the per-thread history budget.
+        budget_tokens: ``B``, the per-thread history budget: History % of
+            the usable context window (``ContextBudget.history``).
         start_percent: Start a run at this share of ``B``.
         keep_percent: A run keeps at least this share of ``B`` verbatim.
         notes_percent: The notes cap as a share of ``B``.
@@ -237,12 +239,14 @@ def read_settings() -> CompactionSettings:
     Raises:
         ConfigError: A key is missing, not a whole number, outside its range,
             or the percents break ``keep < start`` or ``notes < keep``. The
-            message names the key.
+            message names the key. Also raised when the Context Window
+            settings that size the history budget are missing or invalid
+            (``core.context_budget.read_context_budget``).
     """
     raw_enabled = config.require("conversation_compaction_enabled")
     if raw_enabled not in {"true", "false"}:
         raise ConfigError(f"Setting 'conversation_compaction_enabled' must be true or false, got {raw_enabled!r}")
-    budget = _setting_int("conversation_history_budget_tokens", 1, None)
+    budget = read_context_budget().history
     start = _setting_int("conversation_compaction_start_percent", 1, 100)
     keep = _setting_int("conversation_compaction_keep_percent", 1, 100)
     notes = _setting_int("conversation_notes_max_percent", 1, 100)
@@ -289,20 +293,16 @@ def _entry_text(message: dict[str, Any]) -> str:
     return f"[{sender}]: {content}"
 
 
-@functools.lru_cache(maxsize=8192)
-def _count(text: str) -> int:
-    # Strings hash once; an edited row (a queue-visibility line) has new text
-    # and so is counted again.
-    return count_history_tokens(text)
-
-
 def entry_tokens(text: str) -> int:
     """Tokens of one rendered history entry, via the shared cached counter.
+
+    ``core.llm.client.count_text_tokens`` caches by text, so an edited row (a
+    queue-visibility line) has new text and is counted again.
 
     Raises:
         Exception: Whatever the tokenizer raises; never mapped to 0.
     """
-    return _count(text)
+    return count_text_tokens(text)
 
 
 def notes_history_entry(scope: ThreadScope, notes_row: dict[str, Any]) -> dict[str, Any]:
@@ -393,7 +393,7 @@ def _collect_tail(
                 return kept, tokens, False
             if exclude_message_id and entry.get("id") == exclude_message_id:
                 continue
-            size = _count(_entry_text(entry))
+            size = count_text_tokens(_entry_text(entry))
             if kept and tokens + size > ceiling_tokens:
                 return kept, tokens, True
             kept.append(entry)
@@ -470,7 +470,7 @@ def load_thread_window(
         )
     rows.reverse()
     notes_entry = notes_history_entry(scope, notes_row) if anchor is not None and notes_row is not None else None
-    notes_tokens = _count(_entry_text(notes_entry)) if notes_entry is not None else 0
+    notes_tokens = count_text_tokens(_entry_text(notes_entry)) if notes_entry is not None else 0
     return ThreadWindow(
         notes_entry=notes_entry,
         rows=rows,
@@ -653,7 +653,7 @@ async def _summarize(messages: list[dict[str, str]], cap: int) -> str:
     notes = (raw or "").strip()
     if not notes:
         raise _RunFailed(RUN_FAILED_EMPTY)
-    tokens = _count(notes)
+    tokens = count_text_tokens(notes)
     if tokens <= cap:
         return notes
     retry = [
@@ -665,7 +665,7 @@ async def _summarize(messages: list[dict[str, str]], cap: int) -> str:
     shorter = (raw or "").strip()
     if not shorter:
         raise _RunFailed(RUN_FAILED_EMPTY_RETRY)
-    tokens = _count(shorter)
+    tokens = count_text_tokens(shorter)
     if tokens > cap:
         raise _RunFailed(RUN_FAILED_TOO_LONG, tokens=tokens, cap=cap)
     return shorter
@@ -705,7 +705,7 @@ async def _compact(scope: ThreadScope) -> bool:
     prior_anchor = _usable_anchor(window.notes_row) if window.notes_entry is not None else None
     prior_notes = str(window.notes_row.get("notes") or "").strip() if prior_anchor and window.notes_row else ""
     rows = window.rows
-    sizes = [_count(_entry_text(row)) for row in rows]
+    sizes = [count_text_tokens(_entry_text(row)) for row in rows]
     cut = _cut_index(rows, sizes, settings.keep_tokens)
     folded = _summarizer_input(scope, rows[:cut])
     if cut <= 0 or (not folded and not prior_notes):
@@ -714,7 +714,7 @@ async def _compact(scope: ThreadScope) -> bool:
         return False
     cap = settings.notes_cap_tokens
     notes = await _summarize(_summarizer_messages(prior_notes, folded, cap), cap)
-    source_tokens = sum(sizes[:cut]) + (_count(prior_notes) if prior_notes else 0)
+    source_tokens = sum(sizes[:cut]) + (count_text_tokens(prior_notes) if prior_notes else 0)
     committed = db.commit_conversation_notes(
         scope.kind,
         scope.key,

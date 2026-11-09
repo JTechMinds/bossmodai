@@ -7,7 +7,8 @@ the settings as they are now, and the card hides itself once they fit.
 
 The setting names in the text ("Work summary size", "Work kept after
 summarizing") are the Settings labels (``ui/static/js/settings/
-settings-system-meta.js``), so the operator finds them by name.
+settings-context-meta.js``), so the operator finds them by name. Every size
+is in tokens, the unit of every context budget (``core/context_budget.py``).
 """
 
 from __future__ import annotations
@@ -17,10 +18,6 @@ from dataclasses import dataclass
 
 from core.agent_loop.work_summary import SUMMARY_PERCENT_SETTING, TRIM_PERCENT_SETTING, SummaryLimits
 from core.models import WorkSummaryOverflow
-
-# The same rule the Work budget description in Settings states:
-# "About 4 characters make a token".
-CHARS_PER_TOKEN = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,7 +43,7 @@ def advise_summary_limit(
 
     The suggested Work summary size is the smallest whole percent whose
     limit fits the model's first summary at the Work budget it was written
-    under: ``ceil(summary_chars * 100 / budget_chars)``. The first summary,
+    under: ``ceil(summary_tokens * 100 / budget_tokens)``. The first summary,
     not the shortest rewrite, so the next one fits without rewrites and the
     rewrites become margin. A percentage stays right when the Work budget has
     changed since, because a summary grows with the folded input, which
@@ -66,13 +63,13 @@ def advise_summary_limit(
         The card's title, text and setting, or ``None`` when the current
         Work summary size already fits what the model wrote.
     """
-    needed = math.ceil(overflow.summary_chars * 100 / overflow.budget_chars)
+    needed = math.ceil(overflow.summary_tokens * 100 / overflow.budget_tokens)
     if needed <= limits.summary_percent:
         return None
     title = f"{agent_name}'s work summary is too long for your settings"
     wrote = (
-        f"Its model ({overflow.model}) wrote a {overflow.summary_chars:,}-character summary of its earlier steps; "
-        f"the limit was {overflow.limit_chars:,}."
+        f"Its model ({overflow.model}) wrote a {overflow.summary_tokens:,}-token summary of its earlier steps; "
+        f"the limit was {overflow.limit_tokens:,}."
     )
     if needed < limits.trim_percent:
         new_limit = limits.budget * needed // 100
@@ -80,9 +77,8 @@ def advise_summary_limit(
         kept_new = limits.target - new_limit
         sub = (
             f"{wrote} Set Work summary size to {needed}% or more (it is {limits.summary_percent}%). "
-            f"Summaries can then use up to {new_limit:,} characters (about {_tokens(new_limit)} tokens), "
-            f"and recent steps kept word for word go from {kept_now:,} to {kept_new:,} characters "
-            f"(about {_tokens(kept_now)} → {_tokens(kept_new)} tokens). Total context stays the same."
+            f"Summaries can then use up to {new_limit:,} tokens, and recent steps kept word for word "
+            f"go from {kept_now:,} to {kept_new:,} tokens. Total context stays the same."
         )
         return SummaryAdvice(title=title, sub=sub, setting_key=SUMMARY_PERCENT_SETTING)
     sub = (
@@ -91,11 +87,3 @@ def advise_summary_limit(
         f"or give {agent_name} a model that writes shorter summaries."
     )
     return SummaryAdvice(title=title, sub=sub, setting_key=TRIM_PERCENT_SETTING)
-
-
-def _tokens(chars: int) -> str:
-    """A character count as an approximate token count: ``"500"`` or ``"13K"``."""
-    tokens = round(chars / CHARS_PER_TOKEN)
-    if tokens >= 1000:
-        return f"{round(tokens / 1000)}K"
-    return str(tokens)

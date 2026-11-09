@@ -304,6 +304,11 @@ def wrap_cli_tool_message(
     File contents and shell stdout must never inherit ``role=system``.
     Allowed roles are ``user`` (default) and ``tool``.
 
+    Every result is capped on its way into context: output over Largest
+    command result (``ContextBudget.result``) keeps its leading whole lines
+    plus a note saying how much was cut (``context_budget.fit_command_result``).
+    ``cat`` and ``rr`` size their reads to fit, so a read is never cut here.
+
     Args:
         content: The CLI output text.
         role: ``user`` or ``tool``.
@@ -319,13 +324,22 @@ def wrap_cli_tool_message(
         The message dict.
 
     Raises:
-        ValueError: ``role`` is ``system`` or not an allowed tool role.
+        ValueError: ``role`` is ``system`` or not an allowed tool role, or
+            Largest command result cannot hold even the cut note.
+        core.config.ConfigError: The Context Window settings are missing or
+            invalid.
     """
     if role == "system":
         raise ValueError("CLI/tool output must not be elevated to role=system")
     if role not in _ALLOWED_TOOL_ROLES:
         raise ValueError(f"CLI/tool output role must be 'user' or 'tool', not {role!r}")
-    message: dict[str, Any] = {"role": role, "content": wrap_cli_text(content)}
+    # Imported here: core.context_budget's counter lives in core.llm, whose
+    # imports load this package.
+    from core.context_budget import fit_command_result, read_context_budget
+
+    text = "" if content is None else str(content)
+    fitted = fit_command_result(text, limit_tokens=read_context_budget().result)
+    message: dict[str, Any] = {"role": role, "content": wrap_cli_text(fitted)}
     if image_paths:
         # Imported here: attachment_parts pulls in db and model routing, which
         # this rendering module otherwise does not need.

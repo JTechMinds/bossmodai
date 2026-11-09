@@ -1,5 +1,9 @@
 /**
  * BossMod AI — Settings → System Settings (HA-STRUCT-P1-04).
+ *
+ * Every tab is a grid of standard setting rows, except Context Window, which
+ * lays the same rows out around its budget numbers
+ * (settings-context-panel.js, loaded first).
  */
 
 const SystemSection = (() => {
@@ -40,11 +44,79 @@ const SystemSection = (() => {
             return `<div data-setting-switch="${BossModFormat.escapeAttribute(setting.key)}"
                          data-setting-category="${BossModFormat.escapeAttribute(setting.category)}"></div>`;
         }
-        return `<input type="text"
+        return `<input type="text" id="${BossModFormat.escapeAttribute(fieldId(setting.key))}"
                         data-setting-key="${BossModFormat.escapeAttribute(setting.key)}"
                         data-setting-category="${BossModFormat.escapeAttribute(setting.category)}"
                         value="${BossModFormat.escapeAttribute(setting.value)}"
                         class="${INPUT_CLASS}">`;
+    }
+
+    /** The text field's id, which its row's label points at. */
+    function fieldId(key) {
+        return `setting-field-${key}`;
+    }
+
+    /**
+     * One setting's standard row: its label, description, control and error line.
+     *
+     * Shared by the generic grid and the Context Window slots, so a field
+     * looks, saves and reports a refusal the same way on every tab.
+     *
+     * @param {{key: string, value: string, category: string}} setting
+     * @returns {string} The row's markup, every value escaped.
+     */
+    function settingRow(setting) {
+        const meta = SETTING_META[setting.key] || {};
+        const label = BossModFormat.escapeHtml(meta.label || setting.key);
+        const description = meta.description || 'System setting.';
+        // A switch row carries the label as its accessible name; a second heading would repeat it.
+        let heading = '';
+        if (meta.control === 'select') heading = `<label class="block text-sm font-medium mb-1">${label}</label>`;
+        else if (meta.control !== 'switch') {
+            heading = `<label for="${BossModFormat.escapeAttribute(fieldId(setting.key))}" class="block text-sm font-medium mb-1">${label}</label>`;
+        }
+        return `
+                    <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
+                        ${heading}
+                        <p class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(description)}</p>
+                        ${settingControl(setting)}
+                        <p role="alert" class="text-xs text-red-600 mt-1" data-setting-error="${BossModFormat.escapeAttribute(setting.key)}"></p>
+                    </div>`;
+    }
+
+    /**
+     * Fill each Context Window slot with its setting's standard row. A slot
+     * whose setting has no row says so instead of leaving a silent gap.
+     *
+     * @param {HTMLElement} el
+     * @param {Array<{key: string}>} items  The tab's settings.
+     */
+    function fillSlots(el, items) {
+        el.querySelectorAll('[data-setting-slot]').forEach(slot => {
+            const key = slot.dataset.settingSlot;
+            const setting = items.find(item => item.key === key);
+            if (setting) {
+                slot.innerHTML = settingRow(setting);
+                return;
+            }
+            const label = (SETTING_META[key] && SETTING_META[key].label) || key;
+            slot.innerHTML = `<p role="alert" class="text-xs text-red-600">${BossModFormat.escapeHtml(label)} is not configured. Reset Seed Settings restores it.</p>`;
+        });
+    }
+
+    /**
+     * GET /api/settings/context-budget, as `{budget}` or `{error}`: a failure
+     * here leaves the other tabs working and is shown on the Context Window tab.
+     */
+    async function loadBudget() {
+        const res = await apiFetch('/api/settings/context-budget');
+        if (res.ok) return { budget: await res.json() };
+        // A body that is not JSON has no reason in it; the status still says what happened.
+        const payload = await res.json().catch(() => null);
+        const detail = payload && typeof payload.detail === 'string' && payload.detail.trim()
+            ? payload.detail
+            : `The server answered ${res.status}.`;
+        return { error: `Couldn't load the context window numbers. ${detail}` };
     }
 
     /**
@@ -103,11 +175,21 @@ const SystemSection = (() => {
         if (options && options.tab) activeCategory = options.tab;
         container = el;
         SettingsView.bindRepaint('system', () => render(container));
+        const wantsBudget = activeCategory === 'context';
+        // A repaint of the tab keeps its numbers on screen until the new ones arrive.
+        if (wantsBudget && !el.querySelector('[data-ctx-budget]')) {
+            (el.querySelector('[data-system-section-body]') || el).innerHTML = '<p class="text-sm text-bm-muted" role="status">Loading…</p>';
+        }
         let settings = [];
+        let loaded = null;
         try {
-            const res = await apiFetch('/api/settings');
+            const [res, budgetLoad] = await Promise.all([
+                apiFetch('/api/settings'),
+                wantsBudget ? loadBudget() : Promise.resolve(null),
+            ]);
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             settings = await res.json();
+            loaded = budgetLoad;
         } catch (err) {
             el.innerHTML = '<p class="text-red-500 text-sm">Failed to load settings.</p>';
             return;
@@ -137,6 +219,15 @@ const SystemSection = (() => {
         const availableCategories = CATEGORIES.filter(cat => (groups[cat.key] || []).length > 0);
         if (!availableCategories.some(cat => cat.key === activeCategory)) {
             activeCategory = availableCategories[0]?.key || 'simulation';
+        }
+        if (activeCategory === 'context' && !loaded) {
+            // Landed on Context Window only now (the asked-for tab had no settings).
+            try {
+                loaded = await loadBudget();
+            } catch (err) {
+                el.innerHTML = '<p class="text-red-500 text-sm">Failed to load settings.</p>';
+                return;
+            }
         }
 
         const activeItems = groups[activeCategory] || [];
@@ -169,23 +260,15 @@ const SystemSection = (() => {
                         <h3 class="text-sm font-semibold text-bm-muted uppercase tracking-wide">${BossModFormat.escapeHtml(activeCategoryMeta?.label || 'Settings')}</h3>
                         <p class="text-xs text-bm-muted mt-1">${BossModFormat.escapeHtml(CATEGORY_DESCRIPTIONS[activeCategory] || '')}</p>
                     </div>
-                    <div class="grid grid-cols-1 2xl:grid-cols-2 gap-4">`;
+                    <div data-system-section-body>`;
 
-        for (const s of activeItems) {
-            const meta = SETTING_META[s.key] || {};
-            const label = meta.label || s.key;
-            const description = meta.description || 'System setting.';
-            // A switch row carries the label as its accessible name; a second heading would repeat it.
-            const heading = meta.control === 'switch'
-                ? ''
-                : `<label class="block text-sm font-medium mb-1">${BossModFormat.escapeHtml(label)}</label>`;
-            html += `
-                    <div class="rounded-lg border border-bm-border bg-slate-50/70 p-4">
-                        ${heading}
-                        <p class="text-xs text-bm-muted mb-1.5">${BossModFormat.escapeHtml(description)}</p>
-                        ${settingControl(s)}
-                        <p role="alert" class="text-xs text-red-600 mt-1" data-setting-error="${BossModFormat.escapeAttribute(s.key)}"></p>
-                    </div>`;
+        const budget = activeCategory === 'context' ? loaded.budget : null;
+        if (activeCategory === 'context') {
+            html += budget
+                ? BossModContextPanel.layout(budget)
+                : `<p role="alert" class="text-sm text-red-600">${BossModFormat.escapeHtml(loaded.error)}</p>`;
+        } else {
+            html += `<div class="grid grid-cols-1 2xl:grid-cols-2 gap-4">${activeItems.map(settingRow).join('')}</div>`;
         }
 
         html += `
@@ -193,6 +276,10 @@ const SystemSection = (() => {
                 </section>
             </div>`;
         el.innerHTML = html;
+        if (budget) {
+            fillSlots(el, activeItems);
+            BossModContextPanel.wire(el, { budget, api: apiFetch, onApplied: () => render(container) });
+        }
 
         el.querySelectorAll('[data-system-category]').forEach(btn => {
             btn.addEventListener('click', () => {
@@ -250,7 +337,8 @@ const SystemSection = (() => {
 
     /**
      * Bring one setting's field into view, focused with its value selected.
-     * The work-context settings a need opens are text inputs.
+     * The work-context settings a need opens are text inputs; on Context
+     * Window they sit in a collapsed fine-tuning section, which is opened.
      *
      * @param {string} key  Setting key.
      * @returns {void}
@@ -262,6 +350,8 @@ const SystemSection = (() => {
             console.error('[settings-system] no field for setting', key);
             return;
         }
+        const fold = control.closest('details');
+        if (fold) fold.open = true;
         control.scrollIntoView({ block: 'center' });
         control.focus();
         control.select();

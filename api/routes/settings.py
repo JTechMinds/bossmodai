@@ -15,6 +15,24 @@ from api.routes._shared import (
 from api.websocket import manager
 from core import boss, config
 from core.agent_loop.standing_prefs import WARM_PREFIX_MAX_CHARS, WARM_SECTION_HEADER
+from core.context_budget import (
+    COMPACTION_KEEP_SETTING,
+    COMPACTION_START_SETTING,
+    CONTEXT_PRESETS,
+    FIXED_SETTING,
+    HISTORY_SETTING,
+    NOTES_MAX_SETTING,
+    PRESET_SETTINGS,
+    SETTING_LABELS,
+    SHARE_SETTINGS,
+    WINDOW_SETTING,
+    ContextPreset,
+    active_preset,
+    check_shares,
+    find_preset,
+    read_context_budget,
+    read_shares,
+)
 from core.bm_cli.approval_gate import GLOBAL_AUTO_APPROVE_SETTING
 from core.llm import connection_health
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
@@ -108,6 +126,129 @@ async def reseed_application():
     return {"status": "ok", "detail": "Application database recreated from current schema defaults"}
 
 
+def _percent_of(part: int, whole: int) -> int:
+    """``part`` as a whole percent of ``whole``, rounded half up."""
+    return (part * 100 + whole // 2) // whole
+
+
+def _context_budget_payload() -> dict:
+    """The Context Window tab's numbers: every budget, the worst cases and the presets.
+
+    Raises:
+        HTTPException: 500 naming every problem when the stored Context
+            Window settings are missing or break the rules; the save routes
+            refuse such values, so this is a damaged database.
+    """
+    try:
+        budget = read_context_budget()
+        values = {key: config.require_int(key) for key in PRESET_SETTINGS}
+    except config.ConfigError as exc:
+        raise HTTPException(500, str(exc)) from exc
+    return {
+        "window": budget.window,
+        "fixed": budget.fixed,
+        "usable": budget.usable,
+        "reply": budget.reply,
+        "result": budget.result,
+        "history": budget.history,
+        "history_cap": budget.history_cap,
+        "asked": budget.asked,
+        "task_log": budget.task_log,
+        "work": budget.work,
+        "worst_chat_turn": budget.worst_chat_turn,
+        "worst_work_turn": budget.worst_work_turn,
+        "worst_chat_percent": _percent_of(budget.worst_chat_turn, budget.window),
+        "worst_work_percent": _percent_of(budget.worst_work_turn, budget.window),
+        # The stored percents behind the numbers, for the tab's summaries.
+        "values": values,
+        "active_preset": active_preset(values),
+        "presets": [{"id": preset.id, "label": preset.label} for preset in CONTEXT_PRESETS],
+    }
+
+
+@router.get("/settings/context-budget")
+async def get_context_budget():
+    """Return the context window budget for Settings → System Settings → Context Window.
+
+    Returns:
+        ``window``, ``fixed``, ``usable``, ``reply``, ``result``,
+        ``history``, ``history_cap``, ``asked``, ``task_log`` and ``work``
+        in tokens (``core.context_budget.ContextBudget``);
+        ``worst_chat_turn`` and ``worst_work_turn`` in tokens with
+        ``worst_chat_percent`` and ``worst_work_percent`` as whole percents
+        of the window; ``values``, the stored setting behind each number;
+        ``active_preset`` (``"small"``, ``"medium"``, ``"large"``, or
+        ``None`` when any value differs from every preset); and
+        ``presets`` as ``[{"id", "label"}]``.
+
+    Raises:
+        HTTPException: 500 when the stored Context Window settings are
+            missing or invalid; the detail lists the problems.
+    """
+    return _context_budget_payload()
+
+
+def _preset_problems(preset: ContextPreset) -> list[str]:
+    """Every rule a preset would break: ``check_shares``, and the conversation-memory ranges and order."""
+    shares = read_shares({key: value for key, value in preset.values.items() if key in SHARE_SETTINGS})
+    problems = check_shares(shares)
+    for key in (COMPACTION_START_SETTING, COMPACTION_KEEP_SETTING, NOTES_MAX_SETTING):
+        label, low, high = _PERCENT_SETTINGS[key]
+        if not low <= preset.values[key] <= high:
+            problems.append(f"{label} must be a whole number from {low} to {high}.")
+    order = _compaction_order_problem(
+        start=preset.values[COMPACTION_START_SETTING],
+        keep=preset.values[COMPACTION_KEEP_SETTING],
+        notes=preset.values[NOTES_MAX_SETTING],
+    )
+    if order is not None:
+        problems.append(order)
+    return problems
+
+
+@router.post("/settings/context-presets/{preset_id}")
+async def apply_context_preset(preset_id: str):
+    """Apply a Context Window starting point: write every value of one preset in one save.
+
+    Every value is written inside one transaction, so the stored settings
+    are never half one preset and half another; each row keeps its stored
+    category (the two work percents live under ``simulation``). Afterwards
+    every value is an ordinary setting the operator can edit.
+
+    Args:
+        preset_id: ``small``, ``medium`` or ``large``.
+
+    Returns:
+        The Context Window payload (:func:`get_context_budget`) after the
+        save, with this preset active.
+
+    Raises:
+        HTTPException: 404 for an unknown preset; 500 when the preset itself
+            breaks a context rule (a shipped value is wrong), naming every
+            problem, before anything is written.
+    """
+    try:
+        preset = find_preset(preset_id)
+    except KeyError as exc:
+        raise HTTPException(404, f"There is no context preset named {preset_id!r}.") from exc
+    problems = _preset_problems(preset)
+    if problems:
+        raise HTTPException(500, f"The {preset.label} preset breaks the context rules: {' '.join(problems)}")
+    categories = {row.key: row.category for row in db.get_settings()}
+    with db.transaction():
+        for key, value in preset.values.items():
+            category = categories.get(key)
+            if category is None:
+                seeded = db.get_seed_setting_default(key)
+                if seeded is None:
+                    raise HTTPException(500, f"Setting '{key}' has no row and no seeded default.")
+                category = seeded[1]
+            db.set_setting(key, str(value), category)
+    config.reload()
+    await _broadcast_operator_surfaces(["system", "chat"])
+    return _context_budget_payload()
+
+
 @router.post("/settings/{key}/reset")
 async def reset_setting_to_default(key: str):
     """Reset one seeded setting back to its default value.
@@ -121,7 +262,7 @@ async def reset_setting_to_default(key: str):
     if seeded is not None:
         _validate_positive_int_setting(key, seeded[0])
         _validate_percent_setting(key, seeded[0])
-        _validate_work_context_setting(key, seeded[0])
+        _validate_context_setting(key, seeded[0])
     try:
         result = db.reset_setting_to_seed(key)
     except ValueError as exc:
@@ -176,19 +317,10 @@ POSITIVE_INT_SETTINGS = frozenset({
     "channel_idle_check_max_attempts",
     "schedule_max_sleep_seconds",
     "schedule_fire_grace_seconds",
-    # No upper cap: the history budget is the user's choice (a 4k budget
-    # for a small local model, 100k for a large one).
-    "conversation_history_budget_tokens",
     # Read with require_positive_int at every background launch and Keep.
     "background_process_checkin_minutes",
     # Read with require_positive_int at every history prune.
     "agent_process_retention_days",
-    # Read with require_positive_int at every cat and rr.
-    "cli_max_read_chars",
-    # Read with require_int on every execution turn (work_snapshot_max_chars)
-    # and every decision turn's paused-work view (the chat-view limit).
-    "work_snapshot_max_chars",
-    "work_snapshot_chat_view_max_chars",
     # Read with require_positive_int on every counted provider failure
     # (core/llm/connection_health.py).
     "llm_connection_failure_threshold",
@@ -208,12 +340,8 @@ _POSITIVE_INT_SETTING_LABELS = {
     "channel_idle_check_max_attempts": "Idle check attempts",
     "schedule_max_sleep_seconds": "Schedule clock re-check",
     "schedule_fire_grace_seconds": "Schedule on-time window",
-    "conversation_history_budget_tokens": "History budget",
     "background_process_checkin_minutes": "Background process check-in (minutes)",
     "agent_process_retention_days": "Background process history (days)",
-    "cli_max_read_chars": "CLI Read Limit",
-    "work_snapshot_max_chars": "Work budget",
-    "work_snapshot_chat_view_max_chars": "Work shown when you ask",
     "llm_connection_failure_threshold": "Failures before pausing a connection",
     "llm_connection_backoff_seconds": "Paused connection first retry wait",
     "llm_connection_backoff_max_seconds": "Paused connection longest retry wait",
@@ -237,18 +365,15 @@ _PERCENT_SETTINGS = {
     "conversation_notes_max_percent": ("Notes size", 1, 100),
     "conversation_history_ceiling_percent": ("Hard limit", 100, 300),
 }
+# Settings that change what an open transcript marks as outside the agent's
+# context: the conversation-memory knobs and the numbers that size History.
 CONVERSATION_COMPACTION_SETTINGS = frozenset({
     "conversation_compaction_enabled",
-    "conversation_history_budget_tokens",
+    WINDOW_SETTING,
+    FIXED_SETTING,
+    HISTORY_SETTING,
     *_PERCENT_SETTINGS,
 })
-
-# Work-context percents (core/agent_loop/work_summary.py): key → (label the
-# 400 names, lowest, highest).
-_WORK_CONTEXT_PERCENT_SETTINGS = {
-    "work_snapshot_trim_percent": ("Work kept after summarizing", 1, 99),
-    "work_snapshot_summary_percent": ("Work summary size", 1, 99),
-}
 
 
 def _validate_positive_int_setting(key: str, value: str) -> None:
@@ -369,79 +494,62 @@ def _validate_percent_setting(key: str, value: str) -> None:
     if not (stripped.isascii() and stripped.isdigit()) or not low <= int(stripped, 10) <= high:
         raise HTTPException(400, f"{label} must be a whole number from {low} to {high}.")
     written = int(stripped, 10)
-    start = written if key == "conversation_compaction_start_percent" else config.require_int(
-        "conversation_compaction_start_percent"
+    problem = _compaction_order_problem(
+        start=written if key == COMPACTION_START_SETTING else config.require_int(COMPACTION_START_SETTING),
+        keep=written if key == COMPACTION_KEEP_SETTING else config.require_int(COMPACTION_KEEP_SETTING),
+        notes=written if key == NOTES_MAX_SETTING else config.require_int(NOTES_MAX_SETTING),
     )
-    keep = written if key == "conversation_compaction_keep_percent" else config.require_int(
-        "conversation_compaction_keep_percent"
-    )
-    notes = written if key == "conversation_notes_max_percent" else config.require_int(
-        "conversation_notes_max_percent"
-    )
+    if problem is not None:
+        raise HTTPException(400, problem)
+
+
+def _compaction_order_problem(*, start: int, keep: int, notes: int) -> str | None:
+    """The conversation-memory order rule a set of percents breaks, if any.
+
+    ``keep < start`` and ``notes < keep``; shared by the single-setting save
+    (:func:`_validate_percent_setting`) and the presets.
+
+    Returns:
+        The message naming the Settings labels, or ``None`` when the order holds.
+    """
     if keep >= start:
-        raise HTTPException(
-            400,
+        return (
             f"Keep recent messages ({keep}%) must be lower than Start summarizing at ({start}%), "
-            "or there would be nothing to summarize.",
+            "or there would be nothing to summarize."
         )
     if notes >= keep:
-        raise HTTPException(
-            400,
-            f"Notes size ({notes}%) must be lower than Keep recent messages ({keep}%).",
-        )
+        return f"Notes size ({notes}%) must be lower than Keep recent messages ({keep}%)."
+    return None
 
 
-def _validate_work_context_setting(key: str, value: str) -> None:
-    """Reject a work-context value that is out of range or breaks the cross-key rules.
+def _validate_context_setting(key: str, value: str) -> None:
+    """Refuse a Context Window value that would let any turn outgrow the window.
 
-    The two percents are whole numbers from 1 to 99. Across the three keys,
-    with the value being written and the other two read from ``config``,
-    ``summary < trim`` must hold and the summary limit
-    (``budget * summary // 100``) must be at least one character: the same
-    rules ``core.agent_loop.work_summary.read_summary_limits`` enforces, so
-    no saved combination can stop an execution turn with ``ConfigError``.
-
-    For ``work_snapshot_max_chars`` this runs after
-    :func:`_validate_positive_int_setting`, which has already refused
-    anything but a whole number of at least 1.
+    For every key ``core.context_budget.check_shares`` governs (the window,
+    the fixed prompt room, the six shares of the usable window, Hard limit,
+    Work kept after summarizing and Work summary size): the value must be a
+    base-10 whole number, and the stored settings with this one value
+    replaced must pass ``check_shares``, the single source of the rule that
+    a chat turn and a work turn both fit. So no saved combination can stop a
+    turn with ``ConfigError``.
 
     Args:
-        key: Setting key being written. Keys other than
-            ``work_snapshot_max_chars``, ``work_snapshot_trim_percent`` and
-            ``work_snapshot_summary_percent`` are not checked.
+        key: Setting key being written. Other keys are not checked.
         value: Raw value from the request.
 
     Raises:
-        HTTPException: 400 naming the setting's label and the range; 400
-            when Work summary size would not be lower than Work kept after
-            summarizing; or 400 when Work budget leaves the summary no room.
+        HTTPException: 400 when the value is not a whole number, or with the
+            first problem ``check_shares`` reports (in Settings labels).
     """
-    spec = _WORK_CONTEXT_PERCENT_SETTINGS.get(key)
-    if spec is None and key != "work_snapshot_max_chars":
+    if key not in SHARE_SETTINGS:
         return
     stripped = value.strip()
-    if spec is not None:
-        label, low, high = spec
-        # isascii + isdigit: base-10 digits only, so "-1", "+5" and "1_0" are refused.
-        if not (stripped.isascii() and stripped.isdigit()) or not low <= int(stripped, 10) <= high:
-            raise HTTPException(400, f"{label} must be a whole number from {low} to {high}.")
-    written = int(stripped, 10)
-    budget = written if key == "work_snapshot_max_chars" else config.require_int("work_snapshot_max_chars")
-    trim = written if key == "work_snapshot_trim_percent" else config.require_int("work_snapshot_trim_percent")
-    summary = written if key == "work_snapshot_summary_percent" else config.require_int(
-        "work_snapshot_summary_percent"
-    )
-    if summary >= trim:
-        raise HTTPException(
-            400,
-            f"Work summary size ({summary}%) must be lower than Work kept after summarizing ({trim}%).",
-        )
-    if budget * summary // 100 < 1:
-        raise HTTPException(
-            400,
-            f"Work budget ({budget}) is too small for Work summary size ({summary}%): "
-            "the summary would have no room.",
-        )
+    # isascii + isdigit: base-10 digits only, so "-1", "+5" and "1_0" are refused.
+    if not (stripped.isascii() and stripped.isdigit()):
+        raise HTTPException(400, f"{SETTING_LABELS[key]} must be a whole number.")
+    problems = check_shares(read_shares({key: int(stripped, 10)}))
+    if problems:
+        raise HTTPException(400, problems[0])
 
 
 def _validate_boss_name_setting(key: str, value: str) -> str:
@@ -566,7 +674,7 @@ async def set_setting(key: str, value: str, category: str = "general"):
     _validate_non_negative_int_setting(key, value)
     _validate_boolean_setting(key, value)
     _validate_percent_setting(key, value)
-    _validate_work_context_setting(key, value)
+    _validate_context_setting(key, value)
     value = _validate_boss_name_setting(key, value)
     _validate_system_ai_thinking(key, value)
     _refuse_orphaning_system_ai_thinking(key, value)

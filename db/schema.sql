@@ -776,13 +776,14 @@ CREATE TABLE IF NOT EXISTS work_snapshots (
 
 -- One row per agent whose latest work step summary came out over its limit
 -- (core/agent_loop/turn_helpers.py). Deleted when one fits again.
+-- Sizes are tokens (core/context_budget.py).
 CREATE TABLE IF NOT EXISTS work_summary_overflows (
-    agent_id       VARCHAR PRIMARY KEY,
-    model          VARCHAR NOT NULL,
-    summary_chars  INTEGER NOT NULL,
-    limit_chars    INTEGER NOT NULL,
-    budget_chars   INTEGER NOT NULL,
-    created_at     TIMESTAMP NOT NULL
+    agent_id        VARCHAR PRIMARY KEY,
+    model           VARCHAR NOT NULL,
+    summary_tokens  INTEGER NOT NULL,
+    limit_tokens    INTEGER NOT NULL,
+    budget_tokens   INTEGER NOT NULL,
+    created_at      TIMESTAMP NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS notifications (

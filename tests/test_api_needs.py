@@ -13,6 +13,7 @@ import db
 from api.auth import LOCAL_API_TOKEN_HEADER, ensure_local_api_token, install_local_api_auth
 from api.routes import router
 from core import config
+from tests._context_budget import set_context_budget
 
 ROOT = Path(__file__).resolve().parent.parent
 REQUIRED_KEYS = {
@@ -217,18 +218,17 @@ def test_retry_route_makes_the_test_call_due(client: TestClient) -> None:
     assert admission.allowed and admission.probe
 
 
-def _work_context(*, budget: int = 350_000, trim_percent: int = 50, summary_percent: int = 10) -> None:
-    db.set_setting("work_snapshot_max_chars", str(budget), "simulation")
-    db.set_setting("work_snapshot_trim_percent", str(trim_percent), "simulation")
-    db.set_setting("work_snapshot_summary_percent", str(summary_percent), "simulation")
-    config.reload()
+def _work_context(*, trim_percent: int = 60, summary_percent: int = 20) -> None:
+    """Large's Work budget: 60% of a 244,000-token usable window, 146,400 tokens."""
+    budget = set_context_budget(usable=244_000, work=60, work_trim=trim_percent, work_summary=summary_percent)
+    assert budget.work == 146_400
 
 
-def _overflowing_agent(summary_chars: int = 49_587) -> str:
-    """Eng-A, whose gpt-6.1-sol summary did not fit a 35,000 limit at a 350,000 budget."""
+def _overflowing_agent(summary_tokens: int = 40_000) -> str:
+    """Eng-A, whose gpt-6.1-sol summary did not fit a 29,280-token limit at a 146,400-token budget."""
     agent = db.create_agent(name="Eng-A", role="Engineer")
     db.record_work_summary_overflow(
-        agent.id, model="gpt-6.1-sol", summary_chars=summary_chars, limit_chars=35_000, budget_chars=350_000,
+        agent.id, model="gpt-6.1-sol", summary_tokens=summary_tokens, limit_tokens=29_280, budget_tokens=146_400,
     )
     return agent.id
 
@@ -251,10 +251,9 @@ def test_a_summary_too_long_for_the_settings_says_which_setting_to_raise(client:
     assert (item["agent_id"], item["agent_name"]) == (agent_id, "Eng-A")
     assert item["title"] == "Eng-A's work summary is too long for your settings"
     assert item["sub"] == (
-        "Its model (gpt-6.1-sol) wrote a 49,587-character summary of its earlier steps; the limit was 35,000. "
-        "Set Work summary size to 15% or more (it is 10%). Summaries can then use up to 52,500 characters "
-        "(about 13K tokens), and recent steps kept word for word go from 140,000 to 122,500 characters "
-        "(about 35K → 31K tokens). Total context stays the same."
+        "Its model (gpt-6.1-sol) wrote a 40,000-token summary of its earlier steps; the limit was 29,280. "
+        "Set Work summary size to 28% or more (it is 20%). Summaries can then use up to 40,992 tokens, and "
+        "recent steps kept word for word go from 58,560 to 46,848 tokens. Total context stays the same."
     )
     assert item["setting_key"] == "work_snapshot_summary_percent"
     assert item["created_at"] == db.list_work_summary_overflows()[0].created_at.isoformat()
@@ -267,14 +266,14 @@ def test_the_work_summary_need_hides_once_the_settings_fit(client: TestClient) -
     _overflowing_agent()
     assert len(_work_summary_needs(client)) == 1
 
-    _work_context(summary_percent=15)
+    _work_context(summary_percent=28)
 
     assert _work_summary_needs(client) == []
 
 
 def test_a_summary_no_single_size_fixes_points_at_work_kept_after_summarizing(client: TestClient) -> None:
     _work_context()
-    _overflowing_agent(summary_chars=180_000)  # needs 52%, not below the 50% trim share
+    _overflowing_agent(summary_tokens=100_000)  # needs 69%, not below the 60% trim share
 
     (item,) = _work_summary_needs(client)
 

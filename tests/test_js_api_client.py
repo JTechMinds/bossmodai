@@ -153,6 +153,9 @@ API_BY_INJECTION = {
     "places/files/file-ops.js",
     "places/files/host-roots.js",
     "places/files/folder-opener.js",
+    # The Context Window starting points POST through the `api` System
+    # Settings hands the panel.
+    "settings/settings-context-panel.js",
 }
 
 RAW_FETCH_API = re.compile(
@@ -385,7 +388,6 @@ _SAVE_OK_SITES = {
     ],
     "settings/settings-advanced.js": [
         "apiFetchOk(`/api/settings/diagnostics_enabled?value=${newValue}&category=advanced`",
-        "apiFetchOk(`/api/settings/cli_max_read_chars?value=${encodeURIComponent(value)}&category=advanced`",
         "apiFetchOk(`/api/settings/desktop_open_folder_handler?value=${encodeURIComponent(resolvedValue)}&category=advanced`",
     ],
     # Re-pointed in Phase 3B. apiFetchOk is not injectable, so the guard it
@@ -415,6 +417,7 @@ _INJECTED_MUTATORS = (
     "places/files/file-viewer.js",
     "places/files/host-roots.js",
     "context/desk-opener.js",
+    "settings/settings-context-panel.js",
 )
 
 _INJECTED_MUTATING_CALL = re.compile(

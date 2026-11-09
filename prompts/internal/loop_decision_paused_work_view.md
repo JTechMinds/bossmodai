@@ -3,4 +3,8 @@ YOUR PAUSED WORK (read-only record of your latest steps on "{{task_title}}"). An
 ({{dropped_steps}} earlier steps are not shown.)
 {{end}}
 
-{{steps}}
+{{if summary}}Summary of your earlier steps ({{summarized_steps}} steps, no longer shown word for word):
+{{summary}}
+
+Your newest steps:
+{{end}}{{steps}}

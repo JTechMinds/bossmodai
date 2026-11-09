@@ -214,7 +214,7 @@ def _seed_footprint(ada_id: str, bob_id: str) -> dict[str, Any]:
 
     activity = _row("activities", agent_id=ada_id, kind="work", status="completed")
     _row("work_snapshots", activity_id=activity["id"], agent_id=ada_id)
-    db.record_work_summary_overflow(ada_id, model="m", summary_chars=200, limit_chars=150, budget_chars=1500)
+    db.record_work_summary_overflow(ada_id, model="m", summary_tokens=200, limit_tokens=150, budget_tokens=1500)
 
     open_task = create_or_bind_task(
         title="Ship the report",

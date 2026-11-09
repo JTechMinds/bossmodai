@@ -7,6 +7,7 @@ Ollama, etc.) through litellm's unified API.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import time
 from dataclasses import dataclass
@@ -634,7 +635,8 @@ async def completion(
     temperature : float | None
         Sampling temperature. Read from settings if not provided.
     max_tokens : int | None
-        Maximum response tokens. Read from settings if not provided.
+        Maximum response tokens. When not provided, the Reply budget
+        (``core.context_budget``: Reply % of the usable context window).
     api_base : str | None
         Override API base URL (for self-hosted models).
     api_key : str | None
@@ -664,7 +666,9 @@ async def completion(
     AttachmentUnavailableError
         If a named attachment's row or file is missing.
     ConfigError
-        If a timeout or transient-retry setting is missing, invalid, or negative.
+        If a timeout or transient-retry setting is missing, invalid, or negative,
+        or ``max_tokens`` is not given and the Context Window settings are
+        missing or invalid.
     """
     # The raw model name is the image-capability key, so expand before the
     # provider prefix is added; both the call and the stream rebuild below
@@ -676,7 +680,11 @@ async def completion(
     if temperature is None:
         temperature = config.get_float("default_temperature") or 0.7
     if max_tokens is None:
-        max_tokens = config.get_int("default_max_tokens") or 16384
+        # The Reply budget: Reply % of the usable context window. There is no
+        # fallback number; invalid Context Window settings raise ConfigError.
+        from core.context_budget import read_context_budget
+
+        max_tokens = read_context_budget().reply
 
     from dataclasses import asdict
     from core.extensions.model_provider import (
@@ -905,24 +913,32 @@ def count_tokens(text: str, model: str | None = None) -> int:
         return 0
 
 
-def count_history_tokens(text: str) -> int:
-    """Count tokens of conversation history with litellm's default tokenizer.
+@functools.lru_cache(maxsize=8192)
+def count_text_tokens(text: str) -> int:
+    """Count tokens of prompt text with litellm's default tokenizer: the unit of every context budget.
 
-    Unlike :func:`count_tokens` this takes no model: conversation history is
-    shared per thread, so every reader (each agent in a thread, and the
-    transcript API) must get the same count whatever connection it uses, and
-    the count must never depend on a configured model.
+    Every context budget (``core/context_budget.py``) is counted with this:
+    history, the task log, saved work, the paused-work view, file reads and
+    command results. Unlike :func:`count_tokens` it takes no model: history
+    is shared per thread and the budgets are shared by every agent, so every
+    reader (each agent, and the transcript API) must get the same count
+    whatever connection it uses. The generic tokenizer can count somewhat
+    fewer tokens than a model's own; the budgets leave room for that.
+
+    Cached by text: strings hash once, so a history row or a saved step is
+    counted once however many turns re-read it, and an edited row (new text)
+    is counted again.
 
     Args:
-        text: The rendered history entry.
+        text: The text as the model will see it.
 
     Returns:
         The token count.
 
     Raises:
         Exception: Whatever litellm raises. Deliberately not mapped to 0 like
-            :func:`count_tokens`: a 0 count would silently disable both the
-            history budget and conversation compaction.
+            :func:`count_tokens`: a 0 count would silently disable every
+            context budget and conversation compaction.
     """
     return litellm.token_counter(text=text)
 

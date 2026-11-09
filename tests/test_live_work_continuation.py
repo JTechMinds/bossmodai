@@ -24,7 +24,7 @@ from core.agent_loop.dispatcher import TurnDispatcher
 from core.agent_loop.loop import run_turn
 from core.agent_loop.soft_blocks import apply_no_progress_block
 from core.agent_loop.task_origin_mirrors import BOSS_CANCEL_REASON
-from core.agent_loop.work_snapshot import freeze_work_turn, saved_chars, split_steps, transcript_chars
+from core.agent_loop.work_snapshot import freeze_work_turn, saved_tokens, split_steps, transcript_tokens
 from core.agent_loop.work_summary import read_summary_limits
 from core.bm_cli.runtime import execute_bm_cli
 from core.llm.client import LLMError, LLMResponse
@@ -32,6 +32,14 @@ from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.tasking import add_checklist_items, create_or_bind_task
 from core.tasking.service import cancel_task_as_operator
+from tests._context_budget import set_context_budget
+
+
+@pytest.fixture(autouse=True)
+def _char_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Saved work and command results count one token per character, so the budgets below are exact."""
+    monkeypatch.setattr("core.llm.client.count_text_tokens", len)
+    monkeypatch.setattr("core.agent_loop.work_snapshot.count_text_tokens", len)
 
 
 def setup_function() -> None:
@@ -506,11 +514,13 @@ async def test_a_check_off_in_a_decision_turn_clears_nothing(monkeypatch: pytest
 
 
 def _over_budget_work(agent) -> list[str]:
-    """Budget 1500 with a 66% trim; freeze four 357-character steps (1428, under it)."""
+    """Work budget 1500 with a 66% trim and a 10% summary; freeze four 357-token steps (1428, under it).
+
+    Work is 1% of a 150,000-token usable window, so Largest command result
+    (5%) is far above any result here and nothing is cut.
+    """
     activity = activity_runtime.get_active_work_activity(agent.id)
-    db.set_setting("work_snapshot_max_chars", "1500", "simulation")
-    db.set_setting("work_snapshot_trim_percent", "66", "simulation")
-    config.reload()
+    assert set_context_budget(usable=150_000, work=1, work_trim=66, work_summary=10).work == 1500
     earlier = [
         '{"act":"cli","data":{"cmd":"cat /me/f%d.md"},"th":"read"}' % index for index in range(4)
     ]
@@ -546,7 +556,7 @@ async def test_a_turn_past_the_budget_ends_saved_untrimmed_and_the_next_turn_sum
         *earlier, _STATUS_STEP,
     ], "the freeze appends; nothing is dropped"
     assert (untrimmed.step_summary, untrimmed.summarized_steps) == ("", 0)
-    assert saved_chars(untrimmed) > 1500
+    assert saved_tokens(untrimmed) > 1500
     assert len(_resumes(agent.id, task.id)) == 1
 
     # The next resumed turn: its first model call writes the step summary.
@@ -563,11 +573,11 @@ async def test_a_turn_past_the_budget_ends_saved_untrimmed_and_the_next_turn_sum
     assert summarized.step_summary == _SUMMARY_REPLY
     folded = summarized.summarized_steps
     # The status step alone fits the target with the summary limit; one more
-    # 357-character step would not, so every earlier step is folded.
+    # 357-token step would not, so every earlier step is folded.
     assert folded == len(earlier)
     kept = [message for group in split_steps(untrimmed.transcript)[folded:] for message in group]
     limits = read_summary_limits()
-    assert limits.cap + transcript_chars(kept) <= limits.target
+    assert limits.cap + transcript_tokens(kept) <= limits.target
 
     # Its first execution call: preamble, then the summary, then the kept steps, then the resume.
     heads = [
@@ -599,7 +609,7 @@ async def test_a_failed_summary_call_fails_the_turn_before_any_step(monkeypatch:
     _over_budget_work(agent)
     _frozen_steps(agent, _STATUS_STEP)
     before = db.get_work_snapshot(activity.id)
-    assert saved_chars(before) > 1500
+    assert saved_tokens(before) > 1500
     # One call only: the fake refuses a second, so no execution step can run.
     prompts = _script_prompts(monkeypatch, [LLMError("provider unreachable")])
 
@@ -618,7 +628,7 @@ async def test_a_failed_summary_call_fails_the_turn_before_any_step(monkeypatch:
 async def test_a_failed_shorter_request_records_the_first_call_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task = _working_agent()
     activity = activity_runtime.get_active_work_activity(agent.id)
-    _over_budget_work(agent)  # the summary limit is 150 characters
+    _over_budget_work(agent)  # the summary limit is 150 tokens
     _frozen_steps(agent, _STATUS_STEP)
     before = db.get_work_snapshot(activity.id)
     # An over-limit reply, then the shorter request fails: two calls, no execution step.
@@ -664,7 +674,7 @@ async def test_a_summary_over_its_limit_records_the_overflow_for_the_needs_card(
     assert outcome.trigger_status == "failed" and outcome.retryable is True
     assert len(prompts) == 3
     (row,) = db.list_work_summary_overflows()
-    assert (row.agent_id, row.model, row.summary_chars, row.limit_chars, row.budget_chars) == (
+    assert (row.agent_id, row.model, row.summary_tokens, row.limit_tokens, row.budget_tokens) == (
         agent.id, "test/mock", 200, 150, 1500,
     )
     (detail,) = [text for event, text in recorder.details if event == "work_summary_limit_error"]
@@ -690,7 +700,7 @@ async def _fold_that_fits(monkeypatch: pytest.MonkeyPatch, agent, task) -> _Acti
 @pytest.mark.asyncio
 async def test_a_summary_that_fits_again_clears_the_overflow(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task = _working_agent()
-    db.record_work_summary_overflow(agent.id, model="test/mock", summary_chars=200, limit_chars=150, budget_chars=1500)
+    db.record_work_summary_overflow(agent.id, model="test/mock", summary_tokens=200, limit_tokens=150, budget_tokens=1500)
 
     recorder = await _fold_that_fits(monkeypatch, agent, task)
 
@@ -758,8 +768,7 @@ async def test_a_single_step_over_the_budget_still_moves_on(monkeypatch: pytest.
     agent, task = _working_agent()
     activity = activity_runtime.get_active_work_activity(agent.id)
     # Smaller than any one CLI result: every turn runs exactly one step.
-    db.set_setting("work_snapshot_max_chars", "50", "simulation")
-    config.reload()
+    assert set_context_budget(usable=5000, work=1).work == 50
 
     prompts = _script_prompts(monkeypatch, [_STATUS_STEP])
     await TurnDispatcher()._run_trigger(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
@@ -810,9 +819,8 @@ async def test_after_a_budget_boundary_the_next_turn_summarizes_then_runs_a_run_
     db.delete_queued_triggers(agent.id)
     step = sum(len(item["content"]) for item in db.get_work_snapshot(activity.id).transcript)
     budget = step * 9 // 2
-    db.set_setting("work_snapshot_max_chars", str(budget), "simulation")
-    db.set_setting("work_snapshot_trim_percent", "33", "simulation")
-    config.reload()
+    # Work 1% of a usable window 100 times the budget: exactly the budget.
+    assert set_context_budget(usable=budget * 100, work=1, work_trim=33, work_summary=10).work == budget
 
     # The first boundary: the saved step plus four more passes 4.5 steps. The
     # saved work started under the budget, so there was no summary call.
@@ -841,5 +849,115 @@ async def test_after_a_budget_boundary_the_next_turn_summarizes_then_runs_a_run_
     groups = split_steps(again.transcript)
     kept = [message for group in groups[: len(groups) - steps_run] for message in group]
     limits = read_summary_limits()
-    assert limits.cap + transcript_chars(kept) <= limits.target
+    assert limits.cap + transcript_tokens(kept) <= limits.target
     assert len(_resumes(agent.id, task.id)) == 1
+
+
+# ─── Per-mode history budgets (D10) ───
+
+
+def _spy_history(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Record the budget each turn's history view was built with, and what it showed."""
+    from core.agent_loop import loop as loop_module
+
+    real = loop_module.build_prompt_history_view
+    seen: list[dict[str, Any]] = []
+
+    def _spy(agent, trigger, **kwargs):
+        view = real(agent, trigger, **kwargs)
+        seen.append({**kwargs, "history": view.conversation_history})
+        return view
+
+    monkeypatch.setattr(loop_module, "build_prompt_history_view", _spy)
+    return seen
+
+
+def _history_tokens(rows: list[dict[str, Any]], agent_id: str) -> int:
+    from core.agent_loop.conversation_notes import entry_tokens, render_history_entry
+
+    return sum(entry_tokens(render_history_entry(row, agent_id)) for row in rows)
+
+
+def _task_comments(task_id: str, count: int) -> None:
+    for index in range(count):
+        db.create_task_event(
+            task_id=task_id, author_type="human", author_name="Human Operator", event_type="comment",
+            content=f"comment {index}: " + "please keep the parser change small and covered " * 4,
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_work_turn_windows_its_task_log_to_the_task_log_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    # Task log 5% and History 40% of a 10,000-token usable window.
+    budget = set_context_budget(usable=10_000, task_log=5, history=40)
+    assert (budget.task_log, budget.history) == (500, 4000)
+    _task_comments(task.id, 30)
+    seen = _spy_history(monkeypatch)
+    _script_prompts(monkeypatch, [_STATUS_STEP])
+    _queue_status_question(agent.id)
+
+    await run_turn(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
+
+    (view,) = seen
+    assert (view["budget_tokens"], view["work_turn"]) == (500, True)
+    rows = [row for row in view["history"] if not str(row.get("id") or "").startswith("sticky-slot:")]
+    assert rows, "the newest task-log rows are shown"
+    assert _history_tokens(rows, agent.id) <= 500
+    assert "comment 29:" in rows[-1]["content"] and all("comment 0:" not in row["content"] for row in rows)
+
+
+@pytest.mark.asyncio
+async def test_a_chat_turn_on_the_same_task_uses_the_history_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    agent, task = _working_agent()
+    budget = set_context_budget(usable=10_000, task_log=5, history=40)
+    _task_comments(task.id, 30)
+    seen = _spy_history(monkeypatch)
+    _script_prompts(monkeypatch, ['{"say":"Still on the parser.","actions":[],"work_commit":true}'])
+
+    await run_turn(
+        agent, db.get_agent_state(agent.id),
+        {"type": "human_chat", "content": "Status?", "from_name": "Human Operator", "source_channel": "chat"},
+    )
+
+    (view,) = seen
+    assert (view["budget_tokens"], view["work_turn"]) == (budget.history, False)
+
+
+@pytest.mark.asyncio
+async def test_a_meeting_execution_turn_uses_the_history_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A resume that holds no work (a meeting) is not a work turn."""
+    agent = db.create_agent("Mia", role="Lead", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
+    activity_runtime.begin_commitment_activity(agent.id, kind="meeting", title="Planning", reason="test")
+    budget = set_context_budget(usable=10_000, task_log=5, history=40)
+    seen = _spy_history(monkeypatch)
+    # The budget is chosen before the first model call; the call itself is beside the point.
+    _script_prompts(monkeypatch, [LLMError("not needed")])
+
+    await run_turn(agent, db.get_agent_state(agent.id), {"type": "activity_resumed", "content": "Resume."})
+
+    (view,) = seen
+    assert (view["budget_tokens"], view["work_turn"]) == (budget.history, False)
+
+
+def test_a_work_turn_channel_fallback_is_windowed_to_the_task_log_budget() -> None:
+    """A consent wake with no task thread falls back to its channel; on a work turn that is Task log too."""
+    from core.agent_loop.prompt_history import build_prompt_history_view
+
+    agent = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
+    channel = db.create_channel(name="Ops", member_agent_ids=[agent.id], created_by=agent.id)
+    for index in range(40):
+        db.create_channel_message(
+            channel_id=channel.id, author_type="human", author_name="Human Operator",
+            content=f"thread line {index}: " + "the deploy waits on the schema review " * 3,
+            source_channel="channel",
+        )
+    budget = set_context_budget(usable=10_000, task_log=5, history=40)
+    trigger = {"type": "host_path_consent_resolved", "channel_id": channel.id, "payload": {"status": "allowed"}}
+
+    chat = build_prompt_history_view(agent, trigger, budget_tokens=budget.history, work_turn=False)
+    work = build_prompt_history_view(agent, trigger, budget_tokens=budget.task_log, work_turn=True)
+
+    assert _history_tokens(chat.conversation_history, agent.id) > budget.task_log
+    assert 0 < _history_tokens(work.conversation_history, agent.id) <= budget.task_log
+    assert work.conversation_history[-1]["content"] == chat.conversation_history[-1]["content"], "the newest stay"

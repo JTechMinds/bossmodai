@@ -34,14 +34,14 @@ COMPACTION_SETTINGS = (
     ("compaction_cooldown_minutes", "10"),
 )
 
-# (key, default). Category is context: Settings → Context Window.
+# (key, default). Category is context: Settings → Context Window. The history
+# budget itself is History % of the usable window (core/context_budget.py).
 CONVERSATION_SETTINGS = (
     ("conversation_compaction_enabled", "true"),
-    ("conversation_history_budget_tokens", "16000"),
     ("conversation_compaction_start_percent", "80"),
     ("conversation_compaction_keep_percent", "50"),
     ("conversation_notes_max_percent", "10"),
-    ("conversation_history_ceiling_percent", "150"),
+    ("conversation_history_ceiling_percent", "125"),
 )
 
 # Keys retired with chat fade and the per-agent history window.
@@ -132,8 +132,26 @@ def test_obsolete_history_and_chat_fade_keys_are_pruned() -> None:
         assert get_seed_setting_default(key) is None
 
 
+def _budget_payloads() -> str:
+    """The real Context Window payloads the harness serves: Medium (the seeds) and Large.
+
+    Large is read by applying its preset through the route, then Medium is
+    applied again, so the database is left as the test found it.
+    """
+    client = _settings_client()
+    headers = {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
+    medium = client.get("/api/settings/context-budget", headers=headers)
+    assert medium.status_code == 200, medium.text
+    large = client.post("/api/settings/context-presets/large", headers=headers)
+    assert large.status_code == 200, large.text
+    restored = client.post("/api/settings/context-presets/medium", headers=headers)
+    assert restored.json() == medium.json()
+    return json.dumps({"medium": medium.json(), "large": large.json()})
+
+
 def _render_system_settings() -> dict:
     harness = Path(__file__).resolve().parent / "js_system_settings_harness.cjs"
+    budgets = _budget_payloads()
     result = subprocess.run(
         [
             "node",
@@ -153,6 +171,10 @@ def _render_system_settings() -> dict:
             str(JS / "core" / "menu-select.js"),
             # The Advanced section's Retention card, loaded before settings-advanced.js.
             str(JS / "settings" / "settings-retention.js"),
+            # Context Window: its catalog and its layout, then the budget payloads.
+            str(JS / "settings" / "settings-context-meta.js"),
+            str(JS / "settings" / "settings-context-panel.js"),
+            budgets,
         ],
         check=False,
         capture_output=True,
@@ -173,7 +195,11 @@ def test_ai_output_renders_compaction_knobs_without_system_ai() -> None:
     assert payload["heading"] == "AI Output"
     assert any("compaction pressure" in line for line in payload["intro"])
     assert not any("system processes" in line for line in payload["intro"])
-    assert set(payload["fetches"]) == {"/api/settings"}
+    # Only the Context Window tab asks for the budget numbers.
+    assert set(payload["fetchesBeforeContext"]) == {"/api/settings"}
+    assert set(payload["fetches"]) == {
+        "/api/settings", "/api/settings/context-budget", "/api/settings/context-presets/large",
+    }
 
     rows = _by_key(payload["fresh"])
     order = [row["key"] for row in payload["fresh"]]
@@ -414,40 +440,44 @@ def test_fresh_db_seeds_the_standing_prefs_limits() -> None:
         assert settings[key].category == "context"
 
 
-def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
+# Every Context Window setting, in the panel's order: the Model card, Chat mode
+# (History, its fine-tuning, When you ask), Work mode (Task log, Work, its
+# fine-tuning), then what is in every prompt.
+CONTEXT_SLOTS = [
+    "context_window_tokens",
+    "context_fixed_tokens",
+    "context_reply_percent",
+    "context_result_percent",
+    "context_history_percent",
+    "conversation_compaction_enabled",
+    "conversation_compaction_start_percent",
+    "conversation_compaction_keep_percent",
+    "conversation_notes_max_percent",
+    "conversation_history_ceiling_percent",
+    "context_asked_percent",
+    "context_task_log_percent",
+    "context_work_percent",
+    "work_snapshot_trim_percent",
+    "work_snapshot_summary_percent",
+    "context_recent_work_artifacts",
+    "context_recent_completed_tasks",
+    "standing_prefs_line_max_chars",
+    "standing_prefs_section_max_chars",
+]
+
+
+def test_context_window_fills_every_slot_with_the_standard_row() -> None:
     payload = _render_system_settings()
-    order = [row["key"] for row in payload["context"]]
-    assert order == [
-        "context_recent_work_artifacts",
-        "context_recent_completed_tasks",
-        "standing_prefs_line_max_chars",
-        "standing_prefs_section_max_chars",
-        "conversation_history_budget_tokens",
-        "conversation_compaction_start_percent",
-        "conversation_compaction_keep_percent",
-        "conversation_notes_max_percent",
-        "conversation_history_ceiling_percent",
-        "work_snapshot_max_chars",
-        "work_snapshot_trim_percent",
-        "work_snapshot_summary_percent",
-        "work_snapshot_chat_view_max_chars",
-    ]
+    panel = payload["panel"]
+    assert panel["panels"] == 1
+    assert panel["titles"] == ["Model", "Chat mode", "Work mode", "Also in every prompt"]
+    assert panel["groups"] == ["Conversation", "Its work", "Conversation", "Its work"]
+    assert [slot["key"] for slot in panel["slots"]] == CONTEXT_SLOTS
+    assert all(slot["control"] == "standard" and slot["error"] == 1 for slot in panel["slots"])
     # The switch is a switch mount, not a text input, in its own place.
-    assert payload["contextOrder"] == [
-        "context_recent_work_artifacts",
-        "context_recent_completed_tasks",
-        "standing_prefs_line_max_chars",
-        "standing_prefs_section_max_chars",
-        "conversation_compaction_enabled",
-        "conversation_history_budget_tokens",
-        "conversation_compaction_start_percent",
-        "conversation_compaction_keep_percent",
-        "conversation_notes_max_percent",
-        "conversation_history_ceiling_percent",
-        "work_snapshot_max_chars",
-        "work_snapshot_trim_percent",
-        "work_snapshot_summary_percent",
-        "work_snapshot_chat_view_max_chars",
+    assert payload["contextOrder"] == CONTEXT_SLOTS
+    assert [row["key"] for row in payload["context"]] == [
+        key for key in CONTEXT_SLOTS if key != "conversation_compaction_enabled"
     ]
     rows = _by_key(payload["context"])
     line = rows["standing_prefs_line_max_chars"]
@@ -462,32 +492,100 @@ def test_context_window_renders_the_standing_prefs_limits_in_order() -> None:
     section = rows["standing_prefs_section_max_chars"]
     assert section["label"] == "Memory Section Limit (chars)"
     assert section["value"] == "4000"
-    assert section["category"] == "context"
     assert "Must leave room for at least one full memory line." in section["paragraphs"][0]
     assert "Default 4000." in section["paragraphs"][0]
     for row in (line, section):
         assert "restart" not in row["paragraphs"][0].lower()
     labels = {key: rows[key]["label"] for key, _default in CONVERSATION_SETTINGS if key in rows}
     assert labels == {
-        "conversation_history_budget_tokens": "History budget (tokens)",
-        "conversation_compaction_start_percent": "Start summarizing at (% of budget)",
-        "conversation_compaction_keep_percent": "Keep recent messages (% of budget)",
-        "conversation_notes_max_percent": "Notes size (% of budget)",
-        "conversation_history_ceiling_percent": "Hard limit (% of budget)",
+        "conversation_compaction_start_percent": "Start summarizing at (% of history)",
+        "conversation_compaction_keep_percent": "Keep recent messages (% of history)",
+        "conversation_notes_max_percent": "Notes size (% of history)",
+        "conversation_history_ceiling_percent": "Hard limit (% of history)",
     }
     for key in labels:
         assert rows[key]["category"] == "context"
+    assert rows["context_window_tokens"]["label"] == "Context window (tokens)"
+    assert rows["context_window_tokens"]["paragraphs"][0].startswith(
+        "The most your agents' model can take in one request, prompt and reply together. "
+        "If agents use different models, use the smallest window among them."
+    )
+    assert rows["context_reply_percent"]["label"] == "Reply (% of usable window)"
+    assert rows["context_task_log_percent"]["paragraphs"][0].startswith(
+        "While an agent works, how much of the task's log it sees: your comments on the task, "
+        "its status lines and teammates' results, newest first."
+    )
 
 
-def test_conversation_budget_is_a_positive_int_with_no_upper_cap() -> None:
-    for bad in ("0", "-1", "16k", ""):
-        res = _put_setting("conversation_history_budget_tokens", bad, "context")
+def test_context_window_shows_the_budget_numbers_and_both_bars() -> None:
+    panel = _render_system_settings()["panel"]
+    # Medium: 116,000 usable tokens.
+    assert panel["derived"] == {
+        "context_reply_percent": "= 13,920 tokens",
+        "context_result_percent": "= 5,800 tokens",
+        "context_history_percent": "= 23,200 tokens (up to 29,000)",
+        "context_asked_percent": "= 29,000 tokens",
+        "context_task_log_percent": "= 5,800 tokens",
+        "context_work_percent": "= 69,600 tokens",
+    }
+    assert panel["usable"] == ["Usable window: 116,000 tokens (context window minus fixed prompt room)"]
+    assert panel["worst"] == ["Worst case: 89,720 tokens (70%)", "Worst case: 107,120 tokens (84%)"]
+    assert panel["bars"] == [
+        "A chat turn at its largest, out of a 128,000-token window: Fixed prompt room 12,000, Reply 13,920, "
+        "History, at its hard limit 29,000, When you ask 29,000, Largest result 5,800, Free 38,280 tokens.",
+        "A work turn at its largest, out of a 128,000-token window: Fixed prompt room 12,000, Reply 13,920, "
+        "Task log 5,800, Work 69,600, Largest result 5,800, Free 20,880 tokens.",
+    ]
+    # The legend repeats every number as text: the bar is never colour-only.
+    assert panel["legends"] == [
+        ["12,000", "13,920", "29,000", "29,000", "5,800", "38,280"],
+        ["12,000", "13,920", "5,800", "69,600", "5,800", "20,880"],
+    ]
+    assert panel["summaries"] == [
+        "Summarizing: at 80%, keep 50% + 10% notes, hard limit 125%",
+        "Summarizing: keep 60%, summary 20%",
+    ]
+
+
+def test_a_starting_point_is_pressed_and_a_click_applies_it() -> None:
+    payload = _render_system_settings()
+    panel = payload["panel"]
+    assert panel["presets"] == [
+        {"id": "small", "label": "Small (32K)", "pressed": "false"},
+        {"id": "medium", "label": "Medium (128K)", "pressed": "true"},
+        {"id": "large", "label": "Large (256K)", "pressed": "false"},
+    ]
+    assert panel["custom"] == 0, "a preset is active, so no Custom chip"
+
+    after = payload["afterPreset"]
+    assert after["posts"] == [{"url": "/api/settings/context-presets/large", "method": "POST"}]
+    assert "/api/settings/context-budget" in after["refetched"], "the tab re-renders with the new numbers"
+    assert [preset["pressed"] for preset in after["panel"]["presets"]] == ["false", "false", "true"]
+    assert after["panel"]["worst"] == ["Worst case: 175,480 tokens (69%)", "Worst case: 212,080 tokens (83%)"]
+    assert after["panel"]["derived"]["context_work_percent"] == "= 146,400 tokens"
+
+
+def test_the_history_budget_is_a_share_of_the_usable_window() -> None:
+    """History is a percent of the usable window; a save that lets a chat turn outgrow it is refused."""
+    for bad in ("0", "100"):
+        res = _put_setting("context_history_percent", bad, "context")
         assert res.status_code == 400
-        assert res.json()["detail"] == "History budget must be a whole number of at least 1."
-    for good in ("4000", "100000"):
-        res = _put_setting("conversation_history_budget_tokens", good, "context")
-        assert res.status_code == 200, res.text
-        assert config.require_int("conversation_history_budget_tokens") == int(good)
+        assert res.json()["detail"] == "History must be a whole number from 1 to 99."
+    res = _put_setting("context_history_percent", "16k", "context")
+    assert res.status_code == 400
+    assert res.json()["detail"] == "History must be a whole number."
+    res = _put_setting("context_history_percent", "50", "context")
+    assert res.status_code == 400
+    assert res.json()["detail"] == (
+        "A chat turn could use 104.5% of the usable window (Reply 12% + History up to 62.5% + "
+        "When you ask 25% + Largest result 5%). Lower one so the total is 100% or less."
+    )
+    res = _put_setting("context_history_percent", "25", "context")
+    assert res.status_code == 200, res.text
+    assert config.require_int("context_history_percent") == 25
+    from core.agent_loop.conversation_notes import read_settings
+
+    assert read_settings().budget_tokens == 116_000 * 25 // 100
 
 
 def test_conversation_switch_accepts_only_true_or_false() -> None:
@@ -536,7 +634,8 @@ def test_conversation_percents_accept_a_consistent_set_and_refresh_chat() -> Non
         ("conversation_compaction_start_percent", "100"),
         ("conversation_compaction_keep_percent", "30"),
         ("conversation_notes_max_percent", "5"),
-        ("conversation_history_ceiling_percent", "300"),
+        # 200% of History 20% is 40%: with Reply, When you ask and Largest result, 82%.
+        ("conversation_history_ceiling_percent", "200"),
     ):
         res = _put_setting(key, value, "context")
         assert res.status_code == 200, res.text
@@ -545,6 +644,17 @@ def test_conversation_percents_accept_a_consistent_set_and_refresh_chat() -> Non
 
     for key, _default in CONVERSATION_SETTINGS:
         assert _operator_surfaces_for_setting(key, "context") == ["system", "chat"]
+    # The numbers that size History change what an open transcript marks too.
+    for key in ("context_window_tokens", "context_fixed_tokens", "context_history_percent"):
+        assert _operator_surfaces_for_setting(key, "context") == ["system", "chat"]
+
+
+def test_a_hard_limit_that_lets_a_chat_turn_outgrow_the_window_is_refused() -> None:
+    res = _put_setting("conversation_history_ceiling_percent", "300", "context")
+    assert res.status_code == 400
+    assert res.json()["detail"].startswith("A chat turn could use 102% of the usable window")
+    config.reload()
+    assert config.get("conversation_history_ceiling_percent") == "125"
 
 
 THREAD_KEYS = [
@@ -612,6 +722,7 @@ def test_a_need_opens_context_window_with_its_field_focused() -> None:
     """
     opened = _render_system_settings()["openedFromNeed"]
     assert opened["heading"] == "Context Window"
+    assert opened["openDetails"] == ["Summarizing: keep 60%, summary 20%"], "its fine-tuning is opened"
     assert opened["fields"] == [{
         "key": "work_snapshot_summary_percent",
         "focused": True,
@@ -630,6 +741,10 @@ _GLOBAL_AUTO_APPROVE_WARNING = (
     "tasks ask for. Never-allowed rules, the path jail and whole-project deletes "
     "still stop or ask. Turn on?"
 )
+
+
+def test_the_advanced_tab_has_no_read_limit_control() -> None:
+    assert _render_system_settings()["readLimit"] == {"field": False, "labels": []}
 
 
 def test_global_auto_approve_asks_before_turning_on_only() -> None:

@@ -21,9 +21,11 @@ from core.agent_loop.sticky_slots import (
     _FILL_SYSTEM,
     SLOT_ID_PREFIX,
     _clean_fact,
+    _pressure_prefix,
     note_sticky_slot_turn,
     set_sticky_slot_scheduler,
 )
+from core.context_budget import read_context_budget
 from core.bm_cli import filesystem
 from core.llm import context_builder
 from core.models.message import HUMAN_SENDER_ID
@@ -31,6 +33,7 @@ from core.models.work_contract import DeliverableSpec, WorkContract
 from db.crud import execute
 from db.sticky_slots import SLOT_KINDS, get_sticky_slot, get_sticky_slot_gate, upsert_sticky_slots
 from db.task_work_contracts import set_task_work_contract
+from tests._context_budget import set_context_budget
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -66,13 +69,12 @@ def _patch_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
     # Task and meeting windows: 100 tokens a row against the history budget.
     monkeypatch.setattr("core.agent_loop.prompt_history.entry_tokens", lambda text: 100)
     # Channel windows stay far under the conversation-notes start line.
-    monkeypatch.setattr("core.agent_loop.conversation_notes._count", lambda text: 1)
+    monkeypatch.setattr("core.agent_loop.conversation_notes.count_text_tokens", lambda text: 1)
 
 
 def _budget(tokens: int) -> None:
-    """Set the per-thread history budget (Settings → Context Window)."""
-    db.set_setting("conversation_history_budget_tokens", str(tokens), "context")
-    config.reload()
+    """Set the per-thread history budget: History 20% of a usable window five times ``tokens``."""
+    assert set_context_budget(usable=tokens * 5, history=20).history == tokens
 
 
 def _store_notes(channel_id: str, through_message_id: str, notes: str) -> None:
@@ -163,6 +165,8 @@ def _task_history(agent, task_id: str) -> list[dict]:
     view = build_prompt_history_view(
         agent,
         {"type": "task_assigned", "task_id": task_id},
+        budget_tokens=read_context_budget().history,
+        work_turn=False,
     )
     return view.conversation_history
 
@@ -171,6 +175,8 @@ def _channel_history(agent, channel_id: str) -> list[dict]:
     view = build_prompt_history_view(
         agent,
         {"type": "channel_message", "channel_id": channel_id},
+        budget_tokens=read_context_budget().history,
+        work_turn=False,
     )
     return view.conversation_history
 
@@ -217,6 +223,29 @@ def _fill_json(task_id: str, blocker_id: str, *, blockers: str = BLOCKERS, plan:
 
 def test_slot_kinds_are_the_work_spine() -> None:
     assert SLOT_KINDS == ("plan", "next_owner", "verdict_path", "blockers")
+
+
+def test_pressure_is_measured_against_the_budget_passed_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The window a turn shows and its sticky-slot pressure use one budget.
+
+    A work turn windows its task log to Task log, a chat turn to History; the
+    pressure line follows whichever budget the caller passes, never a stored
+    History value of its own.
+    """
+    _patch_tokens(monkeypatch)
+    _knob("compaction_mode", "pressure_only")
+    _knob("compaction_task_budget_headroom_percent", "0")
+    agent = db.create_agent("Ada", role="QA", desk_x=1, desk_y=1)
+    _budget(10_000)
+    messages = [
+        {"id": f"row-{index}", "from_agent": "__human__", "from_name": "Boss", "content": f"row {index}"}
+        for index in range(5)
+    ]
+    # Five rows at 100 tokens: within a 10,000 budget, over a 250 one.
+    wide = _pressure_prefix(messages, None, agent_id=agent.id, token_model=None, budget_tokens=10_000)
+    narrow = _pressure_prefix(messages, None, agent_id=agent.id, token_model=None, budget_tokens=250)
+    assert wide is None
+    assert [row["id"] for row in narrow] == ["row-0", "row-1", "row-2"]
 
 
 def test_pressure_gate_is_task_side_and_uses_task_headroom(
@@ -670,7 +699,9 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
             f"direct note {index}",
             message_type="human",
         )
-    human = build_prompt_history_view(agent, {"type": "human_chat"}).conversation_history
+    human = build_prompt_history_view(
+        agent, {"type": "human_chat"}, budget_tokens=read_context_budget().history, work_turn=False,
+    ).conversation_history
     assert all(not str(item["id"]).startswith(SLOT_ID_PREFIX) for item in human)
     assert all(blocker.id not in item["content"] for item in human)
 
