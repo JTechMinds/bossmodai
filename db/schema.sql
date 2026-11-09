@@ -786,6 +786,17 @@ CREATE TABLE IF NOT EXISTS work_summary_overflows (
     created_at      TIMESTAMP NOT NULL
 );
 
+-- One row per agent: the tokens of its instructions (every prompt message
+-- before the history, except the paused-work view) as its latest turn
+-- measured them (core/agent_loop/turn_prompt.py). The largest row of an
+-- existing agent is the reserve the context budget shares out what's left
+-- after (core/context_budget.py). Replaced every turn; deleted with the agent.
+CREATE TABLE IF NOT EXISTS agent_instruction_sizes (
+    agent_id     VARCHAR PRIMARY KEY,
+    tokens       INTEGER NOT NULL,
+    measured_at  TIMESTAMP NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
     id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
     agent_id          VARCHAR NOT NULL REFERENCES agents(id),

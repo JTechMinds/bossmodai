@@ -301,8 +301,9 @@ def render_paused_work_for_agent(agent_id: str) -> str | None:
     status reply is grounded in what the agent actually ran. The view is
     titled with the activity's task title, else the activity's own title,
     else "your task". Execution turns get the full restored transcript
-    instead and never this view; ``core.llm.context_builder.build_context``
-    calls this for decision turns only.
+    instead and never this view; ``core.agent_loop.turn_prompt`` calls this
+    for decision turns only and hands the view to ``build_context`` as
+    ``TurnContext.paused_work_view``.
 
     Args:
         agent_id: The agent whose paused work to show.

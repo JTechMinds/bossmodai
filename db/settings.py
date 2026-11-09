@@ -56,6 +56,10 @@ _OBSOLETE_SETTING_KEYS = {
     "conversation_history_budget_tokens",
     "default_max_tokens",
     "cli_max_read_chars",
+    # Fixed prompt room, a guessed reserve for what every turn starts with.
+    # The reserve is measured now: the largest instructions any agent's turn
+    # sent (agent_instruction_sizes, core/context_budget.py).
+    "context_fixed_tokens",
 }
 
 
@@ -171,11 +175,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # One context window in tokens, shared out by core/context_budget.py.
     # Seeded with the Medium preset; Settings → Context Window offers Small,
     # Medium and Large. Percents are of the usable window (window minus the
-    # fixed prompt room), and a save that lets a turn outgrow it is refused.
+    # reserved instructions, measured every turn), and a save that lets a
+    # turn outgrow it is refused.
     # The model's context window: prompt and reply of one request together.
     ("context_window_tokens", "128000", "context"),
-    # Room for what every turn starts with: system prompt, role, memory, task.
-    ("context_fixed_tokens", "12000", "context"),
     # The longest reply: max_tokens of every agent model call.
     ("context_reply_percent", "12", "context"),
     # The most one command result may add, a file read included.

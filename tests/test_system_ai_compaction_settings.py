@@ -133,10 +133,12 @@ def test_obsolete_history_and_chat_fade_keys_are_pruned() -> None:
 
 
 def _budget_payloads() -> str:
-    """The real Context Window payloads the harness serves: Medium (the seeds) and Large.
+    """The real Context Window payloads the harness serves: Medium (the seeds), Large and recovery.
 
     Large is read by applying its preset through the route, then Medium is
-    applied again, so the database is left as the test found it.
+    applied again. Recovery is a damaged row (a Context window of 0, written
+    past the route's check), read, then put back to its seed. So the
+    database is left as the test found it.
     """
     client = _settings_client()
     headers = {LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}
@@ -146,7 +148,15 @@ def _budget_payloads() -> str:
     assert large.status_code == 200, large.text
     restored = client.post("/api/settings/context-presets/medium", headers=headers)
     assert restored.json() == medium.json()
-    return json.dumps({"medium": medium.json(), "large": large.json()})
+    db.set_setting("context_window_tokens", "0", "context")
+    config.reload()
+    recovery = client.get("/api/settings/context-budget", headers=headers)
+    assert recovery.status_code == 200, recovery.text
+    seed_value, seed_category = get_seed_setting_default("context_window_tokens")
+    db.set_setting("context_window_tokens", seed_value, seed_category)
+    config.reload()
+    assert client.get("/api/settings/context-budget", headers=headers).json() == medium.json()
+    return json.dumps({"medium": medium.json(), "large": large.json(), "recovery": recovery.json()})
 
 
 def _render_system_settings() -> dict:
@@ -445,7 +455,6 @@ def test_fresh_db_seeds_the_standing_prefs_limits() -> None:
 # fine-tuning), then what is in every prompt.
 CONTEXT_SLOTS = [
     "context_window_tokens",
-    "context_fixed_tokens",
     "context_reply_percent",
     "context_result_percent",
     "context_history_percent",
@@ -519,27 +528,27 @@ def test_context_window_fills_every_slot_with_the_standard_row() -> None:
 
 def test_context_window_shows_the_budget_numbers_and_both_bars() -> None:
     panel = _render_system_settings()["panel"]
-    # Medium: 116,000 usable tokens.
+    # Medium with no instructions measured yet: all 128,000 tokens are usable.
     assert panel["derived"] == {
-        "context_reply_percent": "= 13,920 tokens",
-        "context_result_percent": "= 5,800 tokens",
-        "context_history_percent": "= 23,200 tokens (up to 29,000)",
-        "context_asked_percent": "= 29,000 tokens",
-        "context_task_log_percent": "= 5,800 tokens",
-        "context_work_percent": "= 69,600 tokens",
+        "context_reply_percent": "= 15,360 tokens",
+        "context_result_percent": "= 6,400 tokens",
+        "context_history_percent": "= 25,600 tokens (up to 32,000)",
+        "context_asked_percent": "= 32,000 tokens",
+        "context_task_log_percent": "= 6,400 tokens",
+        "context_work_percent": "= 76,800 tokens",
     }
-    assert panel["usable"] == ["Usable window: 116,000 tokens (context window minus fixed prompt room)"]
-    assert panel["worst"] == ["Worst case: 89,720 tokens (70%)", "Worst case: 107,120 tokens (84%)"]
+    assert panel["usable"] == ["Usable window: 128,000 tokens (context window minus reserved instructions)"]
+    assert panel["worst"] == ["Worst case: 85,760 tokens (67%)", "Worst case: 104,960 tokens (82%)"]
     assert panel["bars"] == [
-        "A chat turn at its largest, out of a 128,000-token window: Fixed prompt room 12,000, Reply 13,920, "
-        "History, at its hard limit 29,000, When you ask 29,000, Largest result 5,800, Free 38,280 tokens.",
-        "A work turn at its largest, out of a 128,000-token window: Fixed prompt room 12,000, Reply 13,920, "
-        "Task log 5,800, Work 69,600, Largest result 5,800, Free 20,880 tokens.",
+        "A chat turn at its largest, out of a 128,000-token window: Instructions 0, Reply 15,360, "
+        "History, at its hard limit 32,000, When you ask 32,000, Largest result 6,400, Free 42,240 tokens.",
+        "A work turn at its largest, out of a 128,000-token window: Instructions 0, Reply 15,360, "
+        "Task log 6,400, Work 76,800, Largest result 6,400, Free 23,040 tokens.",
     ]
     # The legend repeats every number as text: the bar is never colour-only.
     assert panel["legends"] == [
-        ["12,000", "13,920", "29,000", "29,000", "5,800", "38,280"],
-        ["12,000", "13,920", "5,800", "69,600", "5,800", "20,880"],
+        ["0", "15,360", "32,000", "32,000", "6,400", "42,240"],
+        ["0", "15,360", "6,400", "76,800", "6,400", "23,040"],
     ]
     assert panel["summaries"] == [
         "Summarizing: at 80%, keep 50% + 10% notes, hard limit 125%",
@@ -561,8 +570,36 @@ def test_a_starting_point_is_pressed_and_a_click_applies_it() -> None:
     assert after["posts"] == [{"url": "/api/settings/context-presets/large", "method": "POST"}]
     assert "/api/settings/context-budget" in after["refetched"], "the tab re-renders with the new numbers"
     assert [preset["pressed"] for preset in after["panel"]["presets"]] == ["false", "false", "true"]
-    assert after["panel"]["worst"] == ["Worst case: 175,480 tokens (69%)", "Worst case: 212,080 tokens (83%)"]
-    assert after["panel"]["derived"]["context_work_percent"] == "= 146,400 tokens"
+    assert after["panel"]["worst"] == ["Worst case: 171,520 tokens (67%)", "Worst case: 209,920 tokens (82%)"]
+    assert after["panel"]["derived"]["context_work_percent"] == "= 153,600 tokens"
+
+
+def test_settings_that_break_a_rule_render_the_recovery_card_with_standard_rows() -> None:
+    recovery = _render_system_settings()["recovery"]
+    panel = recovery["panel"]
+    assert (panel["panels"], panel["titles"], panel["groups"]) == (1, ["Model"], [])
+    assert recovery["problem"] == [{
+        "text": "Agents can't start a turn with these settings. Context window must be a whole number of "
+                "at least 1. Change a value below, or pick a starting point.",
+        "role": "alert",
+    }]
+    assert panel["slots"] == [
+        {"key": key, "control": "standard", "error": 1}
+        for key in ("context_window_tokens", "context_reply_percent", "context_result_percent")
+    ]
+    assert [preset["pressed"] for preset in panel["presets"]] == ["false", "false", "false"]
+    assert (panel["custom"], panel["bars"], panel["derived"]) == (0, [], {})
+    assert (panel["worst"], panel["usable"], panel["summaries"]) == ([], [], [])
+    # Opened on the window field, as a fix starts.
+    assert recovery["fields"] == [
+        {"key": "context_window_tokens", "focused": True, "selected": True, "scrolled": {"block": "center"}},
+    ]
+    # A starting point applies and the whole tab comes back.
+    assert recovery["posts"] == [{"url": "/api/settings/context-presets/large", "method": "POST"}]
+    after = recovery["afterPreset"]
+    assert after["titles"] == ["Model", "Chat mode", "Work mode", "Also in every prompt"]
+    assert [preset["pressed"] for preset in after["presets"]] == ["false", "false", "true"]
+    assert after["worst"] == ["Worst case: 171,520 tokens (67%)", "Worst case: 209,920 tokens (82%)"]
 
 
 def test_the_history_budget_is_a_share_of_the_usable_window() -> None:
@@ -585,7 +622,8 @@ def test_the_history_budget_is_a_share_of_the_usable_window() -> None:
     assert config.require_int("context_history_percent") == 25
     from core.agent_loop.conversation_notes import read_settings
 
-    assert read_settings().budget_tokens == 116_000 * 25 // 100
+    # Nothing measured yet, so the whole 128,000-token window is usable.
+    assert read_settings().budget_tokens == 128_000 * 25 // 100
 
 
 def test_conversation_switch_accepts_only_true_or_false() -> None:
@@ -645,7 +683,7 @@ def test_conversation_percents_accept_a_consistent_set_and_refresh_chat() -> Non
     for key, _default in CONVERSATION_SETTINGS:
         assert _operator_surfaces_for_setting(key, "context") == ["system", "chat"]
     # The numbers that size History change what an open transcript marks too.
-    for key in ("context_window_tokens", "context_fixed_tokens", "context_history_percent"):
+    for key in ("context_window_tokens", "context_history_percent"):
         assert _operator_surfaces_for_setting(key, "context") == ["system", "chat"]
 
 

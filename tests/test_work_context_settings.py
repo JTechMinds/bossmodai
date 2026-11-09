@@ -135,10 +135,11 @@ _SUMMARY_RANGE = "Work summary size must be a whole number from 1 to 99."
             "20",
             "Work summary size (20%) must be lower than Work kept after summarizing (20%).",
         ),
+        # Nothing measured yet, so the whole window is usable: 100 tokens.
         (
             [("work_snapshot_summary_percent", "1")],
             "context_window_tokens",
-            "12100",
+            "100",
             "Work summary size (1%) leaves the work summary no room: "
             "it would be under 1 token of a 100-token usable window.",
         ),
@@ -167,8 +168,8 @@ def test_a_consistent_work_set_is_saved_and_read_by_the_summary() -> None:
         assert res.json()["category"] == "simulation"
     assert _put_setting("context_work_percent", "70", "context").status_code == 200
     limits = read_summary_limits()
-    # 70% of Medium's 116,000 usable tokens.
-    assert (limits.budget, limits.target, limits.cap) == (81_200, 60_900, 16_240)
+    # 70% of Medium's 128,000 tokens, all usable while nothing is measured.
+    assert (limits.budget, limits.target, limits.cap) == (89_600, 67_200, 17_920)
 
 
 def test_each_work_setting_resets_to_its_default() -> None:

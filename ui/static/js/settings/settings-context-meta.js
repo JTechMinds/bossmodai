@@ -18,10 +18,6 @@ const BossModContextSettingsMeta = (() => {
             label: 'Context window (tokens)',
             description: 'The most your agents\' model can take in one request, prompt and reply together. If agents use different models, use the smallest window among them. Default 128000.',
         },
-        context_fixed_tokens: {
-            label: 'Fixed prompt room (tokens)',
-            description: 'Set aside for what every turn starts with: the system prompt, the agent\'s role, its memory and the task. Everything else is a share of what\'s left. Default 12000.',
-        },
         context_reply_percent: {
             label: 'Reply (% of usable window)',
             description: 'The longest reply the model may write in one request. Default 12.',

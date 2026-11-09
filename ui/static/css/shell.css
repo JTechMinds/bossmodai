@@ -153,7 +153,22 @@ body[data-view="settings"] #main-layout { display: none; }
   color: var(--ink);
   font-variant-numeric: tabular-nums;
 }
+/* Read-only: the reserve is measured every turn, so it is a line, not a field. */
+.ctx-budget-reserved { margin: 0; font-size: 13px; line-height: 1.5; color: var(--muted); }
+.ctx-budget-reserved strong { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
 .ctx-budget-usable { margin: 0; font-size: 13px; color: var(--muted); }
+/* The recovery Model card's problems: the stored settings break a rule, so
+   no turn can start. The app's alert box (.context-error, .callout). */
+.ctx-budget-problem {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--alert-line);
+  border-radius: var(--r);
+  background: var(--alert-bg);
+  color: var(--alert-ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
 
 /* The two modes share their rows (subgrid), so History lines up with Task
    log and When you ask with Work whatever each column's fine-tuning holds.
@@ -182,7 +197,7 @@ body[data-view="settings"] #main-layout { display: none; }
 }
 .ctx-budget-seg { display: block; height: 100%; }
 .ctx-budget-seg + .ctx-budget-seg { border-left: 1px solid var(--panel); }
-.ctx-budget-seg-fixed { background: var(--line-strong); }
+.ctx-budget-seg-instructions { background: var(--line-strong); }
 .ctx-budget-seg-reply { background: var(--pink); }
 .ctx-budget-seg-conversation { background: var(--blue); }
 .ctx-budget-seg-work { background: var(--teal); }

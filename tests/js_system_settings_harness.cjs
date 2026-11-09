@@ -3,9 +3,11 @@
  * and a change saves through the existing settings PUT. Context Window
  * renders the budget panel (settings-context-panel.js) with every slot
  * filled by the standard row, the budget numbers from the server's
- * payload (argv[17]: the real Medium and Large payloads), and starting
- * points that POST and re-render; a refused work save shows the server's
- * message on its row. Threads renders the routing and
+ * payload (argv[17]: the real Medium, Large and recovery payloads), and
+ * starting points that POST and re-render; a refused work save shows the
+ * server's message on its row. Settings that break a rule (the recovery
+ * payload) get the recovery Model card, its three fields standard rows.
+ * Threads renders the routing and
  * idle-check settings, with a BossModSwitch for the idle-check flag, and a
  * refused save shows the server's message on its row. System AI lives
  * under AI Connections. Advanced renders the Global auto-approve switch,
@@ -336,7 +338,6 @@ async function main() {
         setting("standing_prefs_line_max_chars", "400", "context"),
         setting("standing_prefs_section_max_chars", "4000", "context"),
         setting("context_window_tokens", "128000", "context"),
-        setting("context_fixed_tokens", "12000", "context"),
         setting("context_reply_percent", "12", "context"),
         setting("context_result_percent", "5", "context"),
         setting("context_history_percent", "20", "context"),
@@ -575,9 +576,33 @@ async function main() {
         unknown: { errors: consoleErrors, fields: fieldState(unknownRoot) },
     };
 
+    // ─── Settings that break a rule: the recovery Model card ───
+    // Opened on the window field, as a fix starts; a starting point then
+    // POSTs and the tab re-renders whole (the fake POST answers Large).
+    world.budget = budgets.recovery;
+    const recoveryRoot = new FakeEl("div");
+    await SystemSection.render(recoveryRoot, { tab: "context", key: "context_window_tokens" });
+    const recoveryPanel = contextPanel(recoveryRoot);
+    const problem = recoveryRoot.querySelectorAll("p")
+        .filter((node) => node.getAttribute("class") === "ctx-budget-problem")
+        .map((node) => ({ text: node.textContent.trim(), role: node.getAttribute("role") }));
+    const recoveryFields = fieldState(recoveryRoot);
+    const postsBeforeRecovery = posts.length;
+    await recoveryRoot.querySelectorAll("[data-context-preset]")
+        .find((button) => button.dataset.contextPreset === "large").dispatchClick();
+    await settle();
+    const recovery = {
+        panel: recoveryPanel,
+        problem,
+        fields: recoveryFields,
+        posts: posts.slice(postsBeforeRecovery),
+        afterPreset: contextPanel(recoveryRoot),
+    };
+
     process.stdout.write(JSON.stringify({
         ok: true,
         openedFromNeed,
+        recovery,
         openedOnSimulation,
         savesBeforeOpen,
         heading,

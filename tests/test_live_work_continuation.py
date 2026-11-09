@@ -32,7 +32,7 @@ from core.models.message import HUMAN_SENDER_ID
 from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.tasking import add_checklist_items, create_or_bind_task
 from core.tasking.service import cancel_task_as_operator
-from tests._context_budget import set_context_budget
+from tests._context_budget import hold_reserve, set_context_budget
 
 
 @pytest.fixture(autouse=True)
@@ -517,9 +517,11 @@ def _over_budget_work(agent) -> list[str]:
     """Work budget 1500 with a 66% trim and a 10% summary; freeze four 357-token steps (1428, under it).
 
     Work is 1% of a 150,000-token usable window, so Largest command result
-    (5%) is far above any result here and nothing is cut.
+    (5%) is far above any result here and nothing is cut. The reserve is
+    held, so the agent's own turns are sized in one pass and the budget holds.
     """
     activity = activity_runtime.get_active_work_activity(agent.id)
+    hold_reserve()
     assert set_context_budget(usable=150_000, work=1, work_trim=66, work_summary=10).work == 1500
     earlier = [
         '{"act":"cli","data":{"cmd":"cat /me/f%d.md"},"th":"read"}' % index for index in range(4)
@@ -768,6 +770,7 @@ async def test_a_single_step_over_the_budget_still_moves_on(monkeypatch: pytest.
     agent, task = _working_agent()
     activity = activity_runtime.get_active_work_activity(agent.id)
     # Smaller than any one CLI result: every turn runs exactly one step.
+    hold_reserve()
     assert set_context_budget(usable=5000, work=1).work == 50
 
     prompts = _script_prompts(monkeypatch, [_STATUS_STEP])
@@ -857,10 +860,14 @@ async def test_after_a_budget_boundary_the_next_turn_summarizes_then_runs_a_run_
 
 
 def _spy_history(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
-    """Record the budget each turn's history view was built with, and what it showed."""
-    from core.agent_loop import loop as loop_module
+    """Record the budget each turn's history view was built with, and what it showed.
 
-    real = loop_module.build_prompt_history_view
+    One entry per prompt pass (core/agent_loop/turn_prompt.py); with the
+    reserve held, every turn takes one.
+    """
+    from core.agent_loop import turn_prompt as turn_prompt_module
+
+    real = turn_prompt_module.build_prompt_history_view
     seen: list[dict[str, Any]] = []
 
     def _spy(agent, trigger, **kwargs):
@@ -868,7 +875,7 @@ def _spy_history(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
         seen.append({**kwargs, "history": view.conversation_history})
         return view
 
-    monkeypatch.setattr(loop_module, "build_prompt_history_view", _spy)
+    monkeypatch.setattr(turn_prompt_module, "build_prompt_history_view", _spy)
     return seen
 
 
@@ -890,6 +897,7 @@ def _task_comments(task_id: str, count: int) -> None:
 async def test_a_work_turn_windows_its_task_log_to_the_task_log_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task = _working_agent()
     # Task log 5% and History 40% of a 10,000-token usable window.
+    hold_reserve()
     budget = set_context_budget(usable=10_000, task_log=5, history=40)
     assert (budget.task_log, budget.history) == (500, 4000)
     _task_comments(task.id, 30)
@@ -910,6 +918,7 @@ async def test_a_work_turn_windows_its_task_log_to_the_task_log_budget(monkeypat
 @pytest.mark.asyncio
 async def test_a_chat_turn_on_the_same_task_uses_the_history_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task = _working_agent()
+    hold_reserve()
     budget = set_context_budget(usable=10_000, task_log=5, history=40)
     _task_comments(task.id, 30)
     seen = _spy_history(monkeypatch)
@@ -929,6 +938,7 @@ async def test_a_meeting_execution_turn_uses_the_history_budget(monkeypatch: pyt
     """A resume that holds no work (a meeting) is not a work turn."""
     agent = db.create_agent("Mia", role="Lead", desk_x=1, desk_y=1, connection_id=model_connection("test/mock"))
     activity_runtime.begin_commitment_activity(agent.id, kind="meeting", title="Planning", reason="test")
+    hold_reserve()
     budget = set_context_budget(usable=10_000, task_log=5, history=40)
     seen = _spy_history(monkeypatch)
     # The budget is chosen before the first model call; the call itself is beside the point.

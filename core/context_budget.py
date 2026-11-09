@@ -3,9 +3,11 @@
 The one owner of the context arithmetic, its rules and its presets, shared by
 the runtime (every budget a turn applies) and the Settings route (the
 never-too-big rule on save, the presets, the numbers the Context Window tab
-shows). Every budget is a share of one number, the model's context window:
+shows). Every budget is a share of one number, the model's context window,
+less the reserved instructions (measured):
 
-    usable    = Context window - Fixed prompt room
+    reserved  = the largest instructions any agent's turn measured (0 before any)
+    usable    = Context window - reserved
     Shared:     reply    = usable x Reply %             -> max_tokens of every agent model call
                 result   = usable x Largest result %    -> most one command result may add
     Chat mode:  history  = usable x History %           -> DM / thread / meeting history
@@ -15,8 +17,14 @@ shows). Every budget is a share of one number, the model's context window:
     Work mode:  task_log = usable x Task log %          -> the task's event log in a work turn
                 work     = usable x Work %              -> saved work: summary + steps + what
                                                            you told it during the work
-    worst chat turn = fixed + reply + history cap + asked + result
-    worst work turn = fixed + reply + task_log + work + result
+    worst chat turn = reserved + reply + history cap + asked + result
+    worst work turn = reserved + reply + task_log + work + result
+
+The reserve is measured, never set: every turn measures its agent's
+instructions (``core.agent_loop.turn_prompt``) and stores them per agent
+(``agent_instruction_sizes``); one Context window covers every agent, so the
+reserve is the largest stored measurement. The message a turn answers is not
+part of it: it fits in the room the shares leave free.
 
 The Hard limit is a share of History; Work kept after summarizing and Work
 summary size are shares of Work. :func:`check_shares` is the single source of
@@ -27,8 +35,8 @@ Tokens are counted with the shared generic tokenizer
 (``core.llm.client.count_text_tokens``). This module imports only the
 standard library at module level: ``core.config`` imports ``db``, whose
 package import loads ``core.bm_cli``, which imports this module, so the
-settings reader and the counter are imported inside the functions that use
-them.
+settings reader, the database and the counter are imported inside the
+functions that use them.
 """
 
 from __future__ import annotations
@@ -37,9 +45,12 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from types import MappingProxyType
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from core.models.instruction_size import InstructionSize
 
 WINDOW_SETTING = "context_window_tokens"
-FIXED_SETTING = "context_fixed_tokens"
 REPLY_SETTING = "context_reply_percent"
 RESULT_SETTING = "context_result_percent"
 HISTORY_SETTING = "context_history_percent"
@@ -56,7 +67,6 @@ NOTES_MAX_SETTING = "conversation_notes_max_percent"
 # ContextShares field -> the setting it is read from.
 _SHARE_FIELDS: Mapping[str, str] = MappingProxyType({
     "window": WINDOW_SETTING,
-    "fixed": FIXED_SETTING,
     "reply": REPLY_SETTING,
     "result": RESULT_SETTING,
     "history": HISTORY_SETTING,
@@ -85,7 +95,6 @@ PRESET_SETTINGS: tuple[str, ...] = (
 # problems name, so the operator finds each setting by what it is called.
 SETTING_LABELS: Mapping[str, str] = MappingProxyType({
     WINDOW_SETTING: "Context window",
-    FIXED_SETTING: "Fixed prompt room",
     REPLY_SETTING: "Reply",
     RESULT_SETTING: "Largest command result",
     HISTORY_SETTING: "History",
@@ -113,7 +122,6 @@ class ContextShares:
 
     Attributes:
         window: Context window, in tokens.
-        fixed: Fixed prompt room, in tokens.
         reply: Reply, as a percent of the usable window.
         result: Largest command result, as a percent of the usable window.
         history: History, as a percent of the usable window.
@@ -126,7 +134,6 @@ class ContextShares:
     """
 
     window: int
-    fixed: int
     reply: int
     result: int
     history: int
@@ -144,17 +151,20 @@ class ContextBudget:
 
     With ``pct(p) = usable * p // 100``:
 
-    - ``usable = window - fixed``;
+    - ``usable = window - reserved``, where ``reserved`` is the largest
+      instructions any agent measured (0 before any measurement);
     - ``reply``, ``result``, ``history``, ``asked``, ``task_log`` and ``work``
       are ``pct`` of their share;
     - ``history_cap = history * history_ceiling // 100``, the most history a
       chat turn can show while conversation memory catches up;
-    - ``worst_chat_turn = fixed + reply + history_cap + asked + result``;
-    - ``worst_work_turn = fixed + reply + task_log + work + result``.
+    - ``worst_chat_turn = reserved + reply + history_cap + asked + result``;
+    - ``worst_work_turn = reserved + reply + task_log + work + result``.
 
     Attributes:
         window: The model's context window.
-        fixed: Room set aside for what every turn starts with.
+        reserved: The reserved instructions (measured): the largest system
+            prompt, role, memory and task any agent's turn sent, or 0 when
+            none is measured yet.
         usable: What the shares divide.
         reply: The ``max_tokens`` of every agent model call.
         result: The most one command result may add.
@@ -169,7 +179,7 @@ class ContextBudget:
     """
 
     window: int
-    fixed: int
+    reserved: int
     usable: int
     reply: int
     result: int
@@ -197,7 +207,7 @@ class ContextPreset:
     values: Mapping[str, int]
 
 
-def compute_budget(shares: ContextShares) -> ContextBudget:
+def compute_budget(shares: ContextShares, *, reserved: int) -> ContextBudget:
     """Turn the stored shares into token budgets (the formulas on :class:`ContextBudget`).
 
     Pure integer arithmetic; it does not judge the shares. Callers check them
@@ -205,18 +215,23 @@ def compute_budget(shares: ContextShares) -> ContextBudget:
 
     Args:
         shares: The context settings.
+        reserved: The reserved instructions (measured), in tokens: the
+            largest any agent's turn measured, or 0 before any measurement.
 
     Returns:
         Every budget, in tokens.
 
     Raises:
-        ValueError: ``window`` is not larger than ``fixed``, so there is no
-            usable window to share.
+        ValueError: ``reserved`` is negative, or ``window`` is not larger
+            than ``reserved``, so there is no usable window to share.
     """
-    usable = shares.window - shares.fixed
+    if reserved < 0:
+        raise ValueError(f"The reserved instructions cannot be negative ({reserved}).")
+    usable = shares.window - reserved
     if usable < 1:
         raise ValueError(
-            f"Context window ({shares.window}) must be larger than Fixed prompt room ({shares.fixed})."
+            f"Context window ({shares.window:,}) must be larger than the reserved instructions "
+            f"({reserved:,} tokens)."
         )
 
     def pct(percent: int) -> int:
@@ -231,7 +246,7 @@ def compute_budget(shares: ContextShares) -> ContextBudget:
     work = pct(shares.work)
     return ContextBudget(
         window=shares.window,
-        fixed=shares.fixed,
+        reserved=reserved,
         usable=usable,
         reply=reply,
         result=result,
@@ -240,19 +255,22 @@ def compute_budget(shares: ContextShares) -> ContextBudget:
         asked=asked,
         task_log=task_log,
         work=work,
-        worst_chat_turn=shares.fixed + reply + history_cap + asked + result,
-        worst_work_turn=shares.fixed + reply + task_log + work + result,
+        worst_chat_turn=reserved + reply + history_cap + asked + result,
+        worst_work_turn=reserved + reply + task_log + work + result,
     )
 
 
-def check_shares(shares: ContextShares) -> list[str]:
+def check_shares(shares: ContextShares, *, reserved: int, reserved_by: str | None) -> list[str]:
     """List every way the shares break the context rules, in Settings words.
 
     The single source of the never-too-big rule: the Settings route refuses
     a save that would break it, and :func:`read_context_budget` refuses to
     run on stored values that do. The rules:
 
-    - ``window > fixed >= 1``;
+    - ``window >= 1``;
+    - ``window > reserved``, naming the agent whose instructions are the
+      reserve (checked only once something is measured: before that the
+      reserve is 0 and ``window >= 1`` covers it);
     - Reply, Largest command result, History, When you ask, Task log and
       Work are each 1-99;
     - Hard limit is 100-300;
@@ -261,22 +279,35 @@ def check_shares(shares: ContextShares) -> list[str]:
     - work: ``reply + task_log + work + result <= 100``;
     - ``asked >= ceil(work * work_summary / 100)``, so the whole work summary
       fits the paused-work view;
-    - ``usable * work // 100 * work_summary // 100 >= 1``, so the summary
-      has room.
+    - ``usable * work // 100 * work_summary // 100 >= 1`` with
+      ``usable = window - reserved``, so the summary has room.
 
     Args:
         shares: The values to check, stored or about to be.
+        reserved: The reserved instructions (measured), in tokens; 0 before
+            any measurement.
+        reserved_by: The name of the agent whose instructions ``reserved``
+            is; ``None`` only when ``reserved`` is 0.
 
     Returns:
         The operator-facing problems, most basic first; empty when the shares
         are valid.
+
+    Raises:
+        ValueError: ``reserved`` is negative, or positive with no
+            ``reserved_by`` to name in the message.
     """
+    if reserved < 0:
+        raise ValueError(f"The reserved instructions cannot be negative ({reserved}).")
+    if reserved > 0 and not reserved_by:
+        raise ValueError(f"A {reserved}-token reserve must name the agent it was measured for.")
     problems: list[str] = []
-    if shares.fixed < 1:
-        problems.append(f"{SETTING_LABELS[FIXED_SETTING]} must be a whole number of at least 1.")
-    if shares.window <= shares.fixed:
+    if shares.window < 1:
+        problems.append(f"{SETTING_LABELS[WINDOW_SETTING]} must be a whole number of at least 1.")
+    elif reserved > 0 and shares.window <= reserved:
         problems.append(
-            f"Context window ({shares.window:,}) must be larger than Fixed prompt room ({shares.fixed:,})."
+            f"Context window ({shares.window:,}) must be larger than {reserved_by}'s instructions "
+            f"({reserved:,} tokens), the largest of any agent's."
         )
     for name in _USABLE_SHARES:
         if not 1 <= getattr(shares, name) <= 99:
@@ -317,7 +348,7 @@ def check_shares(shares: ContextShares) -> list[str]:
             f"When you ask ({shares.asked}%) must be at least {needed_asked}% (Work {shares.work}% × "
             f"Work summary size {shares.work_summary}%), so an agent's whole summary fits when you message it."
         )
-    usable = shares.window - shares.fixed
+    usable = shares.window - reserved
     if usable >= 1 and usable * shares.work // 100 * shares.work_summary // 100 < 1:
         problems.append(
             f"Work summary size ({shares.work_summary}%) leaves the work summary no room: "
@@ -362,31 +393,79 @@ def read_shares(overrides: Mapping[str, int] | None = None) -> ContextShares:
     return ContextShares(**values)
 
 
-def read_context_budget() -> ContextBudget:
-    """Read, check and compute the current context budget.
+def reserve_of(largest: InstructionSize | None) -> tuple[int, str | None]:
+    """The reserve and whose it is, from the largest stored measurement.
+
+    Args:
+        largest: ``db.largest_instruction_size()``: the largest instructions
+            any existing agent's turn measured, or ``None`` when none is
+            measured yet.
 
     Returns:
-        Every budget, in tokens, from the stored settings.
+        ``(tokens, agent name)``; ``(0, None)`` before any measurement, the
+        documented "not measured yet" state (each agent's first turn then
+        measures and sizes itself, see ``core.agent_loop.turn_prompt``).
+    """
+    if largest is None:
+        return 0, None
+    return largest.tokens, largest.agent_name
+
+
+def checked_budget(shares: ContextShares, largest: InstructionSize | None) -> ContextBudget:
+    """Check the shares against the reserve, then compute the budget.
+
+    The runtime's path (:func:`read_context_budget`). The Settings payload
+    runs the same two steps itself, :func:`check_shares` then
+    :func:`compute_budget` on one read of the reserve, so it can show each
+    problem to the operator instead of failing.
+
+    Args:
+        shares: The context settings.
+        largest: The largest stored instruction measurement, or ``None``.
+
+    Returns:
+        Every budget, in tokens.
 
     Raises:
-        core.config.ConfigError: A setting is missing or not an integer, or
-            the stored values break a rule of :func:`check_shares`; the
-            message lists every problem in Settings words.
+        core.config.ConfigError: The shares break a rule of
+            :func:`check_shares`, the reserve included (the message names
+            the agent whose instructions do not fit the window); every
+            problem is listed in Settings words.
     """
     from core import config
 
-    shares = read_shares()
-    problems = check_shares(shares)
+    reserved, reserved_by = reserve_of(largest)
+    problems = check_shares(shares, reserved=reserved, reserved_by=reserved_by)
     if problems:
         raise config.ConfigError("The Context Window settings are invalid: " + " ".join(problems))
-    return compute_budget(shares)
+    return compute_budget(shares, reserved=reserved)
+
+
+def read_context_budget() -> ContextBudget:
+    """Read, check and compute the current context budget.
+
+    The stored shares plus the reserved instructions (measured): the largest
+    stored instruction measurement of any existing agent, on every floor,
+    because one Context window covers them all; 0 before any measurement.
+
+    Returns:
+        Every budget, in tokens, from the stored settings and measurements.
+
+    Raises:
+        core.config.ConfigError: A setting is missing or not an integer, or
+            the stored values break a rule of :func:`check_shares`, the
+            reserve included; the message lists every problem in Settings
+            words and names the agent whose instructions do not fit.
+    """
+    import db
+
+    return checked_budget(read_shares(), db.largest_instruction_size())
 
 
 # ─── Presets ───
 
 # Shared by every preset (D3); each preset sets the rest.
 _PRESET_COMMON: Mapping[str, int] = MappingProxyType({
-    FIXED_SETTING: 12_000,
     RESULT_SETTING: 5,
     HISTORY_CEILING_SETTING: 125,
     ASKED_SETTING: 25,

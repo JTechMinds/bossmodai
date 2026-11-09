@@ -19,7 +19,6 @@ from core.context_budget import (
     COMPACTION_KEEP_SETTING,
     COMPACTION_START_SETTING,
     CONTEXT_PRESETS,
-    FIXED_SETTING,
     HISTORY_SETTING,
     NOTES_MAX_SETTING,
     PRESET_SETTINGS,
@@ -29,9 +28,10 @@ from core.context_budget import (
     ContextPreset,
     active_preset,
     check_shares,
+    compute_budget,
     find_preset,
-    read_context_budget,
     read_shares,
+    reserve_of,
 )
 from core.bm_cli.approval_gate import GLOBAL_AUTO_APPROVE_SETTING
 from core.llm import connection_health
@@ -132,21 +132,66 @@ def _percent_of(part: int, whole: int) -> int:
 
 
 def _context_budget_payload() -> dict:
-    """The Context Window tab's numbers: every budget, the worst cases and the presets.
+    """The Context Window tab's numbers: every budget, the reserve and whose it is, the worst cases and the presets.
+
+    The budget and ``reserved_by`` come from one read of the largest stored
+    instruction measurement, so the agent the tab names is always the one
+    whose instructions the numbers were computed with.
+
+    Stored settings that break a rule are not a server error: the tab is
+    where the operator fixes them, so they come back as ``problems`` with
+    what the tab needs to offer a fix (the presets and the reserve). The
+    save routes refuse such values, so this is a damaged settings row, or
+    an agent's measured instructions have outgrown the window since it was
+    saved (the problem names the agent).
+
+    Returns:
+        Always ``problems`` (``list[str]``), ``presets``,
+        ``reserved``, ``reserved_by`` and ``active_preset``. When
+        ``problems`` is empty, also every budget, the worst cases and
+        ``values`` (see :func:`get_context_budget`). Otherwise those are
+        left out, because no budget can be computed, and ``active_preset``
+        is ``None``. ``problems`` is one message when a setting is missing
+        or not an integer, else every rule ``check_shares`` reports.
 
     Raises:
-        HTTPException: 500 naming every problem when the stored Context
-            Window settings are missing or break the rules; the save routes
-            refuse such values, so this is a damaged database.
+        Anything unexpected, such as the database failing, propagates: only
+        a settings problem is reported instead of raised.
     """
+    largest = db.largest_instruction_size()
+    reserved, reserved_name = reserve_of(largest)
+    reserved_by = None
+    if largest is not None:
+        reserved_by = {
+            "agent_id": largest.agent_id,
+            "agent_name": largest.agent_name,
+            "measured_at": largest.measured_at.isoformat(),
+        }
+    # What the tab needs to offer a fix, whether or not a budget can be computed.
+    fixable = {
+        "reserved": reserved,
+        "reserved_by": reserved_by,
+        "active_preset": None,
+        "presets": [{"id": preset.id, "label": preset.label} for preset in CONTEXT_PRESETS],
+    }
     try:
-        budget = read_context_budget()
+        shares = read_shares()
+    except config.ConfigError as exc:
+        return {"problems": [str(exc)], **fixable}
+    # check_shares, not checked_budget: each problem stays its own message.
+    problems = check_shares(shares, reserved=reserved, reserved_by=reserved_name)
+    if problems:
+        return {"problems": problems, **fixable}
+    try:
         values = {key: config.require_int(key) for key in PRESET_SETTINGS}
     except config.ConfigError as exc:
-        raise HTTPException(500, str(exc)) from exc
+        return {"problems": [str(exc)], **fixable}
+    budget = compute_budget(shares, reserved=reserved)
     return {
+        "problems": [],
         "window": budget.window,
-        "fixed": budget.fixed,
+        "reserved": budget.reserved,
+        "reserved_by": reserved_by,
         "usable": budget.usable,
         "reply": budget.reply,
         "result": budget.result,
@@ -162,7 +207,7 @@ def _context_budget_payload() -> dict:
         # The stored percents behind the numbers, for the tab's summaries.
         "values": values,
         "active_preset": active_preset(values),
-        "presets": [{"id": preset.id, "label": preset.label} for preset in CONTEXT_PRESETS],
+        "presets": fixable["presets"],
     }
 
 
@@ -170,28 +215,48 @@ def _context_budget_payload() -> dict:
 async def get_context_budget():
     """Return the context window budget for Settings → System Settings → Context Window.
 
+    Answers 200 even when the stored settings break a rule: the tab is where
+    they are fixed, so it gets the problems and what it needs to offer a
+    fix rather than an error (see :func:`_context_budget_payload`).
+
     Returns:
-        ``window``, ``fixed``, ``usable``, ``reply``, ``result``,
+        One of two shapes, told apart by ``problems`` (``list[str]``).
+
+        Always: ``problems``; ``presets`` as ``[{"id", "label"}]``;
+        ``reserved`` and ``reserved_by`` as below; ``active_preset``.
+
+        ``problems`` empty, the budget: ``window``, ``reserved``,
+        ``usable``, ``reply``, ``result``,
         ``history``, ``history_cap``, ``asked``, ``task_log`` and ``work``
-        in tokens (``core.context_budget.ContextBudget``);
+        in tokens (``core.context_budget.ContextBudget``; ``reserved`` is
+        the largest measured instructions of any agent, 0 when none is
+        measured yet); ``reserved_by``, the agent those instructions are,
+        as ``{"agent_id", "agent_name", "measured_at"}`` (ISO 8601, UTC),
+        or ``None`` before any measurement;
         ``worst_chat_turn`` and ``worst_work_turn`` in tokens with
         ``worst_chat_percent`` and ``worst_work_percent`` as whole percents
         of the window; ``values``, the stored setting behind each number;
-        ``active_preset`` (``"small"``, ``"medium"``, ``"large"``, or
-        ``None`` when any value differs from every preset); and
-        ``presets`` as ``[{"id", "label"}]``.
+        and ``active_preset`` (``"small"``, ``"medium"``, ``"large"``, or
+        ``None`` when any value differs from every preset).
+
+        ``problems`` not empty, the settings can't be used: a setting is
+        missing or not an integer (one message naming it), or the values
+        break the context rules, the measured instructions outgrowing the
+        window included (one message per rule, naming the agent). No
+        budget, worst case or ``values`` is sent, and ``active_preset`` is
+        ``None``; saving a fixed value or applying a preset clears them.
 
     Raises:
-        HTTPException: 500 when the stored Context Window settings are
-            missing or invalid; the detail lists the problems.
+        Anything unexpected, such as the database failing, propagates as a
+        server error; a settings problem never does.
     """
     return _context_budget_payload()
 
 
-def _preset_problems(preset: ContextPreset) -> list[str]:
-    """Every rule a preset would break: ``check_shares``, and the conversation-memory ranges and order."""
+def _preset_problems(preset: ContextPreset, *, reserved: int, reserved_by: str | None) -> list[str]:
+    """Every rule a preset would break: ``check_shares`` at this reserve, and the conversation-memory ranges and order."""
     shares = read_shares({key: value for key, value in preset.values.items() if key in SHARE_SETTINGS})
-    problems = check_shares(shares)
+    problems = check_shares(shares, reserved=reserved, reserved_by=reserved_by)
     for key in (COMPACTION_START_SETTING, COMPACTION_KEEP_SETTING, NOTES_MAX_SETTING):
         label, low, high = _PERCENT_SETTINGS[key]
         if not low <= preset.values[key] <= high:
@@ -224,16 +289,22 @@ async def apply_context_preset(preset_id: str):
 
     Raises:
         HTTPException: 404 for an unknown preset; 500 when the preset itself
-            breaks a context rule (a shipped value is wrong), naming every
-            problem, before anything is written.
+            breaks a context rule with nothing reserved (a shipped value is
+            wrong), naming every problem; 400 when it cannot hold the
+            measured instructions (its window is at or below them), naming
+            the agent. Both before anything is written.
     """
     try:
         preset = find_preset(preset_id)
     except KeyError as exc:
         raise HTTPException(404, f"There is no context preset named {preset_id!r}.") from exc
-    problems = _preset_problems(preset)
+    problems = _preset_problems(preset, reserved=0, reserved_by=None)
     if problems:
         raise HTTPException(500, f"The {preset.label} preset breaks the context rules: {' '.join(problems)}")
+    reserved, reserved_by = reserve_of(db.largest_instruction_size())
+    unfit = _preset_problems(preset, reserved=reserved, reserved_by=reserved_by)
+    if unfit:
+        raise HTTPException(400, " ".join(unfit))
     categories = {row.key: row.category for row in db.get_settings()}
     with db.transaction():
         for key, value in preset.values.items():
@@ -370,7 +441,6 @@ _PERCENT_SETTINGS = {
 CONVERSATION_COMPACTION_SETTINGS = frozenset({
     "conversation_compaction_enabled",
     WINDOW_SETTING,
-    FIXED_SETTING,
     HISTORY_SETTING,
     *_PERCENT_SETTINGS,
 })
@@ -526,12 +596,14 @@ def _validate_context_setting(key: str, value: str) -> None:
     """Refuse a Context Window value that would let any turn outgrow the window.
 
     For every key ``core.context_budget.check_shares`` governs (the window,
-    the fixed prompt room, the six shares of the usable window, Hard limit,
-    Work kept after summarizing and Work summary size): the value must be a
-    base-10 whole number, and the stored settings with this one value
-    replaced must pass ``check_shares``, the single source of the rule that
-    a chat turn and a work turn both fit. So no saved combination can stop a
-    turn with ``ConfigError``.
+    the six shares of the usable window, Hard limit, Work kept after
+    summarizing and Work summary size): the value must be a base-10 whole
+    number, and the stored settings with this one value replaced must pass
+    ``check_shares`` at the current reserve (the largest measured
+    instructions, ``db.largest_instruction_size``), the single source of the
+    rule that a chat turn and a work turn both fit. So no saved combination
+    can stop a turn with ``ConfigError``; a window at or below the reserve
+    is refused naming the agent whose instructions it is.
 
     Args:
         key: Setting key being written. Other keys are not checked.
@@ -547,7 +619,8 @@ def _validate_context_setting(key: str, value: str) -> None:
     # isascii + isdigit: base-10 digits only, so "-1", "+5" and "1_0" are refused.
     if not (stripped.isascii() and stripped.isdigit()):
         raise HTTPException(400, f"{SETTING_LABELS[key]} must be a whole number.")
-    problems = check_shares(read_shares({key: int(stripped, 10)}))
+    reserved, reserved_by = reserve_of(db.largest_instruction_size())
+    problems = check_shares(read_shares({key: int(stripped, 10)}), reserved=reserved, reserved_by=reserved_by)
     if problems:
         raise HTTPException(400, problems[0])
 

@@ -476,6 +476,9 @@ def delete_agent_rows(agent_id: str) -> bool:
         # frozen work transcripts reference activities
         execute("DELETE FROM work_snapshots WHERE agent_id = $1", [agent_id])
         execute("DELETE FROM work_summary_overflows WHERE agent_id = $1", [agent_id])
+        # its measured instructions: largest_instruction_size joins agents, but
+        # a stale row would otherwise outlive the agent
+        execute("DELETE FROM agent_instruction_sizes WHERE agent_id = $1", [agent_id])
         # activities (clear self-referential parent_activity_id first)
         execute(
             "UPDATE activities SET parent_activity_id = NULL WHERE agent_id = $1 AND parent_activity_id IS NOT NULL",

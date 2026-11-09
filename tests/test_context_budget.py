@@ -1,7 +1,9 @@
 """core/context_budget.py: one context window in tokens, its rules, presets and the result cap.
 
 The domain functions are pure (except the two readers); the API section runs
-the Settings routes against the isolated test database (conftest.py).
+the Settings routes against the isolated test database (conftest.py). The
+reserve is measured, never set: on a fresh database nothing is measured and
+it is 0; a test that needs one records an agent's instruction size.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ from core.context_budget import (
     fit_command_result,
     read_context_budget,
     read_shares,
+    reserve_of,
 )
 from core.llm.client import count_text_tokens
 from db.crud import query, query_one
@@ -40,6 +43,8 @@ _OLD_KEYS = (
     "conversation_history_budget_tokens",
     "default_max_tokens",
     "cli_max_read_chars",
+    # Fixed prompt room: the reserve is measured now.
+    "context_fixed_tokens",
 )
 
 
@@ -65,29 +70,47 @@ def _shares(preset_id: str, **changes: int) -> ContextShares:
     return ContextShares(**{**{name: getattr(shares, name) for name in shares.__slots__}, **changes})
 
 
-# ─── compute_budget: the D3 numbers ───
+# ─── compute_budget: the shares of what the reserve leaves ───
 
 
 @pytest.mark.parametrize(
-    ("preset_id", "expected"),
+    ("preset_id", "reserved", "expected"),
     [
-        ("small", (32_000, 12_000, 20_000, 3_000, 1_000, 3_000, 3_750, 5_000, 1_000, 11_000, 24_750, 28_000)),
-        ("medium", (128_000, 12_000, 116_000, 13_920, 5_800, 23_200, 29_000, 29_000, 5_800, 69_600, 89_720, 107_120)),
-        ("large", (256_000, 12_000, 244_000, 29_280, 12_200, 48_800, 61_000, 61_000, 12_200, 146_400, 175_480, 212_080)),
+        # Nothing measured yet: the shares divide the whole window.
+        ("small", 0, (32_000, 0, 32_000, 4_800, 1_600, 4_800, 6_000, 8_000, 1_600, 17_600, 20_400, 25_600)),
+        ("medium", 0, (128_000, 0, 128_000, 15_360, 6_400, 25_600, 32_000, 32_000, 6_400, 76_800, 85_760, 104_960)),
+        ("large", 0, (256_000, 0, 256_000, 30_720, 12_800, 51_200, 64_000, 64_000, 12_800, 153_600, 171_520, 209_920)),
+        # The plan's example (D15): Large with a 10,000-token reserve.
+        (
+            "large", 10_000,
+            (256_000, 10_000, 246_000, 29_520, 12_300, 49_200, 61_500, 61_500, 12_300, 147_600, 174_820, 211_720),
+        ),
+        ("small", 10_000, (32_000, 10_000, 22_000, 3_300, 1_100, 3_300, 4_125, 5_500, 1_100, 12_100, 24_025, 27_600)),
     ],
 )
-def test_each_preset_computes_the_planned_numbers(preset_id: str, expected: tuple[int, ...]) -> None:
-    budget = compute_budget(_shares(preset_id))
+def test_each_preset_computes_its_numbers_around_the_reserve(
+    preset_id: str, reserved: int, expected: tuple[int, ...],
+) -> None:
+    budget = compute_budget(_shares(preset_id), reserved=reserved)
     assert (
-        budget.window, budget.fixed, budget.usable, budget.reply, budget.result, budget.history,
+        budget.window, budget.reserved, budget.usable, budget.reply, budget.result, budget.history,
         budget.history_cap, budget.asked, budget.task_log, budget.work, budget.worst_chat_turn,
         budget.worst_work_turn,
     ) == expected
 
 
+def test_the_message_being_answered_has_the_free_room() -> None:
+    """D14: Large with a 10,000-token reserve leaves 44,280 free on the worst work turn, 81,180 on chat."""
+    budget = compute_budget(_shares("large"), reserved=10_000)
+    assert budget.window - budget.worst_work_turn == 44_280
+    assert budget.window - budget.worst_chat_turn == 81_180
+
+
 def test_compute_budget_refuses_a_window_with_no_usable_room() -> None:
-    with pytest.raises(ValueError, match="must be larger than Fixed prompt room"):
-        compute_budget(_shares("medium", window=12_000))
+    with pytest.raises(ValueError, match=r"Context window \(12,000\) must be larger than the reserved instructions"):
+        compute_budget(_shares("medium", window=12_000), reserved=12_000)
+    with pytest.raises(ValueError, match="cannot be negative"):
+        compute_budget(_shares("medium"), reserved=-1)
 
 
 # ─── check_shares: the never-too-big rule ───
@@ -95,7 +118,12 @@ def test_compute_budget_refuses_a_window_with_no_usable_room() -> None:
 
 def test_every_preset_passes_every_rule() -> None:
     for preset in CONTEXT_PRESETS:
-        assert check_shares(_shares(preset.id)) == [], preset.id
+        assert check_shares(_shares(preset.id), reserved=0, reserved_by=None) == [], preset.id
+
+
+def test_every_preset_holds_a_10000_token_reserve() -> None:
+    for preset in CONTEXT_PRESETS:
+        assert check_shares(_shares(preset.id), reserved=10_000, reserved_by="Eng-A") == [], preset.id
 
 
 def test_every_preset_keeps_the_conversation_memory_order() -> None:
@@ -110,8 +138,12 @@ def test_every_preset_keeps_the_conversation_memory_order() -> None:
 @pytest.mark.parametrize(
     ("changes", "problem"),
     [
-        ({"window": 12_000}, "Context window (12,000) must be larger than Fixed prompt room (12,000)."),
-        ({"fixed": 0}, "Fixed prompt room must be a whole number of at least 1."),
+        (
+            {"window": 12_000},
+            "Context window (12,000) must be larger than Eng-A's instructions (12,000 tokens), "
+            "the largest of any agent's.",
+        ),
+        ({"window": 0}, "Context window must be a whole number of at least 1."),
         ({"reply": 0}, "Reply must be a whole number from 1 to 99."),
         ({"result": 100}, "Largest command result must be a whole number from 1 to 99."),
         ({"history_ceiling": 99}, "Hard limit must be a whole number from 100 to 300."),
@@ -139,11 +171,34 @@ def test_every_preset_keeps_the_conversation_memory_order() -> None:
     ],
 )
 def test_each_rule_names_the_settings_it_breaks(changes: dict[str, int], problem: str) -> None:
-    assert problem in check_shares(_shares("medium", **changes))
+    """Checked at a 12,000-token reserve measured for Eng-A."""
+    assert problem in check_shares(_shares("medium", **changes), reserved=12_000, reserved_by="Eng-A")
+
+
+def test_a_window_of_zero_is_named_once() -> None:
+    assert check_shares(_shares("medium", window=0), reserved=12_000, reserved_by="Eng-A")[:1] == [
+        "Context window must be a whole number of at least 1."
+    ]
+    assert not any("instructions" in problem for problem in check_shares(
+        _shares("medium", window=0), reserved=12_000, reserved_by="Eng-A",
+    ))
+
+
+def test_nothing_measured_has_no_reserve_rule() -> None:
+    # 1 token of window: every share rounds to nothing, but no agent is named.
+    problems = check_shares(_shares("medium", window=1), reserved=0, reserved_by=None)
+    assert not any("instructions" in problem for problem in problems)
+
+
+def test_a_reserve_must_name_its_agent_and_cannot_be_negative() -> None:
+    with pytest.raises(ValueError, match="must name the agent"):
+        check_shares(_shares("medium"), reserved=10_000, reserved_by=None)
+    with pytest.raises(ValueError, match="cannot be negative"):
+        check_shares(_shares("medium"), reserved=-1, reserved_by=None)
 
 
 def test_a_total_of_exactly_100_percent_is_allowed() -> None:
-    assert check_shares(_shares("medium", work=78)) == []  # 12 + 5 + 78 + 5 = 100
+    assert check_shares(_shares("medium", work=78), reserved=0, reserved_by=None) == []  # 12 + 5 + 78 + 5 = 100
 
 
 # ─── reading the stored settings ───
@@ -154,7 +209,63 @@ def test_the_seeds_are_the_medium_preset() -> None:
     for key in PRESET_SETTINGS:
         seeded = get_seed_setting_default(key)
         assert seeded is not None and seeded[0] == str(medium.values[key]), key
-    assert read_context_budget() == compute_budget(_shares("medium"))
+    assert get_seed_setting_default("context_fixed_tokens") is None, "the reserve is measured, not seeded"
+    assert read_context_budget() == compute_budget(_shares("medium"), reserved=0)
+
+
+# ─── the measured reserve ───
+
+
+def test_an_instruction_size_is_one_row_per_agent_replaced_each_time() -> None:
+    agent = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(agent.id, 9_052)
+    first = db.largest_instruction_size()
+    db.record_instruction_size(agent.id, 9_937)
+    rows = query("SELECT agent_id, tokens FROM agent_instruction_sizes")
+    assert rows == [{"agent_id": agent.id, "tokens": 9_937}]
+    latest = db.largest_instruction_size()
+    assert latest is not None and first is not None
+    assert (latest.agent_id, latest.agent_name, latest.tokens) == (agent.id, "Eng-A", 9_937)
+    assert latest.measured_at >= first.measured_at
+    assert latest.measured_at.tzinfo is not None, "stored and read back in UTC"
+
+
+def test_a_bad_instruction_size_is_refused() -> None:
+    agent = db.create_agent("Eng-A", role="Eng")
+    with pytest.raises(ValueError, match="cannot be negative"):
+        db.record_instruction_size(agent.id, -1)
+    with pytest.raises(ValueError, match="needs the agent"):
+        db.record_instruction_size("  ", 10)
+    assert db.largest_instruction_size() is None
+
+
+def test_the_reserve_is_the_largest_measurement_of_an_existing_agent() -> None:
+    assert db.largest_instruction_size() is None
+    assert reserve_of(None) == (0, None)
+    small = db.create_agent("Ada", role="Eng")
+    large = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(small.id, 4_000)
+    db.record_instruction_size(large.id, 9_937)
+    # A row left by an agent that no longer exists never counts.
+    db.record_instruction_size("agent-gone", 50_000)
+
+    largest = db.largest_instruction_size()
+    assert largest is not None
+    assert reserve_of(largest) == (9_937, "Eng-A")
+    budget = read_context_budget()
+    assert (budget.reserved, budget.usable) == (9_937, 128_000 - 9_937)
+    assert budget == compute_budget(_shares("medium"), reserved=9_937)
+
+
+def test_instructions_that_outgrow_the_window_stop_the_budget_naming_the_agent() -> None:
+    agent = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(agent.id, 130_000)
+    with pytest.raises(config.ConfigError) as excinfo:
+        read_context_budget()
+    assert str(excinfo.value) == (
+        "The Context Window settings are invalid: Context window (128,000) must be larger than "
+        "Eng-A's instructions (130,000 tokens), the largest of any agent's."
+    )
 
 
 def test_read_shares_takes_overrides_and_refuses_unknown_keys() -> None:
@@ -255,13 +366,17 @@ def test_the_budget_route_returns_the_numbers_and_the_presets() -> None:
 
     assert res.status_code == 200, res.text
     body = res.json()
+    assert "fixed" not in body
+    assert body["problems"] == []
+    # Nothing measured yet: the shares divide the whole window.
     assert {key: body[key] for key in (
-        "window", "fixed", "usable", "reply", "result", "history", "history_cap", "asked", "task_log", "work",
-        "worst_chat_turn", "worst_work_turn", "worst_chat_percent", "worst_work_percent",
+        "window", "reserved", "reserved_by", "usable", "reply", "result", "history", "history_cap", "asked",
+        "task_log", "work", "worst_chat_turn", "worst_work_turn", "worst_chat_percent", "worst_work_percent",
     )} == {
-        "window": 128_000, "fixed": 12_000, "usable": 116_000, "reply": 13_920, "result": 5_800,
-        "history": 23_200, "history_cap": 29_000, "asked": 29_000, "task_log": 5_800, "work": 69_600,
-        "worst_chat_turn": 89_720, "worst_work_turn": 107_120, "worst_chat_percent": 70, "worst_work_percent": 84,
+        "window": 128_000, "reserved": 0, "reserved_by": None, "usable": 128_000, "reply": 15_360,
+        "result": 6_400, "history": 25_600, "history_cap": 32_000, "asked": 32_000, "task_log": 6_400,
+        "work": 76_800, "worst_chat_turn": 85_760, "worst_work_turn": 104_960, "worst_chat_percent": 67,
+        "worst_work_percent": 82,
     }
     assert body["active_preset"] == "medium"
     assert body["presets"] == [
@@ -272,6 +387,160 @@ def test_the_budget_route_returns_the_numbers_and_the_presets() -> None:
     assert body["values"] == dict(find_preset("medium").values)
 
 
+def test_the_budget_route_names_the_agent_the_reserve_is_based_on() -> None:
+    client, headers = _client()
+    agent = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(agent.id, 9_937)
+    measured = db.largest_instruction_size()
+    assert measured is not None
+
+    body = client.get("/api/settings/context-budget", headers=headers).json()
+
+    assert body["reserved"] == 9_937
+    assert body["reserved_by"] == {
+        "agent_id": agent.id, "agent_name": "Eng-A", "measured_at": measured.measured_at.isoformat(),
+    }
+    assert body["usable"] == 128_000 - 9_937
+    assert body["reply"] == (128_000 - 9_937) * 12 // 100
+
+
+_BUDGET_KEYS = (
+    "window", "usable", "reply", "result", "history", "history_cap", "asked", "task_log", "work",
+    "worst_chat_turn", "worst_work_turn", "worst_chat_percent", "worst_work_percent", "values",
+)
+
+
+def test_an_outgrown_window_is_reported_not_a_server_error_and_a_larger_window_fixes_it() -> None:
+    """Instructions measured after the window was saved: the tab gets the problem, the presets and the reserve."""
+    client, headers = _client()
+    agent = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(agent.id, 40_000)
+    # Straight to the table: the route would refuse it, which is the point.
+    db.set_setting("context_window_tokens", "32000", "context")
+    config.reload()
+
+    res = client.get("/api/settings/context-budget", headers=headers)
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["problems"] == [
+        "Context window (32,000) must be larger than Eng-A's instructions (40,000 tokens), "
+        "the largest of any agent's."
+    ]
+    assert [preset["id"] for preset in body["presets"]] == ["small", "medium", "large"]
+    assert body["reserved"] == 40_000
+    assert body["reserved_by"]["agent_name"] == "Eng-A"
+    assert body["active_preset"] is None
+    assert not set(_BUDGET_KEYS) & set(body), "no number is worked out from settings that break a rule"
+
+    # Small cannot hold the reserve either; nothing is written.
+    small = client.post("/api/settings/context-presets/small", headers=headers)
+    assert small.status_code == 400
+    assert "Eng-A's instructions (40,000 tokens)" in small.json()["detail"]
+
+    fixed = client.put(
+        "/api/settings/context_window_tokens", params={"value": "128000", "category": "context"}, headers=headers,
+    )
+    assert fixed.status_code == 200, fixed.text
+    after = client.get("/api/settings/context-budget", headers=headers).json()
+    assert after["problems"] == []
+    assert (after["window"], after["reserved"], after["usable"]) == (128_000, 40_000, 88_000)
+    assert after["work"] == 88_000 * 60 // 100
+    assert after["active_preset"] == "medium"
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "context_work_percent",  # a share: read_shares
+        "conversation_compaction_start_percent",  # a preset value outside the shares
+    ],
+)
+def test_a_missing_row_is_reported_and_a_preset_restores_it(key: str) -> None:
+    client, headers = _client()
+    db.execute("DELETE FROM settings WHERE key = $1", [key])
+    config.reload()
+
+    res = client.get("/api/settings/context-budget", headers=headers)
+
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert len(body["problems"]) == 1 and key in body["problems"][0], body["problems"]
+    assert [preset["id"] for preset in body["presets"]] == ["small", "medium", "large"]
+    assert (body["reserved"], body["reserved_by"], body["active_preset"]) == (0, None, None)
+    assert not set(_BUDGET_KEYS) & set(body)
+
+    applied = client.post("/api/settings/context-presets/large", headers=headers)
+
+    assert applied.status_code == 200, applied.text
+    restored = applied.json()
+    assert restored["problems"] == []
+    assert restored["active_preset"] == "large"
+    assert (restored["worst_work_turn"], restored["worst_work_percent"]) == (209_920, 82)
+    assert restored["values"][key] == find_preset("large").values[key]
+
+
+def test_a_window_at_or_below_the_reserve_is_refused_naming_the_agent() -> None:
+    client, headers = _client()
+    agent = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(agent.id, 9_937)
+
+    for value in ("9937", "9000"):
+        res = client.put(
+            "/api/settings/context_window_tokens", params={"value": value, "category": "context"}, headers=headers,
+        )
+        assert res.status_code == 400, value
+        assert res.json()["detail"] == (
+            f"Context window ({int(value):,}) must be larger than Eng-A's instructions (9,937 tokens), "
+            "the largest of any agent's."
+        )
+    config.reload()
+    assert config.require_int("context_window_tokens") == 128_000
+    res = client.put(
+        "/api/settings/context_window_tokens", params={"value": "64000", "category": "context"}, headers=headers,
+    )
+    assert res.status_code == 200, res.text
+
+
+def test_a_preset_that_cannot_hold_the_reserve_is_refused_naming_the_agent() -> None:
+    client, headers = _client()
+    agent = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(agent.id, 33_000)
+
+    res = client.post("/api/settings/context-presets/small", headers=headers)
+
+    assert res.status_code == 400
+    assert res.json()["detail"] == (
+        "Context window (32,000) must be larger than Eng-A's instructions (33,000 tokens), "
+        "the largest of any agent's."
+    )
+    config.reload()
+    assert config.require_int("context_window_tokens") == 128_000, "nothing was written"
+    applied = client.post("/api/settings/context-presets/large", headers=headers)
+    assert applied.status_code == 200, applied.text
+    assert applied.json()["reserved"] == 33_000
+
+
+def test_a_shipped_preset_that_breaks_a_share_rule_stays_a_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Checked with nothing reserved, so it is the preset's own values that are wrong, not the window."""
+    from api.routes import settings as settings_route
+    from core.context_budget import ContextPreset
+
+    broken = ContextPreset(
+        id="large", label="Large (256K)",
+        values={**find_preset("large").values, "context_reply_percent": 0},
+    )
+    monkeypatch.setattr(settings_route, "find_preset", lambda _preset_id: broken)
+    client, headers = _client()
+
+    res = client.post("/api/settings/context-presets/large", headers=headers)
+
+    assert res.status_code == 500
+    assert res.json()["detail"] == (
+        "The Large (256K) preset breaks the context rules: Reply must be a whole number from 1 to 99."
+    )
+
+
 def test_the_large_preset_writes_every_value_and_becomes_active() -> None:
     client, headers = _client()
 
@@ -280,8 +549,8 @@ def test_the_large_preset_writes_every_value_and_becomes_active() -> None:
     assert res.status_code == 200, res.text
     body = res.json()
     assert body["active_preset"] == "large"
-    assert (body["worst_chat_turn"], body["worst_chat_percent"]) == (175_480, 69)
-    assert (body["worst_work_turn"], body["worst_work_percent"]) == (212_080, 83)
+    assert (body["worst_chat_turn"], body["worst_chat_percent"]) == (171_520, 67)
+    assert (body["worst_work_turn"], body["worst_work_percent"]) == (209_920, 82)
     config.reload()
     for key, value in find_preset("large").values.items():
         assert config.require_int(key) == value, key
@@ -362,7 +631,13 @@ def test_a_character_sized_overflow_table_is_dropped_and_recreated() -> None:
 
 
 def _render_panel() -> dict:
-    """Run the panel harness on the real payloads: Medium, and Medium with one edit (Custom)."""
+    """Run the panel harness on the real payloads.
+
+    Medium with nothing measured; Medium with one edit (Custom); Medium
+    once Eng-A's instructions are measured at 9,937 tokens; and, last,
+    settings that break two rules (Eng-A's instructions grown to 40,000
+    against a 32,000 window, and Reply at 0), so the tab is the recovery card.
+    """
     import json
     import subprocess
 
@@ -373,6 +648,19 @@ def _render_panel() -> dict:
     )
     assert edit.status_code == 200, edit.text
     custom = client.get("/api/settings/context-budget", headers=headers).json()
+    restore = client.put(
+        "/api/settings/context_work_percent", params={"value": "60", "category": "context"}, headers=headers,
+    )
+    assert restore.status_code == 200, restore.text
+    agent = db.create_agent("Eng-A", role="Eng")
+    db.record_instruction_size(agent.id, 9_937)
+    measured = client.get("/api/settings/context-budget", headers=headers).json()
+    db.record_instruction_size(agent.id, 40_000)
+    # Straight to the table: the route would refuse both.
+    db.set_setting("context_window_tokens", "32000", "context")
+    db.set_setting("context_reply_percent", "0", "context")
+    config.reload()
+    recovery = client.get("/api/settings/context-budget", headers=headers).json()
     root = Path(__file__).resolve().parents[1]
     js = root / "ui" / "static" / "js"
     result = subprocess.run(
@@ -381,7 +669,7 @@ def _render_panel() -> dict:
             str(Path(__file__).resolve().parent / "js_context_panel_harness.cjs"),
             str(js / "core" / "format.js"),
             str(js / "settings" / "settings-context-panel.js"),
-            json.dumps({"medium": medium, "custom": custom}),
+            json.dumps({"medium": medium, "custom": custom, "measured": measured, "recovery": recovery}),
         ],
         check=False,
         capture_output=True,
@@ -393,8 +681,9 @@ def _render_panel() -> dict:
 
 def test_the_panel_lays_out_both_modes_with_every_slot_and_number() -> None:
     medium = _render_panel()["medium"]
+    # No Fixed prompt room: the reserve is a read-only line, not a setting.
     assert medium["slots"] == [
-        "context_window_tokens", "context_fixed_tokens", "context_reply_percent", "context_result_percent",
+        "context_window_tokens", "context_reply_percent", "context_result_percent",
         "context_history_percent", "conversation_compaction_enabled", "conversation_compaction_start_percent",
         "conversation_compaction_keep_percent", "conversation_notes_max_percent",
         "conversation_history_ceiling_percent", "context_asked_percent", "context_task_log_percent",
@@ -403,12 +692,13 @@ def test_the_panel_lays_out_both_modes_with_every_slot_and_number() -> None:
         "standing_prefs_section_max_chars",
     ]
     assert medium["derived"] == [
-        "= 13,920 tokens", "= 5,800 tokens", "= 23,200 tokens (up to 29,000)", "= 29,000 tokens",
-        "= 5,800 tokens", "= 69,600 tokens",
+        "= 15,360 tokens", "= 6,400 tokens", "= 25,600 tokens (up to 32,000)", "= 32,000 tokens",
+        "= 6,400 tokens", "= 76,800 tokens",
     ]
     assert len(medium["bars"]) == 2
-    assert medium["bars"][0].startswith("A chat turn at its largest, out of a 128,000-token window:")
-    assert medium["bars"][1].endswith("Largest result 5,800, Free 20,880 tokens.")
+    assert medium["bars"][0].startswith("A chat turn at its largest, out of a 128,000-token window: Instructions 0,")
+    assert medium["bars"][1].endswith("Largest result 6,400, Free 23,040 tokens.")
+    assert medium["legend"][0] == "Instructions", "the first segment is the instructions"
     assert medium["details"] == 2 and len(medium["summaries"]) == 2
     assert medium["alert"] == 1, "the starting points have their own alert line"
 
@@ -419,12 +709,73 @@ def test_the_panel_marks_the_active_preset_or_shows_custom() -> None:
     assert panel["medium"]["custom"] == 0
     assert panel["custom"]["pressed"] == ["false", "false", "false"]
     assert panel["custom"]["custom"] == 1
-    assert panel["custom"]["derived"][-1] == "= 68,440 tokens", "Work 59% of 116,000"
+    assert panel["custom"]["derived"][-1] == "= 75,520 tokens", "Work 59% of 128,000"
+
+
+def test_the_model_card_says_the_reserve_is_not_measured_yet() -> None:
+    medium = _render_panel()["medium"]
+    assert medium["reserved"] == [
+        "Reserved for instructions: not measured yet. Each agent's instructions are measured on its next turn."
+    ]
+    assert medium["usable"] == ["Usable window: 128,000 tokens (context window minus reserved instructions)"]
+
+
+def test_the_model_card_names_the_agent_the_reserve_is_based_on() -> None:
+    panel = _render_panel()
+    measured = panel["measured"]
+    assert measured["reserved"] == [
+        "Reserved for instructions: 9,937 tokens. Based on Eng-A, the agent with the largest instructions "
+        "(system prompt, role, memory and task), measured just now. Everything below is a share of what's left."
+    ]
+    assert panel["threeMinutesAgo"]["reserved"][0].endswith(
+        "measured 3m ago. Everything below is a share of what's left."
+    )
+    assert measured["usable"] == ["Usable window: 118,063 tokens (context window minus reserved instructions)"]
+    # The Instructions segment carries the reserve, in the bar's name and its legend.
+    assert measured["bars"][0].startswith(
+        "A chat turn at its largest, out of a 128,000-token window: Instructions 9,937, Reply 14,167,"
+    )
+    assert measured["bars"][1].startswith(
+        "A work turn at its largest, out of a 128,000-token window: Instructions 9,937, Reply 14,167,"
+    )
 
 
 def test_the_panel_escapes_what_it_shows() -> None:
-    hostile = _render_panel()["hostile"]
-    assert hostile == {"rawQuote": False, "rawTag": False, "escapedTag": True}
+    panel = _render_panel()
+    assert panel["hostile"] == {"rawQuote": False, "rawTag": False, "escapedTag": True}
+    assert panel["hostileRecovery"] == {"rawTag": False, "escapedTag": True}, "the problems are escaped too"
+
+
+def test_settings_that_break_a_rule_get_the_recovery_model_card() -> None:
+    panel = _render_panel()
+    recovery = panel["recovery"]
+    assert recovery["titles"] == ["Model"]
+    assert recovery["problem"] == [
+        "Agents can't start a turn with these settings. Context window (32,000) must be larger than "
+        "Eng-A's instructions (40,000 tokens), the largest of any agent's. Reply must be a whole number "
+        "from 1 to 99. Change a value below, or pick a starting point."
+    ]
+    assert recovery["pressed"] == ["false", "false", "false"]
+    assert recovery["custom"] == 0
+    assert recovery["alert"] == 1, "a refused starting point still has its alert line"
+    assert recovery["slots"] == ["context_window_tokens", "context_reply_percent", "context_result_percent"]
+    assert recovery["reserved"] == [
+        "Reserved for instructions: 40,000 tokens. Based on Eng-A, the agent with the largest instructions "
+        "(system prompt, role, memory and task), measured just now. Everything below is a share of what's left."
+    ]
+    # Nothing that needs a budget: no bars, mode columns, derived numbers, Usable line or fine-tuning.
+    assert (recovery["bars"], recovery["modes"], recovery["derived"], recovery["usable"]) == ([], 0, [], [])
+    assert (recovery["details"], recovery["legend"]) == (0, [])
+    # Without problems the layout is the full tab.
+    assert panel["medium"]["problem"] == []
+    assert panel["medium"]["titles"] == ["Model", "Chat mode", "Work mode", "Also in every prompt"]
+    assert panel["medium"]["modes"] == 2
+
+
+def test_a_starting_point_click_from_the_recovery_card_posts_and_re_renders() -> None:
+    accepted = _render_panel()["recoveryAccepted"]
+    assert accepted["calls"] == [{"url": "/api/settings/context-presets/large", "method": "POST"}]
+    assert accepted["applied"] == 1 and accepted["error"] == ""
 
 
 def test_a_starting_point_click_posts_and_a_refusal_is_shown() -> None:

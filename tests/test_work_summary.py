@@ -35,6 +35,7 @@ from core.agent_loop.work_summary import (
     summarize_saved_work,
 )
 from core.bm_cli.results import CLI_TOOL_RESULT_BEGIN, CLI_TOOL_RESULT_END
+from core.context_budget import reserve_of
 from core.llm.client import LLMError, LLMResponse
 from core.models.message import HUMAN_SENDER_ID
 from core.prompting.runtime_prompt_lint import lint_runtime_prompts
@@ -118,10 +119,12 @@ def _freeze(agent, activity, messages: list[dict[str, str]]) -> None:
 def _limits(work_tokens: int, trim_percent: int = 50, summary_percent: int = 10, *, repairs: int = 2) -> None:
     """Store a Work budget of exactly ``work_tokens``: Work 50% of a usable window twice that.
 
-    Written without checking, so a test can store a combination the rules refuse.
+    The window is the current reserve (the largest measured instructions; 0
+    until a turn runs) plus that usable window. Written without checking, so
+    a test can store a combination the rules refuse.
     """
-    fixed = config.require_int("context_fixed_tokens")
-    db.set_setting("context_window_tokens", str(fixed + 2 * work_tokens), "context")
+    reserved, _reserved_by = reserve_of(db.largest_instruction_size())
+    db.set_setting("context_window_tokens", str(reserved + 2 * work_tokens), "context")
     db.set_setting("context_work_percent", "50", "context")
     db.set_setting("work_snapshot_trim_percent", str(trim_percent), "simulation")
     db.set_setting("work_snapshot_summary_percent", str(summary_percent), "simulation")
@@ -517,9 +520,9 @@ async def test_work_that_ends_during_the_call_raises_work_ended_and_writes_nothi
 
 
 def test_the_limits_follow_the_seeded_settings() -> None:
-    """Medium: Work is 60% of a 116,000-token usable window, kept 60%, summary 20%."""
+    """Medium with nothing measured yet: Work is 60% of the whole 128,000-token window, kept 60%, summary 20%."""
     limits = read_summary_limits()
-    assert (limits.budget, limits.target, limits.cap) == (69_600, 41_760, 13_920)
+    assert (limits.budget, limits.target, limits.cap) == (76_800, 46_080, 15_360)
     assert (limits.trim_percent, limits.summary_percent) == (60, 20)
 
 

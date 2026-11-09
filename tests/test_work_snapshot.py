@@ -27,6 +27,7 @@ from core.agent_loop.turn_context import _get_current_activity, _get_current_tas
 from core.agent_loop.work_snapshot import (
     freeze_work_turn,
     interlude_tokens,
+    render_paused_work_for_agent,
     render_paused_work_view,
     restore_work_turn,
     saved_tokens,
@@ -136,7 +137,8 @@ async def _interrupted_step(monkeypatch, agent, task, step: str, *, interrupt: s
     return prompts
 
 
-def _decision_context(agent) -> list[dict[str, str]]:
+def _decision_context(agent, *, paused_work_view: str | None) -> list[dict[str, str]]:
+    """A decision turn's prompt; the paused-work view is an input, rendered by the caller (turn_prompt)."""
     state = db.get_agent_state(agent.id)
     turn = context_builder.TurnContext(
         agent=agent,
@@ -148,6 +150,7 @@ def _decision_context(agent) -> list[dict[str, str]]:
         current_activity=_get_current_activity(agent.id),
         current_task=_get_current_task(agent.id),
         contract_kind="decision",
+        paused_work_view=paused_work_view,
     )
     return context_builder.build_context(turn)
 
@@ -170,7 +173,9 @@ async def test_interrupt_freezes_only_the_working_transcript(monkeypatch: pytest
 async def test_decision_turn_gets_the_plain_text_view_before_history(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task, _activity = _working_agent()
     await _interrupted_step(monkeypatch, agent, task, _STATUS_STEP)
-    context = _decision_context(agent)
+    paused = render_paused_work_for_agent(agent.id)
+    assert paused is not None and paused.startswith(_VIEW_HEAD)
+    context = _decision_context(agent, paused_work_view=paused)
     views = [index for index, item in enumerate(context) if item["content"].startswith(_VIEW_HEAD)]
     assert len(views) == 1
     view_index = views[0]
@@ -182,12 +187,25 @@ async def test_decision_turn_gets_the_plain_text_view_before_history(monkeypatch
     history_index = next(i for i, item in enumerate(context) if "Earlier ask" in item["content"])
     assert view_index < history_index
     assert all(item["role"] == "system" for item in context[:view_index])
+    assert view["content"] == paused, "build_context renders the view it is given, as given"
+
+
+@pytest.mark.asyncio
+async def test_a_decision_turn_without_a_view_renders_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    """build_context no longer looks the paused work up itself: no view given, none shown."""
+    agent, task, _activity = _working_agent()
+    await _interrupted_step(monkeypatch, agent, task, _STATUS_STEP)
+    assert render_paused_work_for_agent(agent.id) is not None, "there is paused work to show"
+    context = _decision_context(agent, paused_work_view=None)
+    assert not any(item["content"].startswith(_VIEW_HEAD) for item in context)
 
 
 @pytest.mark.asyncio
 async def test_execution_turns_do_not_get_the_view(monkeypatch: pytest.MonkeyPatch) -> None:
     agent, task, _activity = _working_agent()
     await _interrupted_step(monkeypatch, agent, task, _STATUS_STEP)
+    paused = render_paused_work_for_agent(agent.id)
+    assert paused is not None
     state = db.get_agent_state(agent.id)
     turn = context_builder.TurnContext(
         agent=agent,
@@ -199,6 +217,7 @@ async def test_execution_turns_do_not_get_the_view(monkeypatch: pytest.MonkeyPat
         current_activity=_get_current_activity(agent.id),
         current_task=_get_current_task(agent.id),
         contract_kind="execution",
+        paused_work_view=paused,
     )
     assert not any(item["content"].startswith(_VIEW_HEAD) for item in context_builder.build_context(turn))
 

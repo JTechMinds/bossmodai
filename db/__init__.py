@@ -386,6 +386,7 @@ from db.work_summary_overflows import (
     list_work_summary_overflows,
     record_work_summary_overflow,
 )
+from db.instruction_sizes import largest_instruction_size, record_instruction_size
 
 # AI Connections
 from db.ai_connections import (
@@ -737,6 +738,9 @@ __all__ = [
     "delete_work_summary_overflow",
     "list_work_summary_overflows",
     "record_work_summary_overflow",
+    # Measured agent instruction sizes (the context reserve)
+    "largest_instruction_size",
+    "record_instruction_size",
     "get_recent_activity_log_entries",
     "prune_activity_log",
     "classify_category",

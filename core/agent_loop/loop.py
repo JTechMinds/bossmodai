@@ -21,7 +21,7 @@ from core.agent_loop.decision_turn import _is_decision_turn, _run_decision_turn
 from core.agent_loop.execution_turn import _run_execution_turn
 from core.agent_loop.outcomes import TurnOutcome
 from core.agent_loop.policies import get_trigger_policy
-from core.agent_loop.prompt_history import build_prompt_history_view
+from core.agent_loop.prompt_history import PromptHistoryView
 from core.agent_loop.task_origins import stamp_trigger_origin_channel
 from core.agent_loop.turn_context import (
     _COMMUNICATION_TRIGGER_TYPES,
@@ -35,6 +35,7 @@ from core.agent_loop.turn_context import (
     _get_reference_materials,
     stamp_channel_latest_line,
 )
+from core.agent_loop.turn_prompt import build_turn_prompt
 from core.agent_loop.turn_request import bind_turn_request
 from core.agent_loop.work_binding import bind_turn, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import RESUME_TRIGGER_TYPES, restore_work_turn
@@ -44,7 +45,6 @@ from core.agent_loop.turn_helpers import (
     _skip_turn,
     summarize_before_restore,
 )
-from core.context_budget import read_context_budget
 from core.llm import context_builder, routing
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
@@ -122,12 +122,6 @@ async def _run_bound_turn(
         if not is_decision_turn and not is_detached(trigger) and trigger_type in RESUME_TRIGGER_TYPES
         else None
     )
-    budget = read_context_budget()
-    prompt_history = build_prompt_history_view(
-        agent, trigger, token_model=model,
-        budget_tokens=budget.task_log if work_activity is not None else budget.history,
-        work_turn=work_activity is not None,
-    )
     nearby = _get_nearby_agents(agent.id, state)
     current_task = _get_current_task(agent.id)
     current_activity = _get_current_activity(agent.id)
@@ -145,23 +139,31 @@ async def _run_bound_turn(
         )
 
     contract_kind = _contract_kind_for_trigger(trigger_type)
-    turn_context = context_builder.TurnContext(
-        agent=agent,
-        state=state,
-        trigger=trigger,
-        conversation_history=prompt_history.conversation_history,
-        prompt_notifications=prompt_history.prompt_notifications,
-        reference_materials=reference_materials,
-        current_activity=current_activity,
-        current_session=current_session,
-        current_channel=current_channel,
-        nearby_agents=nearby,
-        current_task=current_task,
-        pending_trigger_count=pending_count,
-        contract_kind=contract_kind,
-        communication_snapshot_json=communication_snapshot_json(communication_snapshot) if communication_snapshot else None,
-    )
-    context = context_builder.build_context(turn_context)
+
+    def make_turn(view: PromptHistoryView, paused_work: str | None) -> context_builder.TurnContext:
+        return context_builder.TurnContext(
+            agent=agent,
+            state=state,
+            trigger=trigger,
+            conversation_history=view.conversation_history,
+            prompt_notifications=view.prompt_notifications,
+            reference_materials=reference_materials,
+            current_activity=current_activity,
+            current_session=current_session,
+            current_channel=current_channel,
+            nearby_agents=nearby,
+            current_task=current_task,
+            pending_trigger_count=pending_count,
+            contract_kind=contract_kind,
+            communication_snapshot_json=communication_snapshot_json(communication_snapshot) if communication_snapshot else None,
+            paused_work_view=paused_work,
+        )
+
+    # Sized around this agent's own measured instructions (rebuilt once if they just grew).
+    context = build_turn_prompt(
+        agent, trigger, token_model=model, work_turn=work_activity is not None,
+        decision_contract=contract_kind == "decision", make_turn=make_turn,
+    ).context
     summary_run: StepSummaryRun | None = None
     if work_activity is not None:
         # Resuming frozen work: fresh preamble, then the agent's own steps.

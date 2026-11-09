@@ -20,7 +20,6 @@ from core.agent_loop.role_contracts import format_role_contract_block, operator_
 from core.agent_loop.runtime_core import format_runtime_core_block, workspace_preference_context
 from core.agent_loop.standing_prefs import read_memories, render_warm_section
 from core.agent_loop.turn_context import _determine_mode
-from core.agent_loop.work_snapshot import render_paused_work_for_agent
 from core.bm_cli.filesystem import slugify_name
 from core.default_prompts import load_default_role_prompt
 from core.extensions.prompt_blocks import render_extension_blocks
@@ -157,6 +156,8 @@ class TurnContext:
     pending_trigger_count: int = 0
     contract_kind: str = "execution"
     communication_snapshot_json: str | None = None
+    # Rendered by the caller (core.agent_loop.turn_prompt), so it can skip it when measuring instructions.
+    paused_work_view: str | None = None
 
 
 def build_context(
@@ -203,9 +204,8 @@ def build_context(
             messages.append({"role": "system", "content": communication_snapshot})
         # After the stable blocks and before chat history, so the cached
         # prefix is unchanged when there is no paused work.
-        paused_work = render_paused_work_for_agent(turn.agent.id)
-        if paused_work:
-            messages.append({"role": "system", "content": paused_work})
+        if turn.paused_work_view:
+            messages.append({"role": "system", "content": turn.paused_work_view})
     messages.extend(live_processes_messages(turn.agent.id, template_overrides))  # both contract kinds
 
     manifests = history_manifests(turn.conversation_history)

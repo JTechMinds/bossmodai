@@ -67,10 +67,16 @@ async def _call(**kwargs: Any) -> None:
 async def test_without_max_tokens_the_reply_budget_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
     sent = _provider(monkeypatch)
     await _call()
-    # Medium, the seeded default: 12% of 116,000 usable tokens.
-    assert sent[-1]["max_tokens"] == 13_920
+    # Medium, the seeded default, with no instructions measured yet: 12% of the whole 128,000.
+    assert sent[-1]["max_tokens"] == 15_360
 
-    # Large: 12% of 244,000.
+    # Once an agent's instructions are measured, Reply is a share of what's left: 12% of 118,000.
+    agent = db.create_agent("Ada", role="Eng")
+    db.record_instruction_size(agent.id, 10_000)
+    await _call()
+    assert sent[-1]["max_tokens"] == 14_160
+
+    # Large: 12% of 244,000 usable tokens.
     assert set_context_budget(usable=244_000).reply == 29_280
     await _call()
     assert sent[-1]["max_tokens"] == 29_280

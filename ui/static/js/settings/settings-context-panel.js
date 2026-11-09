@@ -2,9 +2,13 @@
  * BossMod AI — Settings → System Settings → Context Window, the layout.
  *
  * One context window, shared out in tokens (core/context_budget.py): a Model
- * card (starting points, the window, the fixed prompt room, the two shared
- * shares), then Chat mode and Work mode side by side, each with a bar of its
+ * card (starting points, the window, the two shared shares, and the reserved
+ * instructions: measured every turn, read-only, naming the agent they are
+ * based on), then Chat mode and Work mode side by side, each with a bar of its
  * largest possible request, then the settings that are in every prompt.
+ * When the stored settings break a rule (the payload's `problems`), no number
+ * can be worked out, so the tab is a recovery Model card instead: the
+ * problems, the starting points and the fields that fix them.
  *
  * Layout only. Every setting position is an empty `[data-setting-slot]`
  * that settings-system.js fills with its standard row and wires with its
@@ -52,7 +56,7 @@ const BossModContextPanel = (() => {
 
     // Complete class names per tone: the Tailwind drift guard reads literals only.
     const SEGMENT_CLASS = {
-        fixed: 'ctx-budget-seg ctx-budget-seg-fixed',
+        instructions: 'ctx-budget-seg ctx-budget-seg-instructions',
         reply: 'ctx-budget-seg ctx-budget-seg-reply',
         conversation: 'ctx-budget-seg ctx-budget-seg-conversation',
         work: 'ctx-budget-seg ctx-budget-seg-work',
@@ -100,24 +104,49 @@ const BossModContextPanel = (() => {
                         class="${pressed ? PRESET_ACTIVE : PRESET_IDLE}">${esc(preset.label)}</button>`;
     }
 
+    /**
+     * The reserved instructions, read-only: measured on every turn, so there
+     * is nothing to set. Names the agent the reserve is based on and how old
+     * its measurement is; before any measurement, says when one happens.
+     */
+    function reservedLine(budget) {
+        const by = budget.reserved_by;
+        if (!by) {
+            return `<p class="ctx-budget-reserved"><strong>Reserved for instructions: not measured yet.</strong> Each agent's instructions are measured on its next turn.</p>`;
+        }
+        const age = BossModFormat.formatRelativeTime(by.measured_at);
+        return `<p class="ctx-budget-reserved"><strong>Reserved for instructions: ${esc(tokens(budget.reserved))} tokens.</strong> Based on ${esc(by.agent_name)}, the agent with the largest instructions (system prompt, role, memory and task), measured ${esc(age)}. Everything below is a share of what's left.</p>`;
+    }
+
+    /**
+     * The starting-point buttons and the alert line a refused one writes to (wire).
+     * @param {Array<{id: string, label: string}>} presets
+     * @param {string|null} activeId  The pressed preset; null presses none.
+     * @param {string} chip  Markup after the buttons: the Custom chip, or ''.
+     */
+    function startingPoints(presets, activeId, chip) {
+        return `
+                <div class="ctx-budget-presets" role="group" aria-labelledby="ctx-budget-presets-label">
+                    <span id="ctx-budget-presets-label" class="ctx-budget-presets-label">Starting points</span>
+                    ${presets.map(preset => presetButton(preset, activeId)).join('')}
+                    ${chip}
+                </div>
+                <p role="alert" class="text-xs text-red-600 mt-1" data-ctx-preset-error></p>`;
+    }
+
     function modelCard(budget) {
         const custom = budget.active_preset ? '' : '<span class="ctx-budget-chip">Custom</span>';
         return `
             <section class="ctx-budget-card" aria-labelledby="ctx-budget-model-title">
                 <h4 id="ctx-budget-model-title" class="ctx-budget-card-title">Model</h4>
-                <div class="ctx-budget-presets" role="group" aria-labelledby="ctx-budget-presets-label">
-                    <span id="ctx-budget-presets-label" class="ctx-budget-presets-label">Starting points</span>
-                    ${budget.presets.map(preset => presetButton(preset, budget.active_preset)).join('')}
-                    ${custom}
-                </div>
-                <p role="alert" class="text-xs text-red-600 mt-1" data-ctx-preset-error></p>
+                ${startingPoints(budget.presets, budget.active_preset, custom)}
                 <div class="ctx-budget-fields">
                     ${field('context_window_tokens')}
-                    ${field('context_fixed_tokens')}
                     ${field('context_reply_percent', `= ${tokens(budget.reply)} tokens`)}
                     ${field('context_result_percent', `= ${tokens(budget.result)} tokens`)}
                 </div>
-                <p class="ctx-budget-usable">Usable window: ${esc(tokens(budget.usable))} tokens (context window minus fixed prompt room)</p>
+                ${reservedLine(budget)}
+                <p class="ctx-budget-usable">Usable window: ${esc(tokens(budget.usable))} tokens (context window minus reserved instructions)</p>
             </section>`;
     }
 
@@ -128,7 +157,7 @@ const BossModContextPanel = (() => {
      */
     function bar(mode, budget) {
         const parts = [
-            { label: 'Fixed prompt room', tone: 'fixed', value: budget.fixed },
+            { label: 'Instructions', tone: 'instructions', value: budget.reserved },
             ...mode.segments.map(segment => ({ label: segment.label, tone: segment.tone, value: budget[segment.budget] })),
         ];
         parts.push({ label: 'Free', tone: 'free', value: Math.max(0, budget.window - budget[mode.worst]) });
@@ -208,16 +237,49 @@ const BossModContextPanel = (() => {
     }
 
     /**
+     * The tab when the stored settings break a rule: the Model card alone,
+     * so the operator can fix them here. No bars, modes or derived numbers:
+     * those need a budget, and there is none to compute.
+     *
+     * @param {object} budget  A payload with `problems`: `presets`,
+     *   `reserved` and `reserved_by`, no budgets.
+     * @returns {string} The problems in an alert line, the starting points
+     *   with none pressed, the Context window, Reply and Largest command
+     *   result slots, and the reserved line.
+     */
+    function recoveryLayout(budget) {
+        const problems = budget.problems.join(' ');
+        return `
+            <div class="ctx-budget" data-ctx-budget>
+                <section class="ctx-budget-card" aria-labelledby="ctx-budget-model-title">
+                    <h4 id="ctx-budget-model-title" class="ctx-budget-card-title">Model</h4>
+                    ${startingPoints(budget.presets, null, '')}
+                    <p role="alert" class="ctx-budget-problem">Agents can't start a turn with these settings. ${esc(problems)} Change a value below, or pick a starting point.</p>
+                    <div class="ctx-budget-fields">
+                        ${field('context_window_tokens')}
+                        ${field('context_reply_percent')}
+                        ${field('context_result_percent')}
+                    </div>
+                    ${reservedLine(budget)}
+                </section>
+            </div>`;
+    }
+
+    /**
      * The Context Window tab's markup, every text escaped.
      *
-     * @param {object} budget  GET /api/settings/context-budget: the budgets in
-     *   tokens, the worst cases, `values` (the stored percents), `presets` and
-     *   `active_preset`.
-     * @returns {string} The Model card, the Chat mode and Work mode columns,
-     *   and the "Also in every prompt" card, with an empty
-     *   `[data-setting-slot]` at every setting.
+     * @param {object} budget  GET /api/settings/context-budget. With
+     *   `problems` empty: the budgets in tokens, `reserved` and `reserved_by`
+     *   (null before any measurement), the worst cases, `values` (the stored
+     *   percents), `presets` and `active_preset`. With `problems`, only
+     *   `presets`, `reserved`, `reserved_by` and a null `active_preset`.
+     * @returns {string} With no problems, the Model card, the Chat mode and
+     *   Work mode columns, and the "Also in every prompt" card; with
+     *   problems, the recovery Model card (recoveryLayout). An empty
+     *   `[data-setting-slot]` at every setting either way.
      */
     function layout(budget) {
+        if (budget.problems.length) return recoveryLayout(budget);
         return `
             <div class="ctx-budget" data-ctx-budget>
                 ${modelCard(budget)}

@@ -60,8 +60,8 @@ class AgentRepository:
     - Private rows, deleted: ``agents``, ``agent_state``, ``agent_cli_state``,
       ``agent_prompt_history_policies``, ``agent_storage_identities``,
       notifications and their links, DMs (``messages`` from or to it),
-      ``diagnostics`` and their steps, ``activities``, ``work_snapshots``
-      and ``work_summary_overflows``,
+      ``diagnostics`` and their steps, ``activities``, ``work_snapshots``,
+      ``work_summary_overflows`` and ``agent_instruction_sizes``,
       ``agent_triggers``, ``artifacts`` rows, CLI audit (``bm_cli_events``)
       and approvals, host-path consent, agent-scoped ``cli_policy_rules``
       (deleted, never detached: a NULL ``agent_id`` means a global rule),
