@@ -20,7 +20,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
@@ -231,10 +231,13 @@ const store = BossModStore.createStore({
         { id: "d", name: "Di", role: "Designer", color: "#065f46" },
     ],
     threads: [],
+    presence: [],
     hasUsableModel: true,
 });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
 const offOperatorInvalidate = BossModOperatorInvalidate.attach({ bus });
+// Page-lifetime, as shell.js attaches it: presence outlives every conversation.
+const offPresence = BossModPresence.attach({ store, bus });
 
 // The bar is part of the surface now; the queue behind it is exercised in
 // js_needs_harness.cjs, so an empty one is enough to build the conversation.
@@ -462,8 +465,9 @@ async function main() {
     // ─── presenceSurvivesSwitch ───
     // Send in a thread, look elsewhere, come back: the indicator is still there.
     await conversation.open("t1", "thread");
-    bus.publish("channel_presence", {
+    bus.publish("agent_presence", {
         channel_id: "t1", agent_id: "m1", agent_name: "Ada", phase: "thinking",
+        since: new Date().toISOString(),
     });
     const paintedInThread = conversation.element
         .querySelectorAll(".transcript-presence-row").length === 1;
@@ -1826,6 +1830,7 @@ async function main() {
     // Destroying drains everything the controller ever subscribed.
     conversation.destroy();
     offOperatorInvalidate();
+    offPresence();
     if (bus.subscriberCount() !== 0) {
         throw new Error(`destroy left ${bus.subscriberCount()} bus subscribers`);
     }

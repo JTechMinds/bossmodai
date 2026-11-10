@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -249,20 +250,17 @@ async def test_third_agent_turn_stays_queued_until_a_lane_frees(
     cy_row = _enqueue(cy.id, channel_id=room_c.id, when="2026-01-01 00:00:03")
     assert ada_row is not None and bea_row is not None and cy_row is not None
 
-    phases: list[tuple[str, str, int | None]] = []
+    # (channel_id, phase, ahead) for every agent_presence, and each thinking's since.
+    phases: list[tuple[object, str, int | None]] = []
+    thinking_since: list[object] = []
 
-    async def _capture(kind: str, **kwargs: object) -> None:
+    async def _presence(**kwargs: object) -> None:
         ahead = kwargs.get("ahead")
-        phases.append((kind, str(kwargs.get("phase")), ahead if isinstance(ahead, int) else None))
+        phases.append((kwargs.get("channel_id"), str(kwargs.get("phase")), ahead if isinstance(ahead, int) else None))
+        if kwargs.get("phase") == "thinking":
+            thinking_since.append(kwargs.get("since"))
 
-    async def _desk(**kwargs: object) -> None:
-        await _capture("desk", **kwargs)
-
-    async def _channel(**kwargs: object) -> None:
-        await _capture("channel", **kwargs)
-
-    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _desk)
-    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_channel_presence", _channel)
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _presence)
 
     async def _done(*_args: object, **_kwargs: object) -> TurnOutcome:
         return TurnOutcome(result={}, trigger_status="completed")
@@ -288,8 +286,7 @@ async def test_third_agent_turn_stays_queued_until_a_lane_frees(
     await dispatcher._emit_queue_notices()
     assert phases
     assert {item[1] for item in phases} == {"queued"}
-    assert ("desk", "queued", 2) in phases
-    assert ("channel", "queued", 2) in phases
+    assert (room_c.id, "queued", 2) in phases
     assert "thinking" not in {item[1] for item in phases}
 
     dispatcher._release_turn_reservations(ada.id)
@@ -309,9 +306,12 @@ async def test_third_agent_turn_stays_queued_until_a_lane_frees(
         "content": "go",
     }
     await dispatcher._run_trigger(cy, state, payload)
-    assert ("channel", "thinking", None) in phases
-    assert ("desk", "thinking", None) in phases
-    assert phases.index(("channel", "queued", 2)) < phases.index(("channel", "thinking", None))
+    assert (room_c.id, "thinking", None) in phases
+    assert phases.index((room_c.id, "queued", 2)) < phases.index((room_c.id, "thinking", None))
+    # The turn's real start, which the transcript counts elapsed time from.
+    assert len(thinking_since) == 1
+    assert isinstance(thinking_since[0], str)
+    assert datetime.fromisoformat(thinking_since[0]).tzinfo is not None
 
 
 def test_same_snapshot_peers_do_not_draft_in_parallel() -> None:
@@ -372,25 +372,18 @@ async def test_same_channel_waiter_stays_queued_while_lanes_remain(
     _enqueue(dee.id, channel_id=other.id, when="2026-01-01 00:00:04")
     assert ada_row is not None and bea_row is not None and cy_row is not None
 
-    phases: list[tuple[str, str, str, int | None]] = []
+    phases: list[tuple[object, str, str, int | None]] = []
 
-    async def _capture(kind: str, **kwargs: object) -> None:
+    async def _presence(**kwargs: object) -> None:
         ahead = kwargs.get("ahead")
         phases.append((
-            kind,
+            kwargs.get("channel_id"),
             str(kwargs.get("agent_id")),
             str(kwargs.get("phase")),
             ahead if isinstance(ahead, int) else None,
         ))
 
-    async def _desk(**kwargs: object) -> None:
-        await _capture("desk", **kwargs)
-
-    async def _channel(**kwargs: object) -> None:
-        await _capture("channel", **kwargs)
-
-    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _desk)
-    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_channel_presence", _channel)
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _presence)
 
     dispatcher = TurnDispatcher()
     first = dispatcher._claim_available_trigger()
@@ -410,10 +403,8 @@ async def test_same_channel_waiter_stays_queued_while_lanes_remain(
     assert bea.id not in dispatcher._turn_lanes
     assert cy.id not in dispatcher._turn_lanes
     await dispatcher._emit_queue_notices()
-    assert ("desk", bea.id, "queued", 1) in phases
-    assert ("channel", bea.id, "queued", 1) in phases
-    assert ("desk", cy.id, "queued", 2) in phases
-    assert ("channel", cy.id, "queued", 2) in phases
+    assert (room.id, bea.id, "queued", 1) in phases
+    assert (room.id, cy.id, "queued", 2) in phases
     assert "thinking" not in {item[2] for item in phases}
 
     blocked = dispatcher._claim_available_trigger()
@@ -433,7 +424,7 @@ async def test_same_channel_waiter_stays_queued_while_lanes_remain(
     assert cy_notice["ahead"] == 1
     assert cy_notice["phase"] == "queued"
     await dispatcher._emit_queue_notices()
-    assert ("channel", cy.id, "queued", 1) in phases
+    assert (room.id, cy.id, "queued", 1) in phases
     assert "thinking" not in {item[2] for item in phases}
 
 
@@ -441,25 +432,25 @@ def test_send_does_not_paint_thinking_before_a_lane() -> None:
     thread = (ROOT / "ui" / "static" / "js" / "conversation" / "sources" / "thread-source.js").read_text(encoding="utf-8")
     desk = (ROOT / "ui" / "static" / "js" / "context" / "desk-panel.js").read_text(encoding="utf-8")
     transcript = (ROOT / "ui" / "static" / "js" / "conversation" / "transcript.js").read_text(encoding="utf-8")
-    send = thread.split("async function send", 1)[1].split("function subscribe", 1)[0]
-    assert "presence.start(" not in send
-    assert "phase === 'queued'" in thread
+    presence = (ROOT / "ui" / "static" / "js" / "core" / "presence.js").read_text(encoding="utf-8")
+    send = thread.split("async function send", 1)[1].split("function context", 1)[0]
+    # Sending paints nothing: a row only ever comes from the server's events.
+    assert "presence" not in send
+    # The source only selects; core/presence.js is the one writer of the slice.
+    assert "store.setState" not in thread
+    assert "phase === 'queued'" in presence
     assert "Queued (${ahead} ahead)" in transcript
-    assert "Queued (${ahead} ahead)" in desk
+    assert "Queued (${row.ahead} ahead)" in desk
 
 
-def _presence_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str, str]]:
-    """Record (surface, agent_id, phase) for every desk and thread presence."""
-    phases: list[tuple[str, str, str]] = []
+def _presence_log(monkeypatch: pytest.MonkeyPatch) -> list[tuple[object, str, str]]:
+    """Record (channel_id, agent_id, phase) for every agent_presence the dispatcher sends."""
+    phases: list[tuple[object, str, str]] = []
 
-    async def _desk(**kwargs: object) -> None:
-        phases.append(("desk", str(kwargs.get("agent_id")), str(kwargs.get("phase"))))
+    async def _presence(**kwargs: object) -> None:
+        phases.append((kwargs.get("channel_id"), str(kwargs.get("agent_id")), str(kwargs.get("phase"))))
 
-    async def _channel(**kwargs: object) -> None:
-        phases.append(("channel", str(kwargs.get("agent_id")), str(kwargs.get("phase"))))
-
-    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _desk)
-    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_channel_presence", _channel)
+    monkeypatch.setattr("core.agent_loop.dispatcher.manager.broadcast_agent_presence", _presence)
     return phases
 
 
@@ -497,10 +488,9 @@ async def test_deleted_waiter_gets_exactly_one_idle_and_its_busy_line_resynced(
 ) -> None:
     phases = _presence_log(monkeypatch)
     synced = _busy_syncs(monkeypatch)
-    dispatcher, _ada, bea, _room, _first, bea_row = _painted_waiter(monkeypatch)
+    dispatcher, _ada, bea, room, _first, bea_row = _painted_waiter(monkeypatch)
     await dispatcher._emit_queue_notices()
-    assert ("channel", bea.id, "queued") in phases
-    assert ("desk", bea.id, "queued") in phases
+    assert (room.id, bea.id, "queued") in phases
 
     # The round closed and deleted Bea's wake before it ran.
     execute("DELETE FROM agent_triggers WHERE id = $1", [bea_row.id])
@@ -510,7 +500,7 @@ async def test_deleted_waiter_gets_exactly_one_idle_and_its_busy_line_resynced(
     await dispatcher._emit_queue_notices()
 
     bea_idle = [item for item in phases if item[1] == bea.id and item[2] == "idle"]
-    assert sorted(bea_idle) == [("channel", bea.id, "idle"), ("desk", bea.id, "idle")]
+    assert bea_idle == [(room.id, bea.id, "idle")]
     assert synced == [bea.id]
 
 
@@ -551,7 +541,7 @@ async def test_waiter_claimed_next_gets_thinking_and_no_retraction(
             "content": "go",
         },
     )
-    bea_channel = [item[2] for item in phases if item[0] == "channel" and item[1] == bea.id]
+    bea_channel = [item[2] for item in phases if item[0] == room.id and item[1] == bea.id]
     # The only idle is the turn's own end, after thinking.
     assert bea_channel == ["queued", "thinking", "idle"]
     assert not any(key[0] == bea.id for key in dispatcher._painted_queued)
@@ -613,7 +603,7 @@ async def test_row_in_another_thread_is_retracted_after_the_agents_turn(
     execute("DELETE FROM agent_triggers WHERE id = $1", [bea_x.id])
     assert dispatcher._claim_available_trigger() is None
     await dispatcher._emit_queue_notices()
-    assert ("channel", bea.id, "idle") not in phases
+    assert [item for item in phases if item[1] == bea.id and item[2] == "idle"] == []
     assert (bea.id, room_x.id) in dispatcher._painted_queued
 
     state = db.get_agent_state(bea.id)
@@ -631,13 +621,13 @@ async def test_row_in_another_thread_is_retracted_after_the_agents_turn(
             "content": "go",
         },
     )
-    idle_before = len([item for item in phases if item == ("channel", bea.id, "idle")])
+    idle_before = [item[0] for item in phases if item[1] == bea.id and item[2] == "idle"]
     synced_before = synced.count(bea.id)
     assert dispatcher._claim_available_trigger() is None
     await dispatcher._emit_queue_notices()
-    idle_after = len([item for item in phases if item == ("channel", bea.id, "idle")])
+    idle_after = [item[0] for item in phases if item[1] == bea.id and item[2] == "idle"]
     # One idle closed the Y turn; the next emit retracts the stale X row.
-    assert (idle_before, idle_after) == (1, 2)
+    assert (idle_before, idle_after) == ([room_y.id], [room_y.id, room_x.id])
     assert dispatcher._painted_queued == {}
     # The retraction also re-syncs Bea's Busy line once.
     assert synced.count(bea.id) == synced_before + 1

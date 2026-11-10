@@ -1,18 +1,13 @@
 /**
- * BossMod AI — submit, load, and presence gates.
+ * BossMod AI — submit and load gates.
  *
- * Four small state machines that stop the UI lying to the operator: a load
+ * Three small state machines that stop the UI lying to the operator: a load
  * generation so a stale response is dropped rather than painted, a send gate
- * that keeps the draft until the server acknowledges, a one-at-a-time action
- * gate, and a presence model keyed by conversation.
+ * that keeps the draft until the server acknowledges, and a one-at-a-time
+ * action gate.
  *
  * Moved out of utils.js unchanged; every function here is covered by an
  * existing Node harness.
- *
- * The predicate-guarded chat typing controller that used to live here was
- * deleted in Phase 2B with its last caller, agent-context.js. Presence is
- * keyed by conversation instead, which partitions state structurally rather
- * than guarding it with an "is this the active chat" test (spec 4.1).
  */
 const BossModGates = (() => {
 
@@ -167,77 +162,10 @@ const BossModGates = (() => {
         return { busy, run };
     }
 
-    /**
-     * Who is mid-turn, keyed `conversationId::agentId`.
-     *
-     * Partitioning by conversation is what makes presence survive a switch:
-     * state cannot leak between conversations because it is separated, not
-     * guarded by an "is this the active chat" predicate.
-     *
-     * @returns {{ start: Function, stop: Function, stopAll: Function,
-     *             list: Function, has: Function }}
-     *   start/stop/has take (conversationId, agentId); stopAll and list take a
-     *   conversationId. Every one returns false / 0 / [] for a missing id
-     *   rather than throwing: a presence signal for a conversation that has
-     *   since been archived is expected traffic, not an error.
-     */
-    function createChannelPresenceController() {
-        const members = new Map();
-
-        function key(channelId, agentId) {
-            return `${channelId}::${agentId}`;
-        }
-
-        function start(channelId, agentId, agentName, options) {
-            if (!channelId || !agentId) return false;
-            const opts = options || {};
-            const ahead = Number(opts.ahead);
-            members.set(key(channelId, agentId), {
-                channelId: String(channelId),
-                agentId: String(agentId),
-                name: agentName || 'Agent',
-                phase: opts.phase === 'queued' ? 'queued' : 'thinking',
-                ahead: Number.isFinite(ahead) ? Math.max(0, ahead) : 0,
-            });
-            return true;
-        }
-
-        function stop(channelId, agentId) {
-            if (!channelId || !agentId) return false;
-            return members.delete(key(channelId, agentId));
-        }
-
-        function stopAll(channelId) {
-            if (!channelId) return 0;
-            const prefix = `${channelId}::`;
-            let removed = 0;
-            for (const itemKey of Array.from(members.keys())) {
-                if (itemKey.startsWith(prefix)) {
-                    members.delete(itemKey);
-                    removed += 1;
-                }
-            }
-            return removed;
-        }
-
-        function list(channelId) {
-            if (!channelId) return [];
-            return Array.from(members.values()).filter((item) => item.channelId === String(channelId));
-        }
-
-        function has(channelId, agentId) {
-            if (!channelId || !agentId) return false;
-            return members.has(key(channelId, agentId));
-        }
-
-        return { start, stop, stopAll, list, has };
-    }
-
     return {
         createLoadGeneration,
         setComposerError,
         createComposerSendGate,
         createInFlightGate,
-        createChannelPresenceController,
     };
 })();

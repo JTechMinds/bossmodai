@@ -10,8 +10,6 @@ const BossModConversationFocus = (() => {
     const FOCUS_TOPICS = Object.freeze([
         'chat_message',
         'chat_reset',
-        'agent_presence',
-        'channel_presence',
         'channel_message',
         'channel_updated',
         'meeting_message',

@@ -16,7 +16,7 @@ require("./js_icons_stub.cjs").installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
@@ -372,6 +372,7 @@ async function conversationCases() {
     const store = global.BossModStore.createStore({
         roster: [{ id: "a", name: "Ada", role: "Writer" }],
         threads: [],
+        presence: [],
         hasUsableModel: true,
         needs: [errorNeed],
         needsBarEnabled: true,
@@ -382,6 +383,8 @@ async function conversationCases() {
     });
     const bus = global.BossModBus.createBus(global.BossModBus.KNOWN_TOPICS);
     global.BossModOperatorInvalidate.attach({ bus });
+    // As shell.js does: the thinking row below reaches the DM through the store.
+    global.BossModPresence.attach({ store, bus });
     const acknowledged = [];
     const needs = {
         refresh: () => Promise.resolve(),
@@ -422,7 +425,9 @@ async function conversationCases() {
     const menuOffersRewindOnAgentDm = (await menuNames()).split("|").includes("Rewind…");
     check(menuOffersRewindOnAgentDm, `agent menu: ${await menuNames()}`);
 
-    bus.publish("agent_presence", { agent_id: "a", agent_name: "Ada", phase: "thinking" });
+    bus.publish("agent_presence", {
+        agent_id: "a", agent_name: "Ada", phase: "thinking", since: new Date().toISOString(),
+    });
     await settle();
     const menuOffersRewindWhileThinking = (await menuNames()).split("|").includes("Rewind…");
     check(menuOffersRewindWhileThinking, "Rewind must stay offered while the agent is thinking");

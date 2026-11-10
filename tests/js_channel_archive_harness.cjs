@@ -30,7 +30,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate",
     "BossModFormat", "BossModGates", "BossModConsentCard",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton",
     "BossModEmptyState", "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
@@ -80,7 +80,7 @@ const api = async (url, opts = {}) => {
     throw new Error(`unhandled ${method} ${url}`);
 };
 
-const store = BossModStore.createStore({ roster: [], threads: [], hasUsableModel: true });
+const store = BossModStore.createStore({ roster: [], threads: [], presence: [], hasUsableModel: true });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
 BossModOperatorInvalidate.attach({ bus });
 // The needs bar is part of the surface; its own behaviour is proven in

@@ -17,7 +17,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, gatesPath, consentPath,
+    agentStatusPath, domPath, avatarPath, switchPath, storePath, busPath, operatorInvalidatePath, presencePath, consentPath,
     overlayFocusPath, modalTrailPath, overlayActionsPath, overlaysPath, yoloModePath, menuPath, formatPath, needShapePath, rowMetaPath, archivePath,
     threadRequestsPath, approvalControlsPath, threadMembersPath, threadSourcePath,
     menuButtonPath, peopleViewMenuPath, rosterPeoplePath, threadCreatePath, threadViewMenuPath,
@@ -32,7 +32,9 @@ load(switchPath, "BossModSwitch");
 load(storePath, "BossModStore");
 load(busPath, "BossModBus");
 load(operatorInvalidatePath, "BossModOperatorInvalidate");
-load(gatesPath, "BossModGates");
+// The page's presence rows: the People half reads each agent's, and a sealed
+// thread's presenceFor answers none.
+load(presencePath, "BossModPresence");
 load(consentPath, "BossModConsentCard");
 load(overlayFocusPath, "BossModOverlayFocus");
 load(modalTrailPath, "BossModModalTrail");
@@ -65,7 +67,7 @@ load(agentRoutesPath, "BossModAgentRoutes");
 load(rosterPath, "BossModRoster");
 
 const {
-    BossModThreadArchive, BossModThreadSource, BossModGates, BossModRoster,
+    BossModThreadArchive, BossModThreadSource, BossModPresence, BossModRoster,
     BossModStore, BossModBus,
 } = global;
 
@@ -175,7 +177,6 @@ const api = async (url, opts = {}) => {
 
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
 BossModOperatorInvalidate.attach({ bus });
-const presence = BossModGates.createChannelPresenceController();
 const forgotten = [];
 const noop = () => {};
 const signals = { message: noop, reset: noop, presence: noop, chrome: noop };
@@ -184,7 +185,6 @@ function sourceFor(threadId, confirmChoice) {
     return BossModThreadSource.createThreadSource(threadId, {
         api,
         bus,
-        presence,
         archive: BossModThreadArchive.createThreadArchive({ api, confirm: () => confirmChoice }),
         seat: { pickAndSeat: async () => null },
         forgetCache: (id) => forgotten.push(id),
@@ -366,14 +366,18 @@ async function main() {
         author_name: "Ada",
         message_id: "spam-1",
     });
-    bus.publish("channel_presence", {
+    // A turn still running in the sealed room is in the page's rows, and the
+    // room shows none of it.
+    const stillThinking = BossModPresence.applyEvent([], {
         channel_id: "open-a",
         agent_id: "ada",
         agent_name: "Ada",
         phase: "thinking",
+        since: new Date().toISOString(),
     });
     const archivedNotLive = leaked === 0
-        && presence.list("open-a").length === 0
+        && stillThinking.length === 1
+        && annSource.presenceFor(stillThinking).length === 0
         && forgotten.includes("open-a")
         && annSource.canSend() === false;
     if (!archivedNotLive) throw new Error("live handlers must not revive an archived thread");
@@ -407,7 +411,7 @@ async function main() {
     // ─── 6. The archived list is still reachable, from the roster ───
 
     const store = BossModStore.createStore({
-        roster: [], threads: [], rosterQuery: "", needs: [], runtimePaused: false,
+        roster: [], threads: [], rosterQuery: "", needs: [], runtimePaused: false, presence: [],
     });
     const rail = documentStub.createElement("aside");
     documentStub.body.append(rail);

@@ -93,7 +93,7 @@ documentStub.createElement = (tag) => {
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModApi", "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
+    "BossModApi", "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModFactList", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate", "BossModFormat", "BossModAgentStatus", "BossModSpecialty", "BossModCommunication", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModMenuSelect",
     "BossModAutoGrow", "BossModTimeField", "BossModDateField",
     "BossModFileListing",
@@ -688,6 +688,7 @@ async function main() {
         conversationKind: null,
         roster: [],
         threads: [],
+        presence: [],
         rosterQuery: "",
         runtimePaused: false,
         hasUsableModel: true,
@@ -1065,11 +1066,34 @@ async function main() {
     // the built modal — a source check would pass while a block sat in a
     // branch that never runs.
 
+    // Jim is queued when his desk opens. The store does not notify on
+    // subscribe, so the desk reads the page's presence rows at build or it
+    // would say nothing until the next change.
+    store.setState({
+        presence: [global.BossModPresence.normalizeRow({
+            agent_id: "a1", agent_name: "Jim", phase: "queued", channel_id: "c1", ahead: 2,
+        })],
+    });
     desk.open("a1");
     await drain();
     const sectionLabels = deskModal().querySelectorAll(".desk-section-head")
         .map((node) => node.children[0].textContent);
     const aboutPill = inDesk(".desk-about-block").querySelector(".status-pill");
+    const queuedAtBuild = aboutPill.textContent === "Queued (2 ahead)";
+    // A thinking row is not a lane note; the pill goes back to the status.
+    store.setState({
+        presence: [global.BossModPresence.normalizeRow({
+            agent_id: "a1", agent_name: "Jim", phase: "thinking", channel_id: "c1", since: new Date().toISOString(),
+        })],
+    });
+    const thinkingDropsNote = aboutPill.textContent === global.BossModAgentStatus.getStatusLabel(
+        ROSTER.find((agent) => agent.id === "a1").status, null);
+    store.setState({ presence: [] });
+    const deskLaneNoteAtBuild = queuedAtBuild && thinkingDropsNote;
+    if (!deskLaneNoteAtBuild) {
+        throw new Error(`a desk opened mid-queue must say so: at build ${queuedAtBuild}, `
+            + `thinking "${aboutPill.textContent}"`);
+    }
     const deskFields = {
         // The name is the modal's title now, and the face its lead.
         name: deskModal().querySelector(".modal-title").textContent === "Jim"
@@ -3370,6 +3394,7 @@ async function main() {
         columnHoldsOfficeAndChatter,
         oneDeskAtATime,
         deskDrainsOnClose,
+        deskLaneNoteAtBuild,
         toolsAreInTheHead,
         optionsMenuHoldsEveryAction,
         taskRowIsAButtonWithTheSharedPill,

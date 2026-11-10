@@ -17,6 +17,7 @@ HARNESS_MODULES = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "presence.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "needs" / "need-shape.js",

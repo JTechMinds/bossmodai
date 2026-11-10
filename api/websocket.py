@@ -279,31 +279,6 @@ class ConnectionManager:
             },
         })
 
-    async def broadcast_channel_presence(
-        self,
-        *,
-        channel_id: str,
-        agent_id: str,
-        agent_name: str,
-        phase: str,
-        ahead: int | None = None,
-    ) -> None:
-        """Broadcast one member's in-flight thinking/working presence."""
-        if db.is_channel_archived(channel_id):
-            return
-        data: dict[str, Any] = {
-            "channel_id": channel_id,
-            "agent_id": agent_id,
-            "agent_name": agent_name,
-            "phase": phase,
-        }
-        if ahead is not None:
-            data["ahead"] = ahead
-        await self.broadcast({
-            "type": "channel_presence",
-            "data": data,
-        })
-
     async def broadcast_agent_presence(
         self,
         *,
@@ -312,8 +287,24 @@ class ConnectionManager:
         phase: str,
         ahead: int | None = None,
         channel_id: str | None = None,
+        since: str | None = None,
     ) -> None:
-        """Broadcast desk presence for one agent: thinking, queued, or idle."""
+        """Broadcast one agent's presence delta: thinking, queued, or idle.
+
+        The one presence event. Each client applies it to the page's presence
+        rows (``ui/static/js/core/presence.js``), keyed by agent and channel,
+        and every surface selects its own rows from those. Keys left unset are
+        omitted from the frame.
+
+        Args:
+            agent_id: The agent the turn belongs to.
+            agent_name: Its display name.
+            phase: ``thinking``, ``queued`` or ``idle``.
+            ahead: How many turns wait ahead of a queued one.
+            channel_id: The thread the turn is for; unset for a DM or desk turn.
+            since: ISO-8601 start of a thinking turn, which the transcript
+                counts elapsed time from.
+        """
         data: dict[str, Any] = {
             "agent_id": agent_id,
             "agent_name": agent_name,
@@ -323,10 +314,25 @@ class ConnectionManager:
             data["ahead"] = ahead
         if channel_id:
             data["channel_id"] = channel_id
+        if since is not None:
+            data["since"] = since
         await self.broadcast({
             "type": "agent_presence",
             "data": data,
         })
+
+    async def broadcast_presence_snapshot(self, rows: list[dict[str, Any]]) -> None:
+        """Broadcast the whole presence view; each client replaces its rows with it.
+
+        Sent with an empty list when the runtime worker exits, since every
+        turn died with it. A connecting client gets the same frame from
+        ``api/routes/ws.py``.
+
+        Args:
+            rows: ``RuntimeServices.presence_snapshot()`` rows:
+                ``{agent_id, agent_name, channel_id, phase, ahead, since}``.
+        """
+        await self.broadcast({"type": "presence_snapshot", "data": rows})
 
     async def broadcast_channel_updated(self, channel: dict[str, Any]) -> None:
         """Broadcast a channel summary update to all connected clients."""

@@ -15,8 +15,10 @@ router = APIRouter()
 async def websocket_endpoint(ws: WebSocket):
     """Real-time connection for Canvas agent positions and Activity log.
 
-    On connect, sends the full world state and recent activity history.
-    Then keeps the connection alive, forwarding broadcasts.
+    On connect, sends four frames in order: ``world_update`` (the full world
+    state), ``unified_feed`` (recent activity history), ``runtime_state`` and
+    ``presence_snapshot`` (who is thinking or queued right now). Then keeps
+    the connection alive, forwarding broadcasts.
     """
     if not websocket_authorized(ws):
         await ws.close(code=4401)
@@ -31,6 +33,10 @@ async def websocket_endpoint(ws: WebSocket):
     # Send unified activity feed
     await ws.send_json(jsonable_encoder({"type": "unified_feed", "data": manager.unified_feed}))
     await ws.send_json(jsonable_encoder({"type": "runtime_state", "data": runtime_services.status_payload()}))
+    # Read and handed to send_json in one statement, with no await between.
+    # Every agent_presence delta is an idempotent set or delete, so however
+    # this interleaves with a concurrent broadcast, the client converges.
+    await ws.send_json(jsonable_encoder({"type": "presence_snapshot", "data": runtime_services.presence_snapshot()}))
 
     try:
         while True:

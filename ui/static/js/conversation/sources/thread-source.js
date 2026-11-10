@@ -1,7 +1,7 @@
 /**
  * BossMod AI — the shared-thread conversation adapter.
  *
- * Adapts `GET/POST /api/channels/{id}` and the three `channel_*` broadcasts to
+ * Adapts `GET/POST /api/channels/{id}` and the two `channel_*` broadcasts to
  * the one Message shape the renderer understands. It is a data adapter and
  * nothing else: it never touches the DOM. That boundary is the point of the
  * consolidation — the three renderers it replaces each knew their own wire
@@ -21,7 +21,6 @@ const BossModThreadSource = (() => {
      * @param {object} ctx
      * @param {Function} ctx.api  Authenticated fetch helper (injected, never global).
      * @param {object} ctx.bus  Topic bus.
-     * @param {object} ctx.presence  Shared presence controller, keyed by conversation.
      * @param {object} ctx.archive  From BossModThreadArchive.createThreadArchive.
      * @param {object} ctx.seat  From BossModThreadSeat.createThreadSeat.
      * @param {(conversationId: string) => void} ctx.forgetCache  Drops the cached
@@ -32,14 +31,12 @@ const BossModThreadSource = (() => {
     function createThreadSource(threadId, ctx) {
         const api = ctx && ctx.api;
         const bus = ctx && ctx.bus;
-        const presence = ctx && ctx.presence;
         const archive = ctx && ctx.archive;
         const seat = ctx && ctx.seat;
         const forgetCache = ctx && ctx.forgetCache;
         const store = ctx && ctx.store;
         if (typeof api !== 'function') throw new Error('[thread-source] ctx.api is required');
         if (!bus) throw new Error('[thread-source] ctx.bus is required');
-        if (!presence) throw new Error('[thread-source] ctx.presence is required');
         if (!archive) throw new Error('[thread-source] ctx.archive is required');
         if (!seat) throw new Error('[thread-source] ctx.seat is required');
         if (typeof forgetCache !== 'function') {
@@ -76,9 +73,22 @@ const BossModThreadSource = (() => {
 
         /** A sealed room keeps no presence, no cached transcript and no members dialog. */
         function seal() {
-            presence.stopAll(threadId);
+            // presenceFor answers [] once archived; this repaints the rows away.
+            signal('presence');
             forgetCache(threadId);
             membersDialog.close();
+        }
+
+        /**
+         * This thread's rows from the page's presence slice (core/presence.js).
+         * A sealed room shows none: archived rooms are filtered here, now that
+         * the dispatcher sends one event for every surface.
+         *
+         * @param {object[]} rows  `store.presence`.
+         * @returns {object[]} The rows whose channel is this thread.
+         */
+        function presenceFor(rows) {
+            return isLiveThread() ? rows.filter((row) => row.channelId === threadId) : [];
         }
 
         /**
@@ -187,9 +197,12 @@ const BossModThreadSource = (() => {
         }
 
         /**
-         * Subscribe to this thread's live traffic.
+         * Subscribe to this thread's live traffic: its posts and channel
+         * updates. Presence is not live traffic here — it is the page's store
+         * slice, read through presenceFor — so `on.presence` only asks for a
+         * repaint, when the room seals.
          * @param {{message: Function, reset: Function, presence: Function, chrome: Function}} on
-         * @returns {() => void} One disposer that drains all three subscriptions.
+         * @returns {{ dispose: () => void, onLiveEvent: (topic: string, data: any) => void }}
          */
         function subscribe(on) {
             signals = on;
@@ -200,31 +213,8 @@ const BossModThreadSource = (() => {
                         seal();
                         return;
                     }
-                    if (data.author_type === 'agent' && data.author_agent_id) {
-                        presence.stop(threadId, data.author_agent_id);
-                        on.presence();
-                    }
                     if (isRoundMarker(data)) return;
                     on.message(toMessage(data));
-                    return;
-                }
-                if (topic === 'channel_presence') {
-                    if (!data || data.channel_id !== threadId || !data.agent_id) return;
-                    if (!isLiveThread()) {
-                        seal();
-                        return;
-                    }
-                    if (data.phase === 'thinking') {
-                        presence.start(threadId, data.agent_id, data.agent_name, { phase: 'thinking' });
-                    } else if (data.phase === 'queued') {
-                        presence.start(threadId, data.agent_id, data.agent_name, {
-                            phase: 'queued',
-                            ahead: data.ahead,
-                        });
-                    } else {
-                        presence.stop(threadId, data.agent_id);
-                    }
-                    on.presence();
                     return;
                 }
                 if (topic === 'channel_updated') {
@@ -384,6 +374,7 @@ const BossModThreadSource = (() => {
             send,
             context,
             subscribe,
+            presenceFor,
             chrome,
             emptyState: () => ({ title: 'No thread messages yet.', hint: '' }),
             canSend: isLiveThread,

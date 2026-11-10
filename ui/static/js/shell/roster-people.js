@@ -38,23 +38,22 @@ const BossModRosterPeople = (() => {
     const { h } = BossModDom;
 
     /**
-     * The one-line state under an agent's name.
-     *
-     * Precedence is live first: a paused runtime makes every other state a
-     * lie, then Working / Idle / Break from current activity (the same truth
-     * as Writing / Done in the thread). Needs you is only an uncleared Focus
-     * ask — a stale error card or denied consent must not outrank writing.
+     * The one-line state under an agent's name, live first: Paused (it makes all else a lie), then
+     * the activity word (Working / Break; a work turn never flickers), then thinking / queued (a chat
+     * turn moves neither status nor activity), then Needs you (an uncleared Focus ask), then the label.
      *
      * @param {object} agent
      * @param {boolean} runtimePaused
      * @param {Set<string>} agentsWithNeeds
+     * @param {object|null} presenceRow  BossModPresence.agentRow's answer.
      * @returns {string}
      */
-    function statusLine(agent, runtimePaused, agentsWithNeeds) {
+    function statusLine(agent, runtimePaused, agentsWithNeeds, presenceRow) {
         if (runtimePaused) return 'Paused';
         if (hasLiveActivity(agent)) {
             return BossModAgentStatus.getStatusLabel(agent.status, agent.currentActivityKind);
         }
+        if (presenceRow) return presenceRow.phase;
         if (agentsWithNeeds.has(agent.id)) return 'Needs you';
         return BossModAgentStatus.getStatusLabel(agent.status, agent.currentActivityKind);
     }
@@ -91,8 +90,7 @@ const BossModRosterPeople = (() => {
      * Build the People section.
      *
      * @param {object} deps
-     * @param {object} deps.store  Application store; `roster`, `rosterQuery`,
-     *   `needs` and `runtimePaused` are the four slices this half reads.
+     * @param {object} deps.store  Read for `roster`, `rosterQuery`, `needs`, `runtimePaused` and `presence`.
      * @param {Function} deps.apiFetch  For the People `⋯`'s On vacation view.
      * @param {(agentId: string) => void} deps.onOpenConversation
      * @param {(agentId: string) => void} deps.onOpenDesk
@@ -165,9 +163,10 @@ const BossModRosterPeople = (() => {
          * @param {boolean} paused
          * @param {Set<string>} needy
          * @param {boolean} showRoles  From the header's `⋯`.
+         * @param {object|null} presenceRow  Forwarded to statusLine.
          * @returns {HTMLElement}
          */
-        function personRow(agent, paused, needy, showRoles) {
+        function personRow(agent, paused, needy, showRoles, presenceRow) {
             const selecting = selectMode;
             const role = showRoles && typeof agent.role === 'string' && agent.role.trim()
                 ? agent.role.trim()
@@ -238,7 +237,7 @@ const BossModRosterPeople = (() => {
                     h('span', { class: 'roster-name-line' },
                         h('span', { class: 'roster-name' }, agent.name),
                         role ? h('span', { class: 'roster-role', title: role }, `– ${role}`) : null),
-                    h('span', { class: 'roster-status' }, statusLine(agent, paused, needy))),
+                    h('span', { class: 'roster-status' }, statusLine(agent, paused, needy, presenceRow))),
                 // The row's right-hand column, shared with the Threads half:
                 // when the operator last spoke to this agent, over the need
                 // dot. A sibling of the name button, because inside the text
@@ -249,9 +248,8 @@ const BossModRosterPeople = (() => {
 
         function message(cls, text) { rows.reset(); list.append(h('li', { class: cls }, text)); }
 
-        // Rows are PATCHED by agent id; a row's signature is all personRow reads
-        // (the agent object is stable while its values hold). `selected` is not
-        // in it: setSelected updates its row in place, and exiting changes selectMode.
+        // Rows are PATCHED by agent id; the signature is all personRow reads (the agent is stable while
+        // its values hold) but `selected`: setSelected patches in place, and exiting changes selectMode.
         function render() {
             if (loadState === 'loading') return message('roster-skeleton', 'Loading people…');
             if (loadState === 'error') return message('roster-empty', 'Could not load the roster.');
@@ -269,10 +267,12 @@ const BossModRosterPeople = (() => {
             const paused = state.runtimePaused === true;
             const needy = agentsWithNeeds();
             const showRoles = view.showRoles();
+            const presence = new Map(visible.map((a) => [a.id, BossModPresence.agentRow(state.presence, a.id)]));
             const built = rows.sync(visible, (agent) => agent.id,
                 (agent) => [agent, paused, needy.has(agent.id), showRoles, selectMode,
-                    BossModFormat.formatActivityTime(agent.lastMessageAt)],
-                (agent) => personRow(agent, paused, needy, showRoles));
+                    BossModFormat.formatActivityTime(agent.lastMessageAt),
+                    presence.get(agent.id) ? presence.get(agent.id).phase : null],
+                (agent) => personRow(agent, paused, needy, showRoles, presence.get(agent.id)));
             syncSeatAction();
             // Only a row built this pass can hold an unpainted placeholder.
             built.forEach((row) => BossModIcons.paint(row, 'roster-people'));
@@ -352,6 +352,7 @@ const BossModRosterPeople = (() => {
         disposers.push(store.subscribe((s) => s.currentFloorId, render));
         disposers.push(store.subscribe((s) => s.needs, render));
         disposers.push(store.subscribe((s) => s.runtimePaused, render));
+        disposers.push(store.subscribe((s) => s.presence, render));
         disposers.push(store.subscribe((s) => s.conversationId, syncSeatAction));
         disposers.push(store.subscribe((s) => s.conversationKind, syncSeatAction));
         disposers.push(store.subscribe((s) => s.threads, syncSeatAction));

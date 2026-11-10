@@ -31,6 +31,9 @@ const BossModTranscript = (() => {
      */
     const LONG_TURN_MS = 60 * 1000;
 
+    /** The duration only moves in whole minutes, so the clock repaints on their boundaries. */
+    const MINUTE_MS = 60 * 1000;
+
     /**
      * A message's dedupe key, normalised. `''` means the backend gave none.
      * @param {object} message
@@ -44,36 +47,25 @@ const BossModTranscript = (() => {
      * Build the transcript view.
      *
      * @param {object} deps
-     * @param {object} deps.presence  Shared presence controller instance, owned
-     *   by conversation.js and keyed `conversationId::agentId`.
      * @param {(m: object) => HTMLElement} deps.renderMessage  For kind 'message'.
      * @param {(m: object) => HTMLElement} deps.renderEventCard  For every other kind.
-     * @param {(agentId: string) => string|null} deps.activitySince  ISO-8601
-     *   start of the member's active turn, or null when the roster does not
-     *   know of one. The transcript never reads the roster itself; this is the
-     *   whole of what it needs from it (spec 12, carried items).
      * @returns {{ element: HTMLElement, setMessages: Function, append: Function,
      *             renderPresence: Function, setStatus: Function,
      *             isNearBottom: Function, scrollToBottom: Function,
-     *             messageCount: Function }}
+     *             messageCount: Function, destroy: Function }}
+     *   `destroy` stops the presence clock; the owner calls it when it goes.
      * @throws {Error} When any dependency is missing. A transcript that cannot
      *   render half its message kinds must fail at construction, not paint a
      *   partial conversation.
      */
     function createTranscript(deps) {
-        const presence = deps && deps.presence;
         const renderMessage = deps && deps.renderMessage;
         const renderEventCard = deps && deps.renderEventCard;
-        const activitySince = deps && deps.activitySince;
-        if (!presence) throw new Error('[transcript] deps.presence is required');
         if (typeof renderMessage !== 'function') {
             throw new Error('[transcript] deps.renderMessage is required');
         }
         if (typeof renderEventCard !== 'function') {
             throw new Error('[transcript] deps.renderEventCard is required');
-        }
-        if (typeof activitySince !== 'function') {
-            throw new Error('[transcript] deps.activitySince is required');
         }
 
         const renderedKeys = new Set();
@@ -81,6 +73,8 @@ const BossModTranscript = (() => {
         let statusEl = null;
         let statusKind = 'ready';
         let newCount = 0;
+        /** The pending repaint that moves a long turn's duration on; null when none is due. */
+        let presenceTimer = null;
 
         const listEl = h('div', { class: 'transcript-list' });
         const presenceEl = h('div', { class: 'transcript-presence' });
@@ -243,6 +237,24 @@ const BossModTranscript = (() => {
         }
 
         /**
+         * How long a thinking row's turn has run, from its `since`, clamped at
+         * 0. A `since` that does not parse breaks the presence contract (the
+         * dispatcher stamps every thinking turn), so it is reported on the
+         * console and the row keeps its copy without a duration.
+         *
+         * @param {{since: string|null}} row  A thinking row.
+         * @returns {number|null} Milliseconds, or null when unknown.
+         */
+        function elapsedMsOf(row) {
+            const startedAt = Date.parse(row.since);
+            if (Number.isNaN(startedAt)) {
+                console.error('[transcript] a thinking presence row has no parseable since', row);
+                return null;
+            }
+            return Math.max(0, Date.now() - startedAt);
+        }
+
+        /**
          * What one presence row says.
          *
          * Under the threshold the copy is unchanged, because that is the
@@ -252,42 +264,58 @@ const BossModTranscript = (() => {
          * the duration (spec 12, carried items — this is where the retired
          * `progress` card's information went).
          *
-         * @param {{agentId: string, name: string}} member
+         * @param {{name: string, phase: string, ahead: number}} row
+         * @param {number|null} elapsedMs  A thinking row's run time; null when
+         *   unknown or queued.
          * @returns {string}
          */
-        function presenceText(member) {
-            if (member.phase === 'queued') {
-                const ahead = Math.max(0, Number(member.ahead) || 0);
+        function presenceText(row, elapsedMs) {
+            if (row.phase === 'queued') {
+                const ahead = Math.max(0, Number(row.ahead) || 0);
                 return `Queued (${ahead} ahead)`;
             }
-            const since = activitySince(member.agentId);
-            const startedAt = since ? new Date(since).getTime() : NaN;
-            if (!Number.isNaN(startedAt)) {
-                const elapsedMs = Date.now() - startedAt;
-                if (elapsedMs >= LONG_TURN_MS) {
-                    const elapsed = BossModFormat.formatDuration(Math.floor(elapsedMs / 1000));
-                    return `${member.name} is working · ${elapsed}`;
-                }
+            if (elapsedMs !== null && elapsedMs >= LONG_TURN_MS) {
+                const elapsed = BossModFormat.formatDuration(Math.floor(elapsedMs / 1000));
+                return `${row.name} is working · ${elapsed}`;
             }
-            return `${member.name} is thinking...`;
+            return `${row.name} is thinking...`;
+        }
+
+        function clearPresenceTimer() {
+            if (presenceTimer === null) return;
+            clearTimeout(presenceTimer);
+            presenceTimer = null;
         }
 
         /**
-         * Repaint the "someone is thinking" rows for one conversation.
-         * @param {string} conversationId
-         * @returns {void} An empty presence list clears the slot completely.
+         * Repaint the "someone is thinking" rows, and keep their durations
+         * moving: while any thinking row is shown, the same rows repaint at the
+         * soonest minute boundary across them, which also makes the first
+         * switch at one minute. A new call replaces the pending repaint.
+         *
+         * @param {object[]} rows  The presence rows to paint (core/presence.js
+         *   shape), already selected for this conversation.
+         * @returns {void} An empty list clears the slot completely.
          */
-        function renderPresence(conversationId) {
+        function renderPresence(rows) {
             const stick = isNearBottom();
             clear(presenceEl);
-            for (const member of presence.list(conversationId)) {
+            let nextRepaintMs = null;
+            for (const row of rows) {
+                const elapsedMs = row.phase === 'thinking' ? elapsedMsOf(row) : null;
                 presenceEl.append(h('div', {
                     class: 'transcript-presence-row',
-                    'data-agent-id': member.agentId,
-                }, presenceText(member)));
+                    'data-agent-id': row.agentId,
+                }, presenceText(row, elapsedMs)));
+                if (elapsedMs !== null) {
+                    const untilBoundary = MINUTE_MS - (elapsedMs % MINUTE_MS);
+                    nextRepaintMs = nextRepaintMs === null ? untilBoundary : Math.min(nextRepaintMs, untilBoundary);
+                }
             }
             keepPresenceLast();
             if (stick) scrollToBottom();
+            clearPresenceTimer();
+            if (nextRepaintMs !== null) presenceTimer = setTimeout(() => renderPresence(rows), nextRepaintMs);
         }
 
         /**
@@ -349,6 +377,7 @@ const BossModTranscript = (() => {
             isNearBottom,
             scrollToBottom,
             messageCount: () => messages,
+            destroy: clearPresenceTimer,
         };
     }
 

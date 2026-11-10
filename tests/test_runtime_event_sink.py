@@ -54,8 +54,8 @@ class _RecordingSink:
     async def broadcast_channel_message(self, **data: Any) -> None:
         self.calls.append(("channel_message", data))
 
-    async def broadcast_channel_presence(self, **data: Any) -> None:
-        self.calls.append(("channel_presence", data))
+    async def broadcast_presence_snapshot(self, rows: list[dict[str, Any]]) -> None:
+        self.calls.append(("presence_snapshot", {"rows": rows}))
 
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None:
         self.calls.append(("diagnostic", summary))
@@ -232,7 +232,11 @@ async def test_an_unexpected_worker_exit_announces_every_extension_changed() -> 
     services.set_event_sink(sink)
     services._process = _ExitedProcess()
     await services._read_worker_output()
-    assert sink.calls == [("extension_live", {"extension_id": None, "agent_id": None})]
+    # Its turns died with it too: the empty presence snapshot goes first.
+    assert sink.calls == [
+        ("presence_snapshot", {"rows": []}),
+        ("extension_live", {"extension_id": None, "agent_id": None}),
+    ]
     assert db.get_runtime_worker_state("primary").lifecycle_state == "error"
 
 
@@ -249,7 +253,10 @@ async def test_a_normal_stop_announces_every_extension_changed_once() -> None:
     await services._read_worker_output()
     assert sink.calls == []
     await services._stop_unlocked()
-    assert sink.calls == [("extension_live", {"extension_id": None, "agent_id": None})]
+    assert sink.calls == [
+        ("presence_snapshot", {"rows": []}),
+        ("extension_live", {"extension_id": None, "agent_id": None}),
+    ]
 
 
 # ─── peer_message (Office chatter) ───

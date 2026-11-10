@@ -16,7 +16,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
@@ -116,6 +116,7 @@ function actionLabels(root) {
             { id: "sh", name: "Sh", role: "Engineer" },
         ],
         threads: [],
+        presence: [],
         hasUsableModel: true,
         needs: [],
         inlineNeedIds: [],

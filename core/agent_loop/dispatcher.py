@@ -1262,23 +1262,31 @@ class TurnDispatcher:
         phase: str,
         channel_id: str | None,
         ahead: int | None = None,
+        since: str | None = None,
     ) -> None:
-        """Tell the desk and, when this turn has a channel, the thread."""
+        """Emit the one ``agent_presence`` delta for this agent and channel.
+
+        Every surface reads this one event: the app process keeps a snapshot
+        of them (``core/runtime/presence.py``) and the browser selects rows
+        from it for the thread, the DM, the desk and the People rail. An
+        archived thread's rows are dropped by the thread's view, not here.
+
+        Args:
+            agent_id: The agent the turn belongs to.
+            agent_name: Its display name.
+            phase: ``thinking``, ``queued`` or ``idle``.
+            channel_id: The thread the turn is for, or None.
+            ahead: How many turns wait ahead of a queued one.
+            since: ISO-8601 start of a thinking turn; None otherwise.
+        """
         await manager.broadcast_agent_presence(
             agent_id=agent_id,
             agent_name=agent_name,
             phase=phase,
             ahead=ahead,
             channel_id=channel_id,
+            since=since,
         )
-        if channel_id and not db.is_channel_archived(channel_id):
-            await manager.broadcast_channel_presence(
-                channel_id=channel_id,
-                agent_id=agent_id,
-                agent_name=agent_name,
-                phase=phase,
-                ahead=ahead,
-            )
 
     async def _heartbeat_claim_lease(self, trigger_id: str, claim_generation: int) -> None:
         """Keep ``claimed_at`` fresh for the duration of a long LLM/shell turn."""
@@ -1318,6 +1326,7 @@ class TurnDispatcher:
                 agent_name=agent.name,
                 phase="thinking",
                 channel_id=channel_id,
+                since=datetime.now(timezone.utc).isoformat(),
             )
 
         try:

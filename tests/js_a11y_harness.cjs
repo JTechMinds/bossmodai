@@ -92,7 +92,7 @@ const { installIconsStub } = require("./js_icons_stub.cjs");
 installIconsStub();
 
 const [
-    dom, avatar, switchControl, store, bus, format, agentStatus, needShape, overlayFocus, modalTrail, overlayActions, overlays, menu, menuButton,
+    dom, avatar, switchControl, store, bus, presence, format, agentStatus, needShape, overlayFocus, modalTrail, overlayActions, overlays, menu, menuButton,
     rowMeta, places, scopeModule, floorApi, floorSwitcher, header, peopleViewMenu, rosterPeople, threadCreate, threadViewMenu,
     rosterThreads, agentRoutes, roster, footer,
 ] = process.argv.slice(2);
@@ -103,6 +103,8 @@ load(avatar, "BossModAvatar");
 load(switchControl, "BossModSwitch");
 load(store, "BossModStore");
 load(bus, "BossModBus");
+// A person row's status line reads the agent's presence row through this.
+load(presence, "BossModPresence");
 // A person row renders its last-activity timestamp through this.
 load(format, "BossModFormat");
 load(agentStatus, "BossModAgentStatus");
@@ -209,6 +211,7 @@ function apiFetch(url) {
         runtimePaused: false,
         hasUsableModel: true,
         connection: "connected",
+        presence: [],
     });
     const b = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
 

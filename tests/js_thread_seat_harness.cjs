@@ -11,7 +11,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModGates",
+    "BossModDom", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome", "BossModFloorScope",
     "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource",
@@ -23,7 +23,7 @@ NAMES.forEach((name, index) => {
     eval(`${fs.readFileSync(paths[index], "utf8")}\n;global.${name} = ${name};\n`);
 });
 
-const { BossModStore, BossModBus, BossModGates, BossModThreadArchive, BossModThreadSeat, BossModThreadSource } = global;
+const { BossModStore, BossModBus, BossModThreadArchive, BossModThreadSeat, BossModThreadSource } = global;
 
 const calls = [];
 const thread = {
@@ -94,7 +94,6 @@ const store = BossModStore.createStore({
     threads: [thread],
 });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
-const presence = BossModGates.createChannelPresenceController();
 
 async function main() {
     const candidates = BossModThreadSeat.liveCandidates(
@@ -150,7 +149,6 @@ async function main() {
     const source = BossModThreadSource.createThreadSource("t1", {
         api,
         bus,
-        presence,
         archive: BossModThreadArchive.createThreadArchive({ api }),
         seat: seater,
         forgetCache: () => {},

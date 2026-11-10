@@ -18,7 +18,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
@@ -101,6 +101,7 @@ global.BossModApi = {
 const store = BossModStore.createStore({
     roster: [{ id: "a", name: "Ada", role: "Writer", color: "#1d4ed8" }],
     threads: [],
+    presence: [],
     hasUsableModel: true,
 });
 const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);

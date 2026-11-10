@@ -60,10 +60,6 @@ const BossModAgentStatus = (() => {
             color: w.color || '#3b82f6',
             status: w.status || 'idle',
             currentActivityKind: w.currentActivityKind || null,
-            // When the running turn began (spec 12, carried items). The
-            // presence row turns this into "working · 12m"; null is a turn
-            // that is not running, and reads as "is thinking...".
-            currentActivitySince: w.currentActivitySince || null,
             boundTaskId: w.boundTaskId || null,
             idle_since: w.idle_since || null,
             location: w.location || null,

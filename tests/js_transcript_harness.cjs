@@ -191,13 +191,12 @@ global.document = documentStub;
 global.window = { document: documentStub };
 
 const [
-    domPath, avatarPath, gatesPath, formatPath, emptyStatePath, noteGroupPath, transcriptPath, cachePath,
+    domPath, avatarPath, formatPath, emptyStatePath, noteGroupPath, transcriptPath, cachePath,
 ] = process.argv.slice(2);
 eval(`${fs.readFileSync(domPath, "utf8")}\n;global.BossModDom = BossModDom;\n`);
 // The empty state is the one status with a face and controls; it lives in its
 // own module and the transcript delegates to it.
 eval(`${fs.readFileSync(avatarPath, "utf8")}\n;global.BossModAvatar = BossModAvatar;\n`);
-eval(`${fs.readFileSync(gatesPath, "utf8")}\n;global.BossModGates = BossModGates;\n`);
 // The presence row's duration is formatted by the shared formatter, not a
 // second opinion local to the transcript.
 eval(`${fs.readFileSync(formatPath, "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
@@ -230,15 +229,25 @@ function message(key, text, kind = "message") {
     };
 }
 
-const presence = BossModGates.createChannelPresenceController();
+// The presence clock is the transcript's one timer. Every pending one is
+// tracked, so "destroy stops the clock" is read rather than assumed — and a
+// leaked timer would also hold this process open for up to a minute.
+const pendingTimers = new Set();
+const realSetTimeout = global.setTimeout;
+const realClearTimeout = global.clearTimeout;
+global.setTimeout = (fn, ms) => {
+    const id = realSetTimeout(() => { pendingTimers.delete(id); fn(); }, ms);
+    pendingTimers.add(id);
+    return id;
+};
+global.clearTimeout = (id) => {
+    pendingTimers.delete(id);
+    realClearTimeout(id);
+};
+
 let eventCards = 0;
-// What the roster would say about each agent's active turn. The transcript
-// never reads the roster itself, so a plain map is the whole of the seam.
-const activityStarts = new Map();
 
 const transcript = BossModTranscript.createTranscript({
-    presence,
-    activitySince: (agentId) => activityStarts.get(agentId) || null,
     renderMessage(m) {
         const node = new FakeEl("div");
         node.setAttribute("class", "msg");
@@ -257,25 +266,19 @@ const transcript = BossModTranscript.createTranscript({
 // A dependency that is absent must fail loudly rather than render half a view.
 let threw = false;
 try {
-    BossModTranscript.createTranscript({ presence, renderMessage() {} });
+    BossModTranscript.createTranscript({ renderMessage() {} });
 } catch (err) {
     threw = true;
 }
 if (!threw) throw new Error("a missing renderEventCard must throw, not no-op");
 
-let threwOnActivity = false;
+let threwOnMessage = false;
 try {
-    BossModTranscript.createTranscript({
-        presence,
-        renderMessage() {},
-        renderEventCard() {},
-    });
+    BossModTranscript.createTranscript({ renderEventCard() {} });
 } catch (err) {
-    threwOnActivity = true;
+    threwOnMessage = true;
 }
-if (!threwOnActivity) {
-    throw new Error("a missing activitySince must throw, not silently drop the duration");
-}
+if (!threwOnMessage) throw new Error("a missing renderMessage must throw, not no-op");
 
 const listing = transcript.element.querySelector("[data-transcript]");
 if (!listing) throw new Error("the scrolling list must carry data-transcript");
@@ -368,73 +371,84 @@ if (transcript.append(message("m1", "one")) !== true) {
     throw new Error("setMessages must reset the dedupe set");
 }
 
-// ─── Presence is scoped to one conversation ───
+// ─── Presence paints exactly the rows it is handed ───
+// Choosing them is the source's job (presenceFor); the transcript paints what
+// it is given, replaces what it painted before, and keeps the slot last.
 
 const presenceSlot = transcript.element.querySelector(".transcript-presence");
 if (!presenceSlot) throw new Error("the transcript needs a presence slot");
-presence.start("a", "ada", "Ada");
-transcript.renderPresence("a");
+const row = (agentId, name, phase, extra) => Object.assign(
+    { agentId, name, channelId: "a", phase, ahead: 0, since: null }, extra);
+const ada = (since) => row("ada", "Ada", "thinking", { since });
+transcript.renderPresence([ada(new Date().toISOString())]);
 if (presenceSlot.children.length !== 1) {
     throw new Error(`expected 1 presence row, got ${presenceSlot.children.length}`);
 }
 if (presenceSlot.children[0].textContent !== "Ada is thinking...") {
     throw new Error(`bad presence copy: "${presenceSlot.children[0].textContent}"`);
 }
+if (presenceSlot.children[0].getAttribute("data-agent-id") !== "ada") {
+    throw new Error("a presence row must name its agent");
+}
 if (listing.children[listing.children.length - 1] !== presenceSlot) {
     throw new Error("the presence slot must stay the last child of the list");
 }
-presence.start("b", "bo", "Bo");
-transcript.renderPresence("a");
-if (presenceSlot.children.length !== 1) {
-    throw new Error("another conversation's presence must not leak in");
-}
-transcript.renderPresence("b");
+transcript.renderPresence([row("bo", "Bo", "queued", { ahead: 2 })]);
 if (presenceSlot.children.length !== 1
-    || presenceSlot.children[0].textContent !== "Bo is thinking...") {
-    throw new Error("switching conversation must repaint from that conversation only");
+    || presenceSlot.children[0].textContent !== "Queued (2 ahead)") {
+    throw new Error(`a repaint must replace the rows, got "${presenceSlot.children.map((n) => n.textContent)}"`);
 }
-presence.stopAll("b");
-transcript.renderPresence("b");
+transcript.renderPresence([]);
 if (presenceSlot.children.length !== 0) {
     throw new Error("an empty presence list must leave no residue");
-}
-transcript.renderPresence("a");
-if (presenceSlot.children.length !== 1) {
-    throw new Error("returning to a conversation must restore its presence");
 }
 
 // ─── A long-running turn trades the copy for a duration ───
 // This is where the retired `progress` card's information went (spec 12,
 // carried items). Below the threshold the copy must not move: "< 1m" tells the
-// operator strictly less than "is thinking..." does.
+// operator strictly less than "is thinking..." does. The minute clock itself
+// runs on fake timers in js_channel_presence_harness.cjs.
 
-activityStarts.set("ada", new Date(Date.now() - 30 * 1000).toISOString());
-transcript.renderPresence("a");
+transcript.renderPresence([ada(new Date(Date.now() - 30 * 1000).toISOString())]);
 const shortTurnUnchanged = presenceSlot.children[0].textContent === "Ada is thinking...";
 if (!shortTurnUnchanged) {
     throw new Error(`a 30s turn must still read "is thinking...", got "${presenceSlot.children[0].textContent}"`);
 }
 
-activityStarts.set("ada", new Date(Date.now() - 12 * 60 * 1000).toISOString());
-transcript.renderPresence("a");
+transcript.renderPresence([ada(new Date(Date.now() - 12 * 60 * 1000).toISOString())]);
 const longTurnShowsDuration = presenceSlot.children[0].textContent === "Ada is working · 12m";
 if (!longTurnShowsDuration) {
     throw new Error(`a 12m turn must read the duration, got "${presenceSlot.children[0].textContent}"`);
 }
+if (pendingTimers.size !== 1) {
+    throw new Error(`a thinking row keeps one clock running, got ${pendingTimers.size}`);
+}
 
-// A start time the roster does not have, or cannot parse, is not an excuse to
-// paint a broken row: the copy falls back to the honest one.
-activityStarts.set("ada", "not-a-timestamp");
-transcript.renderPresence("a");
-const unparseableFallsBack = presenceSlot.children[0].textContent === "Ada is thinking...";
+// A start time that is missing or does not parse breaks the contract: it is
+// reported, never painted as a number, and the row keeps the honest copy.
+const reported = [];
+const realConsoleError = console.error;
+console.error = (...args) => { reported.push(args); };
+transcript.renderPresence([ada("not-a-timestamp")]);
+const unparseableText = presenceSlot.children[0].textContent;
+transcript.renderPresence([ada(null)]);
+const missingText = presenceSlot.children[0].textContent;
+console.error = realConsoleError;
+const unparseableFallsBack = unparseableText === "Ada is thinking..."
+    && missingText === "Ada is thinking..."
+    && reported.length === 2
+    && pendingTimers.size === 0;
 if (!unparseableFallsBack) {
-    throw new Error(`an unparseable start must not paint a duration, got "${presenceSlot.children[0].textContent}"`);
+    throw new Error(`an unparseable start must not paint a duration: "${unparseableText}" / "${missingText}", `
+        + `${reported.length} reported, ${pendingTimers.size} clocks`);
 }
-activityStarts.delete("ada");
-transcript.renderPresence("a");
-if (presenceSlot.children[0].textContent !== "Ada is thinking...") {
-    throw new Error("no start time at all must read as thinking");
-}
+
+// destroy() stops the clock, so a closed conversation leaves nothing running.
+transcript.renderPresence([ada(new Date().toISOString())]);
+const clockWhileShown = pendingTimers.size === 1;
+transcript.destroy();
+const destroyStopsClock = clockWhileShown && pendingTimers.size === 0;
+if (!destroyStopsClock) throw new Error(`destroy must stop the presence clock: ${pendingTimers.size} pending`);
 
 // ─── Status states ───
 
@@ -536,8 +550,6 @@ function receipt(key) {
     return node;
 }
 const groupTranscript = BossModTranscript.createTranscript({
-    presence,
-    activitySince: () => null,
     renderMessage(m) {
         const node = new FakeEl("div");
         node.setAttribute("class", "msg");
@@ -677,8 +689,6 @@ if (gl.querySelector(".note-group-overflow").children.length !== 3) throw new Er
 
 // Counter while scrolled up: a run of actions counts once.
 const counterTranscript = BossModTranscript.createTranscript({
-    presence,
-    activitySince: () => null,
     renderMessage(m) {
         const node = new FakeEl("div");
         node.setAttribute("class", "msg");
@@ -716,8 +726,6 @@ if (slotKeys(gx, "note-group-last").join() !== "n6") throw new Error("new note i
 // A run whose head was never counted still shows once when scrolled up.
 function counterFixture() {
     const t = BossModTranscript.createTranscript({
-        presence,
-        activitySince: () => null,
         renderMessage(m) {
             const node = new FakeEl("div");
             node.setAttribute("class", "msg");
@@ -762,8 +770,9 @@ process.stdout.write(JSON.stringify({
     sticksWhenNearBottom,
     keepsScrollWhenReading: true,
     announcesNewCount: true,
-    presenceScoped: true,
-    presenceShowsDuration: shortTurnUnchanged && longTurnShowsDuration && unparseableFallsBack,
+    presencePaintsGivenRows: true,
+    presenceShowsDuration: shortTurnUnchanged && longTurnShowsDuration && unparseableFallsBack
+        && destroyStopsClock,
     cacheCopies: true,
     liveQueueLine: true,
 }));

@@ -112,33 +112,35 @@ eval(`${fs.readFileSync(process.argv[2], "utf8")}\n;global.BossModDom = BossModD
 eval(`${fs.readFileSync(process.argv[3], "utf8")}\n;global.BossModAvatar = BossModAvatar;\n`);
 eval(`${fs.readFileSync(process.argv[4], "utf8")}\n;global.BossModStore = BossModStore;\n`);
 eval(`${fs.readFileSync(process.argv[5], "utf8")}\n;global.BossModBus = BossModBus;\n`);
+// The page's presence rows: People reads each agent's mid-turn row from them.
+eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModPresence = BossModPresence;\n`);
 // The rails render the last-activity timestamp through the shared formatter,
 // so it is the real one here — a stub would prove the column exists and
 // nothing about what it says.
-eval(`${fs.readFileSync(process.argv[6], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
-eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
+eval(`${fs.readFileSync(process.argv[7], "utf8")}\n;global.BossModFormat = BossModFormat;\n`);
+eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModAgentStatus = BossModAgentStatus;\n`);
 // People asks the one Focus-need table which queue rows still need the
 // operator. Loading the real module here is what keeps that answer shared
 // with the needs surfaces rather than copied into the rail.
-eval(`${fs.readFileSync(process.argv[8], "utf8")}\n;global.BossModNeedShape = BossModNeedShape;\n`);
+eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModNeedShape = BossModNeedShape;\n`);
 // The Threads half hangs a menu off its `⋯`, so the real panel is loaded
 // rather than stubbed: a stub would prove a button exists and nothing about
 // what opening it does.
-eval(`${fs.readFileSync(process.argv[9], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
+eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlayFocus = BossModOverlayFocus;\n`);
 // core/modal-trail.js (a modal head's trail and ‹, split from overlays.js)
 // is the overlays slot's SIBLING, for the five-lists reason given below.
-eval(`${fs.readFileSync(path.join(path.dirname(process.argv[10]), "modal-trail.js"), "utf8")}\n;global.BossModModalTrail = BossModModalTrail;\n`);
+eval(`${fs.readFileSync(path.join(path.dirname(process.argv[11]), "modal-trail.js"), "utf8")}\n;global.BossModModalTrail = BossModModalTrail;\n`);
 // core/overlay-actions.js (a modal's action row, split from overlays.js) is
 // a sibling too, for the same reason.
-eval(`${fs.readFileSync(path.join(path.dirname(process.argv[10]), "overlay-actions.js"), "utf8")}\n;global.BossModOverlayActions = BossModOverlayActions;\n`);
-eval(`${fs.readFileSync(process.argv[10], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
+eval(`${fs.readFileSync(path.join(path.dirname(process.argv[11]), "overlay-actions.js"), "utf8")}\n;global.BossModOverlayActions = BossModOverlayActions;\n`);
+eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModOverlays = BossModOverlays;\n`);
 // Both section headers' `⋯` (core/menu-button.js) and the People
 // half's "Show roles" switch behind its own. Loaded as SIBLINGS of the
 // overlays and People slots, for the reason agent-routes.js is below: five
 // Python files drive this harness with one positional list each, and a new
 // slot would have to land in all of them.
-const coreDir = path.dirname(process.argv[10]);
-const shellDir = path.dirname(process.argv[12]);
+const coreDir = path.dirname(process.argv[11]);
+const shellDir = path.dirname(process.argv[13]);
 // core/menu.js holds createMenu, split from core/overlays.js; a sibling of
 // the overlays slot, for the same five-lists reason.
 eval(`${fs.readFileSync(path.join(coreDir, "menu.js"), "utf8")}\n;global.BossModMenu = BossModMenu;\n`);
@@ -146,20 +148,20 @@ eval(`${fs.readFileSync(path.join(coreDir, "menu-button.js"), "utf8")}\n;global.
 eval(`${fs.readFileSync(path.join(coreDir, "switch.js"), "utf8")}\n;global.BossModSwitch = BossModSwitch;\n`);
 eval(`${fs.readFileSync(path.join(shellDir, "people-view-menu.js"), "utf8")}\n;global.BossModPeopleViewMenu = BossModPeopleViewMenu;\n`);
 // Both halves build their right-hand column through this one builder.
-eval(`${fs.readFileSync(process.argv[11], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
-eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
-eval(`${fs.readFileSync(process.argv[13], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
+eval(`${fs.readFileSync(process.argv[12], "utf8")}\n;global.BossModRosterRowMeta = BossModRosterRowMeta;\n`);
+eval(`${fs.readFileSync(process.argv[13], "utf8")}\n;global.BossModRosterPeople = BossModRosterPeople;\n`);
+eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModThreadCreate = BossModThreadCreate;\n`);
 // Which list the rail is showing — the header row's third owner.
-eval(`${fs.readFileSync(process.argv[14], "utf8")}\n;global.BossModThreadViewMenu = BossModThreadViewMenu;\n`);
-eval(`${fs.readFileSync(process.argv[15], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
+eval(`${fs.readFileSync(process.argv[15], "utf8")}\n;global.BossModThreadViewMenu = BossModThreadViewMenu;\n`);
+eval(`${fs.readFileSync(process.argv[16], "utf8")}\n;global.BossModRosterThreads = BossModRosterThreads;\n`);
 // The rail's doors are the app's shared routes (shell/agent-routes.js),
 // reached at click time. Loaded as roster.js's SIBLING rather than from an
 // argument slot of its own: two Python files drive this harness with one
 // positional list each (tests/test_ui_roster.py and
 // tests/test_ui_visual_parity.py), and a new slot would have to land in both.
-const agentRoutesPath = path.join(path.dirname(process.argv[16]), "agent-routes.js");
+const agentRoutesPath = path.join(path.dirname(process.argv[17]), "agent-routes.js");
 eval(`${fs.readFileSync(agentRoutesPath, "utf8")}\n;global.BossModAgentRoutes = BossModAgentRoutes;\n`);
-eval(`${fs.readFileSync(process.argv[16], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
+eval(`${fs.readFileSync(process.argv[17], "utf8")}\n;global.BossModRoster = BossModRoster;\n`);
 
 function text(node) {
     if (!node) return "";
@@ -230,8 +232,11 @@ function rowFor(el, name) {
         threads: [],
         needs: [{ id: "n1", kind: "consent", agentId: "a1" }],
         runtimePaused: true,
+        presence: [],
     });
     const bus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    // Page-lifetime, as shell.js attaches it, so it is outside the baselines.
+    BossModPresence.attach({ store, bus });
     const storeBaseline = store.subscriberCount();
     const busBaseline = bus.subscriberCount();
     const el = makeEl("aside");
@@ -329,6 +334,63 @@ function rowFor(el, name) {
     if (!text(jim()).includes("working")) {
         throw new Error(`status label must come from BossModAgentStatus.getStatusLabel, got "${text(jim())}"`);
     }
+
+    // ── Presence: a chat turn moves neither status nor activity ──
+    //
+    // Laura is idle with no activity, which is exactly what agent_state says
+    // through a whole chat reply turn. Her mid-turn presence row is what tells
+    // the rail she is working; it ranks below Paused and the live activity
+    // word, and above Needs you.
+    const since = new Date().toISOString();
+    const presence = (agentId, name, phase, extra) => bus.publish("agent_presence",
+        Object.assign({ agent_id: agentId, agent_name: name, phase }, extra));
+    const personNode = (name) => rowFor(el, name).parentNode;
+    const jimNodeBefore = personNode("Jim");
+    const lauraNodeBefore = personNode("Laura");
+    presence("a2", "Laura", "queued", { channel_id: "c1", ahead: 1 });
+    const queuedBeatsIdle = text(laura()).includes("queued") && !text(laura()).includes("idle");
+    if (!queuedBeatsIdle) throw new Error(`a queued idle agent must read queued, got "${text(laura())}"`);
+    const lauraNodeQueued = personNode("Laura");
+    presence("a2", "Laura", "thinking", { channel_id: "c1", since });
+    const thinkingBeatsIdle = text(laura()).includes("thinking") && !text(laura()).includes("idle");
+    if (!thinkingBeatsIdle) throw new Error(`a thinking idle agent must read thinking, got "${text(laura())}"`);
+    // Only the row whose phase moved is rebuilt, and only when it moves: a
+    // second thinking row in another thread changes nothing on the rail.
+    const lauraNodeThinking = personNode("Laura");
+    presence("a2", "Laura", "thinking", { channel_id: "c2", since });
+    const presenceChangeRepaintsOnlyThatRow = personNode("Jim") === jimNodeBefore
+        && lauraNodeQueued !== lauraNodeBefore
+        && lauraNodeThinking !== lauraNodeQueued
+        && personNode("Laura") === lauraNodeThinking;
+    if (!presenceChangeRepaintsOnlyThatRow) {
+        throw new Error(`a presence change must rebuild only the row whose phase moved: Jim kept `
+            + `${personNode("Jim") === jimNodeBefore}, Laura rebuilt ${lauraNodeQueued !== lauraNodeBefore}/`
+            + `${lauraNodeThinking !== lauraNodeQueued}, same phase kept ${personNode("Laura") === lauraNodeThinking}`);
+    }
+    presence("a2", "Laura", "idle", { channel_id: "c2" });
+
+    store.setState({ needs: [{ id: "n3", kind: "consent", agentId: "a2" }] });
+    const thinkingBeatsNeedsYou = text(laura()).includes("thinking") && !text(laura()).includes("Needs you");
+    if (!thinkingBeatsNeedsYou) throw new Error(`a running turn must beat Needs you, got "${text(laura())}"`);
+    store.setState({ needs: [] });
+
+    // Jim's work activity keeps its word: a turn inside it never flickers.
+    presence("a1", "Jim", "thinking", { since });
+    const liveActivityBeatsThinking = text(jim()).includes("working") && !text(jim()).includes("thinking");
+    if (!liveActivityBeatsThinking) {
+        throw new Error(`a live activity must beat thinking, got "${text(jim())}"`);
+    }
+
+    store.setState({ runtimePaused: true });
+    const pausedBeatsThinking = text(laura()).includes("Paused") && !text(laura()).includes("thinking");
+    if (!pausedBeatsThinking) throw new Error(`Paused must beat thinking, got "${text(laura())}"`);
+    store.setState({ runtimePaused: false });
+
+    presence("a2", "Laura", "idle", { channel_id: "c1" });
+    presence("a1", "Jim", "idle", {});
+    const idleRemovesThinking = text(laura()).includes("idle") && !text(laura()).includes("thinking")
+        && store.getState().presence.length === 0;
+    if (!idleRemovesThinking) throw new Error(`the turn's idle must restore the label, got "${text(laura())}"`);
 
     // ── The last-activity column ──
     //
@@ -878,6 +940,13 @@ function rowFor(el, name) {
         idleStaleErrorIsNotNeedsYou: true,
         breakBeatsStaleError: true,
         usesSharedStatusLabel: true,
+        thinkingBeatsIdle,
+        queuedBeatsIdle,
+        thinkingBeatsNeedsYou,
+        liveActivityBeatsThinking,
+        pausedBeatsThinking,
+        presenceChangeRepaintsOnlyThatRow,
+        idleRemovesThinking,
         searchMatchesNameAndRole: true,
         caretSurvivesRerender: true,
         identicalWorldPublishesNothing,

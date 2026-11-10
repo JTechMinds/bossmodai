@@ -26,6 +26,7 @@ CONTEXT_MODULES = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "presence.js",
     JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
@@ -222,6 +223,22 @@ def test_context_column_is_torn_down_when_chat_unmounts() -> None:
     assert "BossModContextColumn" not in shell
     assert "BossModMiniOffice" not in shell
     assert "BossModOfficeChatter" not in shell
+
+
+def test_a_desk_opened_mid_queue_shows_its_lane_note() -> None:
+    """The desk reads the page's presence rows, not a live event it may have missed.
+
+    It used to hear `agent_presence` on the bus, so a desk opened while the
+    agent was already queued never said "Queued (n ahead)". The note comes from
+    the store slice now (core/presence.js), read once at build because the
+    store does not notify on subscribe, then kept in step by a subscription.
+    """
+    assert _harness()["deskLaneNoteAtBuild"] is True
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert "let laneNote = laneNoteFor(store.getState().presence);" in panel
+    assert "store.subscribe((s) => s.presence," in panel
+    assert "BossModPresence.agentRow(rows, agentId)" in panel
+    assert "'agent_presence'" not in panel
 
 
 def test_mini_office_groups_by_location_including_unknown() -> None:
@@ -1077,7 +1094,7 @@ def test_desk_toggle_and_open_desk_are_injected() -> None:
 
     # The menu reaches the source through the controller.
     conversation = _read(CONVERSATION / "conversation.js")
-    assert "api, bus, store, presence, agentMenu, liveViews," in conversation
+    assert "api, bus, store, agentMenu, liveViews," in conversation
     assert "BossModAgentMenu" not in conversation
 
     place = _read(JS / "places" / "chat" / "chat-place.js")

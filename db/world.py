@@ -89,7 +89,6 @@ def get_world_state() -> list[dict[str, Any]]:
             s.x, s.y, s.status,
             s.last_active_at, s.idle_since,
             act.kind AS currentActivityKind,
-            act.created_at AS currentActivitySince,
             act.task_id AS boundTaskId
         FROM agents a
         LEFT JOIN agent_state s ON s.agent_id = a.id

@@ -69,9 +69,9 @@ const BossModDeskPanel = (() => {
      * Build one agent's desk.
      *
      * @param {object} deps
-     * @param {object}   deps.store  Application store; the roster names the agent.
-     * @param {object}   deps.bus    Topic bus: the file browser's live writes
-     *   and the agent's lane presence.
+     * @param {object}   deps.store  Application store; the roster names the agent
+     *   and the presence slice gives its lane note.
+     * @param {object}   deps.bus    Topic bus: the file browser's live writes.
      * @param {Function} deps.api    Authenticated fetch helper.
      * @param {(placeId: string, params?: object) => void} deps.navigate  Leaves
      *   for another place. The dialog hands in one that closes the desk — and
@@ -150,8 +150,19 @@ const BossModDeskPanel = (() => {
             agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
             onChange: () => { if (extensionsSection) extensionsSection.hidden = deskExtensions.isEmpty(); },
         });
-        /** Server lane note. Queued replaces the status label until a lane frees. */
-        let laneNote = '';
+        /**
+         * The lane note from the page's presence slice (core/presence.js):
+         * Queued replaces the status label until a lane frees.
+         * @param {object[]} rows  `store.presence`.
+         * @returns {string} Empty unless this agent's row is queued.
+         */
+        function laneNoteFor(rows) {
+            const row = BossModPresence.agentRow(rows, agentId);
+            return row && row.phase === 'queued' ? `Queued (${row.ahead} ahead)` : '';
+        }
+        // Read now: the store does not notify on subscribe, and a desk opened
+        // mid-queue must say so from its first paint.
+        let laneNote = laneNoteFor(store.getState().presence);
         /** The description on screen, its clamp, and whether it may measure yet. */
         let shownDescription = null;
         let clamp = null;
@@ -272,10 +283,8 @@ const BossModDeskPanel = (() => {
                 void pack.refresh();
             }
         }));
-        disposers.push(bus.subscribe('agent_presence', (data) => {
-            if (!data || data.agent_id !== agentId) return;
-            const ahead = Math.max(0, Number(data.ahead) || 0);
-            laneNote = data.phase === 'queued' ? `Queued (${ahead} ahead)` : '';
+        disposers.push(store.subscribe((s) => s.presence, (rows) => {
+            laneNote = laneNoteFor(rows);
             renderProfile();
         }));
 

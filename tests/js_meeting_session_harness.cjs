@@ -13,10 +13,9 @@ const { FakeEl, installDom } = require("./js_fake_dom.cjs");
 
 installDom();
 
-const [domPath, gatesPath, noteGroupPath, transcriptPath] = process.argv.slice(2);
+const [domPath, noteGroupPath, transcriptPath] = process.argv.slice(2);
 const load = (path, name) => eval(`${fs.readFileSync(path, "utf8")}\n;global.${name} = ${name};\n`);
 load(domPath, "BossModDom");
-load(gatesPath, "BossModGates");
 load(noteGroupPath, "BossModNoteGroup");
 load(transcriptPath, "BossModTranscript");
 
@@ -41,10 +40,6 @@ function message(key, author, text) {
 }
 
 const transcript = BossModTranscript.createTranscript({
-    presence: global.BossModGates.createChannelPresenceController(),
-    // No meeting turn in this harness has an active activity behind it, so
-    // every presence row keeps the "is thinking..." copy.
-    activitySince: () => null,
     renderMessage(m) {
         const node = document.createElement("div");
         node.className = "msg";

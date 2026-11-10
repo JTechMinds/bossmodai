@@ -23,7 +23,6 @@ const BossModAgentSource = (() => {
      * @param {Function} ctx.api  Authenticated fetch helper (injected, never global).
      * @param {object} ctx.bus  Topic bus.
      * @param {object} ctx.store  Read for the roster, which names the agent.
-     * @param {object} ctx.presence  Shared presence controller.
      * @param {{actions: Function}} ctx.agentMenu  The page's agent menu: the
      *   `⋯`'s Agent, Manage and Advanced rows, and their operations.
      * @param {object} [ctx.liveViews]  Optional `{views, subscribe, open}`:
@@ -35,11 +34,9 @@ const BossModAgentSource = (() => {
         const api = ctx && ctx.api;
         const bus = ctx && ctx.bus;
         const store = ctx && ctx.store;
-        const presence = ctx && ctx.presence;
         if (typeof api !== 'function') throw new Error('[agent-source] ctx.api is required');
         if (!bus) throw new Error('[agent-source] ctx.bus is required');
         if (!store) throw new Error('[agent-source] ctx.store is required');
-        if (!presence) throw new Error('[agent-source] ctx.presence is required');
         if (!ctx.agentMenu || typeof ctx.agentMenu.actions !== 'function') {
             throw new Error('[agent-source] ctx.agentMenu is required');
         }
@@ -233,10 +230,6 @@ const BossModAgentSource = (() => {
             function onLiveEvent(topic, data) {
                 if (topic === 'chat_message') {
                     if (!data) return;
-                    if (data.agent_id) {
-                        presence.stop(data.agent_id, data.agent_id);
-                        on.presence();
-                    }
                     if (data.agent_id !== agentId) return;
                     on.message(toMessage(data));
                     return;
@@ -244,21 +237,6 @@ const BossModAgentSource = (() => {
                 if (topic === 'chat_reset') {
                     if (!data || data.agent_id !== agentId) return;
                     on.reset();
-                    return;
-                }
-                if (topic === 'agent_presence') {
-                    if (!data || data.agent_id !== agentId) return;
-                    if (data.phase === 'thinking') {
-                        presence.start(agentId, agentId, data.agent_name || agent().name, { phase: 'thinking' });
-                    } else if (data.phase === 'queued') {
-                        presence.start(agentId, agentId, data.agent_name || agent().name, {
-                            phase: 'queued',
-                            ahead: data.ahead,
-                        });
-                    } else {
-                        presence.stop(agentId, agentId);
-                    }
-                    on.presence();
                     return;
                 }
                 if (topic === 'channel_message') {
@@ -291,6 +269,18 @@ const BossModAgentSource = (() => {
                 },
                 onLiveEvent,
             };
+        }
+
+        /**
+         * The presence row this DM shows: what the agent is doing anywhere,
+         * from the page's presence slice (core/presence.js).
+         *
+         * @param {object[]} rows  `store.presence`.
+         * @returns {object[]} The agent's one row, or none.
+         */
+        function presenceFor(rows) {
+            const row = BossModPresence.agentRow(rows, agentId);
+            return row ? [row] : [];
         }
 
         /**
@@ -347,6 +337,7 @@ const BossModAgentSource = (() => {
             rewind: requests.rewind,
             context,
             subscribe,
+            presenceFor,
             chrome,
             // The face too: a conversation nobody has spoken in is where the
             // operator is least sure who they are looking at.

@@ -57,15 +57,6 @@ class RuntimeEventSink(Protocol):
         desk_path: str | None = None,
         task_id: str | None = None,
     ) -> None: ...
-    async def broadcast_channel_presence(
-        self,
-        *,
-        channel_id: str,
-        agent_id: str,
-        agent_name: str,
-        phase: str,
-        ahead: int | None = None,
-    ) -> None: ...
     async def broadcast_agent_presence(
         self,
         *,
@@ -74,6 +65,7 @@ class RuntimeEventSink(Protocol):
         phase: str,
         ahead: int | None = None,
         channel_id: str | None = None,
+        since: str | None = None,
     ) -> None: ...
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None: ...
     async def broadcast_thought(self, agent_id: str, thought: str, action_name: str) -> None: ...
@@ -115,9 +107,6 @@ class NullRuntimeEventSink:
         return None
 
     async def broadcast_channel_message(self, **_: Any) -> None:
-        return None
-
-    async def broadcast_channel_presence(self, **_: Any) -> None:
         return None
 
     async def broadcast_agent_presence(self, **_: Any) -> None:
@@ -183,9 +172,6 @@ class TransportRuntimeEventSink:
 
     async def broadcast_channel_message(self, **kwargs: Any) -> None:
         await self._emit("channel_message", kwargs)
-
-    async def broadcast_channel_presence(self, **kwargs: Any) -> None:
-        await self._emit("channel_presence", kwargs)
 
     async def broadcast_agent_presence(self, **kwargs: Any) -> None:
         await self._emit("agent_presence", kwargs)
@@ -261,11 +247,6 @@ class RuntimeEventProxy:
         if db.is_channel_archived(kwargs.get("channel_id")):
             return
         await self._sink.broadcast_channel_message(**kwargs)
-
-    async def broadcast_channel_presence(self, **kwargs: Any) -> None:
-        if db.is_channel_archived(kwargs.get("channel_id")):
-            return
-        await self._sink.broadcast_channel_presence(**kwargs)
 
     async def broadcast_agent_presence(self, **kwargs: Any) -> None:
         await self._sink.broadcast_agent_presence(**kwargs)

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from core import config
+from core.runtime.presence import PresenceRegistry
 import db
 import db.connection as db_connection
 
@@ -49,9 +50,9 @@ class EventSink(Protocol):
 
     async def broadcast_channel_message(self, **data: Any) -> None: ...
 
-    async def broadcast_channel_presence(self, **data: Any) -> None: ...
-
     async def broadcast_agent_presence(self, **data: Any) -> None: ...
+
+    async def broadcast_presence_snapshot(self, rows: list[dict[str, Any]]) -> None: ...
 
     async def broadcast_diagnostic(self, summary: dict[str, Any]) -> None: ...
 
@@ -92,6 +93,9 @@ class RuntimeServices:
         self._telegram_queue: asyncio.Queue[tuple[str, dict[str, Any]]] | None = None
         self._telegram_consumer: asyncio.Task[None] | None = None
         self._event_sink: EventSink | None = None
+        # Who is mid-turn, from the worker's agent_presence deltas; sent to
+        # each WebSocket client on connect (presence_snapshot).
+        self._presence = PresenceRegistry()
 
     def set_telegram_bridge(self, bridge: Any) -> None:
         """Attach the Telegram event bridge and start its one consumer task.
@@ -137,6 +141,21 @@ class RuntimeServices:
     def set_event_sink(self, sink: EventSink) -> None:
         """Attach the WebSocket (or test) broadcast sink. ``core`` must not import ``api``."""
         self._event_sink = sink
+
+    def presence_snapshot(self) -> list[dict[str, Any]]:
+        """Return who is thinking or queued right now, for a connecting client.
+
+        The materialized view of every ``agent_presence`` delta the worker has
+        emitted since it started (``core/runtime/presence.py``), so a browser
+        that connects, reconnects or reloads mid-turn still sees the turn.
+
+        Returns:
+            Shallow copies of every row:
+            ``{agent_id, agent_name, channel_id, phase, ahead, since}``.
+            Empty while no turn is queued or running, and after the worker
+            exits.
+        """
+        return self._presence.snapshot()
 
     async def start(self) -> None:
         """Start the dedicated runtime worker process."""
@@ -425,7 +444,7 @@ class RuntimeServices:
             await self._kill_process(process)
             await self._clear_process_state()
             db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
-            await self._announce_extension_sessions_changed()
+            await self._announce_worker_exit()
             return
 
         if process.returncode is None:
@@ -440,6 +459,20 @@ class RuntimeServices:
         state = db.get_runtime_worker_state(_WORKER_NAME)
         if state is None or state.lifecycle_state not in {"stopped", "error"}:
             db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
+        await self._announce_worker_exit()
+
+    async def _announce_worker_exit(self) -> None:
+        """Tell the UI the worker is gone, and everything that lived in it.
+
+        In-flight turns die with the worker exactly as extension sessions do,
+        and a dead worker can never send their ``idle``. So the presence view
+        is cleared and every client is sent the empty snapshot, then every
+        extension's live state is announced as changed.
+        """
+        self._presence.clear()
+        sink = self._event_sink
+        if sink is not None:
+            await sink.broadcast_presence_snapshot([])
         await self._announce_extension_sessions_changed()
 
     async def _announce_extension_sessions_changed(self) -> None:
@@ -555,7 +588,7 @@ class RuntimeServices:
                 if state is None or state.lifecycle_state not in {"stopped", "error"}:
                     db.mark_runtime_worker_error("Runtime worker exited unexpectedly", worker_name=_WORKER_NAME)
                 # A normal stop announces from _stop_unlocked instead.
-                await self._announce_extension_sessions_changed()
+                await self._announce_worker_exit()
 
     async def _handle_worker_message(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
@@ -581,6 +614,17 @@ class RuntimeServices:
     async def _dispatch_event(self, envelope: dict[str, Any]) -> None:
         kind = envelope.get("kind")
         data = envelope.get("data") or {}
+
+        if kind == "agent_presence":
+            # Ahead of the sink check: the connect snapshot must hold every
+            # row the worker emitted, whether or not a sink was attached yet.
+            try:
+                self._presence.apply(data)
+            except ValueError as exc:
+                # Not forwarded anywhere, so no client holds a row the snapshot
+                # lacks. Raising would end _read_worker_output's whole stream.
+                logger.error("Dropped malformed presence event: %s (%s)", data, exc)
+                return
 
         queue = self._telegram_queue
         if queue is not None:
@@ -614,9 +658,6 @@ class RuntimeServices:
             return
         if kind == "channel_message":
             await sink.broadcast_channel_message(**data)
-            return
-        if kind == "channel_presence":
-            await sink.broadcast_channel_presence(**data)
             return
         if kind == "agent_presence":
             await sink.broadcast_agent_presence(**data)

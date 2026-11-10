@@ -40,6 +40,7 @@ CONVERSATION_STACK = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "presence.js",
     JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
@@ -81,6 +82,66 @@ CONVERSATION_STACK = [
     JS / "conversation" / "conversation.js",
     # The agent `⋯` every conversation is handed; a thread never paints its
     # rows, so the menu alone (it names nothing else until a row is picked).
+    JS / "context" / "agent-menu.js",
+]
+
+# The order the presence harness evaluates its modules in: the whole
+# conversation stack, since it opens an agent DM as well as threads (the DM
+# builds its Rewind and paints the agent `⋯`'s rows).
+PRESENCE_STACK = [
+    JS / "core" / "dom.js",
+    JS / "core" / "markdown.js",
+    JS / "core" / "avatar.js",
+    JS / "core" / "switch.js",
+    JS / "core" / "store.js",
+    JS / "core" / "bus.js",
+    JS / "core" / "presence.js",
+    JS / "core" / "operator-invalidate.js",
+    JS / "core" / "format.js",
+    JS / "core" / "gates.js",
+    JS / "core" / "consent-card.js",
+    JS / "core" / "overlay-focus.js",
+    JS / "core" / "modal-trail.js",
+    JS / "core" / "overlay-actions.js",
+    JS / "core" / "overlays.js",
+    JS / "core" / "yolo-mode.js",
+    JS / "core" / "menu.js",
+    JS / "core" / "menu-button.js",
+    JS / "conversation" / "empty-state.js",
+    JS / "conversation" / "note-group.js",
+    JS / "conversation" / "transcript.js",
+    JS / "conversation" / "transcript-cache.js",
+    JS / "conversation" / "message.js",
+    JS / "conversation" / "event-cards.js",
+    JS / "conversation" / "title-rename.js",
+    JS / "conversation" / "chrome-menu.js",
+    JS / "conversation" / "chrome-switch.js",
+    JS / "conversation" / "chrome.js",
+    JS / "core" / "desktop-clipboard.js",
+    JS / "conversation" / "composer-attachments.js",
+    JS / "conversation" / "composer-history.js",
+    JS / "conversation" / "mention-draft.js",
+    JS / "conversation" / "composer.js",
+    JS / "conversation" / "system-receipts.js",
+    JS / "needs" / "need-shape.js",
+    JS / "needs" / "needs-bar.js",
+    JS / "conversation" / "sources" / "thread-archive.js",
+    JS / "conversation" / "sources" / "thread-seat.js",
+    JS / "conversation" / "sources" / "thread-requests.js",
+    JS / "conversation" / "approval-controls.js",
+    JS / "conversation" / "sources" / "thread-members.js",
+    JS / "conversation" / "sources" / "thread-source.js",
+    JS / "conversation" / "sources" / "agent-requests.js",
+    JS / "conversation" / "sources" / "agent-source.js",
+    JS / "conversation" / "conversation-focus-invalidate.js",
+    JS / "conversation" / "conversation-window.js",
+    JS / "conversation" / "chat-rewind-dialog.js",
+    JS / "conversation" / "chat-rewind.js",
+    JS / "conversation" / "consent-activity.js",
+    JS / "conversation" / "conversation.js",
+    JS / "context" / "agent-api.js",
+    JS / "shell" / "agent-routes.js",
+    JS / "context" / "desk-memory.js",
     JS / "context" / "agent-menu.js",
 ]
 
@@ -131,9 +192,14 @@ def test_gates_and_consent_card_export_presence_and_consent_card() -> None:
     """Split by owner in Phase 2A: the gates moved to core/gates.js and the
     consent card to core/consent-card.js. Every asserted string survives."""
     gates = _read("core/gates.js")
-    assert "function createChannelPresenceController(" in gates
-    assert "createChannelPresenceController," in gates
+    # Presence left the gates for the page-lifetime store (core/presence.js).
+    assert "createChannelPresenceController" not in gates
     assert "function createInFlightGate(" in gates
+    presence = _read("core/presence.js")
+    assert "function applyEvent(" in presence
+    assert "function agentRow(" in presence
+    assert "function attach(" in presence
+    assert "return { normalizeRow, applyEvent, agentRow, attach };" in presence
 
     consent = _read("core/consent-card.js")
     assert "function renderHostPathConsentCard(" in consent
@@ -193,14 +259,18 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     roster_threads = _read("shell/roster-threads.js")
     bus = _read("core/bus.js")
 
-    # Presence: one shared model, painted by the transcript, driven by the source.
-    assert "BossModGates.createChannelPresenceController()" in conversation
-    assert "function renderPresence(" in transcript
-    assert "presence.list(conversationId)" in transcript
+    # Presence: the page's store slice, selected by the source, painted by the
+    # transcript. The thread no longer writes presence; it only picks its rows.
+    assert "source.presenceFor(store.getState().presence)" in conversation
+    assert "function renderPresence(rows)" in transcript
     assert "is thinking..." in transcript
-    assert "presence.start(" in thread
-    assert "presence.stop(" in thread
-    assert "presence.stopAll(" in thread
+    assert "function presenceFor(rows)" in thread
+    assert "rows.filter((row) => row.channelId === threadId)" in thread
+    assert "presence.start(" not in thread
+    assert "presence.stop" not in thread
+    agent = _read("conversation/sources/agent-source.js")
+    assert "function presenceFor(rows)" in agent
+    assert "BossModPresence.agentRow(rows, agentId)" in agent
 
     # Consent and CLI approval cards render inline in the transcript.
     assert "BossModConsentCard.cardFromMessage(raw)" in thread
@@ -282,19 +352,25 @@ def test_channels_view_renders_consent_card_and_member_thinking() -> None:
     assert "BossModRosterThreads.createThreads(" in roster
     assert "BossModThreadCreate.createThreadControls(" in roster_threads
 
-    # channel_presence is routed to the thread that owns it. The dock-era
-    # switch in app.js and the AgentContext delegation it called are gone; the
-    # bus and the source carry the topic now.
-    assert "'channel_presence'," in bus
-    assert "'channel_presence'," in bus
-    assert "topic === 'channel_presence'" in thread
+    # channel_presence is gone end to end: agent_presence carries the channel,
+    # and the connect snapshot fills the store before any source looks.
+    assert "'agent_presence'," in bus
+    assert "'presence_snapshot'," in bus
+    retired = [
+        path.relative_to(JS).as_posix()
+        for path in JS.rglob("*.js")
+        if "vendor" not in path.parts and "channel_presence" in path.read_text(encoding="utf-8")
+    ]
+    assert retired == []
+    assert "BossModPresence.attach({ store, bus });" in _read("shell/shell.js")
 
 
 def test_live_channel_message_appends_without_loading_remount() -> None:
     source = _read("conversation/sources/thread-source.js")
     handler = source.split("if (topic === 'channel_message') {", 1)[1].split(
-        "if (topic === 'channel_presence'", 1
+        "if (topic === 'channel_updated'", 1
     )[0]
+    assert "if (topic === 'channel_updated'" in source
     assert "on.message(" in handler
     assert "isLiveThread(" in handler
     assert handler.index("isLiveThread(") < handler.index("on.message(")
@@ -360,7 +436,7 @@ def test_archive_open_tasks_harness_covers_prompt_branches() -> None:
             str(JS / "core" / "store.js"),
             str(JS / "core" / "bus.js"),
             str(JS / "core" / "operator-invalidate.js"),
-            str(JS / "core" / "gates.js"),
+            str(JS / "core" / "presence.js"),
             str(JS / "core" / "consent-card.js"),
             str(JS / "core" / "overlay-focus.js"),
             str(JS / "core" / "modal-trail.js"),
@@ -421,7 +497,6 @@ def test_transcript_cache_swaps_without_loading() -> None:
             str(TRANSCRIPT_HARNESS),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "avatar.js"),
-            str(JS / "core" / "gates.js"),
             str(JS / "core" / "format.js"),
             str(JS / "conversation" / "empty-state.js"),
             str(JS / "conversation" / "note-group.js"),
@@ -461,9 +536,17 @@ def test_channel_presence_helper_only_tracks_channel_turns() -> None:
     assert _channel_id_for_presence({"type": "channel_message"}) is None
 
 
-def test_channel_presence_harness_tracks_members_per_channel() -> None:
+def test_channel_presence_harness_keeps_rows_for_the_life_of_the_page() -> None:
+    """Presence is the page's store slice, so leaving or switching never loses it.
+
+    The operator's case: a long turn, Chat → Log → Chat, and the row was gone.
+    The harness drives the real conversation stack against core/presence.js:
+    snapshot and delta semantics, a remount, a thread opened mid-turn, an idle
+    that lands while another conversation is open, archived rooms, the DM's
+    one-row rule, and the transcript's minute clock on fake timers.
+    """
     result = subprocess.run(
-        ["node", str(PRESENCE_HARNESS), str(JS / "core" / "gates.js")],
+        ["node", str(PRESENCE_HARNESS)] + [str(path) for path in PRESENCE_STACK],
         check=False,
         capture_output=True,
         text=True,
@@ -472,10 +555,15 @@ def test_channel_presence_harness_tracks_members_per_channel() -> None:
     payload = json.loads(result.stdout.strip().splitlines()[-1])
     assert payload == {
         "ok": True,
-        "tracksMembers": True,
-        "isolatesChannels": True,
-        "stopsOne": True,
-        "stopsAll": True,
+        "snapshotReplaces": True,
+        "malformedLeavesState": True,
+        "deltaSetsAndRemoves": True,
+        "survivesRemount": True,
+        "openedAfterThinking": True,
+        "idleWhileAway": True,
+        "archivedShowsNone": True,
+        "dmAgentRow": True,
+        "clock": True,
     }
 
 

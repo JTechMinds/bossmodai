@@ -23,6 +23,8 @@ CONVERSATION_MODULES = [
     JS / "core" / "switch.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    # The page's presence rows, which the shell attaches before any place.
+    JS / "core" / "presence.js",
     JS / "core" / "operator-invalidate.js",
     JS / "core" / "format.js",
     JS / "core" / "gates.js",
@@ -215,7 +217,7 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
             str(JS / "core" / "store.js"),
             str(JS / "core" / "bus.js"),
             str(JS / "core" / "operator-invalidate.js"),
-            str(JS / "core" / "gates.js"),
+            str(JS / "core" / "presence.js"),
             str(JS / "core" / "consent-card.js"),
             str(JS / "core" / "overlay-focus.js"),
             str(JS / "core" / "modal-trail.js"),
@@ -254,7 +256,6 @@ def _transcript_payload() -> dict:
             str(TRANSCRIPT_HARNESS),
             str(JS / "core" / "dom.js"),
             str(JS / "core" / "avatar.js"),
-            str(JS / "core" / "gates.js"),
             str(JS / "core" / "format.js"),
             str(CONVERSATION / "empty-state.js"),
             str(CONVERSATION / "note-group.js"),
@@ -277,7 +278,7 @@ def test_transcript_harness() -> None:
         "sticksWhenNearBottom": True,
         "keepsScrollWhenReading": True,
         "announcesNewCount": True,
-        "presenceScoped": True,
+        "presencePaintsGivenRows": True,
         "presenceShowsDuration": True,
         "cacheCopies": True,
         "liveQueueLine": True,
@@ -288,11 +289,12 @@ def test_presence_shows_duration_for_a_long_running_turn() -> None:
     """The turn duration lives in the presence row, and nowhere else.
 
     Spec 12, carried items: `progress` had a renderer and no producer, so the
-    operator's answer was to feed `act.created_at` through the world snapshot
-    and paint it where they are already looking. Two halves, both asserted
-    here — the presence row switches copy past the threshold, and the card kind
-    it replaces is gone from event-cards.js so nothing can render the same
-    information a second way.
+    duration is painted where the operator is already looking. It counts from
+    the turn's real start, the `since` the dispatcher stamps on its thinking
+    presence (an activity's start missed every chat turn). Two halves, both
+    asserted here — the presence row switches copy past the threshold, and the
+    card kind it replaces is gone from event-cards.js so nothing can render the
+    same information a second way.
     """
     assert _transcript_payload()["presenceShowsDuration"] is True
 
@@ -303,16 +305,19 @@ def test_presence_shows_duration_for_a_long_running_turn() -> None:
     # Below the threshold the copy is untouched — test_ui_chat_typing.py owns
     # that property, and this is the line that keeps it reachable.
     assert "is thinking..." in transcript
-    # The transcript asks for the start time; it never reads the roster itself.
-    assert "deps.activitySince is required" in transcript
+    # The start time is the presence row's own `since`; the transcript is
+    # handed its rows and never reads the store or the roster itself.
+    assert "function renderPresence(rows)" in transcript
+    assert "Date.parse(row.since)" in transcript
     assert "s.roster" not in transcript
+    assert "getState" not in transcript
 
-    # The controller is what owns the store, and what keeps the number moving:
-    # a duration painted once and never repainted is worse than no duration.
+    # The transcript keeps the number moving with its own clock, and a clock
+    # outliving its conversation would repaint a view nobody is looking at.
+    assert "setTimeout(() => renderPresence(rows), nextRepaintMs)" in transcript
     controller = _read(CONVERSATION / "conversation.js")
-    assert "function activitySince(agentId)" in controller
-    assert "currentActivitySince" in controller
-    assert "(s) => s.roster," in controller
+    assert "transcript.destroy();" in controller
+    assert "(s) => s.presence," in controller
 
     cards = _read(CONVERSATION / "event-cards.js")
     assert "message.kind === 'progress'" not in cards

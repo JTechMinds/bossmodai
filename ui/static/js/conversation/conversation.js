@@ -21,7 +21,6 @@ const BossModConversation = (() => {
             || typeof agentMenu.openMemory !== 'function') throw new Error('[conversation] deps.agentMenu is required');
 
         const generation = BossModGates.createLoadGeneration();
-        const presence = BossModGates.createChannelPresenceController();
         const disposers = [];
         const cardCtx = { api, navigate, openDesk };
 
@@ -50,21 +49,7 @@ const BossModConversation = (() => {
         // buffered rather than dropped; setMessages would otherwise erase them.
         let pendingLive = null;
 
-        /**
-         * When the roster says this agent's active turn began, or null. The
-         * transcript asks; only the controller reads the store.
-         * @param {string} agentId
-         * @returns {string|null}
-         */
-        function activitySince(agentId) {
-            const row = (store.getState().roster || [])
-                .find((item) => item && item.id === agentId);
-            return (row && row.currentActivitySince) || null;
-        }
-
         const transcript = BossModTranscript.createTranscript({
-            presence,
-            activitySince,
             renderMessage: BossModMessage.renderMessage,
             renderEventCard: (message) => BossModEventCards.renderEventCard(message, cardCtx),
         });
@@ -167,6 +152,11 @@ const BossModConversation = (() => {
             store.setState({ inlineNeedIds: ids });
         }
 
+        /** Paint the open source's rows from the page-lifetime presence slice. */
+        function paintPresence() {
+            transcript.renderPresence(source ? source.presenceFor(store.getState().presence) : []);
+        }
+
         function paint(messages) {
             const visible = visibleMessages(messages);
             if (visible.length) transcript.setStatus('ready');
@@ -175,7 +165,7 @@ const BossModConversation = (() => {
                 onAssign: openAssign,
             }));
             transcript.setMessages(visible);
-            transcript.renderPresence(currentId);
+            paintPresence();
             syncInlineNeedIds(visible);
         }
 
@@ -243,7 +233,7 @@ const BossModConversation = (() => {
                 cache.forget(currentId);
                 void open(currentId, currentKind);
             },
-            presence() { transcript.renderPresence(currentId); },
+            presence() { paintPresence(); },
             chrome() { applyChrome(); composer.applyState(); },
             refresh() { void refetchOpenConversation(); },  // its notes changed
         };
@@ -260,12 +250,12 @@ const BossModConversation = (() => {
         function buildSource(id, kind) {
             if (kind === 'agent') {
                 return BossModConversationWindow.attach(api, 'human_dm', BossModAgentSource.createAgentSource(id, {
-                    api, bus, store, presence, agentMenu, liveViews,
+                    api, bus, store, agentMenu, liveViews,
                 }));
             }
             if (kind === 'thread') {
                 return BossModConversationWindow.attach(api, 'channel', BossModThreadSource.createThreadSource(id, {
-                    api, bus, store, presence,
+                    api, bus, store,
                     archive: BossModThreadArchive.createThreadArchive({ api }),
                     seat: BossModThreadSeat.createThreadSeat({ api, store }),
                     forgetCache: (conversationId) => {
@@ -360,10 +350,10 @@ const BossModConversation = (() => {
             },
             () => { if (source) applyChrome(); }));
 
-        // Roster ticks are the presence duration clock; never remount on them.
+        // Presence outlives this controller (core/presence.js); a change repaints the open rows.
         disposers.push(store.subscribe(
-            (s) => s.roster,
-            () => { if (currentId) transcript.renderPresence(currentId); }));
+            (s) => s.presence,
+            () => { if (currentId) paintPresence(); }));
 
         disposers.push(bus.subscribe('activity', (entry) => {
             BossModConsentActivity.settledCards(entry)
@@ -390,6 +380,7 @@ const BossModConversation = (() => {
                 composer.destroy();
                 chrome.destroy();
                 needsBar.destroy();
+                transcript.destroy();
                 disposers.splice(0).forEach((off) => off());
             },
         };

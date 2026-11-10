@@ -37,7 +37,13 @@ def test_conversation_focus_registers_operator_invalidate() -> None:
     focus = (JS / "conversation" / "conversation-focus-invalidate.js").read_text(encoding="utf-8")
     conversation = (JS / "conversation" / "conversation.js").read_text(encoding="utf-8")
     assert "id: 'conversation-focus'" in focus
-    assert "'channel_presence'" in focus
+    # Presence is not Focus traffic: core/presence.js keeps it in the store for
+    # the life of the page, and the open source only selects its rows.
+    assert "'agent_presence'" not in focus
+    assert "'channel_presence'" not in focus
+    shell = (JS / "shell" / "shell.js").read_text(encoding="utf-8")
+    assert "BossModPresence.attach({ store, bus });" in shell
+    assert "source.presenceFor(store.getState().presence)" in conversation
     assert "'chat_message'" in focus
     assert "BossModConversationFocus.attach" in conversation
 

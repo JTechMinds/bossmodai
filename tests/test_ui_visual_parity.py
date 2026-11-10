@@ -454,6 +454,7 @@ ROSTER_MODULES = [
     JS / "core" / "avatar.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
+    JS / "core" / "presence.js",
     JS / "core" / "format.js",
     JS / "core" / "agent-status.js",
     JS / "needs" / "need-shape.js",

@@ -18,6 +18,7 @@ HARNESS = Path(__file__).resolve().parent / "js_roster_harness.cjs"
 
 MODULES = [
     ("core", "dom.js"), ("core", "avatar.js"), ("core", "store.js"), ("core", "bus.js"),
+    ("core", "presence.js"),
     ("core", "format.js"),
     ("core", "agent-status.js"),
     ("needs", "need-shape.js"),
@@ -72,6 +73,30 @@ def test_status_line_precedence_is_live_first() -> None:
     assert "kind === 'error'" not in people
     assert "kind === 'consent'" not in people
     assert "BossModRosterPeople.createPeople(" in _source()
+
+
+def test_status_line_reads_presence_mid_turn() -> None:
+    """A chat turn moves neither status nor activity, so the rail reads presence.
+
+    Pierre-Atoms' agent_state said idle for the whole 7.8-minute turn, and so
+    did the rail. Precedence: Paused, then the live activity word (a work turn
+    never flickers to thinking), then thinking / queued from the page's
+    presence rows, then Needs you, then the status label. A presence change
+    repaints the one row whose phase moved, and only when it moves.
+    """
+    payload = _run_harness()
+    assert payload["thinkingBeatsIdle"] is True
+    assert payload["queuedBeatsIdle"] is True
+    assert payload["thinkingBeatsNeedsYou"] is True
+    assert payload["liveActivityBeatsThinking"] is True
+    assert payload["pausedBeatsThinking"] is True
+    assert payload["presenceChangeRepaintsOnlyThatRow"] is True
+    assert payload["idleRemovesThinking"] is True
+    people = _people_source()
+    # One owner of "what is this agent doing": the rail asks core/presence.js.
+    assert "BossModPresence.agentRow(state.presence, a.id)" in people
+    assert "disposers.push(store.subscribe((s) => s.presence, render));" in people
+    assert "if (presenceRow) return presenceRow.phase;" in people
 
 
 def test_search_filters_on_name_and_role_and_preserves_the_caret() -> None:

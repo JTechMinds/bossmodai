@@ -28,6 +28,8 @@ const BossModShell = (() => {
         // Each floor's last chat; shell/floor-chat.js keeps it in step.
         conversationByFloor: {},
         roster: [],
+        // Who is mid-turn: page-lifetime and server-snapshotted (core/presence.js).
+        presence: [],
         threads: [],
         rosterQuery: '',
         railCollapsed: false,
@@ -70,6 +72,8 @@ const BossModShell = (() => {
         // Every live-view extension's status re-reads on server pushes, not a
         // timer; it must hear them from the first broadcast on.
         BossModLiveStatus.attach({ bus });
+        // The connect snapshot is presence's first broadcast, so the same rule.
+        BossModPresence.attach({ store, bus });
 
         const layoutElement = requireElement('main-layout');
         const placeElement = requireElement('app-place');
