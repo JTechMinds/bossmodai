@@ -111,6 +111,39 @@ def test_search_filters_on_name_and_role_and_preserves_the_caret() -> None:
     assert payload["disposersDrain"] is True
 
 
+def test_rail_label_follows_the_world_when_an_activity_ends() -> None:
+    """An ended activity leaves the rail at the next world_update, not a reload.
+
+    The server sends an ended activity as ``currentActivityKind: null``, which
+    normalizeAgent means as "not set", and the merge must let that null win.
+    It used to keep the old kind, so Designer-A still read "working" after her
+    work activity ended (2026-11-09) — and because the live-activity word
+    outranks presence, the stuck word also hid "thinking". Both cases run
+    through the real world_update handler with no roster re-fetch.
+    """
+    payload = _run_harness()
+    assert payload["endedActivityReadsIdle"] is True
+    assert payload["endedActivityThenThinking"] is True
+
+
+def test_the_live_activity_rule_has_one_definition() -> None:
+    """``hasLiveActivity`` is defined in core/agent-status.js and nowhere else.
+
+    The rail and the desk both ask it whether a live activity's word outranks
+    "thinking". It moved out of shell/roster-people.js when the desk became
+    its second reader; a second copy would drift, and the two surfaces would
+    disagree.
+    """
+    defining = sorted(
+        path.relative_to(JS).as_posix()
+        for path in JS.rglob("*.js")
+        if "vendor" not in path.parts
+        and "function hasLiveActivity" in path.read_text(encoding="utf-8")
+    )
+    assert defining == ["core/agent-status.js"]
+    assert "BossModAgentStatus.hasLiveActivity(agent)" in _people_source()
+
+
 def test_creating_a_thread_clears_the_people_selection() -> None:
     """The selection is People's; the create button is Threads'.
 

@@ -1080,19 +1080,54 @@ async function main() {
         .map((node) => node.children[0].textContent);
     const aboutPill = inDesk(".desk-about-block").querySelector(".status-pill");
     const queuedAtBuild = aboutPill.textContent === "Queued (2 ahead)";
-    // A thinking row is not a lane note; the pill goes back to the status.
+    // A thinking row is not a lane note: the Queued note goes, and Jim (idle,
+    // no activity) reads "thinking", as the People rail does.
     store.setState({
         presence: [global.BossModPresence.normalizeRow({
             agent_id: "a1", agent_name: "Jim", phase: "thinking", channel_id: "c1", since: new Date().toISOString(),
         })],
     });
-    const thinkingDropsNote = aboutPill.textContent === global.BossModAgentStatus.getStatusLabel(
-        ROSTER.find((agent) => agent.id === "a1").status, null);
+    const thinkingDropsNote = aboutPill.textContent === "thinking";
     store.setState({ presence: [] });
     const deskLaneNoteAtBuild = queuedAtBuild && thinkingDropsNote;
     if (!deskLaneNoteAtBuild) {
         throw new Error(`a desk opened mid-queue must say so: at build ${queuedAtBuild}, `
             + `thinking "${aboutPill.textContent}"`);
+    }
+
+    // The pill reads "thinking" exactly when the People rail does. Driven
+    // through the page's own path: an `agent_presence` frame on the bus,
+    // core/presence.js folding it into `store.presence`, and the desk's
+    // subscription repainting. A chat turn moves neither status nor activity,
+    // so before this an agent mid-reply read "idle" on its desk while the
+    // rail read "thinking".
+    const detachPresence = global.BossModPresence.attach({ store, bus });
+    const jimLabel = global.BossModAgentStatus.getStatusLabel(
+        ROSTER.find((agent) => agent.id === "a1").status, null);
+    bus.publish("agent_presence", {
+        agent_id: "a1", agent_name: "Jim", phase: "thinking", channel_id: "c1", since: new Date().toISOString(),
+    });
+    const deskThinkingWhenIdle = aboutPill.textContent === "thinking";
+    // A live activity keeps its word, as on the rail: execution turns inside
+    // a work activity must not flicker "working" ↔ "thinking".
+    store.setState({
+        roster: ROSTER.map((agent) => (agent.id === "a1"
+            ? { ...agent, status: "work_active", currentActivityKind: "work" }
+            : agent)),
+    });
+    const deskLiveActivityBeatsThinking = aboutPill.textContent === "working";
+    store.setState({ roster: ROSTER });
+    const thinkingAgain = aboutPill.textContent === "thinking";
+    // The turn ends: the dispatcher's idle removes the row.
+    bus.publish("agent_presence", { agent_id: "a1", agent_name: "Jim", phase: "idle", channel_id: "c1" });
+    const deskThinkingClearsOnIdle = thinkingAgain
+        && store.getState().presence.length === 0
+        && aboutPill.textContent === jimLabel;
+    detachPresence();
+    if (!(deskThinkingWhenIdle && deskLiveActivityBeatsThinking && deskThinkingClearsOnIdle)) {
+        throw new Error("the desk's pill must read thinking exactly when the rail does: "
+            + JSON.stringify({ deskThinkingWhenIdle, deskLiveActivityBeatsThinking, deskThinkingClearsOnIdle,
+                pill: aboutPill.textContent }));
     }
     const deskFields = {
         // The name is the modal's title now, and the face its lead.
@@ -3395,6 +3430,9 @@ async function main() {
         oneDeskAtATime,
         deskDrainsOnClose,
         deskLaneNoteAtBuild,
+        deskThinkingWhenIdle,
+        deskLiveActivityBeatsThinking,
+        deskThinkingClearsOnIdle,
         toolsAreInTheHead,
         optionsMenuHoldsEveryAction,
         taskRowIsAButtonWithTheSharedPill,

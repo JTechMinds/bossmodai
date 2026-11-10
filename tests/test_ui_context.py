@@ -235,10 +235,30 @@ def test_a_desk_opened_mid_queue_shows_its_lane_note() -> None:
     """
     assert _harness()["deskLaneNoteAtBuild"] is True
     panel = _read(CONTEXT / "desk-panel.js")
-    assert "let laneNote = laneNoteFor(store.getState().presence);" in panel
+    assert "let presenceRow = BossModPresence.agentRow(store.getState().presence, agentId);" in panel
     assert "store.subscribe((s) => s.presence," in panel
     assert "BossModPresence.agentRow(rows, agentId)" in panel
     assert "'agent_presence'" not in panel
+
+
+def test_desk_status_label_reads_thinking_like_the_rail() -> None:
+    """The desk's pill reads "thinking" exactly when the People rail does.
+
+    It used to replace the status label only for a queued row, so an agent
+    mid-reply read "idle" on its desk while the rail read "thinking". The desk
+    takes the rail's rule now: a queued row's "Queued (n ahead)" first, as
+    before; then a live activity's word, so execution turns inside a work
+    activity never flicker; then "thinking" for a thinking row; then the
+    status label. The live-activity rule is core/agent-status.js's one export,
+    so the two surfaces cannot drift apart.
+    """
+    payload = _harness()
+    assert payload["deskThinkingWhenIdle"] is True
+    assert payload["deskLiveActivityBeatsThinking"] is True
+    assert payload["deskThinkingClearsOnIdle"] is True
+    panel = _read(CONTEXT / "desk-panel.js")
+    assert "pillEl.textContent = statusWord(who, presenceRow);" in panel
+    assert "BossModAgentStatus.hasLiveActivity(who)" in panel
 
 
 def test_mini_office_groups_by_location_including_unknown() -> None:

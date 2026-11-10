@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import uuid
+from collections.abc import Iterator
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -11,10 +14,16 @@ import pytest
 
 import db
 from api.websocket import ConnectionManager
+from core.agent_loop import activity_runtime
 from core.agent_loop.message_delivery import peer_message_event
 from core.agent_loop.say_before_actions import merge_say_artifacts, say_already_posted
 from core.models.message import Message
-from core.runtime.events import NullRuntimeEventSink, RuntimeEventProxy, TransportRuntimeEventSink
+from core.runtime.events import (
+    NullRuntimeEventSink,
+    RuntimeEventProxy,
+    TransportRuntimeEventSink,
+    runtime_events,
+)
 from core.runtime.services import RuntimeServices
 
 
@@ -368,3 +377,175 @@ async def test_the_connection_manager_broadcasts_task_step(monkeypatch: pytest.M
     monkeypatch.setattr(manager, "broadcast", record)
     await manager.broadcast_task_step(_STEP)
     assert sent == [{"type": "task_step", "data": _STEP}]
+
+
+# ─── schedule_world_state (status changes outside agent turns) ───
+
+
+async def _let_scheduled_tasks_run() -> None:
+    """Yield to the loop until a scheduled broadcast and its done-callback have both run."""
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+
+class _FailingWorldSink(_RecordingSink):
+    async def broadcast_world_state(self) -> None:
+        raise RuntimeError("socket closed")
+
+
+@pytest.fixture
+def recording_runtime_events() -> Iterator[_RecordingSink]:
+    """A recording sink on the process-wide ``runtime_events``, and the old sink back after.
+
+    The proxy is a singleton every test in this worker shares, so the
+    previous sink is restored even when the test fails.
+    """
+    previous = runtime_events._sink
+    sink = _RecordingSink()
+    runtime_events.set_sink(sink)
+    try:
+        yield sink
+    finally:
+        runtime_events.set_sink(previous)
+
+
+def test_schedule_world_state_without_a_running_loop_schedules_nothing() -> None:
+    proxy = RuntimeEventProxy()
+    sink = _RecordingSink()
+    proxy.set_sink(sink)
+
+    assert proxy.schedule_world_state() is None
+    assert sink.calls == []
+
+
+@pytest.mark.asyncio
+async def test_schedule_world_state_coalesces_a_burst_until_its_broadcast_has_run() -> None:
+    proxy = RuntimeEventProxy()
+    sink = _RecordingSink()
+    proxy.set_sink(sink)
+
+    proxy.schedule_world_state()
+    proxy.schedule_world_state()
+    proxy.schedule_world_state()
+    assert sink.calls == []
+    await _let_scheduled_tasks_run()
+    assert sink.calls == [("world_state", {})]
+
+    # That broadcast is done, so the next request is a new snapshot.
+    proxy.schedule_world_state()
+    await _let_scheduled_tasks_run()
+    assert sink.calls == [("world_state", {}), ("world_state", {})]
+
+
+class _HeldWorldSink(_RecordingSink):
+    """Records each world snapshot as its send starts, then holds the send open."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.release = asyncio.Event()
+
+    async def broadcast_world_state(self) -> None:
+        self.calls.append(("world_state", {}))
+        await self.release.wait()
+
+
+@pytest.mark.asyncio
+async def test_a_request_made_while_a_snapshot_is_sending_gets_its_own() -> None:
+    """A started snapshot no longer absorbs requests.
+
+    The worker's send yields mid-way (two ``to_thread`` steps), so its line
+    can already be in the pipe, and the app can already have read the
+    database, while the task is not done. A refresh in that gap is not in
+    that snapshot and must schedule another.
+    """
+    proxy = RuntimeEventProxy()
+    sink = _HeldWorldSink()
+    proxy.set_sink(sink)
+
+    proxy.schedule_world_state()
+    for _ in range(10):
+        if sink.calls:
+            break
+        await asyncio.sleep(0)
+    assert sink.calls == [("world_state", {})], "the first snapshot never started sending"
+
+    proxy.schedule_world_state()
+    sink.release.set()
+    await _let_scheduled_tasks_run()
+
+    assert sink.calls == [("world_state", {}), ("world_state", {})]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_scheduled_world_state_is_logged_and_stays_in_its_task(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    proxy = RuntimeEventProxy()
+    proxy.set_sink(_FailingWorldSink())
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    try:
+        with caplog.at_level(logging.ERROR, logger="core.runtime.events"):
+            proxy.schedule_world_state()
+            await _let_scheduled_tasks_run()
+    finally:
+        loop.set_exception_handler(None)
+
+    failures = [record for record in caplog.records if record.name == "core.runtime.events"]
+    assert len(failures) == 1
+    assert failures[0].levelno == logging.ERROR
+    assert failures[0].exc_info is not None
+    assert isinstance(failures[0].exc_info[1], RuntimeError)
+    assert str(failures[0].exc_info[1]) == "socket closed"
+    assert unhandled == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_scheduled_world_state_is_not_reported(caplog: pytest.LogCaptureFixture) -> None:
+    proxy = RuntimeEventProxy()
+    sink = _RecordingSink()
+    proxy.set_sink(sink)
+    loop = asyncio.get_running_loop()
+    unhandled: list[dict[str, Any]] = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    try:
+        with caplog.at_level(logging.ERROR, logger="core.runtime.events"):
+            proxy.schedule_world_state()
+            pending = proxy._world_pending
+            assert pending is not None
+            pending.cancel()
+            await _let_scheduled_tasks_run()
+    finally:
+        loop.set_exception_handler(None)
+
+    assert pending.cancelled()
+    assert sink.calls == []
+    assert [record for record in caplog.records if record.name == "core.runtime.events"] == []
+    assert unhandled == []
+    # A cancelled request does not absorb the next one.
+    proxy.schedule_world_state()
+    await _let_scheduled_tasks_run()
+    assert sink.calls == [("world_state", {})]
+
+
+@pytest.mark.asyncio
+async def test_refresh_agent_status_schedules_one_world_snapshot(
+    recording_runtime_events: _RecordingSink,
+) -> None:
+    """The one choke point for visible status writes also asks for the snapshot.
+
+    Status changes outside a turn (claim checks, failed-turn supervision, the
+    watchdog's stall escalation) have no turn broadcast after them, so the
+    rail stayed wrong until an unrelated one.
+    """
+    db.init_db()
+    agent = db.create_agent(f"Refresh-{uuid.uuid4().hex[:8]}", role="Eng", desk_x=1, desk_y=1)
+
+    state = activity_runtime.refresh_agent_status(agent.id)
+
+    assert state is not None and state.status == "idle"
+    # Scheduled, not sent: the loop has not yielded yet.
+    assert recording_runtime_events.calls == []
+    await _let_scheduled_tasks_run()
+    assert recording_runtime_events.calls == [("world_state", {})]

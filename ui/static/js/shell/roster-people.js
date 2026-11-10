@@ -50,28 +50,12 @@ const BossModRosterPeople = (() => {
      */
     function statusLine(agent, runtimePaused, agentsWithNeeds, presenceRow) {
         if (runtimePaused) return 'Paused';
-        if (hasLiveActivity(agent)) {
+        if (BossModAgentStatus.hasLiveActivity(agent)) {
             return BossModAgentStatus.getStatusLabel(agent.status, agent.currentActivityKind);
         }
         if (presenceRow) return presenceRow.phase;
         if (agentsWithNeeds.has(agent.id)) return 'Needs you';
         return BossModAgentStatus.getStatusLabel(agent.status, agent.currentActivityKind);
-    }
-
-    /**
-     * Whether the row should read the live activity word.
-     *
-     * A running kind is the thread's Writing / Break. work_active without a
-     * kind still means they are on a turn, so an old Focus error cannot
-     * relabel that row Needs you.
-     *
-     * @param {object} agent
-     * @returns {boolean}
-     */
-    function hasLiveActivity(agent) {
-        if (!agent) return false;
-        if (agent.currentActivityKind) return true;
-        return agent.status === 'work_active' || agent.status === 'social_active';
     }
 
     /**

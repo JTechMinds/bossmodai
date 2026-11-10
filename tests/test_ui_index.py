@@ -124,8 +124,10 @@ def test_the_dock_era_panes_phase_3b_replaced_are_gone_from_disk() -> None:
         )
 
 
-# What utils.js exported, minus the three overlay helpers Phase 4 retired.
-# Every one of these must now have exactly one owner under core/.
+# What utils.js exported, minus the three overlay helpers Phase 4 retired,
+# plus hasLiveActivity, moved here from shell/roster-people.js when the desk
+# became its second reader. Every one of these must now have exactly one
+# owner under core/.
 UTILS_EXPORTS = {
     "core/format.js": (
         "escapeHtml", "formatRelativeTime", "formatNumber", "formatDuration",
@@ -134,7 +136,7 @@ UTILS_EXPORTS = {
     "core/agent-status.js": (
         "normalizeAgent", "AGENT_COLOR_PALETTE", "nextUnusedAgentColor",
         "mergeRosterFromWorld", "getStatusColor", "getStatusClasses",
-        "getStatusDot", "getStatusLabel",
+        "getStatusDot", "getStatusLabel", "hasLiveActivity",
     ),
     "core/specialty.js": (
         "inferWorkFamily", "specialtyFamily", "suggestFinishLine",
@@ -182,11 +184,11 @@ def test_utils_is_gone_and_its_exports_have_owners() -> None:
                 f"{owner} declares {name} but does not export it"
             )
 
-    # 19 names, three owners, no overlap (the three specialty-match helpers
-    # went with the assignment gate).
+    # 20 names, three owners, no overlap (the three specialty-match helpers
+    # went with the assignment gate; hasLiveActivity joined core/agent-status.js).
     all_names = [name for names in UTILS_EXPORTS.values() for name in names]
-    assert len(all_names) == 19
-    assert len(set(all_names)) == 19
+    assert len(all_names) == 20
+    assert len(set(all_names)) == 20
 
 
 def test_no_module_uses_the_retired_overlay_helpers() -> None:

@@ -6,6 +6,7 @@ from typing import Any
 
 import db
 from core.models import Activity, Agent, AgentState, Task
+from core.runtime.events import runtime_events
 from core.tasking.transitions import is_terminal_task_status, transition_task
 
 TERMINAL_WAKE_WHY = "Board task is already complete"
@@ -270,7 +271,17 @@ def terminal_wake_feedback(agent: Agent, task: Task | None = None) -> dict[str, 
 
 
 def refresh_agent_status(agent_id: str, *, clear_soft_block: bool = True) -> AgentState | None:
-    """Derive visible agent status from the active runtime activity.
+    """Derive visible agent status from the active runtime activity, and show it.
+
+    Every visible status write goes through here, so this is also where the
+    world snapshot is asked for (``runtime_events.schedule_world_state``).
+    Some refreshes happen outside an agent turn (dispatcher claim checks,
+    failed-turn supervision, the watchdog's stall escalation), and no turn
+    broadcast follows them: without this, the People rail kept the old word
+    until some unrelated broadcast. The request is coalesced, so a burst of
+    refreshes costs one snapshot, and it schedules nothing when no event
+    loop is running. In the app process the proxy has no sink, so an app
+    route that refreshes sends the snapshot itself.
 
     Args:
         agent_id: The agent to refresh.
@@ -278,6 +289,28 @@ def refresh_agent_status(agent_id: str, *, clear_soft_block: bool = True) -> Age
             Soft-block (the default). The caller owns that decision: a
             detached turn's claim and finalize pass ``False`` because they
             are not the agent resuming that work.
+
+    Returns:
+        The agent's state as stored, or ``None`` when it has no state row.
+    """
+    state = _write_visible_status(agent_id, clear_soft_block=clear_soft_block)
+    runtime_events.schedule_world_state()
+    return state
+
+
+def _write_visible_status(agent_id: str, *, clear_soft_block: bool) -> AgentState | None:
+    """Derive visible agent status from the active runtime activity and store it.
+
+    The status write itself, with no broadcast; ``refresh_agent_status`` is
+    the one caller, and it schedules the world snapshot after.
+
+    Args:
+        agent_id: The agent to refresh.
+        clear_soft_block: Whether live work demotes the bound task's sticky
+            Soft-block; see ``refresh_agent_status``.
+
+    Returns:
+        The agent's state as stored, or ``None`` when it has no state row.
     """
     active = get_active_activity(agent_id)
     if active and active.kind == "work" and active.task_id:

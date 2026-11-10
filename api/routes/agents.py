@@ -1888,7 +1888,9 @@ async def rewind_agent_chat(agent_id: str, body: ChatRewindBody):
     Deletes the message and every later DM message with their attachments,
     stops the agent's reply in this DM if one is running, and queues again
     any operator message that still stands. See
-    ``core.chat_rewind.rewind_human_chat`` for the ordering.
+    ``core.chat_rewind.rewind_human_chat`` for the ordering. When a reply
+    was stopped, it also sends the world snapshot: the agent's status was
+    refreshed in this process, where runtime events reach no client.
 
     Returns:
         ``{status, removed_messages, removed_attachments, unremoved_files,
@@ -1919,6 +1921,11 @@ async def rewind_agent_chat(agent_id: str, body: ChatRewindBody):
         ),
         agent_name=agent.name,
     )
+    if result.stopped_turn:
+        # The rewind refreshed the agent's status in this, the app process,
+        # where runtime_events has no sink: the snapshot that refresh asked
+        # for reaches no client, so the route sends it.
+        await manager.broadcast_world_state()
     return {
         "status": "ok",
         "removed_messages": removed,

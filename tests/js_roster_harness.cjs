@@ -483,6 +483,53 @@ function rowFor(el, name) {
     await drain();
     offRosterCount();
 
+    // ── An ended activity leaves the rail at the next world_update ──
+    //
+    // The server sends an ended activity as currentActivityKind: null, which
+    // normalizeAgent means as "not set". Only a reload used to clear the old
+    // word, so each step goes through the real world_update handler and the
+    // roster is never fetched again. Jim reads "working" from the fixture.
+    const worldLoads = () => apiCalls.filter((c) => c.url.startsWith("/api/world")).length;
+    const worldLoadsBefore = worldLoads();
+    const jimActivityEnds = WORLD.map((agent) => (agent.id === "a1"
+        ? { ...agent, status: "idle", currentActivityKind: null }
+        : agent));
+    if (!text(jim()).includes("working")) {
+        throw new Error(`Jim must start working for the ended-activity case, got "${text(jim())}"`);
+    }
+    bus.publish("world_update", jimActivityEnds);
+    await drain();
+    const endedActivityReadsIdle = text(jim()).includes("idle") && !text(jim()).includes("working")
+        && worldLoads() === worldLoadsBefore;
+    if (!endedActivityReadsIdle) {
+        throw new Error(`an ended activity must read idle without a reload, got "${text(jim())}"`
+            + ` after ${worldLoads() - worldLoadsBefore} roster fetches`);
+    }
+    // A turn running inside the activity stays under its word until the
+    // activity ends; then the line is the turn's.
+    bus.publish("world_update", WORLD);
+    await drain();
+    presence("a1", "Jim", "thinking", { since });
+    if (!text(jim()).includes("working")) {
+        throw new Error(`a live activity must beat thinking until it ends, got "${text(jim())}"`);
+    }
+    bus.publish("world_update", jimActivityEnds);
+    await drain();
+    const endedActivityThenThinking = text(jim()).includes("thinking") && !text(jim()).includes("working")
+        && worldLoads() === worldLoadsBefore;
+    if (!endedActivityThenThinking) {
+        throw new Error(`an ended activity with a turn running must read thinking, got "${text(jim())}"`
+            + ` after ${worldLoads() - worldLoadsBefore} roster fetches`);
+    }
+    // Back to the fixture, for every check below that reads it.
+    presence("a1", "Jim", "idle", {});
+    bus.publish("world_update", WORLD);
+    await drain();
+    if (!text(jim()).includes("working") || store.getState().presence.length !== 0) {
+        throw new Error(`the fixture must be back: Jim "${text(jim())}",`
+            + ` ${store.getState().presence.length} presence rows`);
+    }
+
     // ── Threads and Hire ──
     if (!text(el).includes("Launch plan")) throw new Error("threads must render from GET /api/channels");
 
@@ -951,6 +998,8 @@ function rowFor(el, name) {
         caretSurvivesRerender: true,
         identicalWorldPublishesNothing,
         changedRowIsRebuiltOthersKept,
+        endedActivityReadsIdle,
+        endedActivityThenThinking,
         selectionClearsAfterCreate,
         rowsAreCleanUntilSelectMode,
         cancelClearsTheSelection,

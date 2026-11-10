@@ -259,6 +259,7 @@ def test_hire_roster_harness_color_and_upsert() -> None:
         "upsertsMembership": True,
         "dropsMissing": True,
         "preservesExtras": True,
+        "clearsEndedActivity": True,
     }
 
 

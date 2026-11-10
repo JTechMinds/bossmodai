@@ -66,12 +66,16 @@ class _Manager:
     def __init__(self) -> None:
         self.chat_resets: list[str] = []
         self.activities: list[dict[str, Any]] = []
+        self.world_states = 0
 
     async def broadcast_chat_reset(self, agent_id: str) -> None:
         self.chat_resets.append(agent_id)
 
     async def broadcast_activity(self, **kwargs: Any) -> None:
         self.activities.append(kwargs)
+
+    async def broadcast_world_state(self) -> None:
+        self.world_states += 1
 
 
 def _agent(name: str = "Ada", x: int = 1):
@@ -462,6 +466,33 @@ def test_j_route_maps_missing_agent_and_message_to_404(monkeypatch) -> None:
     assert empty.status_code == 422
     assert manager.chat_resets == [] and manager.activities == []
     assert _thread(other.id) == ["theirs"]
+
+
+def test_j_route_sends_the_world_only_when_it_stopped_a_reply(monkeypatch) -> None:
+    """A stopped reply refreshes the agent's status in the app process.
+
+    There runtime_events has no sink, so the snapshot that refresh asks for
+    reaches no client, and the route sends it. A rewind that stopped nothing
+    changed no status and sends none.
+    """
+    stopped = _agent()
+    question = _say(stopped.id, "question", human=True)
+    _chat_wake(stopped.id, question.id, claimed=True)
+    quiet = _agent("Bo", x=2)
+    _say(quiet.id, "kept", human=True, at="2026-10-08 10:00:00")
+    regretted = _say(quiet.id, "regretted", human=True, at="2026-10-08 10:00:01")
+    manager = _Manager()
+    client = _client(monkeypatch, _Services(), manager)
+
+    res = client.post(f"/api/agents/{quiet.id}/chat-rewind", json={"from_message_id": regretted.id})
+    assert res.status_code == 200, res.text
+    assert res.json()["stopped_turn"] is False
+    assert manager.world_states == 0
+
+    res = client.post(f"/api/agents/{stopped.id}/chat-rewind", json={"from_message_id": question.id})
+    assert res.status_code == 200, res.text
+    assert res.json()["stopped_turn"] is True
+    assert manager.world_states == 1
 
 
 # ─── (k): what the model sees next ───

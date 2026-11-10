@@ -66,11 +66,37 @@ const BossModDeskPanel = (() => {
     }
 
     /**
+     * The word the About pill reads, by the People rail's rule, so the desk
+     * and the rail never disagree about what the agent is doing.
+     *
+     * Precedence:
+     *   1. a queued row reads `Queued (n ahead)`, replacing the label until a
+     *      lane frees;
+     *   2. a live activity (BossModAgentStatus.hasLiveActivity) reads its
+     *      status label, so execution turns inside a work activity never
+     *      flicker "working" ↔ "thinking";
+     *   3. a thinking row reads "thinking": a chat turn moves neither status
+     *      nor activity, so without it an agent mid-reply reads "idle";
+     *   4. otherwise the status label.
+     *
+     * @param {object} who  This agent's roster row.
+     * @param {object|null} row  BossModPresence.agentRow's answer for it.
+     * @returns {string}
+     */
+    function statusWord(who, row) {
+        const label = BossModAgentStatus.getStatusLabel(who.status, who.currentActivityKind);
+        if (row && row.phase === 'queued') return `Queued (${row.ahead} ahead)`;
+        if (BossModAgentStatus.hasLiveActivity(who)) return label;
+        if (row && row.phase === 'thinking') return 'thinking';
+        return label;
+    }
+
+    /**
      * Build one agent's desk.
      *
      * @param {object} deps
      * @param {object}   deps.store  Application store; the roster names the agent
-     *   and the presence slice gives its lane note.
+     *   and the presence slice says whether it is queued or thinking.
      * @param {object}   deps.bus    Topic bus: the file browser's live writes.
      * @param {Function} deps.api    Authenticated fetch helper.
      * @param {(placeId: string, params?: object) => void} deps.navigate  Leaves
@@ -150,19 +176,10 @@ const BossModDeskPanel = (() => {
             agentName: () => { const who = agent(); return who ? String(who.name) : ''; },
             onChange: () => { if (extensionsSection) extensionsSection.hidden = deskExtensions.isEmpty(); },
         });
-        /**
-         * The lane note from the page's presence slice (core/presence.js):
-         * Queued replaces the status label until a lane frees.
-         * @param {object[]} rows  `store.presence`.
-         * @returns {string} Empty unless this agent's row is queued.
-         */
-        function laneNoteFor(rows) {
-            const row = BossModPresence.agentRow(rows, agentId);
-            return row && row.phase === 'queued' ? `Queued (${row.ahead} ahead)` : '';
-        }
-        // Read now: the store does not notify on subscribe, and a desk opened
-        // mid-queue must say so from its first paint.
-        let laneNote = laneNoteFor(store.getState().presence);
+        // This agent's row in the page's presence slice (core/presence.js), or
+        // null. Read now: the store does not notify on subscribe, and a desk
+        // opened mid-queue or mid-reply must say so from its first paint.
+        let presenceRow = BossModPresence.agentRow(store.getState().presence, agentId);
         /** The description on screen, its clamp, and whether it may measure yet. */
         let shownDescription = null;
         let clamp = null;
@@ -238,8 +255,7 @@ const BossModDeskPanel = (() => {
             pillEl.hidden = false;
             // The agent's status is the tone; an unknown one is the neutral pill.
             pillEl.setAttribute('data-status', String(who.status || ''));
-            pillEl.textContent = laneNote
-                || BossModAgentStatus.getStatusLabel(who.status, who.currentActivityKind);
+            pillEl.textContent = statusWord(who, presenceRow);
             const description = who.description ? String(who.description) : '';
             if (description !== shownDescription) {
                 shownDescription = description;
@@ -284,7 +300,7 @@ const BossModDeskPanel = (() => {
             }
         }));
         disposers.push(store.subscribe((s) => s.presence, (rows) => {
-            laneNote = laneNoteFor(rows);
+            presenceRow = BossModPresence.agentRow(rows, agentId);
             renderProfile();
         }));
 

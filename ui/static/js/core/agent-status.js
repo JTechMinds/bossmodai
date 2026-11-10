@@ -119,6 +119,14 @@ const BossModAgentStatus = (() => {
     /**
      * Fold a fresh world snapshot over the roster already on screen.
      *
+     * The snapshot is authoritative: each row is `{ ...prev, ...runtime }`.
+     * A key the snapshot sends wins, `null` included, because normalizeAgent()
+     * turns "no value" into null to mean "not set" — an activity that ended
+     * arrives as `currentActivityKind: null` and must take its word off the
+     * rail now, not at the next reload. A key the snapshot omits was "not
+     * sent", so the row keeps the prior value. Every default a row needs
+     * already comes from normalizeAgent(), so the merge supplies none.
+     *
      * Reference-stable, because core/store.js notifies by reference: a row
      * whose values did not change is the previous object, and a snapshot that
      * changed nothing returns `roster` itself, so a world_update repeating
@@ -136,22 +144,7 @@ const BossModAgentStatus = (() => {
         const prior = new Map(current.filter(item => item && item.id).map(item => [item.id, item]));
         const next = incoming.filter(item => item && item.id).map(runtime => {
             const prev = prior.get(runtime.id) || {};
-            const merged = {
-                ...prev,
-                ...runtime,
-                id: runtime.id,
-                name: runtime.name || prev.name,
-                role: runtime.role ?? prev.role ?? null,
-                description: runtime.description ?? prev.description ?? null,
-                done_fail_bar: runtime.done_fail_bar ?? prev.done_fail_bar ?? null,
-                color: runtime.color || prev.color || '#3b82f6',
-                status: runtime.status || prev.status || 'idle',
-                currentActivityKind: runtime.currentActivityKind ?? prev.currentActivityKind ?? null,
-                idle_since: runtime.idle_since ?? prev.idle_since ?? null,
-                x: runtime.x ?? prev.x ?? 0,
-                y: runtime.y ?? prev.y ?? 0,
-                location: runtime.location || prev.location || 'Unknown',
-            };
+            const merged = { ...prev, ...runtime };
             return prior.has(runtime.id) && sameRow(merged, prev) ? prev : merged;
         });
         const unchanged = next.length === current.length
@@ -228,6 +221,22 @@ const BossModAgentStatus = (() => {
         return status || 'idle';
     }
 
+    /**
+     * Whether the row should read the live activity word.
+     *
+     * A running kind is the thread's Writing / Break. work_active without a
+     * kind still means they are on a turn, so an old Focus error cannot
+     * relabel that row Needs you.
+     *
+     * @param {object} agent
+     * @returns {boolean}
+     */
+    function hasLiveActivity(agent) {
+        if (!agent) return false;
+        if (agent.currentActivityKind) return true;
+        return agent.status === 'work_active' || agent.status === 'social_active';
+    }
+
     return {
         normalizeAgent,
         AGENT_COLOR_PALETTE,
@@ -237,5 +246,6 @@ const BossModAgentStatus = (() => {
         getStatusClasses,
         getStatusDot,
         getStatusLabel,
+        hasLiveActivity,
     };
 })();

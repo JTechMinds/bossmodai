@@ -110,6 +110,29 @@ if (ignored.length !== 1 || ignored[0].id !== "old") {
     throw new Error("non-array incoming must leave roster unchanged");
 }
 
+// Designer-A, 2026-11-09: her work activity ended and the next snapshot sent
+// it as null, which normalizeAgent means as "not set". The snapshot's null has
+// to win over what the roster held, or the rail reads "working" until a reload.
+const [ended] = BossModAgentStatus.mergeRosterFromWorld(
+    [BossModAgentStatus.normalizeAgent({
+        id: "d", name: "Designer-A", role: "Designer", status: "work_active",
+        currentActivityKind: "work", idle_since: null,
+    })],
+    [BossModAgentStatus.normalizeAgent({
+        id: "d", name: "Designer-A", role: null, status: "idle",
+        currentActivityKind: null, idle_since: "2026-11-09T20:08:41Z",
+    })],
+);
+const endedLabel = BossModAgentStatus.getStatusLabel(ended.status, ended.currentActivityKind);
+const clearsEndedActivity = ended.currentActivityKind === null
+    && endedLabel === "idle"
+    && ended.role === null
+    && ended.idle_since === "2026-11-09T20:08:41Z";
+if (!clearsEndedActivity) {
+    throw new Error(`a snapshot's null must clear what the roster held: kind ${ended.currentActivityKind}, `
+        + `label ${endedLabel}, role ${ended.role}, idle_since ${ended.idle_since}`);
+}
+
 process.stdout.write(JSON.stringify({
     ok: true,
     firstUnused: firstUnused === palette[0],
@@ -119,4 +142,5 @@ process.stdout.write(JSON.stringify({
     upsertsMembership: upserted.length === 2,
     dropsMissing: emptyIncoming.length === 0,
     preservesExtras: patched[0].tasks_completed === 9,
+    clearsEndedActivity,
 }) + "\n");

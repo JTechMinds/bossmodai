@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
 
@@ -25,6 +26,8 @@ from core.llm.call_budget import (
 )
 from core.llm.client import completion
 from core.llm.system_completion import complete_text
+from core.runtime.events import NullRuntimeEventSink, runtime_events
+from core.tasking.transitions import transition_task
 from db.crud import execute
 from db.settings import prune_obsolete_settings, seed_defaults
 
@@ -631,3 +634,59 @@ async def test_row_in_another_thread_is_retracted_after_the_agents_turn(
     assert dispatcher._painted_queued == {}
     # The retraction also re-syncs Bea's Busy line once.
     assert synced.count(bea.id) == synced_before + 1
+
+
+class _WorldStateSink(NullRuntimeEventSink):
+    """Drops every runtime event, and counts the world snapshots asked for."""
+
+    def __init__(self) -> None:
+        self.world_states = 0
+
+    async def broadcast_world_state(self) -> None:
+        self.world_states += 1
+
+
+@pytest.fixture
+def world_sink() -> Iterator[_WorldStateSink]:
+    """Counting sink on the process-wide ``runtime_events``; the old sink is restored even on failure."""
+    previous = runtime_events._sink
+    sink = _WorldStateSink()
+    runtime_events.set_sink(sink)
+    try:
+        yield sink
+    finally:
+        runtime_events.set_sink(previous)
+
+
+@pytest.mark.asyncio
+async def test_a_claim_skipped_for_a_complete_task_still_sends_the_world(world_sink: _WorldStateSink) -> None:
+    """A claim check that refreshes status and starts no turn sends the snapshot.
+
+    The complete-task ``activity_resumed`` skip refreshes the agent's status
+    and returns False, so no turn runs and no turn broadcast follows.
+    refresh_agent_status asks for the snapshot itself, so the rail still hears.
+    """
+    ada = _agent("Ada")
+    task = db.create_task("Ship notes", assigned_to=ada.id)
+    transition_task(task.id, "active", reason="started", actor="pytest")
+    transition_task(task.id, "complete", reason="finished", actor="pytest")
+    row = db.create_agent_trigger(
+        agent_id=ada.id,
+        trigger_type="activity_resumed",
+        source_channel="work",
+        payload={"content": "Resume."},
+        task_id=task.id,
+    )
+    claimed = db.claim_trigger(row.id)
+    assert claimed is not None
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert world_sink.world_states == 0
+
+    started = await TurnDispatcher()._launch_claimed_trigger(claimed)
+
+    assert started is False
+    assert db.get_agent_trigger(row.id).status == "completed"
+    for _ in range(3):
+        await asyncio.sleep(0)
+    assert world_sink.world_states == 1
