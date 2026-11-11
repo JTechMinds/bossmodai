@@ -334,8 +334,9 @@ async def test_alternating_known_peeks_still_hit_soft_budget(
     assert outcome.result.get("event") == "agent_error"
     assert outcome.result.get("peek_budget") == "soft_budget"
     assert SOFT_PEEK_STEER in (outcome.diagnostic_error or "")
-    # Ten executed peeks plus the one steered (not executed) step.
-    assert sum(1 for step in outcome.steps if step.get("action_name") == "bm_cli") == SOFT_PEEK_BUDGET + 1
+    # Ten executed peeks, the one steered (not executed) step, and the refused
+    # call that ended the turn, which is a step so the turn's tokens add up.
+    assert sum(1 for step in outcome.steps if step.get("action_name") == "bm_cli") == SOFT_PEEK_BUDGET + 2
     assert len(_steer_steps(outcome)) == 1
     errors = [item for item in sink.calls if item.get("event") == "agent_error"]
     assert len(errors) == 1

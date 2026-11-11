@@ -215,7 +215,9 @@ async def get_agent(agent_id: str) -> dict[str, object]:
 async def list_company_agents(include: str | None = None) -> list[dict[str, object]]:
     """Return the live company roster for the Company tab.
 
-    Pass ``?include=stats`` to merge per-agent task/token stats into each entry.
+    Pass ``?include=stats`` to merge per-agent task/token stats into each
+    entry, including the all-time ``prompt_cache`` block
+    (``db.prompt_cache_block``).
     """
     agents = [_serialize_company_agent(item) for item in db.get_world_state()]
     if include == "stats":
@@ -224,6 +226,12 @@ async def list_company_agents(include: str | None = None) -> list[dict[str, obje
             agent_stats = stats.get(agent["id"], {})
             agent["tasks_completed"] = agent_stats.get("tasks_completed", 0)
             agent["tokens_used"] = agent_stats.get("tokens_used", 0)
+            if agent["id"] in stats:
+                agent["prompt_cache"] = stats[agent["id"]]["prompt_cache"]
+            else:
+                # Missing from the stats map: no finished task, no active task
+                # and no diagnostics row, so the agent has made no model calls.
+                agent["prompt_cache"] = db.prompt_cache_block(0, 0, 0)
             agent["current_task"] = agent_stats.get("current_task")
     return agents
 

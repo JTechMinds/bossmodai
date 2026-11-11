@@ -23,7 +23,7 @@ from core.agent_loop.liveness import classify_step, next_stale_streak, record_ac
 from core.agent_loop.task_steps import cli_step_result, finish_task_step, start_task_step, task_step_event
 from core.agent_loop.work_binding import bound_activity, bound_task_id, bound_work_activity, is_detached
 from core.agent_loop.work_snapshot import freeze_work_turn, transcript_over_budget
-from core.agent_loop.work_summary import StepSummaryRun
+from core.agent_loop.work_summary import SUMMARY_STEP_ACTION, StepSummaryRun
 from core.agent_loop.cli_turn_result import broadcast_cli_activity, map_cli_result
 from core.agent_loop.notifications import broadcast_origin_status_messages, emit_chat_notifications
 from core.agent_loop.outcomes import TurnOutcome
@@ -66,6 +66,7 @@ from core.bm_cli.types import BossModCliResult
 from core import config
 from core.default_prompts import load_default_prompt
 from core.llm import client
+from core.llm.prompt_cache_usage import PromptCacheUsage
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
 import db
@@ -171,6 +172,7 @@ async def _run_execution_turn(
     policy,
     start: float,
     summary_run: StepSummaryRun | None,
+    work_task_id: str | None,
 ) -> TurnOutcome:
     """Handle CLI-approval resume and the multi-step execution action loop.
 
@@ -199,6 +201,11 @@ async def _run_execution_turn(
             start the turn's totals and it is the first step trace
             (``summarize_steps``), so the diagnostics row's totals stay the
             sum of its steps and the extra call is shown.
+        work_task_id: The task whose work this turn resumed, as ``loop.py``
+            decided at the turn's start; ``None`` for a turn that resumed no
+            task's work. Every exit passes it to ``_finalize_turn``, which
+            adds the turn to that task's usage; it is not re-read from the
+            live binding, which a ``done`` ends.
     """
     # Everything from here on, including approval/consent results, is this
     # turn's working transcript; the preamble before it is never frozen.
@@ -327,14 +334,16 @@ async def _run_execution_turn(
                 step_index=0,
                 context_snapshot=None,
                 raw_response=summary_run.summary,
-                action={"action": "summarize_steps"},
+                action={"action": SUMMARY_STEP_ACTION},
                 result={
                     "event": "work_steps_summarized",
                     "detail": f"{agent.name} summarized {summary_run.summarized_now} earlier steps",
                 },
                 prompt_tokens=summary_run.prompt_tokens,
+                context_prompt_tokens=0,  # the fold's input is not the agent's context
                 completion_tokens=summary_run.completion_tokens,
                 total_tokens=summary_run.total_tokens,
+                cache=summary_run.cache,
                 duration_ms=summary_run.duration_ms,
             )
         )
@@ -404,8 +413,10 @@ async def _run_execution_turn(
                             action=None,
                             result=result,
                             prompt_tokens=0,
+                            context_prompt_tokens=0,  # the call failed: no agent call
                             completion_tokens=0,
                             total_tokens=0,
+                            cache=PromptCacheUsage.ZERO,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=str(exc),
                         ),
@@ -413,6 +424,7 @@ async def _run_execution_turn(
                     cause=exc,
                 ),
                 start=start,
+                work_task_id=work_task_id,
             )
 
         total_prompt_tokens += response.prompt_tokens
@@ -425,8 +437,12 @@ async def _run_execution_turn(
             agent.name, action_count, response.model, response.total_tokens,
         )
         step_prompt_tokens = response.prompt_tokens
+        # The agent's own call: its context size. A managed write adds its
+        # sub-calls to step_prompt_tokens only.
+        step_context_prompt_tokens = response.prompt_tokens
         step_completion_tokens = response.completion_tokens
         step_total_tokens = response.total_tokens
+        step_cache = PromptCacheUsage.of(response)
 
         # Parse action
         action = parse_action(response.content)
@@ -466,8 +482,10 @@ async def _run_execution_turn(
                         action=action,
                         result=result,
                         prompt_tokens=step_prompt_tokens,
+                        context_prompt_tokens=step_context_prompt_tokens,
                         completion_tokens=step_completion_tokens,
                         total_tokens=step_total_tokens,
+                        cache=step_cache,
                         duration_ms=int((time.monotonic() - step_started) * 1000),
                         error=f"Failed to parse action JSON: {action.get('_raw_snippet', '')}",
                     )
@@ -523,14 +541,17 @@ async def _run_execution_turn(
                             action=action,
                             result=result,
                             prompt_tokens=step_prompt_tokens,
+                            context_prompt_tokens=step_context_prompt_tokens,
                             completion_tokens=step_completion_tokens,
                             total_tokens=step_total_tokens,
+                            cache=step_cache,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=steer,
                         ),
                     ],
                 ),
                 start=start,
+                work_task_id=work_task_id,
             )
 
         validation_error = validate_action_for_turn(
@@ -556,8 +577,10 @@ async def _run_execution_turn(
                         action=action,
                         result=result,
                         prompt_tokens=step_prompt_tokens,
+                        context_prompt_tokens=step_context_prompt_tokens,
                         completion_tokens=step_completion_tokens,
                         total_tokens=step_total_tokens,
+                        cache=step_cache,
                         duration_ms=int((time.monotonic() - step_started) * 1000),
                         error=validation_error,
                     )
@@ -616,14 +639,17 @@ async def _run_execution_turn(
                             action=action,
                             result=result,
                             prompt_tokens=step_prompt_tokens,
+                            context_prompt_tokens=step_context_prompt_tokens,
                             completion_tokens=step_completion_tokens,
                             total_tokens=step_total_tokens,
+                            cache=step_cache,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=validation_error,
                         ),
                     ],
                 ),
                 start=start,
+                work_task_id=work_task_id,
             )
 
         # The cap stops a model stuck on one broken reply; a valid action ends the streak.
@@ -697,6 +723,7 @@ async def _run_execution_turn(
                 step_prompt_tokens += managed_write.prompt_tokens
                 step_completion_tokens += managed_write.completion_tokens
                 step_total_tokens += managed_write.total_tokens
+                step_cache += managed_write.cache
                 result = map_cli_result(
                     agent, managed_write.cli_result, command=cli_command, trigger=trigger
                 )
@@ -857,14 +884,17 @@ async def _run_execution_turn(
                             action=action,
                             result=result,
                             prompt_tokens=step_prompt_tokens,
+                            context_prompt_tokens=step_context_prompt_tokens,
                             completion_tokens=step_completion_tokens,
                             total_tokens=step_total_tokens,
+                            cache=step_cache,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=f"Guardian [{violation.rule}]: {violation.detail}",
                         ),
                     ],
                 ),
                 start=start,
+                work_task_id=work_task_id,
             )
 
         # Guardian no-progress: consecutive stale steps (repeats, failures).
@@ -911,14 +941,17 @@ async def _run_execution_turn(
                             action=action,
                             result=result,
                             prompt_tokens=step_prompt_tokens,
+                            context_prompt_tokens=step_context_prompt_tokens,
                             completion_tokens=step_completion_tokens,
                             total_tokens=step_total_tokens,
+                            cache=step_cache,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=f"Guardian [{violation.rule}]: {violation.detail}",
                         ),
                     ],
                 ),
                 start=start,
+                work_task_id=work_task_id,
             )
         if violation:
             logger.warning("Guardian %s for %s: %s", violation.rule, agent.name, violation.detail)
@@ -947,8 +980,10 @@ async def _run_execution_turn(
                     action=action,
                     result=result,
                     prompt_tokens=step_prompt_tokens,
+                    context_prompt_tokens=step_context_prompt_tokens,
                     completion_tokens=step_completion_tokens,
                     total_tokens=step_total_tokens,
+                    cache=step_cache,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                 )
             )
@@ -971,6 +1006,7 @@ async def _run_execution_turn(
                     steps=step_traces,
                 ),
                 start=start,
+                work_task_id=work_task_id,
             )
 
         step_traces.append(
@@ -981,8 +1017,10 @@ async def _run_execution_turn(
                 action=action,
                 result=result,
                 prompt_tokens=step_prompt_tokens,
+                context_prompt_tokens=step_context_prompt_tokens,
                 completion_tokens=step_completion_tokens,
                 total_tokens=step_total_tokens,
+                cache=step_cache,
                 duration_ms=int((time.monotonic() - step_started) * 1000),
             )
         )
@@ -1068,6 +1106,7 @@ async def _run_execution_turn(
             steps=step_traces,
         ),
         start=start,
+        work_task_id=work_task_id,
     )
 
 

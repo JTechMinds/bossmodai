@@ -102,6 +102,21 @@ const BossModDiagnosticDetail = (() => {
         );
     }
 
+    /**
+     * A step's prompt-cache note for its meta line: the cached tokens when
+     * its calls reported a figure, "cache not reported" when they sent
+     * prompt tokens with none, nothing when they sent no prompt tokens.
+     *
+     * @param {object} step  One step of the fetched trace.
+     * @returns {string}
+     */
+    function stepCacheNote(step) {
+        if (step.cache_reported_prompt_tokens) {
+            return ` · ${BossModFormat.formatNumber(step.cached_prompt_tokens)} cached`;
+        }
+        return step.prompt_tokens ? ' · cache not reported' : '';
+    }
+
     function traceStep(step) {
         const stepReply = SHAPE.extractReply(step.raw_response, step.parsed_action);
         const blocks = [
@@ -120,7 +135,7 @@ const BossModDiagnosticDetail = (() => {
                 h('span', { class: 'log-step-badge' }, step.error ? 'Error' : 'OK'),
                 h('span', { class: 'log-step-meta' },
                     `${step.prompt_tokens || 0} / ${step.completion_tokens || 0} / `
-                    + `${step.total_tokens || 0} tok · ${step.duration_ms || 0}ms`)),
+                    + `${step.total_tokens || 0} tok · ${step.duration_ms || 0}ms${stepCacheNote(step)}`)),
             ...blocks);
     }
 

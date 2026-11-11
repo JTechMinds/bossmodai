@@ -103,6 +103,25 @@ const BossModMetricBars = (() => {
         return panel('Task Status Now', chart);
     }
 
+    /**
+     * The prompt-cache note on an agent's token bar, by the Prompt Cache
+     * card's rules: the cached share when the agent's calls reported a
+     * figure, "cache not reported" when they sent prompt tokens with none,
+     * and nothing when they sent no prompt tokens.
+     *
+     * @param {object} cache  The row's `prompt_cache` block.
+     * @returns {string}
+     * @throws {Error} When the block is missing: the dashboard always sends it.
+     */
+    function cacheNote(cache) {
+        if (!cache || typeof cache !== 'object') {
+            throw new Error('[metrics] a token row has no prompt_cache block');
+        }
+        if (cache.reported_prompt_tokens > 0) return ` · ${U.formatSharePercent(cache.cached_share)} cached`;
+        if (cache.prompt_tokens > 0) return ' · cache not reported';
+        return '';
+    }
+
     function tokenRow(agent, index, max, onOpenLog) {
         const total = agent.total_tokens || 0;
         const width = Math.round((total / max) * 100);
@@ -115,7 +134,8 @@ const BossModMetricBars = (() => {
                 onclick: () => onOpenLog(agent.agent_id),
             }, name),
             h('span', { class: 'metric-row-value' },
-                `${U.formatTokenCount(total)} · ${U.formatNumber(agent.api_calls || 0)} calls`),
+                `${U.formatTokenCount(total)} · ${U.formatNumber(agent.api_calls || 0)} calls`
+                + cacheNote(agent.prompt_cache)),
             bar(width, index));
     }
 

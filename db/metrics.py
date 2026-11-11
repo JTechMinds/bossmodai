@@ -25,7 +25,9 @@ def get_dashboard_metrics(start: datetime, end: datetime) -> dict[str, Any]:
 
     Returns:
         The dashboard payload: ``tasks``, ``agents``, ``tokens``, ``errors``,
-        ``communication``, ``tool_calls`` and ``uptime`` blocks.
+        ``communication``, ``tool_calls`` and ``uptime`` blocks. The tokens
+        block and each of its ``by_agent`` rows carry a ``prompt_cache``
+        block (:func:`prompt_cache_block`) for the period.
 
     Raises:
         ValueError: When either bound is naive (its instant would depend on the
@@ -49,10 +51,40 @@ def get_dashboard_metrics(start: datetime, end: datetime) -> dict[str, Any]:
     }
 
 
-def get_agent_stats_batch() -> dict[str, dict[str, Any]]:
-    """Return per-agent stats for the Org Chart tab.
+def prompt_cache_block(prompt: int, cached: int, reported: int) -> dict[str, Any]:
+    """The prompt-cache figures for a set of turns, with their shares.
 
-    Returns ``{agent_id: {"tasks_completed": int, "tokens_used": int, "current_task": str|None}}``.
+    Shares are computed here, once, so no screen does its own arithmetic.
+    The headline share is cached over ALL prompt tokens, so it never
+    overstates: prompt tokens whose provider reported no figure count as
+    not cached, and ``unreported_share`` says how many there were.
+
+    Args:
+        prompt: All prompt tokens of the turns.
+        cached: Prompt tokens the providers served from cache.
+        reported: Prompt tokens of the calls whose provider reported a cache
+            figure, 0 included.
+
+    Returns:
+        ``{"prompt_tokens", "cached_tokens", "reported_prompt_tokens",
+        "cached_share", "unreported_share"}``. Both shares are ``None`` when
+        ``prompt`` is 0: no model calls, which is not "0% cached".
+    """
+    return {
+        "prompt_tokens": prompt,
+        "cached_tokens": cached,
+        "reported_prompt_tokens": reported,
+        "cached_share": cached / prompt if prompt else None,
+        "unreported_share": (prompt - reported) / prompt if prompt else None,
+    }
+
+
+def get_agent_stats_batch() -> dict[str, dict[str, Any]]:
+    """Return per-agent stats for the Org Chart tab, all-time.
+
+    Returns ``{agent_id: {"tasks_completed": int, "tokens_used": int,
+    "prompt_cache": dict, "current_task": str|None}}``; ``prompt_cache`` is
+    :func:`prompt_cache_block` over every turn the agent ever ran.
     """
     completed_rows = query(
         "SELECT assigned_to, COUNT(*) AS cnt FROM tasks WHERE status = 'complete' GROUP BY assigned_to",
@@ -64,13 +96,24 @@ def get_agent_stats_batch() -> dict[str, dict[str, Any]]:
     token_rows = query(
         """
         SELECT agent_id,
-               SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total_tokens
+               SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total_tokens,
+               SUM(COALESCE(prompt_tokens, 0)) AS prompt_tokens,
+               SUM(cached_prompt_tokens) AS cached_prompt_tokens,
+               SUM(cache_reported_prompt_tokens) AS cache_reported_prompt_tokens
         FROM diagnostics
         GROUP BY agent_id
         """,
     )
     token_map: dict[str, int] = {
         row["agent_id"]: int(row["total_tokens"] or 0) for row in token_rows
+    }
+    # GROUP BY yields only agents with rows, so every SUM here is over at
+    # least one row and never NULL.
+    cache_map: dict[str, dict[str, Any]] = {
+        row["agent_id"]: prompt_cache_block(
+            int(row["prompt_tokens"]), int(row["cached_prompt_tokens"]), int(row["cache_reported_prompt_tokens"]),
+        )
+        for row in token_rows
     }
 
     active_task_rows = query(
@@ -87,6 +130,8 @@ def get_agent_stats_batch() -> dict[str, dict[str, Any]]:
         result[agent_id] = {
             "tasks_completed": completed_map.get(agent_id, 0),
             "tokens_used": token_map.get(agent_id, 0),
+            # An agent with no diagnostics rows has made no model calls.
+            "prompt_cache": cache_map[agent_id] if agent_id in cache_map else prompt_cache_block(0, 0, 0),
             "current_task": active_task_map.get(agent_id),
         }
     return result
@@ -153,15 +198,24 @@ def _agent_metrics() -> dict[str, Any]:
 
 
 def _token_metrics(lo: str, hi: str) -> dict[str, Any]:
-    """Aggregate token usage from diagnostics over the period, plus the all-time total."""
+    """Aggregate token usage from diagnostics over the period, plus the all-time total.
+
+    The block and each ``by_agent`` row carry the period's ``prompt_cache``
+    (:func:`prompt_cache_block`).
+    """
     all_time_row = query_one(
         "SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total FROM diagnostics",
     )
     all_time_tokens = int(all_time_row["total"] or 0) if all_time_row else 0
 
+    # COALESCE on the cache sums: SUM over no rows (a quiet period) is NULL,
+    # and the sum of nothing is 0.
     total_row = query_one(
         """
-        SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total
+        SELECT SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total,
+               COALESCE(SUM(COALESCE(prompt_tokens, 0)), 0) AS prompt_tokens,
+               COALESCE(SUM(cached_prompt_tokens), 0) AS cached_prompt_tokens,
+               COALESCE(SUM(cache_reported_prompt_tokens), 0) AS cache_reported_prompt_tokens
         FROM diagnostics
         WHERE created_at >= ? AND created_at < ?
         """,
@@ -173,7 +227,10 @@ def _token_metrics(lo: str, hi: str) -> dict[str, Any]:
         """
         SELECT agent_id, agent_name,
                SUM(COALESCE(prompt_tokens, 0) + COALESCE(completion_tokens, 0)) AS total_tokens,
-               COUNT(*) AS api_calls
+               COUNT(*) AS api_calls,
+               SUM(COALESCE(prompt_tokens, 0)) AS prompt_tokens,
+               SUM(cached_prompt_tokens) AS cached_prompt_tokens,
+               SUM(cache_reported_prompt_tokens) AS cache_reported_prompt_tokens
         FROM diagnostics
         WHERE created_at >= ? AND created_at < ?
         GROUP BY agent_id, agent_name
@@ -187,6 +244,12 @@ def _token_metrics(lo: str, hi: str) -> dict[str, Any]:
             "agent_name": row["agent_name"],
             "total_tokens": int(row["total_tokens"] or 0),
             "api_calls": row["api_calls"],
+            # Grouped rows: every sum is over at least one row, never NULL.
+            "prompt_cache": prompt_cache_block(
+                int(row["prompt_tokens"]),
+                int(row["cached_prompt_tokens"]),
+                int(row["cache_reported_prompt_tokens"]),
+            ),
         }
         for row in by_agent_rows
     ]
@@ -195,6 +258,11 @@ def _token_metrics(lo: str, hi: str) -> dict[str, Any]:
         "total": total_tokens,
         "all_time": all_time_tokens,
         "by_agent": by_agent,
+        "prompt_cache": prompt_cache_block(
+            int(total_row["prompt_tokens"]),
+            int(total_row["cached_prompt_tokens"]),
+            int(total_row["cache_reported_prompt_tokens"]),
+        ),
     }
 
 

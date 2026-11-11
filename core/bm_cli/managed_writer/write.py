@@ -18,6 +18,7 @@ from core.bm_cli.parser import parse_cli_command
 from core.bm_cli.runtime import execute_bm_cli
 from core.loop_breathing import run_shell_off_request_loop
 from core.bm_cli.session import get_cli_cwd
+from core.llm.prompt_cache_usage import PromptCacheUsage
 from core.models import Agent, AgentState
 
 async def run_managed_write(
@@ -55,6 +56,7 @@ async def run_managed_write(
             prompt_tokens=generation.prompt_tokens,
             completion_tokens=generation.completion_tokens,
             total_tokens=generation.total_tokens,
+            cache=generation.cache,
             chunks=generation.chunks,
         )
 
@@ -97,6 +99,7 @@ async def run_managed_write(
         prompt_tokens=generation.prompt_tokens,
         completion_tokens=generation.completion_tokens,
         total_tokens=generation.total_tokens,
+        cache=generation.cache,
         chunks=generation.chunks,
     )
 

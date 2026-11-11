@@ -42,7 +42,7 @@ HARNESS_MODULES = [
     # The detail's Recent steps and the step history layer it opens.
     TASKS / "task-steps.js", TASKS / "task-steps-history.js",
     TASKS / "task-detail-sections.js", TASKS / "task-message.js", TASKS / "task-request.js",
-    TASKS / "task-origin.js", TASKS / "task-detail.js",
+    TASKS / "task-origin.js", TASKS / "task-usage.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
     TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js",
@@ -80,8 +80,10 @@ DETAIL_MODULES = [
     # assign-form.js; the detail builds it when Edit mode is picked.
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
-    # Before this task, which the detail builds once per open.
+    # Before this task, and what the task's work has used, which the detail
+    # builds once per open.
     TASKS / "task-origin.js",
+    TASKS / "task-usage.js",
     TASKS / "task-detail.js",
     # The operator's actions the detail's Edit mode asks for, built for real
     # so the harness drives its saves, status actions, the completer, the
@@ -638,6 +640,18 @@ def test_task_detail_harness() -> None:
         "originOwnIsCollapsedThenShown": True,
         "originForwardedNamesTheParent": True,
         "originErrorSaysSoAndRetries": True,
+        # What the task's work has used (task-usage.js): its four states (none
+        # hides in place and shows live on the first work turn), the three
+        # facts' words, its place in the facts grid, and the live re-read,
+        # which follows a reassignment.
+        "usageLoadsThenHidesWhenNone": True,
+        "usageAppearsLiveOnTheFirstWorkTurn": True,
+        "usageFactsReadAsFacts": True,
+        "usageSitsUnderTheFactsInViewAndEditMode": True,
+        "usageErrorSaysSoAndRetries": True,
+        "usageFollowsTheAssigneesTurns": True,
+        "usageFollowsAReassignment": True,
+        "usageRequiresItsDeps": True,
     }
 
 

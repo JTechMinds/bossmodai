@@ -1,5 +1,5 @@
 /**
- * BossMod AI — the Metrics numbers: the health panel, the four stat cards, the
+ * BossMod AI — the Metrics numbers: the health panel, the five stat cards, the
  * health grid, and the communication line.
  *
  * Pure rendering over the metrics dashboard payload, whose event counts cover
@@ -86,9 +86,42 @@ const BossModMetricCards = (() => {
     }
 
     /**
-     * The four headline numbers: completed tasks and tokens for the period
-     * (each with its all-time total), agents as they are now, and the
-     * period's error rate.
+     * The Prompt Cache card: the share of the period's prompt tokens the
+     * providers served from their caches.
+     *
+     * Three states, because "not reported" is not "0% cached": no prompt
+     * tokens at all, prompt tokens that no provider gave a cache figure for,
+     * and a share. The share is of ALL prompt tokens (the server's rule, so
+     * it never overstates); when some had no figure the sub-line says how
+     * many, so a low share is not mistaken for a bad cache.
+     *
+     * @param {object} cache  The tokens block's `prompt_cache`.
+     * @returns {HTMLElement}
+     * @throws {Error} When the block is missing: the dashboard always sends it.
+     */
+    function promptCacheCard(cache) {
+        if (!cache || typeof cache !== 'object') {
+            throw new Error('[metrics] the dashboard sent no prompt_cache block');
+        }
+        if (cache.prompt_tokens === 0) {
+            return card('Prompt Cache', 'No data',
+                h('p', { class: 'metric-card-sub' }, 'No model calls in this period'));
+        }
+        if (cache.reported_prompt_tokens === 0) {
+            return card('Prompt Cache', 'Not reported',
+                h('p', { class: 'metric-card-sub' }, 'Your AI connections did not report cache use'));
+        }
+        const unreported = cache.unreported_share > 0
+            ? ` · ${U.formatSharePercent(cache.unreported_share)} not reported`
+            : '';
+        return card('Prompt Cache', U.formatSharePercent(cache.cached_share),
+            h('p', { class: 'metric-card-sub' }, `of prompt tokens were cached${unreported}`));
+    }
+
+    /**
+     * The five headline numbers: completed tasks and tokens for the period
+     * (each with its all-time total), agents as they are now, the period's
+     * prompt-cache share, and the period's error rate.
      *
      * @param {object} data
      * @returns {HTMLElement}
@@ -108,6 +141,7 @@ const BossModMetricCards = (() => {
             card('Tokens', U.formatNumber(tokens.total || 0),
                 h('p', { class: 'metric-card-sub' },
                     `${U.formatTokenCount(tokens.all_time || 0)} all-time`)),
+            promptCacheCard(tokens.prompt_cache),
             card('Error Rate', `${health.percent}%`,
                 h('p', { class: 'metric-card-sub metric-card-health', 'data-health': health.tone },
                     h('span', { class: 'status-dot', 'aria-hidden': 'true' }),

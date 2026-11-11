@@ -212,12 +212,30 @@ class ProviderRequest:
 
 @dataclass(frozen=True)
 class ProviderCompletion:
+    """One finished model call, as an extension provider reports it.
+
+    Attributes:
+        content: The reply text.
+        model: The model that answered.
+        prompt_tokens: Prompt tokens the provider counted.
+        completion_tokens: Completion tokens the provider counted.
+        total_tokens: Total tokens the provider counted.
+        finish_reason: The provider's stop reason.
+        cached_prompt_tokens: Prompt tokens the provider served from its
+            cache; ``None`` means the provider reported no figure (never
+            "0 cached"). Trailing and defaulted, so existing extensions and
+            positional constructions keep working. The host drops a figure
+            that is not a non-negative int at most ``prompt_tokens``, with a
+            warning, and records it as not reported.
+    """
+
     content: str
     model: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
     finish_reason: str = "stop"
+    cached_prompt_tokens: int | None = None
 
 
 class ManagedModel(_Strict):

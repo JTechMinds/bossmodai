@@ -6,7 +6,7 @@
  * with no clear owner: a change to a date format and a change to the status
  * palette touched the same file for no reason other than history.
  *
- * These fourteen answer one question — how does a value read on screen. They have
+ * These fifteen answer one question — how does a value read on screen. They have
  * no dependencies, no state, and no DOM beyond `escapeHtml`'s one scratch
  * node, which is why they load first among the three.
  */
@@ -315,6 +315,29 @@ const BossModFormat = (() => {
     }
 
     /**
+     * A share as a whole percent — `41%` — that never rounds to a claim the
+     * number does not make: a sliver above none reads `<1%`, not `0%`, and a
+     * sliver short of all reads `>99%`, not `100%`.
+     *
+     * The server computes every share (db/metrics.py prompt_cache_block); the
+     * screens that show one format it here and nowhere else.
+     *
+     * @param {number} share  0..1.
+     * @returns {string}
+     * @throws {RangeError} When the share is not a number in 0..1 — a share
+     *   the UI cannot read is a server bug to surface, not a blank to show.
+     */
+    function formatSharePercent(share) {
+        if (typeof share !== 'number' || !(share >= 0 && share <= 1)) {
+            throw new RangeError(`[format] not a share: ${share}`);
+        }
+        if (share === 0) return '0%';
+        if (share < 0.005) return '<1%';
+        if (share >= 0.995 && share < 1) return '>99%';
+        return `${Math.round(share * 100)}%`;
+    }
+
+    /**
      * A byte count in the largest unit that keeps it readable.
      *
      * Moved here verbatim from company-files.js and company-file-viewer.js,
@@ -348,6 +371,7 @@ const BossModFormat = (() => {
         formatNumber,
         formatDuration,
         formatTokenCount,
+        formatSharePercent,
         formatFileSize,
     };
 })();

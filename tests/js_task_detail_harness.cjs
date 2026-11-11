@@ -55,7 +55,7 @@ const NAMES = [
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
     "BossModTaskMessage", "BossModTaskRequest",
     "BossModAssignOutcomes", "BossModAssignForm",
-    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskOrigin", "BossModTaskDetail",
+    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskOrigin", "BossModTaskUsage", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",
     "BossModTaskActions",
 ];
@@ -192,6 +192,11 @@ const originReads = [];
 /** How GET …/origin-conversation answers: none, unless originSection() swaps it. */
 let originReply = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ origin: null }) });
 
+/** Every usage request, in order. */
+const usageReads = [];
+/** How GET …/usage answers: none, unless usageSection() swaps it. */
+let usageReply = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ usage: null }) });
+
 /** Every steps request, in order. */
 const stepReads = [];
 /** How GET …/steps/recent and …/steps answer; steps() swaps it per case. */
@@ -213,6 +218,10 @@ function api(url) {
     if (/^\/api\/tasks\/[^/]+\/origin-conversation$/.test(String(url))) {
         originReads.push(String(url));
         return originReply(String(url));
+    }
+    if (/^\/api\/tasks\/[^/]+\/usage$/.test(String(url))) {
+        usageReads.push(String(url));
+        return usageReply(String(url));
     }
     const desk = /^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/.exec(String(url));
     if (desk) {
@@ -466,6 +475,7 @@ async function main() {
     const stepCases = await steps();
     const requestCases = await requestSection();
     const originCases = await originSection();
+    const usageCases = await usageSection();
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -493,6 +503,7 @@ async function main() {
         ...stepCases,
         ...requestCases,
         ...originCases,
+        ...usageCases,
     }));
 }
 
@@ -772,6 +783,304 @@ async function originSection() {
         originOwnIsCollapsedThenShown,
         originForwardedNamesTheParent,
         originErrorSaysSoAndRetries,
+    };
+}
+
+/**
+ * What the task's work has used (task-usage.js): three facts in a second
+ * fact list under the facts grid, one grid between them so they share a
+ * label column, read-only in view and in Edit mode. Loading, then none (the
+ * node hides in place) and the task's first work turn showing it live; the
+ * facts as the operator reads them (folds with a failed one, no fold yet,
+ * no model call yet); an error that says so and retries; the live re-read:
+ * a finished turn of the assignee re-reads with the facts left on screen
+ * meanwhile, another agent's turn does not, a reconnect does, a
+ * reassignment moves which agent's turns count, and closing stops both.
+ */
+async function usageSection() {
+    const TASK = { ...BLOCKED, id: "t-usage", title: "Compress the model", assigned_to: "a1" };
+    const tasks = [TASK];
+    const URL = "/api/tasks/t-usage/usage";
+    const answer = (body) => () => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+    const ROW = {
+        task_id: TASK.id, work_turns: 32, model_calls: 564, prompt_tokens: 37_700_000, completion_tokens: 412_500,
+        latest_prompt_tokens: 84_300, latest_call_at: ago(MINUTE), peak_prompt_tokens: 301_200,
+        summaries: 7, summarized_steps: 213, last_summary_at: ago(2 * HOUR),
+        failed_summaries: 1, last_failed_summary_at: ago(3 * HOUR), window_tokens: 356_000,
+    };
+    const NO_FOLD = {
+        ...ROW, model_calls: 1, prompt_tokens: 1_200, completion_tokens: 40, latest_prompt_tokens: 1_200,
+        peak_prompt_tokens: 1_200, summaries: 0, summarized_steps: 0, last_summary_at: null,
+        failed_summaries: 0, last_failed_summary_at: null,
+    };
+    const NO_CALL = {
+        ...NO_FOLD, model_calls: 0, prompt_tokens: 0, completion_tokens: 0,
+        latest_prompt_tokens: null, latest_call_at: null, peak_prompt_tokens: null,
+    };
+    const base = bus.subscriberCount();
+    const openOn = async (actions = recordingActions().actions) => {
+        const handle = global.BossModTaskDetail.openTaskDetail({
+            api, bus, taskId: TASK.id, tasks, colorOf: () => undefined, onNavigate: () => {},
+            actions, onOpenChat: () => {},
+        });
+        await drain();
+        return { handle, panel: top() };
+    };
+    const closeOn = async (handle) => {
+        handle.close();
+        await drain();
+    };
+    const columnOf = (panel) => panel.querySelector(".task-detail-column");
+    /**
+     * The usage node, where it belongs: the second of exactly two children
+     * of the column's `.task-detail-facts` grid, after the facts list (whose
+     * first label is Assignee). Null when it is anywhere else.
+     */
+    const usageIn = (panel) => {
+        const grid = panel.querySelector(".task-detail-facts");
+        if (!grid || grid.parentNode !== columnOf(panel) || grid.children.length !== 2) return null;
+        const [facts, usage] = grid.children;
+        const factsFirst = facts.classList.contains("fact-list") && facts.getAttribute("data-pairs") === "2"
+            && facts.querySelector(".fact-label").textContent === "Assignee";
+        return factsFirst && usage.classList.contains("task-detail-usage") ? usage : null;
+    };
+    /** `[[label, value], …]` of the usage list in `node`, or null without one. */
+    const factsIn = (node) => {
+        const list = node && node.querySelector(".fact-list");
+        if (!list) return null;
+        const labels = list.querySelectorAll(".fact-label").map((dt) => dt.textContent);
+        const values = list.querySelectorAll(".fact-value").map((dd) => dd.textContent);
+        return labels.map((label, index) => [label, values[index]]);
+    };
+
+    // ── usageLoadsThenHidesWhenNone ─────────────────────────────────────
+    let settleLoad;
+    usageReply = () => new Promise((resolve) => { settleLoad = resolve; });
+    const readsBefore = usageReads.length;
+    const loading = await openOn();
+    const loadingNode = usageIn(loading.panel);
+    const loadingShown = Boolean(loadingNode) && loadingNode.hidden === false
+        && loadingNode.textContent === "Loading what this task has used…"
+        && Boolean(loadingNode.querySelector(".task-detail-meta"))
+        && same(usageReads.slice(readsBefore), [URL]);
+    settleLoad({ ok: true, json: () => Promise.resolve({ usage: null }) });
+    await drain();
+    // Hidden, not removed: the same node stays in place, empty.
+    const hiddenInView = usageIn(loading.panel) === loadingNode && loadingNode.hidden === true
+        && loadingNode.children.length === 0;
+    await click(loading.panel.querySelector("#ct-edit-mode-btn"), "the pencil");
+    const hiddenInEdit = usageIn(loading.panel) === loadingNode && loadingNode.hidden === true;
+    await click(loading.panel.querySelector("#ct-edit-discard"), "✕");
+    const usageLoadsThenHidesWhenNone = loadingShown && hiddenInView && hiddenInEdit;
+    if (!usageLoadsThenHidesWhenNone) {
+        fail(`usage none: loading ${loadingShown}, hidden in view ${hiddenInView}, in edit ${hiddenInEdit}`);
+    }
+
+    // ── usageAppearsLiveOnTheFirstWorkTurn ──────────────────────────────
+    // The task's first work turn ends: the assignee's diagnostic re-reads,
+    // and the hidden node shows the facts where it is, with no repaint.
+    let settleFirst;
+    usageReply = () => new Promise((resolve) => { settleFirst = resolve; });
+    const firstReadsAt = usageReads.length;
+    bus.publish("diagnostic", { id: 10, agent_id: "a1", agent_name: "Jim" });
+    await drain();
+    // No loading line flashes for a task with nothing to show yet.
+    const quietWhileReading = same(usageReads.slice(firstReadsAt), [URL]) && loadingNode.hidden === true;
+    settleFirst({ ok: true, json: () => Promise.resolve({ usage: NO_FOLD }) });
+    await drain();
+    const shownLive = usageIn(loading.panel) === loadingNode && loadingNode.hidden === false
+        && same(factsIn(loadingNode), [
+            ["Context", "1.2K of 356K now · peak 1.2K"],
+            ["Tokens", "1.2K in · 40 out · 1 call"],
+            ["Summarized", "Not yet"],
+        ]);
+    await closeOn(loading.handle);
+    const usageAppearsLiveOnTheFirstWorkTurn = quietWhileReading && shownLive;
+    if (!usageAppearsLiveOnTheFirstWorkTurn) {
+        fail(`usage first turn: quiet ${quietWhileReading}, shown ${shownLive}`);
+    }
+
+    // ── usageFactsReadAsFacts ───────────────────────────────────────────
+    const readFacts = async (row) => {
+        usageReply = answer({ usage: row });
+        const opened = await openOn();
+        const node = usageIn(opened.panel);
+        const read = factsIn(node);
+        const pairs = Boolean(node) && node.querySelector(".fact-list").getAttribute("data-pairs") === "2";
+        await closeOn(opened.handle);
+        return { read, pairs };
+    };
+    const folds = await readFacts(ROW);
+    const noFold = await readFacts(NO_FOLD);
+    const noCall = await readFacts(NO_CALL);
+    const failedOnly = await readFacts({ ...NO_CALL, failed_summaries: 2, last_failed_summary_at: ago(HOUR) });
+    const usageFactsReadAsFacts = folds.pairs && noFold.pairs && noCall.pairs
+        && same(folds.read, [
+            ["Context", "84.3K of 356K now · peak 301.2K"],
+            ["Tokens", "37.7M in · 412.5K out · 564 calls"],
+            ["Summarized", "7 times · 213 steps · last 2h ago · 1 failed"],
+        ])
+        && same(noFold.read, [
+            ["Context", "1.2K of 356K now · peak 1.2K"],
+            ["Tokens", "1.2K in · 40 out · 1 call"],
+            ["Summarized", "Not yet"],
+        ])
+        && same(noCall.read, [
+            ["Context", "No work yet"],
+            ["Tokens", "0 in · 0 out · 0 calls"],
+            ["Summarized", "Not yet"],
+        ])
+        && same(failedOnly.read[2], ["Summarized", "Not yet · 2 failed"]);
+    if (!usageFactsReadAsFacts) {
+        fail(`usage facts read ${JSON.stringify([folds, noFold, noCall, failedOnly])}`);
+    }
+
+    // ── usageSitsUnderTheFactsInViewAndEditMode ─────────────────────────
+    usageReply = answer({ usage: ROW });
+    const placed = await openOn();
+    const usageNode = usageIn(placed.panel);
+    const inView = Boolean(factsIn(usageNode)) && usageNode.hidden === false;
+    await click(placed.panel.querySelector("#ct-edit-mode-btn"), "the pencil");
+    // The same node, still read-only, still in the facts grid after the facts.
+    const inEdit = usageIn(placed.panel) === usageNode
+        && usageNode.querySelectorAll("input").length === 0 && usageNode.querySelectorAll("button").length === 0;
+    await click(placed.panel.querySelector("#ct-edit-discard"), "✕");
+    const backInView = usageIn(placed.panel) === usageNode;
+    await closeOn(placed.handle);
+    const usageSitsUnderTheFactsInViewAndEditMode = inView && inEdit && backInView;
+    if (!usageSitsUnderTheFactsInViewAndEditMode) {
+        fail(`usage placement: view ${inView}, edit ${inEdit}, back ${backInView}`);
+    }
+
+    // ── usageErrorSaysSoAndRetries ──────────────────────────────────────
+    const detail = "The Context Window settings are invalid. Fix them in Settings → Context Window.";
+    usageReply = () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ detail }) });
+    const failing = await openOn();
+    const errorNode = usageIn(failing.panel);
+    const alertLine = errorNode && errorNode.querySelector(".place-error-detail");
+    const retry = errorNode && errorNode.querySelectorAll("button").find((button) => button.textContent === "Retry");
+    const errorShown = Boolean(alertLine) && alertLine.getAttribute("role") === "alert"
+        && alertLine.textContent === `Couldn't load what this task has used: ${detail}`
+        && Boolean(retry) && retry.getAttribute("type") === "button" && errorNode.hidden === false;
+    // A malformed count is an error too, never a made-up number.
+    usageReply = answer({ usage: { ...ROW, prompt_tokens: "37.7M" } });
+    await click(retry, "Retry");
+    const malformedShown = Boolean(errorNode.querySelector(".place-error-detail")) && !factsIn(errorNode);
+    // Retry shows the loading line, then the facts.
+    let settleRetry;
+    usageReply = () => new Promise((resolve) => { settleRetry = resolve; });
+    await click(errorNode.querySelectorAll("button").find((button) => button.textContent === "Retry"), "Retry");
+    const retryLoads = errorNode.textContent === "Loading what this task has used…";
+    settleRetry({ ok: true, json: () => Promise.resolve({ usage: ROW }) });
+    await drain();
+    const retriedToFacts = usageIn(failing.panel) === errorNode && factsIn(errorNode).length === 3
+        && !errorNode.querySelector(".place-error-detail");
+    await closeOn(failing.handle);
+    const usageErrorSaysSoAndRetries = errorShown && malformedShown && retryLoads && retriedToFacts;
+    if (!usageErrorSaysSoAndRetries) {
+        fail(`usage error: shown ${errorShown}, malformed ${malformedShown}, loads ${retryLoads}, `
+            + `retried ${retriedToFacts}`);
+    }
+
+    // ── usageFollowsTheAssigneesTurns ───────────────────────────────────
+    usageReply = answer({ usage: NO_FOLD });
+    const live = await openOn();
+    const liveNode = usageIn(live.panel);
+    const subscribed = bus.subscriberCount();
+    // Another agent's turn: no re-read.
+    let readsAt = usageReads.length;
+    bus.publish("diagnostic", { id: 1, agent_id: "a2", agent_name: "Debra" });
+    await drain();
+    const otherAgentIgnored = usageReads.length === readsAt;
+    // The assignee's turn: a re-read, with the old facts on screen until it lands.
+    let settleTurn;
+    usageReply = () => new Promise((resolve) => { settleTurn = resolve; });
+    readsAt = usageReads.length;
+    bus.publish("diagnostic", { id: 2, agent_id: "a1", agent_name: "Jim" });
+    await drain();
+    const keptWhileReading = same(usageReads.slice(readsAt), [URL]) && factsIn(liveNode)[2][1] === "Not yet";
+    settleTurn({ ok: true, json: () => Promise.resolve({ usage: ROW }) });
+    await drain();
+    const assigneeRereads = keptWhileReading
+        && factsIn(liveNode)[2][1] === "7 times · 213 steps · last 2h ago · 1 failed";
+    // A reconnect: a re-read whoever's turn it was.
+    usageReply = answer({ usage: NO_CALL });
+    readsAt = usageReads.length;
+    bus.publish("resync", { downtimeMs: 900 });
+    await drain();
+    const resyncRereads = same(usageReads.slice(readsAt), [URL]) && factsIn(liveNode)[0][1] === "No work yet";
+    // Closing stops both: no subscriber left, and a late event reads nothing.
+    await closeOn(live.handle);
+    readsAt = usageReads.length;
+    bus.publish("diagnostic", { id: 3, agent_id: "a1", agent_name: "Jim" });
+    bus.publish("resync", { downtimeMs: 0 });
+    await drain();
+    const closingUnsubscribes = bus.subscriberCount() === base && usageReads.length === readsAt;
+    // Recent steps follows `task_step` and `resync`; the usage `diagnostic` and `resync`.
+    const followsTwoTopics = subscribed === base + 4;
+    const usageFollowsTheAssigneesTurns = otherAgentIgnored && assigneeRereads && resyncRereads
+        && closingUnsubscribes && followsTwoTopics;
+    if (!usageFollowsTheAssigneesTurns) {
+        fail(`usage live: other ${otherAgentIgnored}, assignee ${assigneeRereads}, resync ${resyncRereads}, `
+            + `closed ${closingUnsubscribes} (${bus.subscriberCount()} vs ${base}), topics ${followsTwoTopics}`);
+    }
+
+    // ── usageFollowsAReassignment ───────────────────────────────────────
+    // Edit mode reassigns Jim's task to Debra; the detail repaints from the
+    // stored row, and from then on Debra's turns re-read and Jim's do not.
+    usageReply = answer({ usage: NO_FOLD });
+    const recorded = recordingActions();
+    const moved = await openOn(recorded.actions);
+    await click(moved.panel.querySelector("#ct-edit-mode-btn"), "the pencil");
+    await click(moved.panel.querySelector(".menu-select-trigger"), "the assignee trigger");
+    await click(moved.panel.querySelectorAll(".menu-select-option").find((item) => item.textContent.includes("Debra")),
+        "Debra in the assignee menu");
+    recorded.replies.push({ status: 200, body: { ...TASK, assigned_to: "a2", assigned_to_name: "Debra" } });
+    await click(moved.panel.querySelector("#ct-edit-save"), "✓");
+    const reassigned = recorded.requests.length === 1 && same(recorded.requests[0].body, { assigned_to: "a2" })
+        && moved.panel.querySelector("#ct-edit-save").hidden === true;
+    readsAt = usageReads.length;
+    bus.publish("diagnostic", { id: 4, agent_id: "a1", agent_name: "Jim" });
+    await drain();
+    const oldAssigneeIgnored = usageReads.length === readsAt;
+    bus.publish("diagnostic", { id: 5, agent_id: "a2", agent_name: "Debra" });
+    await drain();
+    const newAssigneeRereads = same(usageReads.slice(readsAt), [URL]);
+    await closeOn(moved.handle);
+    const usageFollowsAReassignment = reassigned && oldAssigneeIgnored && newAssigneeRereads;
+    if (!usageFollowsAReassignment) {
+        fail(`usage reassign: saved ${reassigned} (${JSON.stringify(recorded.requests)}), `
+            + `old ignored ${oldAssigneeIgnored}, new re-reads ${newAssigneeRereads}`);
+    }
+
+    // ── usageRequiresItsDeps ────────────────────────────────────────────
+    const errorOf = (deps) => {
+        try {
+            global.BossModTaskUsage.section(deps);
+        } catch (err) {
+            return err.message;
+        }
+        return null;
+    };
+    const assigneeOf = () => "a1";
+    const usageRequiresItsDeps = errorOf({ bus, taskId: TASK.id, assigneeOf }) === "[task-usage] deps.api is required"
+        && errorOf({ api, taskId: TASK.id, assigneeOf }) === "[task-usage] deps.bus is required"
+        && errorOf({ api, bus, assigneeOf }) === "[task-usage] deps.taskId is required"
+        && errorOf({ api, bus, taskId: TASK.id }) === "[task-usage] deps.assigneeOf is required"
+        && bus.subscriberCount() === base;
+    if (!usageRequiresItsDeps) fail("the usage section was built without its api, bus, taskId or assigneeOf");
+
+    usageReply = answer({ usage: null });
+    if (top() !== null) fail("a usage case outlived its close");
+    return {
+        usageLoadsThenHidesWhenNone,
+        usageAppearsLiveOnTheFirstWorkTurn,
+        usageFactsReadAsFacts,
+        usageSitsUnderTheFactsInViewAndEditMode,
+        usageErrorSaysSoAndRetries,
+        usageFollowsTheAssigneesTurns,
+        usageFollowsAReassignment,
+        usageRequiresItsDeps,
     };
 }
 

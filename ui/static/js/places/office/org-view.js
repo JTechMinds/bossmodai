@@ -22,6 +22,24 @@ const BossModOrgView = (() => {
     }
 
     /**
+     * The Prompt cache stat, by the Metrics card's rules, over every turn
+     * the agent ever ran: the cached share, "Not reported" when its calls
+     * sent prompt tokens with no cache figure, "No calls yet" when they sent
+     * none.
+     *
+     * @param {object|undefined} cache  The agent's all-time `prompt_cache`.
+     *   Absent only for an agent that joined after the last load, whose
+     *   stats arrive with the next one; the stat says "Unknown" until then.
+     * @returns {string}
+     */
+    function promptCacheText(cache) {
+        if (!cache) return 'Unknown';
+        if (cache.prompt_tokens === 0) return 'No calls yet';
+        if (cache.reported_prompt_tokens === 0) return 'Not reported';
+        return `${BossModFormat.formatSharePercent(cache.cached_share)} cached`;
+    }
+
+    /**
      * Build the Org view.
      *
      * @param {object} deps
@@ -88,7 +106,8 @@ const BossModOrgView = (() => {
                         h('div', { class: 'org-stat-value' }, badge)),
                     stat('Location', agent.location || 'Unknown'),
                     stat('Tasks done', BossModFormat.formatNumber(agent.tasks_completed ?? 0)),
-                    stat('Tokens used', BossModFormat.formatNumber(agent.tokens_used ?? 0))),
+                    stat('Tokens used', BossModFormat.formatNumber(agent.tokens_used ?? 0)),
+                    stat('Prompt cache', promptCacheText(agent.prompt_cache))),
                 h('p', { class: 'org-task' },
                     agent.current_task ? String(agent.current_task) : 'No active task'));
             cardNodes.set(agent.id, { root, dot, badge, label });

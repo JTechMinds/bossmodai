@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -10,11 +11,14 @@ from core import config
 from db.connection import transaction
 from db.crud import execute, insert_returning_dict, query, query_one
 
+logger = logging.getLogger(__name__)
+
 # Summary columns returned by list queries (excludes large blobs)
 _SUMMARY_COLUMNS = (
     "id, agent_id, agent_name, trigger_type, trigger_data, status, mode, model, "
     "model_source, action_name, prompt_tokens, completion_tokens, "
-    "total_tokens, error, duration_ms, created_at"
+    "total_tokens, cached_prompt_tokens, cache_reported_prompt_tokens, "
+    "error, duration_ms, created_at"
 )
 
 # List reads these only to pull `msg` onto the summary, then drops them.
@@ -100,7 +104,8 @@ def _summary_with_reply(row: dict[str, Any]) -> dict[str, Any]:
 _ALL_COLUMNS = (
     "id, agent_id, agent_name, trigger_type, trigger_data, status, mode, "
     "model, model_source, context, raw_response, action_name, parsed_action, "
-    "result, prompt_tokens, completion_tokens, total_tokens, error, "
+    "result, prompt_tokens, completion_tokens, total_tokens, "
+    "cached_prompt_tokens, cache_reported_prompt_tokens, error, "
     "duration_ms, created_at"
 )
 
@@ -126,7 +131,29 @@ def create_diagnostic(
     duration_ms: int = 0,
     steps: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Insert a diagnostic entry and auto-purge old rows if over limit."""
+    """Insert a diagnostic entry, with its steps, and auto-purge old rows if over limit.
+
+    The turn's prompt-cache totals are derived here, from its steps: the sum
+    of each step's ``cached_prompt_tokens`` and ``cache_reported_prompt_tokens``.
+    The turn's own prompt tokens are checked against the sum over its steps
+    (:func:`_check_turn_matches_steps`); a mismatch is logged at error level
+    and the row is still written, because a bookkeeping slip must not fail a
+    turn.
+
+    Args:
+        steps: Step trace records (``turn_helpers._build_step_trace``). Each
+            must carry ``cached_prompt_tokens`` and
+            ``cache_reported_prompt_tokens``.
+
+    Returns:
+        The new row's summary columns, with ``reply``.
+
+    Raises:
+        KeyError: A step record lacks either cache key.
+    """
+    cached_prompt_tokens = sum(step["cached_prompt_tokens"] for step in steps or [])
+    cache_reported_prompt_tokens = sum(step["cache_reported_prompt_tokens"] for step in steps or [])
+    _check_turn_matches_steps(agent_name, prompt_tokens, steps or [])
     row = insert_returning_dict(
         f"""
         INSERT INTO diagnostics (
@@ -134,8 +161,9 @@ def create_diagnostic(
             mode, model, model_source, context, raw_response,
             action_name, parsed_action, result,
             prompt_tokens, completion_tokens, total_tokens,
+            cached_prompt_tokens, cache_reported_prompt_tokens,
             error, duration_ms, created_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
         RETURNING {_SUMMARY_COLUMNS}
         """,
         [
@@ -143,6 +171,7 @@ def create_diagnostic(
             mode, model, model_source, context, raw_response,
             action_name, parsed_action, result,
             prompt_tokens, completion_tokens, total_tokens,
+            cached_prompt_tokens, cache_reported_prompt_tokens,
             error, duration_ms,
             datetime.now(timezone.utc),
         ],
@@ -155,6 +184,33 @@ def create_diagnostic(
         step_payloads.append(step.get("raw_response"))
         step_payloads.append(step.get("parsed_action"))
     return _attach_reply(row, raw_response, parsed_action, *step_payloads)
+
+
+def _check_turn_matches_steps(agent_name: str, prompt_tokens: int, steps: list[dict[str, Any]]) -> None:
+    """Log an error when a turn's prompt tokens are not the sum over its steps.
+
+    The turn's cache totals come from its steps alone, so its prompt tokens
+    must too; otherwise the cache share of the turn would be measured
+    against calls no step recorded. Each step's tokens are read the way
+    :func:`_create_diagnostic_steps` stores them. Logs only: the caller
+    still writes the row.
+    """
+    if not steps:
+        if prompt_tokens:
+            logger.error(
+                "Diagnostics for %s: the turn has %d prompt tokens but no steps to account for them",
+                agent_name,
+                prompt_tokens,
+            )
+        return
+    step_prompt_tokens = sum(step.get("prompt_tokens", 0) for step in steps)
+    if step_prompt_tokens != prompt_tokens:
+        logger.error(
+            "Diagnostics for %s: the turn has %d prompt tokens but its steps sum to %d",
+            agent_name,
+            prompt_tokens,
+            step_prompt_tokens,
+        )
 
 
 def get_diagnostics(
@@ -206,6 +262,7 @@ def get_diagnostic_steps(diagnostic_id: str) -> list[dict[str, Any]]:
             id, diagnostic_id, step_index, action_name, context_snapshot,
             raw_response, parsed_action, result,
             prompt_tokens, completion_tokens, total_tokens,
+            cached_prompt_tokens, cache_reported_prompt_tokens,
             duration_ms, error, created_at
         FROM diagnostic_steps
         WHERE diagnostic_id = $1
@@ -219,7 +276,11 @@ def _create_diagnostic_steps(
     diagnostic_id: str,
     steps: list[dict[str, Any]],
 ) -> None:
-    """Insert per-step execution trace rows for a diagnostic."""
+    """Insert per-step execution trace rows for a diagnostic.
+
+    The two cache keys are read strictly: a step record without them is a
+    bug in whatever built it, not a step that reported nothing.
+    """
     for step in steps:
         execute(
             """
@@ -227,8 +288,9 @@ def _create_diagnostic_steps(
                 diagnostic_id, step_index, action_name, context_snapshot,
                 raw_response, parsed_action, result,
                 prompt_tokens, completion_tokens, total_tokens,
+                cached_prompt_tokens, cache_reported_prompt_tokens,
                 duration_ms, error
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
             """,
             [
                 diagnostic_id,
@@ -241,6 +303,8 @@ def _create_diagnostic_steps(
                 step.get("prompt_tokens", 0),
                 step.get("completion_tokens", 0),
                 step.get("total_tokens", 0),
+                step["cached_prompt_tokens"],
+                step["cache_reported_prompt_tokens"],
                 step.get("duration_ms", 0),
                 step.get("error"),
             ],

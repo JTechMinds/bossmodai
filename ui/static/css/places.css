@@ -472,6 +472,19 @@
    panel by 16px 20px, and a second gutter here would double it. The gap is
    what separates the sections; they carry no rules between them. */
 .task-detail-column { display: flex; flex-direction: column; gap: 16px; max-width: var(--panel-column); margin: 0 auto; }
+/* The facts and what the task's work has used (task-usage.js) share one
+   label column: .task-detail-facts is the grid, and each fact list is a
+   subgrid across it, so labels and values line up in both lists. Columns and
+   gaps are .fact-list[data-pairs="2"]'s (controls.css), one pair to a row
+   under the same 640px breakpoint; controls.css is untouched, so every other
+   fact list keeps its own columns. The usage's loading and error lines span
+   the row, left-aligned. A hidden usage is display: none (.task-detail
+   [hidden] above), so it takes no row. */
+.task-detail-facts { display: grid; grid-template-columns: auto 1fr auto 1fr; gap: 8px 12px; }
+.task-detail-facts > .fact-list, .task-detail-usage, .task-detail-usage > .fact-list {
+  grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; }
+.task-detail-usage > :not(.fact-list) { grid-column: 1 / -1; justify-self: start; }
+@media (max-width: 640px) { .task-detail-facts { grid-template-columns: auto 1fr; } }
 .task-detail-status { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
 /* Edit mode's status actions, at the status row's end: the row gains them in
    place, so nothing above or below it moves. The hint sits before them and

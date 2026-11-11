@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from core.bm_cli.types import BossModCliResult
+from core.llm.prompt_cache_usage import PromptCacheUsage
 
 _MANAGED_WRITE_DONE_SENTINEL = "<<BOSSMOD_FILE_DONE>>"
 
@@ -37,12 +38,17 @@ _MANAGED_WRITER_PROMPT_ALLOWED_PATHS = {
 
 @dataclass(frozen=True, slots=True)
 class ManagedWriteOutcome:
-    """Result of one runtime-managed file authoring session."""
+    """Result of one runtime-managed file authoring session.
+
+    ``cache`` is the prompt-cache figures of the same model calls
+    ``prompt_tokens`` counts; required, so every construction decides.
+    """
 
     cli_result: BossModCliResult
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache: PromptCacheUsage
     chunks: int
 
 
@@ -70,12 +76,13 @@ class ManagedGeneratedFile:
 
 @dataclass(frozen=True, slots=True)
 class ManagedGenerationOutcome:
-    """Generation outcome for one file body."""
+    """Generation outcome for one file body; ``cache`` beside ``prompt_tokens``, required."""
 
     content: str | None
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache: PromptCacheUsage
     chunks: int
     byte_count: int
     strategy: str
@@ -85,12 +92,13 @@ class ManagedGenerationOutcome:
 
 @dataclass(frozen=True, slots=True)
 class ManagedDirectDraftOutcome:
-    """Outcome of the initial direct authoring attempt."""
+    """Outcome of the initial direct authoring attempt; ``cache`` beside ``prompt_tokens``, required."""
 
     content: str | None
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache: PromptCacheUsage
     byte_count: int
     needs_section_plan: bool
     cli_result: BossModCliResult | None = None

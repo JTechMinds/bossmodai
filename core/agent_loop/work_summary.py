@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import db
@@ -44,6 +44,7 @@ from core import config
 from core.agent_loop import work_snapshot
 from core.context_budget import read_context_budget
 from core.llm import client
+from core.llm.prompt_cache_usage import PromptCacheUsage
 from core.models import Activity, Agent
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,12 @@ logger = logging.getLogger(__name__)
 SUMMARY_PERCENT_SETTING = "work_snapshot_summary_percent"
 TRIM_PERCENT_SETTING = "work_snapshot_trim_percent"
 REPAIRS_SETTING = "execution_max_consecutive_repairs"
+
+# The action name of the fold's step trace (step 0 of the turn it runs in,
+# whether it succeeded or failed). Task usage (core/agent_loop/task_usage.py)
+# leaves it out of the model calls: its input is the folded steps, not the
+# working context.
+SUMMARY_STEP_ACTION = "summarize_steps"
 
 _SUMMARY_SYSTEM = (
     "Condense an AI agent's earlier working steps so it can keep working without them. "
@@ -103,6 +110,9 @@ class WorkSummaryError(RuntimeError):
             no call completed.
         total_tokens: Total tokens the failed fold spent; 0 when no call
             completed.
+        cache: Prompt-cache figures of the calls that completed; ``ZERO``
+            when none did or none reported.
+        duration_ms: Wall time from the fold's start until it failed.
         overflow: Set when the first reply was over the limit and no
             rewrite brought it under, which includes an empty rewrite;
             ``None`` for an empty first reply or a failed model call.
@@ -115,15 +125,20 @@ class WorkSummaryError(RuntimeError):
         prompt_tokens: int,
         completion_tokens: int,
         total_tokens: int,
+        cache: PromptCacheUsage,
+        duration_ms: int,
         overflow: SummaryOverflow | None = None,
     ) -> None:
-        """Keep the message, the tokens spent before the fold failed, and any overflow.
+        """Keep the message, what the fold spent before it failed, and any overflow.
 
         Args:
             message: What went wrong, for the log and the diagnostics row.
             prompt_tokens: Prompt tokens of the calls that completed.
             completion_tokens: Completion tokens of the calls that completed.
             total_tokens: Total tokens of the calls that completed.
+            cache: Prompt-cache figures of the calls that completed.
+            duration_ms: Wall time from the fold's start until it failed,
+                for the failed turn's step 0.
             overflow: The over-limit measurement, when the failure was the
                 summary not fitting its limit; ``None`` otherwise.
         """
@@ -131,6 +146,8 @@ class WorkSummaryError(RuntimeError):
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
         self.total_tokens = total_tokens
+        self.cache = cache
+        self.duration_ms = duration_ms
         self.overflow = overflow
 
 
@@ -200,6 +217,7 @@ class StepSummaryRun:
             rewrites.
         completion_tokens: Completion tokens across those calls.
         total_tokens: Total tokens across those calls.
+        cache: Prompt-cache figures across those calls.
         duration_ms: Wall time of those calls.
     """
 
@@ -208,6 +226,7 @@ class StepSummaryRun:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
+    cache: PromptCacheUsage
     duration_ms: int
 
 
@@ -314,7 +333,6 @@ async def summarize_saved_work(
         {"role": "user", "content": _summary_input(snapshot.step_summary, dropped)},
     ]
     spent = _Spent()
-    started = time.monotonic()
     response = await _complete(messages, model=model, api_config=api_config, spent=spent)
     spent.add(response)
     summary = response.content.strip()
@@ -323,7 +341,7 @@ async def summarize_saved_work(
     summary = await _shorten(
         summary, limits=limits, rewrites_allowed=rewrites_allowed, model=model, api_config=api_config, spent=spent
     )
-    duration_ms = int((time.monotonic() - started) * 1000)
+    duration_ms = int((time.monotonic() - spent.started) * 1000)
 
     try:
         stored = db.save_step_summary(
@@ -349,22 +367,30 @@ async def summarize_saved_work(
         prompt_tokens=spent.prompt_tokens,
         completion_tokens=spent.completion_tokens,
         total_tokens=spent.total_tokens,
+        cache=spent.cache,
         duration_ms=duration_ms,
     )
 
 
 @dataclass(slots=True)
 class _Spent:
-    """The tokens one fold has spent so far, so every way it fails can report them."""
+    """What one fold has spent so far, so every way it fails can report it.
+
+    It owns the fold's clock (``started``), so a success and a failure
+    measure their duration from the same start.
+    """
 
     prompt_tokens: int = 0
     completion_tokens: int = 0
     total_tokens: int = 0
+    cache: PromptCacheUsage = field(default=PromptCacheUsage.ZERO)
+    started: float = field(default_factory=time.monotonic)
 
     def add(self, response: client.LLMResponse) -> None:
         self.prompt_tokens += response.prompt_tokens
         self.completion_tokens += response.completion_tokens
         self.total_tokens += response.total_tokens
+        self.cache += PromptCacheUsage.of(response)
 
     def error(self, message: str, *, overflow: SummaryOverflow | None = None) -> WorkSummaryError:
         return WorkSummaryError(
@@ -372,6 +398,8 @@ class _Spent:
             prompt_tokens=self.prompt_tokens,
             completion_tokens=self.completion_tokens,
             total_tokens=self.total_tokens,
+            cache=self.cache,
+            duration_ms=int((time.monotonic() - self.started) * 1000),
             overflow=overflow,
         )
 

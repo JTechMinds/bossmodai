@@ -245,6 +245,70 @@ class TaskOriginConversation(BaseModel):
         return self
 
 
+class TaskUsage(BaseModel):
+    """What a task's work has used: model tokens, context size, and mid-task summaries.
+
+    Only the task's work turns count: the turns that resume its work
+    activity, including the step-summary fold that runs before a resumed
+    turn's first step. Chat and decision turns about the task (the accept,
+    the operator messaging the agent mid-task, ``task_follow_up`` and
+    ``task_update``) run on chat-mode context, not on the task's working
+    context, so counting them would blur the numbers this exists to tune.
+    A subtask has its own work turns and its own row. Recorded by
+    ``core/agent_loop/task_usage.py`` into the ``task_usage`` side table;
+    never pruned.
+
+    The context size is the prompt of one of the agent's own calls (a step
+    trace's ``context_prompt_tokens``): not a turn's total, and not a
+    managed write's sub-calls, which send prompts of their own. Every
+    number is as the provider (or litellm's estimate, where the provider
+    reports none) gave it.
+
+    Attributes:
+        task_id: The task it belongs to.
+        work_turns: Work turns that ended.
+        model_calls: The agent's own model calls in the work turns; the
+            summary fold and the managed writer's sub-calls are left out.
+        prompt_tokens: Prompt tokens over the work turns, the folds' and the
+            managed writer's sub-calls included.
+        completion_tokens: Completion tokens over the work turns, the folds'
+            included.
+        latest_prompt_tokens: The context of the agent's latest model call;
+            ``None`` before the first call.
+        latest_call_at: When the turn that made that call ended (UTC);
+            ``None`` before the first call.
+        peak_prompt_tokens: The largest context of any one of the agent's
+            model calls; ``None`` before the first call.
+        summaries: Folds that succeeded.
+        summarized_steps: Steps those folds folded into the step summary.
+        last_summary_at: When the latest successful fold finished (UTC);
+            ``None`` before the first.
+        failed_summaries: Folds that failed.
+        last_failed_summary_at: When the latest failed fold ended (UTC);
+            ``None`` before the first.
+
+    Raises:
+        pydantic.ValidationError: A count is negative, a field is missing,
+            or an unknown field is sent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    work_turns: int = Field(ge=0)
+    model_calls: int = Field(ge=0)
+    prompt_tokens: int = Field(ge=0)
+    completion_tokens: int = Field(ge=0)
+    latest_prompt_tokens: int | None = Field(ge=0)
+    latest_call_at: datetime | None
+    peak_prompt_tokens: int | None = Field(ge=0)
+    summaries: int = Field(ge=0)
+    summarized_steps: int = Field(ge=0)
+    last_summary_at: datetime | None
+    failed_summaries: int = Field(ge=0)
+    last_failed_summary_at: datetime | None
+
+
 # Where one checklist item stands: still to do, done, or not needed.
 TaskChecklistStatus = Literal["open", "done", "skipped"]
 

@@ -8,7 +8,9 @@ read one way here and another way everywhere else.
 
 from __future__ import annotations
 
+import json
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -221,3 +223,43 @@ def test_metrics_counts_the_period_the_header_chose() -> None:
     assert "tokens.all_time" in is_empty
     assert "tasks.by_status" in is_empty
     assert "tokens.total" not in is_empty
+
+
+# The order tests/js_prompt_cache_harness.cjs evaluates its modules in.
+_PROMPT_CACHE_MODULES = [
+    JS / "core" / "dom.js",
+    JS / "core" / "format.js",
+    JS / "core" / "fact-list.js",
+    METRICS / "metric-cards.js",
+    METRICS / "metric-bars.js",
+    JS / "places" / "log" / "log-shape.js",
+    JS / "places" / "log" / "diagnostic-detail.js",
+]
+
+
+def test_prompt_cache_shares_read_the_same_everywhere() -> None:
+    """One formatter, three card states, and the bar, Log fact and trace notes.
+
+    "Not reported" is not "0% cached": no prompt tokens says No data, prompt
+    tokens with no figure say Not reported, and a share says how much was
+    not reported when some was. A sliver never rounds to 0% or 100%.
+    """
+    harness = Path(__file__).resolve().parent / "js_prompt_cache_harness.cjs"
+    result = subprocess.run(
+        ["node", str(harness), *(str(path) for path in _PROMPT_CACHE_MODULES)],
+        check=False, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == {
+        "ok": True,
+        "sharesRoundHonestly": True,
+        "unreadableSharesThrow": True,
+        "cardSaysNoData": True,
+        "cardSaysNotReported": True,
+        "cardShowsTheShare": True,
+        "cardNamesTheUnreported": True,
+        "cardRefusesAMissingBlock": True,
+        "barsNoteTheCache": True,
+        "logFactReads": True,
+        "traceStepsNoteTheCache": True,
+    }

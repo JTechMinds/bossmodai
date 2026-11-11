@@ -31,6 +31,7 @@ from core.bm_cli.managed_writer.types import (
     _MANAGED_WRITE_PLAN_SENTINEL,
 )
 from core.llm import client
+from core.llm.prompt_cache_usage import PromptCacheUsage
 
 async def _generate_managed_file(
     *,
@@ -76,6 +77,7 @@ async def _generate_managed_file(
             prompt_tokens=direct.prompt_tokens,
             completion_tokens=direct.completion_tokens,
             total_tokens=direct.total_tokens,
+            cache=direct.cache,
             chunks=1,
             byte_count=direct.byte_count,
             strategy="single_pass",
@@ -88,6 +90,7 @@ async def _generate_managed_file(
             prompt_tokens=direct.prompt_tokens,
             completion_tokens=direct.completion_tokens,
             total_tokens=direct.total_tokens,
+            cache=direct.cache,
             chunks=1,
             byte_count=direct.byte_count,
             strategy="single_pass",
@@ -112,6 +115,7 @@ async def _generate_managed_file(
         prompt_tokens=direct.prompt_tokens + sectioned.prompt_tokens,
         completion_tokens=direct.completion_tokens + sectioned.completion_tokens,
         total_tokens=direct.total_tokens + sectioned.total_tokens,
+        cache=direct.cache + sectioned.cache,
         chunks=1 + sectioned.chunks,
         byte_count=sectioned.byte_count,
         strategy=sectioned.strategy,
@@ -161,6 +165,7 @@ async def _generate_direct_file(
     prompt_tokens = response.prompt_tokens
     completion_tokens = response.completion_tokens
     total_tokens = response.total_tokens
+    cache = PromptCacheUsage.of(response)
 
     if _MANAGED_WRITE_DONE_SENTINEL in text:
         content = _remove_control_tokens(text)
@@ -171,6 +176,7 @@ async def _generate_direct_file(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                cache=cache,
                 byte_count=byte_count,
                 needs_section_plan=False,
                 cli_result=_managed_writer_error_result(
@@ -192,6 +198,7 @@ async def _generate_direct_file(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                cache=cache,
                 byte_count=byte_count,
                 needs_section_plan=False,
                 cli_result=_managed_writer_error_result(
@@ -212,6 +219,7 @@ async def _generate_direct_file(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             byte_count=byte_count,
             needs_section_plan=False,
         )
@@ -222,6 +230,7 @@ async def _generate_direct_file(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             byte_count=0,
             needs_section_plan=True,
         )
@@ -232,6 +241,7 @@ async def _generate_direct_file(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             byte_count=0,
             needs_section_plan=False,
             cli_result=_managed_writer_error_result(
@@ -253,6 +263,7 @@ async def _generate_direct_file(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        cache=cache,
         byte_count=len(text.encode("utf-8")),
         needs_section_plan=True,
     )
@@ -276,6 +287,7 @@ async def _generate_sectioned_file(
     prompt_tokens = 0
     completion_tokens = 0
     total_tokens = 0
+    cache = PromptCacheUsage.ZERO
     call_count = 0
 
     plan_response = await client.completion(
@@ -301,6 +313,7 @@ async def _generate_sectioned_file(
     prompt_tokens += plan_response.prompt_tokens
     completion_tokens += plan_response.completion_tokens
     total_tokens += plan_response.total_tokens
+    cache += PromptCacheUsage.of(plan_response)
     call_count += 1
 
     try:
@@ -311,6 +324,7 @@ async def _generate_sectioned_file(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             chunks=call_count,
             byte_count=0,
             strategy="sectioned",
@@ -386,6 +400,7 @@ async def _generate_sectioned_file(
         prompt_tokens += response.prompt_tokens
         completion_tokens += response.completion_tokens
         total_tokens += response.total_tokens
+        cache += PromptCacheUsage.of(response)
         call_count += 1
 
         section_body = _normalize_generated_text(response.content).strip()
@@ -396,6 +411,7 @@ async def _generate_sectioned_file(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                cache=cache,
                 chunks=call_count,
                 byte_count=sum(len(part.encode("utf-8")) for part in rendered_sections),
                 strategy="sectioned",
@@ -424,6 +440,7 @@ async def _generate_sectioned_file(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             chunks=call_count,
             byte_count=byte_count,
             strategy="sectioned",
@@ -447,6 +464,7 @@ async def _generate_sectioned_file(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             chunks=call_count,
             byte_count=byte_count,
             strategy="sectioned",
@@ -469,6 +487,7 @@ async def _generate_sectioned_file(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        cache=cache,
         chunks=call_count,
         byte_count=byte_count,
         strategy="sectioned",

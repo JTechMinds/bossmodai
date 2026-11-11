@@ -488,6 +488,11 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     # which is what was kept for them.
     _add_column_if_missing(con, "tasks", "request_messages", "TEXT")
     _add_column_if_missing(con, "agent_schedules", "request_messages", "TEXT")
+    # Prompt-cache figures per turn and per step. Existing rows read 0/0,
+    # "not reported", which is true: nothing recorded a figure for them.
+    for table in ("diagnostics", "diagnostic_steps"):
+        for column in ("cached_prompt_tokens", "cache_reported_prompt_tokens"):
+            _add_column_if_missing(con, table, column, "INTEGER NOT NULL DEFAULT 0")
     # After every table rebuild above (a rebuild drops the old table's
     # indexes) and after tasks.owner_id is added.
     _create_hot_path_indexes(con)

@@ -223,6 +223,7 @@ async def _run_bound_turn(
                 total_tokens=0,
             ),
             start=start,
+            work_task_id=None,
         )
 
     return await _run_execution_turn(
@@ -239,4 +240,5 @@ async def _run_bound_turn(
         policy=policy,
         start=start,
         summary_run=summary_run,
+        work_task_id=work_activity.task_id if work_activity is not None else None,
     )

@@ -346,7 +346,8 @@ def test_activity_log_rows_past_retention_are_pruned() -> None:
 def _diagnostic(label: str, created: datetime) -> str:
     row = db.create_diagnostic(
         agent_id="agent-x", agent_name="X", trigger_type="chat_message", trigger_data="{}",
-        context=label, steps=[{"step_index": 0, "raw_response": label}],
+        context=label,
+        steps=[{"step_index": 0, "raw_response": label, "cached_prompt_tokens": 0, "cache_reported_prompt_tokens": 0}],
     )
     execute("UPDATE diagnostics SET created_at = $1 WHERE id = $2", [created, row["id"]])
     return str(row["id"])
@@ -574,7 +575,7 @@ def test_the_row_limit_purge_uses_the_indexes(
     def over_the_limit() -> None:
         db.create_diagnostic(
             agent_id="a", agent_name="A", trigger_type="t", trigger_data="{}",
-            steps=[{"step_index": 0, "raw_response": "r"}],
+            steps=[{"step_index": 0, "raw_response": "r", "cached_prompt_tokens": 0, "cache_reported_prompt_tokens": 0}],
         )
 
     plan = _plan_of(over_the_limit, needle, monkeypatch)

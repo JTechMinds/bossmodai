@@ -620,7 +620,13 @@ async def test_a_failed_summary_call_fails_the_turn_before_any_step(monkeypatch:
     assert outcome.trigger_status == "failed"
     assert outcome.retryable is True
     assert outcome.diagnostic_error == "Step summary failed: The step summary call failed: provider unreachable"
-    assert outcome.steps == []
+    # The failed fold is the turn's one step, step 0, as a successful fold's
+    # call is; no call completed, so it spent nothing.
+    (fold,) = outcome.steps
+    assert (fold["step_index"], fold["action_name"], fold["error"]) == (
+        0, "summarize_steps", outcome.diagnostic_error,
+    )
+    assert (fold["prompt_tokens"], fold["completion_tokens"], fold["total_tokens"]) == (0, 0, 0)
     assert (outcome.prompt_tokens, outcome.completion_tokens, outcome.total_tokens) == (0, 0, 0)
     assert len(prompts) == 1 and prompts[0][0]["content"].startswith(_SUMMARY_SYSTEM_HEAD)
     assert db.get_work_snapshot(activity.id).model_dump() == before.model_dump(), "the snapshot is untouched"

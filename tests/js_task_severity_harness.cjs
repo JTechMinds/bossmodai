@@ -32,7 +32,7 @@ const NAMES = [
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
     "BossModTaskMessage", "BossModTaskRequest",
     "BossModAssignOutcomes", "BossModAssignForm",
-    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskOrigin", "BossModTaskDetail",
+    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskOrigin", "BossModTaskUsage", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",
     "BossModTaskActions",
 ];
@@ -86,6 +86,10 @@ function api(url, opts) {
     // The detail's Before this task: none here; its own subject is js_task_detail_harness.cjs.
     if (/^\/api\/tasks\/[^/]+\/origin-conversation$/.test(text)) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ origin: null }) });
+    }
+    // The detail's usage facts: none here; their own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/usage$/.test(text)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ usage: null }) });
     }
     const desk = /^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/.exec(text);
     if (desk) {

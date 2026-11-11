@@ -2,19 +2,21 @@
  * BossMod AI — the task detail dialog.
  *
  * A panel modal whose body is one centred column: the status line, the facts,
- * the one callout the state calls for, what it waits on, the request, the
- * conversation before the task, the task itself, its references, the
- * deliverables, the assignee's checklist, its recent steps, the subtasks,
- * what counts as done, and the activity. The title is the modal's own head
- * and is not repeated below it. The sections are pure builders in
- * task-detail-sections.js and, for the request, task-request.js; the
- * conversation before the task (task-origin.js) fetches its own, once per
- * open. This file composes them, owns the modal, and owns the head's tools:
- * the pencil that enters Edit mode, and its ✓ and ✕.
+ * what the task's work has used, the one callout the state calls for, what
+ * it waits on, the request, the conversation before the task, the task
+ * itself, its references, the deliverables, the assignee's checklist, its
+ * recent steps, the subtasks, what counts as done, and the activity. The
+ * title is the modal's own head and is not repeated below it. The sections
+ * are pure builders in task-detail-sections.js and, for the request,
+ * task-request.js; the conversation before the task (task-origin.js)
+ * fetches its own, once per open. This file composes them, owns the modal,
+ * and owns the head's tools: the pencil that enters Edit mode, and its ✓
+ * and ✕.
  *
- * Recent steps (task-steps.js) is the one live part: built once, it follows
- * the `task_step` topic for as long as the detail is open, and its "See all
- * steps" opens the full history as a layer (task-steps-history.js).
+ * Two parts are live, each built once per open: Recent steps (task-steps.js)
+ * follows the `task_step` topic, and its "See all steps" opens the full
+ * history as a layer (task-steps-history.js); what the task's work has used
+ * (task-usage.js) re-reads when the assignee finishes a turn.
  *
  * Edit mode (task-edit-mode.js) makes the same panel editable in place; one
  * renderColumn() paints the view, the edit and every repaint after a change.
@@ -87,6 +89,11 @@ const BossModTaskDetail = (() => {
         const events = BossModTaskEvents.createTaskEvents({ api, taskId: task.id, colorOf });
         // Built once per open, not per repaint: it fetches, and it is read-only.
         const origin = BossModTaskOrigin.section({ api, taskId: task.id, colorOf });
+        /** The row renderColumn() last painted: the usage follows its assignee's turns. */
+        let painted = task;
+        const usage = BossModTaskUsage.section({
+            api, bus, taskId: task.id, assigneeOf: () => painted.assigned_to,
+        });
         const recent = BossModTaskSteps.createRecent({
             api, bus, taskId: task.id, onSeeAll: () => BossModTaskStepsHistory.open({ api, bus, task }),
         });
@@ -112,6 +119,7 @@ const BossModTaskDetail = (() => {
          *   on screen.
          */
         function renderColumn(current, editing) {
+            painted = current;
             const children = tasks.filter((item) => item.parent_task_id === current.id);
             const instructions = editing ? null : SECTIONS.instructions(current);
             // Read-only in Edit mode too: nobody edits what was asked.
@@ -122,7 +130,11 @@ const BossModTaskDetail = (() => {
             column.replaceChildren(...[
                 SECTIONS.statusLine(current, { actions: status && status.element }),
                 editing ? editMode.errorSlot : null,
-                SECTIONS.facts(current, { tasks, colorOf, onNavigate, assigneeValue, severityValue }),
+                // One grid for the facts and what the task's work has used
+                // (read-only in Edit mode too), so they share a label column.
+                h('div', { class: 'task-detail-facts' },
+                    SECTIONS.facts(current, { tasks, colorOf, onNavigate, assigneeValue, severityValue }),
+                    usage.element),
                 SECTIONS.callout(current, { onOpenChat }),
                 // What it waits on, or waited on before it started, right
                 // under its state.
@@ -254,6 +266,7 @@ const BossModTaskDetail = (() => {
                 if (editMode) editMode.destroy();
                 events.destroy();
                 origin.destroy();
+                usage.destroy();
                 recent.destroy();
                 if (onClose) onClose();
             },

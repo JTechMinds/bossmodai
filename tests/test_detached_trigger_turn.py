@@ -487,6 +487,7 @@ async def test_l3_a_managed_write_reports_progress_but_leaves_the_activity_detai
 ) -> None:
     from core.bm_cli.managed_writer.types import ManagedWriteOutcome, ManagedWriteProgress
     from core.bm_cli.results import success_result
+    from core.llm.prompt_cache_usage import PromptCacheUsage
 
     agent, task, activity = _working_agent_with_snapshot()
     before = _live_state(task.id, activity.id)
@@ -507,7 +508,7 @@ async def test_l3_a_managed_write_reports_progress_but_leaves_the_activity_detai
             cli_result=success_result(
                 command="write /me/reply.md", detail="Wrote /me/reply.md", kind="write", data={}, sections=[],
             ),
-            prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=1,
+            prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=1,
         )
 
     monkeypatch.setattr("core.agent_loop.execution_turn.run_managed_write", _fake_managed_write)
@@ -778,6 +779,7 @@ async def test_r3_finalize_keeps_the_soft_block_for_detached_and_clears_it_for_a
             outcome=TurnOutcome.skipped(result={"event": "agent_updated", "detail": "", "agent_name": agent.name},
                                         error="skipped", steps=[]),
             start=time.monotonic(),
+            work_task_id=None,
         )
 
     await _finalize(_event_trigger())

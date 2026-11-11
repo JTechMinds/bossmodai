@@ -139,7 +139,7 @@ const NAMES = [
     // conversation route. All are read at call time.
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables", "BossModTaskEvents",
     "BossModTaskSteps", "BossModTaskStepsHistory",
-    "BossModTaskDetailSections", "BossModTaskMessage", "BossModTaskRequest", "BossModTaskOrigin", "BossModTaskDetail",
+    "BossModTaskDetailSections", "BossModTaskMessage", "BossModTaskRequest", "BossModTaskOrigin", "BossModTaskUsage", "BossModTaskDetail",
     "BossModTasksCancel",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksComplete",
@@ -545,6 +545,10 @@ function api(url, init) {
     // A task layer's Before this task: none here; its own subject is js_task_detail_harness.cjs.
     if (/^\/api\/tasks\/[^/]+\/origin-conversation$/.test(String(url))) {
         return jsonResponse({ origin: null });
+    }
+    // A task layer's usage facts: none here; their own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/usage$/.test(String(url))) {
+        return jsonResponse({ usage: null });
     }
     if (String(url) === "/api/tasks") {
         if (taskListFails) return jsonResponse({ detail: "boom" }, 500);

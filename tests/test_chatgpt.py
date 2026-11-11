@@ -488,6 +488,30 @@ async def test_runtime_uses_responses_and_requires_completed_event(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    "usage, cached",
+    [
+        (NS(input_tokens=50, output_tokens=4, total_tokens=54, input_tokens_details=NS(cached_tokens=30)), 30),
+        # The SDK builds responses unvalidated: no details is an absent attribute.
+        (NS(input_tokens=50, output_tokens=4, total_tokens=54), None),
+    ],
+    ids=["input-details", "no-input-details"],
+)
+async def test_runtime_reports_cached_input_tokens_only_when_the_usage_has_them(monkeypatch, usage, cached):
+    saved_account()
+    final = NS(
+        output=[NS(type="message", content=[NS(type="output_text", text='{"action":"done"}')])],
+        model="test-model",
+        usage=usage,
+    )
+    mock_responses(monkeypatch, [NS(type="response.completed", response=final)])
+
+    result = await call_provider("test-model", [{"role": "user", "content": "Go"}])
+
+    assert (result.prompt_tokens, result.cached_prompt_tokens) == (50, cached)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "events, expected",
     [
         ([NS(type="response.output_text.delta", delta="partial")], "interrupted"),

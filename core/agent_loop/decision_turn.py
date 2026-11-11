@@ -67,6 +67,7 @@ from core.bm_cli.managed_writer import (
 from core.bm_cli.results import cli_continuation_messages
 from core.default_prompts import load_default_prompt
 from core.llm import client
+from core.llm.prompt_cache_usage import PromptCacheUsage
 from core.models import Agent, AgentState
 from core.runtime.events import runtime_events as manager
 
@@ -165,8 +166,10 @@ async def _run_decision_turn(
                             "detail": "LLM call timed out; asked the model to retry with one JSON envelope.",
                         },
                         prompt_tokens=0,
+                        context_prompt_tokens=0,  # the call failed: no agent call
                         completion_tokens=0,
                         total_tokens=0,
+                        cache=PromptCacheUsage.ZERO,
                         duration_ms=int((time.monotonic() - step_started) * 1000),
                         error=str(exc),
                     )
@@ -193,8 +196,10 @@ async def _run_decision_turn(
                 next_context_snapshot=next_context_snapshot,
                 step_started=step_started,
                 step_prompt_tokens=0,
+                step_context_prompt_tokens=0,
                 step_completion_tokens=0,
                 step_total_tokens=0,
+                step_cache=PromptCacheUsage.ZERO,
                 error=_timeout_recovery_error(exc),
                 surfaced=surface_llm_timeout_failure(agent=agent, trigger=trigger),
                 action=None,
@@ -234,8 +239,10 @@ async def _run_decision_turn(
                             action=None,
                             result=result,
                             prompt_tokens=0,
+                            context_prompt_tokens=0,  # the call failed: no agent call
                             completion_tokens=0,
                             total_tokens=0,
+                            cache=PromptCacheUsage.ZERO,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=str(exc),
                         )
@@ -243,6 +250,7 @@ async def _run_decision_turn(
                     cause=exc,
                 ),
                 start=start,
+                work_task_id=None,  # a decision turn resumes no task's work
             )
 
         total_prompt_tokens += response.prompt_tokens
@@ -250,8 +258,12 @@ async def _run_decision_turn(
         total_tokens += response.total_tokens
         last_response_content = response.content
         step_prompt_tokens = response.prompt_tokens
+        # The agent's own call: its context size. A managed write adds its
+        # sub-calls to step_prompt_tokens only.
+        step_context_prompt_tokens = response.prompt_tokens
         step_completion_tokens = response.completion_tokens
         step_total_tokens = response.total_tokens
+        step_cache = PromptCacheUsage.of(response)
 
         parsed = parse_direct_turn_response(response.content)
         if parsed.get("decision") == "_parse_failed":
@@ -288,8 +300,10 @@ async def _run_decision_turn(
                             "detail": "Conversation decision JSON was invalid; asked the model to correct it.",
                         },
                         prompt_tokens=step_prompt_tokens,
+                        context_prompt_tokens=step_context_prompt_tokens,
                         completion_tokens=step_completion_tokens,
                         total_tokens=step_total_tokens,
+                        cache=step_cache,
                         duration_ms=int((time.monotonic() - step_started) * 1000),
                     )
                 )
@@ -317,8 +331,10 @@ async def _run_decision_turn(
                 next_context_snapshot=next_context_snapshot,
                 step_started=step_started,
                 step_prompt_tokens=step_prompt_tokens,
+                step_context_prompt_tokens=step_context_prompt_tokens,
                 step_completion_tokens=step_completion_tokens,
                 step_total_tokens=step_total_tokens,
+                step_cache=step_cache,
                 error=error,
                 surfaced=surface_decision_parse_failure(agent=agent, trigger=trigger),
                 action=parsed,
@@ -362,14 +378,17 @@ async def _run_decision_turn(
                                 action=cli_call.model_dump(),
                                 result=early_fail,
                                 prompt_tokens=step_prompt_tokens,
+                                context_prompt_tokens=step_context_prompt_tokens,
                                 completion_tokens=step_completion_tokens,
                                 total_tokens=step_total_tokens,
+                                cache=step_cache,
                                 duration_ms=int((time.monotonic() - step_started) * 1000),
                                 error=early_fail.get("detail"),
                             )
                         ],
                     ),
                     start=start,
+                    work_task_id=None,  # a decision turn resumes no task's work
                 )
             executed_actions.append("bm_cli")
             peek_verdict = peek_budget.consider(cli_call.command, cli_call.content)
@@ -391,8 +410,10 @@ async def _run_decision_turn(
                         action=cli_call.model_dump(),
                         result=steer_result,
                         prompt_tokens=step_prompt_tokens,
+                        context_prompt_tokens=step_context_prompt_tokens,
                         completion_tokens=step_completion_tokens,
                         total_tokens=step_total_tokens,
+                        cache=step_cache,
                         duration_ms=int((time.monotonic() - step_started) * 1000),
                     )
                 )
@@ -416,6 +437,24 @@ async def _run_decision_turn(
                     "peek_budget": peek_verdict.reason,
                 }
                 await manager.broadcast_activity(**result)
+                # The refused call is a step too: the turn's totals count it,
+                # so its tokens and cache figures must be in a step.
+                step_traces.append(
+                    _build_step_trace(
+                        step_index=len(step_traces) + 1,
+                        context_snapshot=next_context_snapshot,
+                        raw_response=response.content,
+                        action=cli_call.model_dump(),
+                        result=result,
+                        prompt_tokens=step_prompt_tokens,
+                        context_prompt_tokens=step_context_prompt_tokens,
+                        completion_tokens=step_completion_tokens,
+                        total_tokens=step_total_tokens,
+                        cache=step_cache,
+                        duration_ms=int((time.monotonic() - step_started) * 1000),
+                        error=peek_verdict.steer,
+                    )
+                )
                 return await _finalize_turn(
                     agent=agent,
                     trigger=trigger,
@@ -437,6 +476,7 @@ async def _run_decision_turn(
                         steps=step_traces,
                     ),
                     start=start,
+                    work_task_id=None,  # a decision turn resumes no task's work
                 )
 
             managed_write = None
@@ -490,6 +530,7 @@ async def _run_decision_turn(
                 step_prompt_tokens += managed_write.prompt_tokens
                 step_completion_tokens += managed_write.completion_tokens
                 step_total_tokens += managed_write.total_tokens
+                step_cache += managed_write.cache
                 cli_result = managed_write.cli_result
             else:
                 cli_result = await run_shell_off_request_loop(
@@ -532,8 +573,10 @@ async def _run_decision_turn(
                     action=cli_call.model_dump(),
                     result=cli_turn_result,
                     prompt_tokens=step_prompt_tokens,
+                    context_prompt_tokens=step_context_prompt_tokens,
                     completion_tokens=step_completion_tokens,
                     total_tokens=step_total_tokens,
+                    cache=step_cache,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                 )
             )
@@ -608,14 +651,17 @@ async def _run_decision_turn(
                                 action=host_call.model_dump(),
                                 result=early_fail,
                                 prompt_tokens=step_prompt_tokens,
+                                context_prompt_tokens=step_context_prompt_tokens,
                                 completion_tokens=step_completion_tokens,
                                 total_tokens=step_total_tokens,
+                                cache=step_cache,
                                 duration_ms=int((time.monotonic() - step_started) * 1000),
                                 error=early_fail.get("detail"),
                             )
                         ],
                     ),
                     start=start,
+                    work_task_id=None,  # a decision turn resumes no task's work
                 )
             executed_actions.append("request_host_access")
             if host_call.thought:
@@ -634,8 +680,10 @@ async def _run_decision_turn(
                     action=host_call.model_dump(),
                     result=host_result,
                     prompt_tokens=step_prompt_tokens,
+                    context_prompt_tokens=step_context_prompt_tokens,
                     completion_tokens=step_completion_tokens,
                     total_tokens=step_total_tokens,
+                    cache=step_cache,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                 )
             )
@@ -722,8 +770,10 @@ async def _run_decision_turn(
                         "detail": "Conversation decision was invalid for this turn; asked the model to correct it.",
                     },
                     prompt_tokens=step_prompt_tokens,
+                    context_prompt_tokens=step_context_prompt_tokens,
                     completion_tokens=step_completion_tokens,
                     total_tokens=step_total_tokens,
+                    cache=step_cache,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                     error=validation_error,
                 )
@@ -767,14 +817,17 @@ async def _run_decision_turn(
                             action=decision.model_dump(),
                             result=result,
                             prompt_tokens=response.prompt_tokens,
+                            context_prompt_tokens=response.prompt_tokens,
                             completion_tokens=response.completion_tokens,
                             total_tokens=response.total_tokens,
+                            cache=PromptCacheUsage.of(response),
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=validation_error,
                         )
                     ],
                 ),
                 start=start,
+                work_task_id=None,  # a decision turn resumes no task's work
             )
 
         # Save ``remember`` before apply_decision posts anything, so a refused
@@ -824,8 +877,10 @@ async def _run_decision_turn(
                                 "detail": "The remember sentence was refused; asked the model to fix it or leave it out.",
                             },
                             prompt_tokens=step_prompt_tokens,
+                            context_prompt_tokens=step_context_prompt_tokens,
                             completion_tokens=step_completion_tokens,
                             total_tokens=step_total_tokens,
+                            cache=step_cache,
                             duration_ms=int((time.monotonic() - step_started) * 1000),
                             error=reason,
                         )
@@ -946,8 +1001,10 @@ async def _run_decision_turn(
                 action=decision.model_dump(),
                 result=result,
                 prompt_tokens=response.prompt_tokens,
+                context_prompt_tokens=response.prompt_tokens,
                 completion_tokens=response.completion_tokens,
                 total_tokens=response.total_tokens,
+                cache=PromptCacheUsage.of(response),
                 duration_ms=int((time.monotonic() - step_started) * 1000),
             )
         )
@@ -971,6 +1028,7 @@ async def _run_decision_turn(
                 steps=step_traces,
             ),
             start=start,
+            work_task_id=None,  # a decision turn resumes no task's work
         )
 
 
@@ -1005,8 +1063,10 @@ async def _finish_decision_recovery(
     next_context_snapshot: str | None,
     step_started: float,
     step_prompt_tokens: int,
+    step_context_prompt_tokens: int,
     step_completion_tokens: int,
     step_total_tokens: int,
+    step_cache: PromptCacheUsage,
     error: str,
     surfaced: dict[str, Any],
     action: dict[str, Any] | None,
@@ -1016,7 +1076,9 @@ async def _finish_decision_recovery(
     """Complete the trigger after one note and one commitment wake.
 
     Completing fail-closes once. The dispatcher persists the wake and does
-    not retry the turn into a stall.
+    not retry the turn into a stall. ``step_context_prompt_tokens`` is the
+    last step's own agent call, beside ``step_prompt_tokens`` (0 after a
+    timeout: no call completed).
     """
     result: dict[str, Any] = {
         "event": "agent_error",
@@ -1062,14 +1124,17 @@ async def _finish_decision_recovery(
                     action=action,
                     result=result,
                     prompt_tokens=step_prompt_tokens,
+                    context_prompt_tokens=step_context_prompt_tokens,
                     completion_tokens=step_completion_tokens,
                     total_tokens=step_total_tokens,
+                    cache=step_cache,
                     duration_ms=int((time.monotonic() - step_started) * 1000),
                     error=error,
                 )
             ],
         ),
         start=start,
+        work_task_id=None,  # a decision turn resumes no task's work
     )
 
 
@@ -1161,4 +1226,5 @@ async def _finalize_origin_chrome_pause(
             steps=step_traces,
         ),
         start=start,
+        work_task_id=None,  # a decision turn resumes no task's work
     )

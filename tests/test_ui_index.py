@@ -126,12 +126,13 @@ def test_the_dock_era_panes_phase_3b_replaced_are_gone_from_disk() -> None:
 
 # What utils.js exported, minus the three overlay helpers Phase 4 retired,
 # plus hasLiveActivity, moved here from shell/roster-people.js when the desk
-# became its second reader. Every one of these must now have exactly one
+# became its second reader, plus formatSharePercent, the one share formatter
+# every prompt-cache screen uses. Every one of these must now have exactly one
 # owner under core/.
 UTILS_EXPORTS = {
     "core/format.js": (
         "escapeHtml", "formatRelativeTime", "formatNumber", "formatDuration",
-        "formatTokenCount", "formatFileSize",
+        "formatTokenCount", "formatFileSize", "formatSharePercent",
     ),
     "core/agent-status.js": (
         "normalizeAgent", "AGENT_COLOR_PALETTE", "nextUnusedAgentColor",
@@ -184,11 +185,12 @@ def test_utils_is_gone_and_its_exports_have_owners() -> None:
                 f"{owner} declares {name} but does not export it"
             )
 
-    # 20 names, three owners, no overlap (the three specialty-match helpers
-    # went with the assignment gate; hasLiveActivity joined core/agent-status.js).
+    # 21 names, three owners, no overlap (the three specialty-match helpers
+    # went with the assignment gate; hasLiveActivity joined core/agent-status.js;
+    # formatSharePercent joined core/format.js).
     all_names = [name for names in UTILS_EXPORTS.values() for name in names]
-    assert len(all_names) == 20
-    assert len(set(all_names)) == 20
+    assert len(all_names) == 21
+    assert len(set(all_names)) == 21
 
 
 def test_no_module_uses_the_retired_overlay_helpers() -> None:

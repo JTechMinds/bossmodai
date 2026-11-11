@@ -160,6 +160,13 @@ class ResponseAccumulator:
             usage.input_tokens if usage else 0,
             usage.output_tokens if usage else 0,
             usage.total_tokens if usage else 0,
+            # The SDK builds responses without validation, so a missing
+            # input_tokens_details is an absent attribute: not reported.
+            cached_prompt_tokens=(
+                getattr(getattr(usage, "input_tokens_details", None), "cached_tokens", None)
+                if usage
+                else None
+            ),
         )
 
 

@@ -1,4 +1,4 @@
-"""Task list, create/bind, board, events, steps, origin conversation, and operator cancel/edit/complete/resume/hold/release."""
+"""Task list, create/bind, board, events, steps, origin conversation, usage, and operator cancel/edit/complete/resume/hold/release."""
 
 import logging
 from typing import Any, Literal
@@ -631,6 +631,46 @@ async def get_origin_conversation(task_id: str) -> dict[str, Any]:
             500, "The Context Window settings are invalid. Fix them in Settings → Context Window.",
         ) from exc
     return {"origin": origin_view_for_task(task, budget_tokens=budget.origin)}
+
+
+@router.get("/tasks/{task_id}/usage")
+async def get_task_usage(task_id: str) -> dict[str, Any]:
+    """Return what a task's work has used, against the current Context window.
+
+    The task detail's Context, Tokens and Summarized facts. Only the task's
+    work turns count (``core/agent_loop/task_usage.py``); the context size
+    is the prompt of one of the agent's own calls, shown against the Context
+    window setting as it is now, read here. Read only here: task lists and the board never
+    load it.
+
+    Args:
+        task_id: The task whose usage is read.
+
+    Returns:
+        ``{"usage": null}`` when the task has had no work turn or fold yet,
+        else ``{"usage": row}``: ``row`` is ``TaskUsage`` (timestamps as ISO
+        strings) plus ``window_tokens``, the current Context window.
+
+    Raises:
+        HTTPException: 404 ``"Task not found"``. 500 when the Context Window
+            settings are invalid, so there is no window to show against; the
+            cause is logged at ERROR and the detail says where to fix it.
+        pydantic.ValidationError: The stored row is malformed
+            (``db.get_task_usage``); never answered as "no usage".
+    """
+    if db.get_task(task_id) is None:
+        raise HTTPException(404, "Task not found")
+    usage = db.get_task_usage(task_id)
+    if usage is None:
+        return {"usage": None}
+    try:
+        budget = read_context_budget()
+    except config.ConfigError as exc:
+        logger.error("Context Window settings are invalid; the usage of task %s is not shown: %s", task_id, exc)
+        raise HTTPException(
+            500, "The Context Window settings are invalid. Fix them in Settings → Context Window.",
+        ) from exc
+    return {"usage": {**usage.model_dump(mode="json"), "window_tokens": budget.window}}
 
 
 @router.get("/tasks/{task_id}")

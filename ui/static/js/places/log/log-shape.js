@@ -264,6 +264,23 @@ const BossModLogShape = (() => {
     }
 
     /**
+     * A turn's Prompt cache fact — `12,345 of 52,000 tokens cached (24%)` —
+     * or "Not reported" when it sent prompt tokens with no cache figure. The
+     * share is of ALL the turn's prompt tokens, the Metrics rule, so a turn
+     * where some calls did not report never reads higher than it was.
+     *
+     * @param {object} row  A diagnostic summary.
+     * @returns {string} '' when the turn sent no prompt tokens, which fact() omits.
+     */
+    function promptCacheValue(row) {
+        if (!row.prompt_tokens) return '';
+        if (!row.cache_reported_prompt_tokens) return 'Not reported';
+        const count = (n) => Number(n).toLocaleString('en-US');
+        return `${count(row.cached_prompt_tokens)} of ${count(row.prompt_tokens)} tokens cached `
+            + `(${BossModFormat.formatSharePercent(row.cached_prompt_tokens / row.prompt_tokens)})`;
+    }
+
+    /**
      * One unified-feed entry as a LogRow.
      *
      * @param {object} entry
@@ -336,6 +353,7 @@ const BossModLogShape = (() => {
             fact('Status', row.status),
             fact('Model', row.model),
             fact('Tokens', row.total_tokens),
+            fact('Prompt cache', promptCacheValue(row)),
             fact('Duration', `${row.duration_ms || 0}ms`),
             fact('Preview', preview),
             fact('Error', error),

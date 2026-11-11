@@ -27,6 +27,7 @@ from core.bm_cli.results import success_result
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.bm_cli.workspace_git import commit_workspace_changes
+from core.llm.prompt_cache_usage import PromptCacheUsage
 from core.models import Agent, AgentState
 
 async def run_managed_batch_write(
@@ -49,6 +50,7 @@ async def run_managed_batch_write(
     prompt_tokens = 0
     completion_tokens = 0
     total_tokens = 0
+    cache = PromptCacheUsage.ZERO
     chunks = 0
     accumulated_bytes = 0
 
@@ -74,7 +76,7 @@ async def run_managed_batch_write(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     try:
         file_specs = _parse_batch_write_manifest(content)
@@ -100,7 +102,7 @@ async def run_managed_batch_write(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     resolved_specs: list[ManagedBatchFileSpec] = []
     for spec in file_specs:
@@ -128,7 +130,7 @@ async def run_managed_batch_write(
                 cli_result=cli_result,
                 trigger_type=trigger_type,
             )
-            return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+            return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
         if resolved.real_path is None:
             cli_result = _managed_writer_error_result(
                 command,
@@ -151,7 +153,7 @@ async def run_managed_batch_write(
                 cli_result=cli_result,
                 trigger_type=trigger_type,
             )
-            return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+            return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
         if resolved.exists and resolved.real_path.is_dir():
             cli_result = _managed_writer_error_result(
                 command,
@@ -174,7 +176,7 @@ async def run_managed_batch_write(
                 cli_result=cli_result,
                 trigger_type=trigger_type,
             )
-            return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+            return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
         resolved_specs.append(ManagedBatchFileSpec(path=resolved.virtual_path, goal=spec.goal))
 
     await _emit_progress(
@@ -205,6 +207,7 @@ async def run_managed_batch_write(
         prompt_tokens += generation.prompt_tokens
         completion_tokens += generation.completion_tokens
         total_tokens += generation.total_tokens
+        cache += generation.cache
         chunks += generation.chunks
         accumulated_bytes += generation.byte_count
         if generation.cli_result is not None:
@@ -226,6 +229,7 @@ async def run_managed_batch_write(
                 prompt_tokens=prompt_tokens,
                 completion_tokens=completion_tokens,
                 total_tokens=total_tokens,
+                cache=cache,
                 chunks=chunks,
             )
         generated_files.append(
@@ -360,6 +364,7 @@ async def run_managed_batch_write(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        cache=cache,
         chunks=chunks,
     )
 

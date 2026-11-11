@@ -20,7 +20,7 @@ const BossModMetricsPlace = (() => {
     const RANGE = BossModMetricsRange;
 
     const ENDPOINT = '/api/metrics/dashboard';
-    const SKELETON_CARDS = 4;
+    const SKELETON_CARDS = 5;
 
     let ctxRef = null;
     // Module-lifetime, so load ids never repeat across mounts.

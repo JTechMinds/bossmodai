@@ -332,6 +332,12 @@ from db.task_dependencies import (
 )
 from db.task_events import create_task_event, list_recent_task_events, list_task_events
 from db.task_origin_conversations import get_task_origin_conversation, set_task_origin_conversation
+from db.task_usage import (
+    add_task_work_summary,
+    add_task_work_summary_failure,
+    add_task_work_turn,
+    get_task_usage,
+)
 from db.task_steps import create_task_step, finish_task_step, get_task_step, list_task_steps
 from db.task_notification_policies import get_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import (
@@ -466,7 +472,7 @@ from db.diagnostics import (
 from db.world import get_nearby_agents, get_world_state
 
 # Metrics
-from db.metrics import get_agent_stats_batch, get_dashboard_metrics
+from db.metrics import get_agent_stats_batch, get_dashboard_metrics, prompt_cache_block
 
 __all__ = [
     # Connection
@@ -697,6 +703,10 @@ __all__ = [
     "list_task_events",
     "get_task_origin_conversation",
     "set_task_origin_conversation",
+    "add_task_work_summary",
+    "add_task_work_summary_failure",
+    "add_task_work_turn",
+    "get_task_usage",
     "create_task_step",
     "finish_task_step",
     "get_task_step",
@@ -841,4 +851,5 @@ __all__ = [
     # Metrics
     "get_agent_stats_batch",
     "get_dashboard_metrics",
+    "prompt_cache_block",
 ]

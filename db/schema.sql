@@ -399,6 +399,28 @@ CREATE TABLE IF NOT EXISTS task_origin_conversations (
     updated_at     TIMESTAMP DEFAULT current_timestamp
 );
 
+-- What a task's work has used (core/agent_loop/task_usage.py): running
+-- totals over its work turns (the turns that resume its work activity;
+-- chat turns about it are not counted), the latest and largest prompt one
+-- model call sent, and how often its saved work was summarized. One row
+-- per task that has had a work turn; never pruned.
+CREATE TABLE IF NOT EXISTS task_usage (
+    task_id                 VARCHAR PRIMARY KEY REFERENCES tasks(id),
+    work_turns              INTEGER NOT NULL DEFAULT 0,
+    model_calls             INTEGER NOT NULL DEFAULT 0,
+    prompt_tokens           INTEGER NOT NULL DEFAULT 0,
+    completion_tokens       INTEGER NOT NULL DEFAULT 0,
+    latest_prompt_tokens    INTEGER,
+    latest_call_at          TIMESTAMP,
+    peak_prompt_tokens      INTEGER,
+    summaries               INTEGER NOT NULL DEFAULT 0,
+    summarized_steps        INTEGER NOT NULL DEFAULT 0,
+    last_summary_at         TIMESTAMP,
+    failed_summaries        INTEGER NOT NULL DEFAULT 0,
+    last_failed_summary_at  TIMESTAMP,
+    updated_at              TIMESTAMP DEFAULT current_timestamp
+);
+
 -- task_id does not start until prerequisite_id is complete (db/task_dependencies.py).
 -- Written at creation only and never edited, so the graph has no cycle.
 CREATE TABLE IF NOT EXISTS task_dependencies (
@@ -876,6 +898,8 @@ CREATE TABLE IF NOT EXISTS diagnostics (
     prompt_tokens       INTEGER DEFAULT 0,
     completion_tokens   INTEGER DEFAULT 0,
     total_tokens        INTEGER DEFAULT 0,
+    cached_prompt_tokens          INTEGER NOT NULL DEFAULT 0,
+    cache_reported_prompt_tokens  INTEGER NOT NULL DEFAULT 0,
     error               TEXT,
     duration_ms         INTEGER DEFAULT 0,
     created_at          TIMESTAMP DEFAULT current_timestamp
@@ -897,6 +921,8 @@ CREATE TABLE IF NOT EXISTS diagnostic_steps (
     prompt_tokens     INTEGER DEFAULT 0,
     completion_tokens INTEGER DEFAULT 0,
     total_tokens      INTEGER DEFAULT 0,
+    cached_prompt_tokens          INTEGER NOT NULL DEFAULT 0,
+    cache_reported_prompt_tokens  INTEGER NOT NULL DEFAULT 0,
     duration_ms       INTEGER DEFAULT 0,
     error             TEXT,
     created_at        TIMESTAMP DEFAULT current_timestamp

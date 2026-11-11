@@ -17,12 +17,20 @@ from core.agent_loop.task_origin_mirrors import (
     persist_origin_status_line,
     persist_unbound_status_line,
 )
+from core.agent_loop.task_usage import record_work_summary, record_work_summary_failure, record_work_turn
 from core.agent_loop.turn_context import _DECISION_TRIGGER_TYPES
 from core.agent_loop.work_binding import bound_work_activity, is_detached
-from core.agent_loop.work_summary import StepSummaryRun, WorkEndedError, WorkSummaryError, summarize_saved_work
+from core.agent_loop.work_summary import (
+    SUMMARY_STEP_ACTION,
+    StepSummaryRun,
+    WorkEndedError,
+    WorkSummaryError,
+    summarize_saved_work,
+)
 from core.bm_cli.managed_writer import ManagedWriteProgress
 from core.default_prompts import load_default_prompt, render_default_prompt
 from core.extensions.registry import get_discovery
+from core.llm.prompt_cache_usage import PromptCacheUsage
 from core.models import Activity, Agent
 from core.runtime.events import runtime_events as manager
 from core.tasking.service import append_task_event
@@ -293,12 +301,29 @@ def _build_step_trace(
     action: dict[str, Any] | None,
     result: dict[str, Any] | None,
     prompt_tokens: int,
+    context_prompt_tokens: int,
     completion_tokens: int,
     total_tokens: int,
+    cache: PromptCacheUsage,
     duration_ms: int,
     error: str | None = None,
 ) -> dict[str, Any]:
-    """Create a normalized per-step execution trace record."""
+    """Create a normalized per-step execution trace record.
+
+    ``cache`` is the prompt-cache figures of the same calls ``prompt_tokens``
+    counts; required, so every step decides. ``db.create_diagnostic`` derives
+    the turn's cache totals from these step records.
+
+    ``prompt_tokens`` is every call the step made, a managed write's
+    sub-calls included, so the turn's totals stay the sum of its steps.
+    ``context_prompt_tokens`` is the prompt of the step's own agent call
+    alone, its context size: the managed writer's sub-calls are left out,
+    and it is 0 for a step with no agent call (a timeout, an ``LLMError``)
+    and for the step-summary fold, whose input is not the agent's context.
+    Required, so every step decides. Task usage
+    (``core/agent_loop/task_usage.py``) reads it; it is not stored in
+    ``diagnostic_steps``.
+    """
     action_name = ""
     if action:
         action_name = str(action.get("action") or action.get("decision") or "")
@@ -311,8 +336,11 @@ def _build_step_trace(
         "parsed_action": _serialize_trace_value(action),
         "result": _serialize_trace_value(result),
         "prompt_tokens": prompt_tokens,
+        "context_prompt_tokens": context_prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": total_tokens,
+        "cached_prompt_tokens": cache.cached_tokens,
+        "cache_reported_prompt_tokens": cache.reported_prompt_tokens,
         "duration_ms": duration_ms,
         "error": error,
     }
@@ -580,6 +608,9 @@ async def _skip_turn(
             steps=[],
         ),
         start=start,
+        # loop.py skips before it resolves any work, and a skipped route made
+        # no model call: nothing to add to a task's usage.
+        work_task_id=None,
     )
 
 
@@ -618,7 +649,8 @@ async def summarize_before_restore(
       skipped trigger without a retry or a new resume;
     - the summary failed (``WorkSummaryError``, a failed model call
       included): the turn fails as replay-safe (``retryable``) and records
-      the tokens the fold spent. No step has run and the snapshot is
+      what the fold spent as its one step, step 0 (``summarize_steps``,
+      with the error). No work step has run and the snapshot is
       untouched, so a retry replays nothing. A failed call's chained
       ``LLMError`` is the outcome's ``cause``, so the dispatcher retries
       the turn unless that cause is permanent (a usage-limit stop); then
@@ -632,6 +664,13 @@ async def summarize_before_restore(
     When a fold succeeds and the agent had an over-limit row, the row is
     deleted and a ``work_summary_fits`` event is broadcast, which clears the
     Needs card.
+
+    When the work belongs to a task (``work_activity.task_id``), the fold is
+    added to that task's usage (``task_usage``): a success with the steps it
+    folded, a failure before the turn is finalized, so the ``diagnostic``
+    broadcast's refresh reads it. Work that ended during the call records no
+    fold. Both turns that end here are credited to that task
+    (``work_task_id``), as the turn that goes on is by ``loop.py``.
 
     Args:
         agent: The agent whose work is resumed.
@@ -676,9 +715,12 @@ async def summarize_before_restore(
             initial_context_json=json.dumps(context),
             outcome=TurnOutcome.skipped(result=result, error=_WORK_ENDED_DURING_SUMMARY, steps=[]),
             start=start,
+            work_task_id=work_activity.task_id,
         )
     except WorkSummaryError as exc:
         logger.warning("Step summary failed for %s on task %s: %s", agent.name, work_activity.task_id, exc)
+        if work_activity.task_id is not None:
+            record_work_summary_failure(work_activity.task_id)
         if exc.overflow is not None:
             # Stored before the broadcast, so the Needs re-read the event triggers sees it.
             db.record_work_summary_overflow(
@@ -703,6 +745,7 @@ async def summarize_before_restore(
             }
             action_summary = ""
         await manager.broadcast_activity(**result)
+        error = f"Step summary failed: {exc}"
         return None, await _finalize_turn(
             agent=agent,
             trigger=trigger,
@@ -715,20 +758,42 @@ async def summarize_before_restore(
                 # No step has run and the snapshot is untouched: a retry replays nothing.
                 retryable=True,
                 result=result,
-                error=f"Step summary failed: {exc}",
+                error=error,
                 action=None,
                 action_summary=action_summary,
                 raw_response="",
                 prompt_tokens=exc.prompt_tokens,
                 completion_tokens=exc.completion_tokens,
                 total_tokens=exc.total_tokens,
+                # The fold's calls are the turn's step 0, as a successful
+                # fold's are (execution_turn), so the diagnostics row's totals
+                # stay the sum of its steps.
+                steps=[
+                    _build_step_trace(
+                        step_index=0,
+                        context_snapshot=None,
+                        raw_response="",
+                        action={"action": SUMMARY_STEP_ACTION},
+                        result=result,
+                        prompt_tokens=exc.prompt_tokens,
+                        context_prompt_tokens=0,  # the fold's input is not the agent's context
+                        completion_tokens=exc.completion_tokens,
+                        total_tokens=exc.total_tokens,
+                        cache=exc.cache,
+                        duration_ms=exc.duration_ms,
+                        error=error,
+                    ),
+                ],
                 # A failed summary call chains its LLMError here (``raise ... from
                 # exc``), so a usage-limit stop is still seen as permanent; a
                 # summary that failed on its content has no cause (None).
                 cause=exc.__cause__,
             ),
             start=start,
+            work_task_id=work_activity.task_id,
         )
+    if run is not None and work_activity.task_id is not None:
+        record_work_summary(work_activity.task_id, summarized_steps=run.summarized_now)
     if run is not None and db.delete_work_summary_overflow(agent.id):
         await manager.broadcast_activity(
             event=WORK_SUMMARY_FITS_EVENT,
@@ -749,11 +814,28 @@ async def _finalize_turn(
     initial_context_json: str | None,
     outcome: TurnOutcome,
     start: float,
+    work_task_id: str | None,
 ) -> TurnOutcome:
     """Normalize diagnostics, refresh visible status, and return the final turn outcome.
 
     A detached turn (``work_binding.is_detached``) refreshes status without
     demoting the live task's Soft-block: it did not resume that work.
+
+    A work turn is added to its task's usage (``task_usage.record_work_turn``)
+    after its diagnostics row and before the ``diagnostic`` broadcast.
+
+    Args:
+        work_task_id: The task whose work this turn resumed, as ``loop.py``
+            decided at the turn's start; ``None`` for a turn that resumed no
+            task's work (a decision turn, a detached turn, a turn whose
+            route was unavailable). Required, so every finalize site
+            decides; never read from the live binding, which a ``done`` or
+            an accept may have changed by now.
+
+    Raises:
+        KeyError: A step trace lacks a key the diagnostics row or the
+            usage reads.
+        sqlite3.IntegrityError: ``work_task_id`` names no task.
     """
     activity_runtime.refresh_agent_status(agent.id, clear_soft_block=not is_detached(trigger))
     db.update_agent_state(agent.id, last_active_at=datetime.now(timezone.utc))
@@ -779,6 +861,9 @@ async def _finalize_turn(
         duration_ms=int((time.monotonic() - start) * 1000),
         steps=outcome.steps,
     )
+    if work_task_id is not None:
+        # Before the broadcast: the task detail re-reads its usage on it.
+        record_work_turn(work_task_id, outcome)
     await manager.broadcast_diagnostic(diag)
 
     logger.info(

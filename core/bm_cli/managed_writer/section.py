@@ -32,6 +32,7 @@ from core.bm_cli.results import success_result
 from core.bm_cli.session import get_cli_cwd
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.llm import client
+from core.llm.prompt_cache_usage import PromptCacheUsage
 from core.models import Agent, AgentState
 
 async def run_managed_section_rewrite(
@@ -72,7 +73,7 @@ async def run_managed_section_rewrite(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     if len(parsed.args) != 2:
         cli_result = _managed_writer_error_result(
@@ -95,7 +96,7 @@ async def run_managed_section_rewrite(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     rewrite_goal = content.strip()
     if not rewrite_goal:
@@ -119,7 +120,7 @@ async def run_managed_section_rewrite(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     target_path, selector = parsed.args
     resolved = resolve_cli_path(agent.storage_key, cwd, target_path)
@@ -144,7 +145,7 @@ async def run_managed_section_rewrite(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
     if resolved.real_path.is_dir():
         cli_result = _managed_writer_error_result(
             command,
@@ -166,7 +167,7 @@ async def run_managed_section_rewrite(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     source_text = resolved.real_path.read_text(encoding="utf-8", errors="replace")
     document = parse_markdown_document(source_text)
@@ -191,7 +192,7 @@ async def run_managed_section_rewrite(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     try:
         target_section = find_markdown_section(document, selector)
@@ -216,7 +217,7 @@ async def run_managed_section_rewrite(
             cli_result=cli_result,
             trigger_type=trigger_type,
         )
-        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, chunks=0)
+        return ManagedWriteOutcome(cli_result=cli_result, prompt_tokens=0, completion_tokens=0, total_tokens=0, cache=PromptCacheUsage.ZERO, chunks=0)
 
     target_index = list(document.sections).index(target_section)
     previous_heading = document.sections[target_index - 1].display_heading if target_index > 0 else None
@@ -265,6 +266,7 @@ async def run_managed_section_rewrite(
     prompt_tokens = response.prompt_tokens
     completion_tokens = response.completion_tokens
     total_tokens = response.total_tokens
+    cache = PromptCacheUsage.of(response)
     rewritten_body = _normalize_generated_text(response.content).strip()
     rewritten_body = _strip_duplicate_heading(rewritten_body, target_section.display_heading).strip()
     byte_count = len(rewritten_body.encode("utf-8"))
@@ -296,6 +298,7 @@ async def run_managed_section_rewrite(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             chunks=1,
         )
 
@@ -325,6 +328,7 @@ async def run_managed_section_rewrite(
             prompt_tokens=prompt_tokens,
             completion_tokens=completion_tokens,
             total_tokens=total_tokens,
+            cache=cache,
             chunks=1,
         )
 
@@ -404,6 +408,7 @@ async def run_managed_section_rewrite(
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,
         total_tokens=total_tokens,
+        cache=cache,
         chunks=1,
     )
 

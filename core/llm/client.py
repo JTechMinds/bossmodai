@@ -11,7 +11,7 @@ import functools
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NamedTuple
 
 import litellm
 import openai
@@ -78,6 +78,9 @@ class LLMResponse:
     total_tokens: int
     # The provider's stop reason for the last choice, when it reported one.
     finish_reason: str | None = None
+    # Provider-reported prompt tokens served from cache; None when the
+    # provider reported no figure.
+    cached_prompt_tokens: int | None = None
 
 
 _STREAM_END = object()
@@ -321,18 +324,79 @@ def _as_text(value: Any) -> str:
     return ""
 
 
-def _usage_counts(usage: Any) -> tuple[int, int, int] | None:
+class _UsageCounts(NamedTuple):
+    """One response's token counts, as its usage block gave them.
+
+    ``cached_prompt`` is the provider's ``prompt_tokens_details.cached_tokens``
+    exactly as sent, unchecked (so typed ``object``): ``None`` when the block
+    or the field is absent or null. :func:`_checked_cached` decides whether
+    it is recorded.
+    """
+
+    prompt: int
+    completion: int
+    total: int
+    cached_prompt: object
+
+
+def _cached_tokens(details: Any) -> object:
+    """Return ``cached_tokens`` from a ``prompt_tokens_details`` block, unchecked.
+
+    The block is a dict on a dict-shaped response and an object (litellm's
+    ``PromptTokensDetailsWrapper``) otherwise. litellm's ``Usage`` already
+    maps DeepSeek's ``prompt_cache_hit_tokens`` and Anthropic's
+    ``cache_read_input_tokens`` into it.
+    """
+    if details is None:
+        return None
+    if isinstance(details, dict):
+        return details.get("cached_tokens")
+    return getattr(details, "cached_tokens", None)
+
+
+def _checked_cached(cached: object, prompt: int, *, model: str) -> int | None:
+    """Return a provider's cached-prompt-token figure when it can be recorded.
+
+    The figure is optional provider data, so an unusable one is dropped and
+    reported, never fatal: a ``bool``, a non-int, a negative value, or a
+    value over the call's own prompt tokens is logged as a warning and
+    recorded as not reported.
+
+    Args:
+        cached: The provider's figure as sent; ``None`` when it reported none.
+        prompt: The same call's prompt tokens.
+        model: The requested model, named in the warning.
+
+    Returns:
+        The figure, or ``None`` when the provider reported none or it was unusable.
+    """
+    if cached is None:
+        return None
+    if isinstance(cached, bool) or not isinstance(cached, int) or cached < 0 or cached > prompt:
+        logger.warning(
+            "Provider reported %r cached prompt tokens for %d prompt tokens (model=%s); "
+            "recorded as not reported",
+            cached,
+            prompt,
+            model,
+        )
+        return None
+    return cached
+
+
+def _usage_counts(usage: Any) -> _UsageCounts | None:
     if usage is None:
         return None
     if isinstance(usage, dict):
         prompt = int(usage.get("prompt_tokens") or 0)
         completion_tokens = int(usage.get("completion_tokens") or 0)
         total = int(usage.get("total_tokens") or (prompt + completion_tokens))
-        return prompt, completion_tokens, total
+        return _UsageCounts(prompt, completion_tokens, total, _cached_tokens(usage.get("prompt_tokens_details")))
     prompt = int(getattr(usage, "prompt_tokens", 0) or 0)
     completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
     total = int(getattr(usage, "total_tokens", 0) or (prompt + completion_tokens))
-    return prompt, completion_tokens, total
+    details = getattr(usage, "prompt_tokens_details", None)
+    return _UsageCounts(prompt, completion_tokens, total, _cached_tokens(details))
 
 
 def _message_content(message: Any) -> str:
@@ -359,14 +423,15 @@ def _response_from_model(response: Any, model: str) -> LLMResponse:
         message = getattr(choice, "message", None)
         usage = _usage_counts(getattr(response, "usage", None))
         response_model = getattr(response, "model", None)
-    prompt_tokens, completion_tokens, total_tokens = usage or (0, 0, 0)
+    counts = usage or _UsageCounts(0, 0, 0, None)
     return LLMResponse(
         content=_message_content(message),
         model=_as_text(response_model) or model,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
+        prompt_tokens=counts.prompt,
+        completion_tokens=counts.completion,
+        total_tokens=counts.total,
         finish_reason=_choice_finish_reason(choice),
+        cached_prompt_tokens=_checked_cached(counts.cached_prompt, counts.prompt, model=model),
     )
 
 
@@ -396,7 +461,7 @@ def _chunk_model(chunk: Any) -> str:
     return _as_text(getattr(chunk, "model", None))
 
 
-def _chunk_usage(chunk: Any) -> tuple[int, int, int] | None:
+def _chunk_usage(chunk: Any) -> _UsageCounts | None:
     usage = chunk.get("usage") if isinstance(chunk, dict) else getattr(chunk, "usage", None)
     return _usage_counts(usage)
 
@@ -422,7 +487,7 @@ def _response_from_chunks(chunks: list[Any], messages: list[dict[str, Any]], mod
 
     parts: list[str] = []
     response_model = model
-    usage: tuple[int, int, int] | None = None
+    usage: _UsageCounts | None = None
     finish_reason: str | None = None
     for chunk in chunks:
         text = _delta_content(chunk)
@@ -437,14 +502,15 @@ def _response_from_chunks(chunks: list[Any], messages: list[dict[str, Any]], mod
         chunk_finish = _chunk_finish_reason(chunk)
         if chunk_finish is not None:
             finish_reason = chunk_finish
-    prompt_tokens, completion_tokens, total_tokens = usage or (0, 0, 0)
+    counts = usage or _UsageCounts(0, 0, 0, None)
     return LLMResponse(
         content="".join(parts),
         model=response_model,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
+        prompt_tokens=counts.prompt,
+        completion_tokens=counts.completion,
+        total_tokens=counts.total,
         finish_reason=finish_reason,
+        cached_prompt_tokens=_checked_cached(counts.cached_prompt, counts.prompt, model=model),
     )
 
 
@@ -594,7 +660,10 @@ async def completion(
     for wall-clock time only at ``llm_request_timeout_seconds`` (default 720).
     A provider path that sets ``extra_body`` ``{"stream": false}``, or that
     returns a finished completion instead of a stream, has no progress signal
-    and uses only that absolute backstop.
+    and uses only that absolute backstop. A stream to an OpenAI-compatible
+    endpoint (``api_base`` set) asks for usage (``stream_options``), so its
+    token counts are the provider's own, cached prompt tokens included,
+    rather than litellm's estimate.
 
     A transient provider failure (connection error, 5xx, rate limit, or an
     empty completion) is retried up to ``llm_transient_retries`` times. The
@@ -686,7 +755,6 @@ async def completion(
 
         max_tokens = read_context_budget().reply
 
-    from dataclasses import asdict
     from core.extensions.model_provider import (
         ProviderError, ProviderRequest, ProviderTimeout, ProviderUsageLimitError,
         complete as complete_provider, provider_id, resolve_provider,
@@ -716,7 +784,17 @@ async def completion(
                 _settle_failed_call(connection_id, admission, exc, failure_kind)
                 raise
             connection_health.record_success(connection_id)
-            return LLMResponse(**asdict(result))
+            return LLMResponse(
+                content=result.content,
+                model=result.model,
+                prompt_tokens=result.prompt_tokens,
+                completion_tokens=result.completion_tokens,
+                total_tokens=result.total_tokens,
+                finish_reason=result.finish_reason,
+                cached_prompt_tokens=_checked_cached(
+                    result.cached_prompt_tokens, result.prompt_tokens, model=model,
+                ),
+            )
     except ProviderTimeout as exc:
         raise LLMTimeoutError(exc.seconds, kind=exc.kind) from None
     except ProviderUsageLimitError as exc:
@@ -764,6 +842,12 @@ async def completion(
     stream_for_progress = not _streaming_disabled(kwargs.get("extra_body"))
     if stream_for_progress:
         kwargs["stream"] = True
+        if api_base:
+            # litellm asks a stream for usage only when the endpoint is
+            # api.openai.com, and otherwise estimates the tokens with its own
+            # tokenizer. Asking makes a custom endpoint report its own counts,
+            # cached prompt tokens included.
+            kwargs["stream_options"] = {"include_usage": True}
 
     logger.info(
         "LLM request: model=%s, api_base=%s, extra_body=%s, stream=%s",

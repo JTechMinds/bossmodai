@@ -30,7 +30,7 @@ const NAMES = [
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskChecklist", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory",
     "BossModTaskDetailSections", "BossModTaskMessage", "BossModTaskRequest",
-    "BossModTaskOrigin", "BossModTaskDetail",
+    "BossModTaskOrigin", "BossModTaskUsage", "BossModTaskDetail",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksCancel", "BossModTasksComplete",
     "BossModTasksHold", "BossModTasksRelease",
@@ -126,6 +126,10 @@ function api(url) {
     // An open detail's Before this task: none here; its own subject is js_task_detail_harness.cjs.
     if (/^\/api\/tasks\/[^/]+\/origin-conversation$/.test(String(url))) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ origin: null }) });
+    }
+    // An open detail's usage facts: none here; their own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/usage$/.test(String(url))) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ usage: null }) });
     }
     if (url.startsWith("/api/tasks")) {
         taskFetches += 1;
