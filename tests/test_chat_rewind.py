@@ -509,7 +509,7 @@ async def test_k_the_prompt_no_longer_contains_the_removed_content() -> None:
     def history_text() -> str:
         view = build_prompt_history_view(
             db.get_agent(agent.id), {"type": "human_chat"},
-            budget_tokens=read_context_budget().history, work_turn=False,
+            budget=read_context_budget(), work_turn=False,
         )
         return json.dumps(view.conversation_history)
 
@@ -541,6 +541,6 @@ async def test_a_rewind_deletes_the_dm_conversation_notes() -> None:
     assert db.get_conversation_notes("human_dm", agent.id) is None
     history = build_prompt_history_view(
         db.get_agent(agent.id), {"type": "human_chat"},
-        budget_tokens=read_context_budget().history, work_turn=False,
+        budget=read_context_budget(), work_turn=False,
     ).conversation_history
     assert all("an old summary" not in item["content"] for item in history)

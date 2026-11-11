@@ -86,7 +86,7 @@ def _setting(key: str, value: str) -> None:
 def _history_view(agent, trigger: dict[str, Any]):
     """A chat turn's history view, at the History budget."""
     return build_prompt_history_view(
-        agent, trigger, budget_tokens=read_context_budget().history, work_turn=False,
+        agent, trigger, budget=read_context_budget(), work_turn=False,
     )
 
 

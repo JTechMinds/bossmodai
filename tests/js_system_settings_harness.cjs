@@ -342,6 +342,7 @@ async function main() {
         setting("context_result_percent", "5", "context"),
         setting("context_history_percent", "20", "context"),
         setting("context_asked_percent", "25", "context"),
+        setting("context_origin_percent", "10", "context"),
         setting("context_task_log_percent", "5", "context"),
         setting("context_work_percent", "60", "context"),
         setting("conversation_compaction_enabled", "true", "context"),

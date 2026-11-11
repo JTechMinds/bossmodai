@@ -90,15 +90,12 @@ class TaskReference(BaseModel):
         return text
 
 
-class TaskRequestMessage(BaseModel):
-    """One message, word for word, that asked for the work a task records.
+class TaskMessage(BaseModel):
+    """One saved conversation message, word for word, with its author.
 
-    Input the assignee works from, as ``references`` are, but a different
-    kind: ``description`` is the brief the accepting agent wrote,
-    ``references`` are documents to read, and a request message is what the
-    requester actually said. The system saves it when a turn turns a message
-    into a task, a backlog item or a schedule; the rules (which message,
-    append only, forwarding to a child) live in ``core/tasking/requests.py``.
+    The shape every message a task keeps from a conversation has: the
+    request (:class:`TaskRequestMessage`) and the conversation before the
+    task (:class:`TaskOriginConversation`).
 
     Attributes:
         author_type: ``human`` (the boss), ``agent`` or ``system``.
@@ -130,7 +127,7 @@ class TaskRequestMessage(BaseModel):
     def _strip_author_name(cls, value: str) -> str:
         text = value.strip()
         if not text:
-            raise ValueError("a request message needs its author's name")
+            raise ValueError("a saved task message needs its author's name")
         return text
 
     @field_validator("content")
@@ -138,15 +135,113 @@ class TaskRequestMessage(BaseModel):
     def _strip_content(cls, value: str) -> str:
         text = value.strip()
         if not text:
-            raise ValueError("a request message needs content")
+            raise ValueError("a saved task message needs content")
         return text
 
     @model_validator(mode="after")
-    def _agent_id_matches_author_type(self) -> "TaskRequestMessage":
+    def _agent_id_matches_author_type(self) -> "TaskMessage":
         if self.author_type == "agent" and not (self.author_agent_id or "").strip():
-            raise ValueError("an agent's request message needs author_agent_id")
+            raise ValueError("an agent's saved task message needs author_agent_id")
         if self.author_type != "agent" and self.author_agent_id is not None:
-            raise ValueError(f"a {self.author_type} request message has no author_agent_id")
+            raise ValueError(f"a {self.author_type} saved task message has no author_agent_id")
+        return self
+
+
+class TaskRequestMessage(TaskMessage):
+    """One message, word for word, that asked for the work a task records.
+
+    Input the assignee works from, as ``references`` are, but a different
+    kind: ``description`` is the brief the accepting agent wrote,
+    ``references`` are documents to read, and a request message is what the
+    requester actually said. The system saves it when a turn turns a message
+    into a task, a backlog item or a schedule; the rules (which message,
+    append only, forwarding to a child) live in ``core/tasking/requests.py``.
+
+    Attributes:
+        author_type: ``human`` (the boss), ``agent`` or ``system``.
+        author_agent_id: The agent's id for an ``agent`` author; ``None``
+            for every other author.
+        author_name: The author's name when it was saved, an audit snapshot.
+            A human is always shown with the current boss label instead.
+            Stripped; never blank.
+        content: The message exactly as sent, newlines included. Never blank
+            (judged after stripping), and stored stripped.
+
+    Raises:
+        pydantic.ValidationError: ``content`` or ``author_name`` is blank, an
+            ``agent`` author has no ``author_agent_id``, another author has
+            one, ``author_type`` is not one of the three, or an unknown
+            field is sent.
+    """
+
+
+# Where the conversation before a task took place: the operator's DM with
+# the agent, a DM between two agents, or a thread (core.agent_loop.
+# conversation_notes ScopeKind).
+TaskOriginSourceKind = Literal["human_dm", "agent_dm", "channel"]
+
+
+class TaskOriginConversation(BaseModel):
+    """The conversation a task came from, as the turn that took it on was shown it.
+
+    Saved by the system, never written by the agent, when a turn answering a
+    DM or thread message accepts or defers a task; the rules (what is kept,
+    the window rule, forwarding to a child) live in
+    ``core/agent_loop/origin_conversation.py``. It differs from the task's
+    other inputs: the request (``request_messages``) is the message that
+    asked, word for word; the description is the agent's brief; references
+    are documents to read. This is the conversation *before* the request,
+    so the work starts from what was discussed. One per task, in the
+    ``task_origin_conversations`` side table.
+
+    Attributes:
+        task_id: The task it belongs to.
+        source_kind: ``human_dm``, ``agent_dm`` or ``channel``.
+        source_names: Who or where, for the label: the DM's agent for
+            ``human_dm``; both agents for ``agent_dm``, the accepting agent
+            first; the thread's name for ``channel``. Each stripped and
+            never blank.
+        messages: The saved messages, oldest first; never empty.
+        captured_at: When it was saved (UTC).
+
+    Raises:
+        pydantic.ValidationError: ``messages`` is empty, ``source_names``
+            does not hold exactly one name (``human_dm``, ``channel``) or
+            two (``agent_dm``), a name is blank, a message is malformed,
+            ``source_kind`` is not one of the three, or an unknown field is
+            sent.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    task_id: str
+    source_kind: TaskOriginSourceKind
+    source_names: list[str]
+    messages: list[TaskMessage]
+    captured_at: datetime
+
+    @field_validator("source_names")
+    @classmethod
+    def _strip_source_names(cls, value: list[str]) -> list[str]:
+        names = [name.strip() for name in value]
+        if any(not name for name in names):
+            raise ValueError("a task's origin conversation needs non-blank source names")
+        return names
+
+    @field_validator("messages")
+    @classmethod
+    def _has_messages(cls, value: list[TaskMessage]) -> list[TaskMessage]:
+        if not value:
+            raise ValueError("a task's origin conversation needs at least one message")
+        return value
+
+    @model_validator(mode="after")
+    def _names_match_source_kind(self) -> "TaskOriginConversation":
+        expected = 2 if self.source_kind == "agent_dm" else 1
+        if len(self.source_names) != expected:
+            raise ValueError(
+                f"a {self.source_kind} origin conversation names {expected} source(s), got {len(self.source_names)}"
+            )
         return self
 
 

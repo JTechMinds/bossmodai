@@ -33,7 +33,7 @@ RULES:
   - socialmsg: require data.to and data.msg; require data.aid only when data.to="agent"
   - taskmsg: require data.tid and data.msg; include data.kind so the runtime knows whether this is a passive update or a response request
   - assign: require data.aid plus data.task.title and data.task.desc; data.task.outs optional, file deliverables only: [{"type":"file","path":"/projects/...","desc":"optional"}]; omit outs when the result is not a file
-  - assign + desc: data.task.desc is the teammate's whole brief. They also see the request your task came from, when there is one, but not your conversation or anything you read. Name the exact files, paths, items and limits they need.
+  - assign + desc: data.task.desc is the teammate's brief. They also see the request your task came from and the conversation before it, when there is one, but nothing you read while working. Name the exact files, paths, items and limits they need.
   - assign + after: optional data.after lists the titles of your open tasks this one waits on (part of a title is enough); it starts by itself when they finish
   - walk: require data.dst
   - mtg: require data.mode; use mode="room" for in-person Meeting Room joins and mode="remote" for remote meetings

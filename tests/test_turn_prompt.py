@@ -189,12 +189,13 @@ def _make_turn(agent, *, grow_on_call: int | None = None):
 
 
 def _spy_history_budgets(monkeypatch: pytest.MonkeyPatch) -> list[int]:
-    """The history budget of every pass, in order."""
+    """The history budget of every pass, in order: a chat turn's, so History."""
     real = turn_prompt_module.build_prompt_history_view
     budgets: list[int] = []
 
     def _spy(agent, trigger, **kwargs):
-        budgets.append(kwargs["budget_tokens"])
+        assert kwargs["work_turn"] is False
+        budgets.append(kwargs["budget"].history)
         return real(agent, trigger, **kwargs)
 
     monkeypatch.setattr(turn_prompt_module, "build_prompt_history_view", _spy)

@@ -1,4 +1,4 @@
-"""Task list, create/bind, board, events, steps, and operator cancel/edit/complete/resume/hold/release."""
+"""Task list, create/bind, board, events, steps, origin conversation, and operator cancel/edit/complete/resume/hold/release."""
 
 import logging
 from typing import Any, Literal
@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from api.websocket import manager
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
 from core.agent_loop.deliverables import build_work_contract
+from core.agent_loop.origin_conversation import origin_view_for_task
 from core.agent_loop.role_contracts import (
     is_auditor_specialty,
     operator_done_claim_guidance,
@@ -20,6 +21,7 @@ from core.agent_loop.task_steps import task_step_event
 from core.boss import boss_label
 from core import config
 from core.bm_cli.host_roots import PathOutsideRootsError
+from core.context_budget import read_context_budget
 from core.floors import FloorDenied
 from core.models import (
     Task,
@@ -591,6 +593,44 @@ async def get_task_steps(task_id: str, before: str | None = None) -> dict[str, A
         "steps": [task_step_event(step) for step in rows[:page_size]],
         "has_more": len(rows) > page_size,
     }
+
+
+@router.get("/tasks/{task_id}/origin-conversation")
+async def get_origin_conversation(task_id: str) -> dict[str, Any]:
+    """Return the conversation before a task, exactly as its next work turn will see it.
+
+    The task detail's "Before this task" section. One view serves this and
+    the work turn's history (``origin_conversation.origin_view_for_task``),
+    fitted to the current "Conversation before the task" budget, so the
+    operator sees what the agent gets. Read only here and by work turns:
+    task lists and the board never load it.
+
+    Args:
+        task_id: The task whose conversation is read.
+
+    Returns:
+        ``{"origin": view}``: ``view`` is ``{"task_id", "parent_title",
+        "where", "messages"}`` (``parent_title`` set when the conversation
+        is the parent task's, forwarded one level; ``messages`` are saved
+        messages, oldest first, each ``{"author_type", "author_agent_id",
+        "author_name", "content"}``), or ``null`` when there is none to show.
+
+    Raises:
+        HTTPException: 404 ``"Task not found"``. 500 when the Context Window
+            settings are invalid, so no budget can be worked out; the cause
+            is logged at ERROR and the detail says where to fix it.
+    """
+    task = db.get_task(task_id)
+    if task is None:
+        raise HTTPException(404, "Task not found")
+    try:
+        budget = read_context_budget()
+    except config.ConfigError as exc:
+        logger.error("Context Window settings are invalid; the conversation before task %s is not shown: %s", task_id, exc)
+        raise HTTPException(
+            500, "The Context Window settings are invalid. Fix them in Settings → Context Window.",
+        ) from exc
+    return {"origin": origin_view_for_task(task, budget_tokens=budget.origin)}
 
 
 @router.get("/tasks/{task_id}")

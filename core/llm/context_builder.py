@@ -32,6 +32,7 @@ from core.llm.template_engine import render_template, syntax_guide
 from core.prompting.runtime_prompt_registry import resolve_runtime_prompt_text
 from core.tasking import board_status_cells, build_task_board
 from core.tasking.checklist import format_checklist_for_context
+from core.tasking.finished import FINISHED_TASKS_HEADING, finished_task_row, format_finished_task_lines
 from core.tasking.references import REFERENCES_HEADING, format_references_for_context
 from core.tasking.requests import format_request_for_context
 from core.time import ensure_utc, now_local
@@ -772,26 +773,11 @@ def _format_team_directory(reference_materials: list[str]) -> str:
 
 
 def _format_recent_completed_tasks(agent_id: str) -> str:
-    """Render recent completed task history."""
+    """Render recent completed task history: id, files and a short summary per task (core/tasking/finished.py)."""
     limit = config.get_int("context_recent_completed_tasks") or 3
     rows = db.get_recent_completed_tasks(agent_id, limit=limit)
-    lines = ["RECENT COMPLETED TASKS:", "datetime | status | task name | summary"]
-    if not rows:
-        lines.append("none")
-        return "\n".join(lines)
-    for task in rows:
-        summary = task.get("completion_summary") or task.get("status_note") or ""
-        lines.append(
-            " | ".join(
-                [
-                    _format_datetime(task.get("last_activity") or task.get("created_at")),
-                    str(task.get("status") or "unknown"),
-                    str(task.get("title") or "Untitled"),
-                    _summarize_text(summary),
-                ]
-            )
-        )
-    return "\n".join(lines)
+    lines = format_finished_task_lines([finished_task_row(row) for row in rows], summary_chars=160)
+    return "\n".join([FINISHED_TASKS_HEADING, *lines])
 
 
 def _format_recent_work_artifacts(agent_id: str) -> str:

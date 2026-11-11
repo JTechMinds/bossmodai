@@ -331,6 +331,7 @@ from db.task_dependencies import (
     list_held_dependents,
 )
 from db.task_events import create_task_event, list_recent_task_events, list_task_events
+from db.task_origin_conversations import get_task_origin_conversation, set_task_origin_conversation
 from db.task_steps import create_task_step, finish_task_step, get_task_step, list_task_steps
 from db.task_notification_policies import get_task_notification_settings, set_task_notification_settings
 from db.task_notification_targets import (
@@ -694,6 +695,8 @@ __all__ = [
     "list_tasks_by_statuses",
     "list_recent_task_events",
     "list_task_events",
+    "get_task_origin_conversation",
+    "set_task_origin_conversation",
     "create_task_step",
     "finish_task_step",
     "get_task_step",

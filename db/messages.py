@@ -375,24 +375,29 @@ def get_recent_completed_tasks(agent_id: str, limit: int = 5) -> list[dict[str, 
     a prerequisite that is not ``complete`` is held, or blocked because that
     prerequisite failed (``core.tasking.dependencies`` invariant), and was
     never this agent's to recall.
+
+    Each row also carries ``work_contract``: the task's stored work-contract
+    JSON text (``task_work_contracts``), or ``None`` when it has none, so a
+    finished row can name its files (``core/tasking/finished.py``).
     """
     from db.crud import query
 
     return query(
         """
         SELECT
-            id, title, project, status, completion_summary, status_note,
-            last_activity, created_at
+            tasks.id, tasks.title, tasks.project, tasks.status, tasks.completion_summary, tasks.status_note,
+            tasks.last_activity, tasks.created_at, w.work_contract AS work_contract
         FROM tasks
-        WHERE assigned_to = $1
-          AND status IN ('complete', 'blocked', 'abandoned', 'stalled', 'delegated', 'declined')
+        LEFT JOIN task_work_contracts w ON w.task_id = tasks.id
+        WHERE tasks.assigned_to = $1
+          AND tasks.status IN ('complete', 'blocked', 'abandoned', 'stalled', 'delegated', 'declined')
           AND NOT EXISTS (
               SELECT 1
               FROM task_dependencies td
               JOIN tasks p ON p.id = td.prerequisite_id
               WHERE td.task_id = tasks.id AND p.status <> 'complete'
           )
-        ORDER BY last_activity DESC, created_at DESC
+        ORDER BY tasks.last_activity DESC, tasks.created_at DESC
         LIMIT $2
         """,
         [agent_id, limit],

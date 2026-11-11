@@ -199,6 +199,7 @@ def _context_budget_payload() -> dict:
         "history_cap": budget.history_cap,
         "asked": budget.asked,
         "task_log": budget.task_log,
+        "origin": budget.origin,
         "work": budget.work,
         "worst_chat_turn": budget.worst_chat_turn,
         "worst_work_turn": budget.worst_work_turn,
@@ -227,8 +228,9 @@ async def get_context_budget():
 
         ``problems`` empty, the budget: ``window``, ``reserved``,
         ``usable``, ``reply``, ``result``,
-        ``history``, ``history_cap``, ``asked``, ``task_log`` and ``work``
-        in tokens (``core.context_budget.ContextBudget``; ``reserved`` is
+        ``history``, ``history_cap``, ``asked``, ``task_log``, ``origin``
+        (Conversation before the task) and ``work`` in tokens
+        (``core.context_budget.ContextBudget``; ``reserved`` is
         the largest measured instructions of any agent, 0 when none is
         measured yet); ``reserved_by``, the agent those instructions are,
         as ``{"agent_id", "agent_name", "measured_at"}`` (ISO 8601, UTC),

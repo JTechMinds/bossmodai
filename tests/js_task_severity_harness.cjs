@@ -30,9 +30,9 @@ const NAMES = [
     "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskCard", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
-    "BossModTaskRequest",
+    "BossModTaskMessage", "BossModTaskRequest",
     "BossModAssignOutcomes", "BossModAssignForm",
-    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
+    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskOrigin", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",
     "BossModTaskActions",
 ];
@@ -82,6 +82,10 @@ function api(url, opts) {
     // The detail's Recent steps; its own subject is js_task_detail_harness.cjs.
     if (/^\/api\/tasks\/[^/]+\/steps/.test(text)) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ steps: [], has_more: false, limit: 5 }) });
+    }
+    // The detail's Before this task: none here; its own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/origin-conversation$/.test(text)) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ origin: null }) });
     }
     const desk = /^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/.exec(text);
     if (desk) {

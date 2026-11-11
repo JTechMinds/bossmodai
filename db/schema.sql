@@ -385,6 +385,20 @@ CREATE TABLE IF NOT EXISTS task_checklists (
     updated_at     TIMESTAMP DEFAULT current_timestamp
 );
 
+-- The conversation a task came from, as the turn that took it on was shown
+-- it (core/agent_loop/origin_conversation.py): source_names and messages are
+-- JSON (TaskOriginConversation); messages are oldest first, already fitted
+-- to "Conversation before the task". One row per task; a later accept that
+-- answers a newer message replaces it. No row = none recorded.
+CREATE TABLE IF NOT EXISTS task_origin_conversations (
+    task_id        VARCHAR PRIMARY KEY REFERENCES tasks(id),
+    source_kind    VARCHAR NOT NULL,
+    source_names   TEXT    NOT NULL,
+    messages       TEXT    NOT NULL,
+    captured_at    TIMESTAMP NOT NULL,
+    updated_at     TIMESTAMP DEFAULT current_timestamp
+);
+
 -- task_id does not start until prerequisite_id is complete (db/task_dependencies.py).
 -- Written at creation only and never edited, so the graph has no cycle.
 CREATE TABLE IF NOT EXISTS task_dependencies (

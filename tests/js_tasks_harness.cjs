@@ -29,8 +29,8 @@ const NAMES = [
     "BossModFloorScope",
     "BossModTasksColumns", "BossModTasksData", "BossModTasksGrid", "BossModTaskChecklist", "BossModTaskCard",
     "BossModTaskDeliverables", "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory",
-    "BossModTaskDetailSections", "BossModTaskRequest",
-    "BossModTaskDetail",
+    "BossModTaskDetailSections", "BossModTaskMessage", "BossModTaskRequest",
+    "BossModTaskOrigin", "BossModTaskDetail",
     "BossModAssignOutcomes", "BossModAssignForm",
     "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTasksCancel", "BossModTasksComplete",
     "BossModTasksHold", "BossModTasksRelease",
@@ -122,6 +122,10 @@ function api(url) {
     // An open detail's Recent steps; its own subject is js_task_detail_harness.cjs.
     if (/^\/api\/tasks\/[^/]+\/steps/.test(String(url))) {
         return Promise.resolve({ ok: true, json: () => Promise.resolve({ steps: [], has_more: false, limit: 5 }) });
+    }
+    // An open detail's Before this task: none here; its own subject is js_task_detail_harness.cjs.
+    if (/^\/api\/tasks\/[^/]+\/origin-conversation$/.test(String(url))) {
+        return Promise.resolve({ ok: true, json: () => Promise.resolve({ origin: null }) });
     }
     if (url.startsWith("/api/tasks")) {
         taskFetches += 1;

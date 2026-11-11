@@ -189,6 +189,8 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     ("context_asked_percent", "25", "context"),
     # Work mode: how much of the task's event log a work turn sees.
     ("context_task_log_percent", "5", "context"),
+    # Work mode: how much of the conversation a task came from its work turns see.
+    ("context_origin_percent", "10", "context"),
     # Work mode: saved work in view (summary, steps, what it was told).
     ("context_work_percent", "60", "context"),
     ("context_recent_work_artifacts", "5", "context"),
@@ -411,6 +413,9 @@ _PREVIOUS_DEFAULT_CATALOG_PINS = frozenset({"3c1e0a6", "dcc94ca"})
 
 def seed_defaults() -> None:
     """Populate settings that don't yet exist. Never overwrites user values."""
+    # Before the loop: on an existing install the new share is seeded into
+    # the room the other work-turn shares leave free, not at its default.
+    reconcile_context_origin_share()
     for key, value, category in _SEED_SETTINGS:
         existing = query_one("SELECT key FROM settings WHERE key = $1", [key])
         if existing is None:
@@ -444,7 +449,86 @@ def seed_defaults() -> None:
     # After the pass above: its new line is this pass's old line.
     reconcile_checklist_context_prompt_line()
     reconcile_task_request_prompt_lines()
+    # After the pass above: its new lines are this pass's old lines.
+    reconcile_task_origin_prompt_lines()
     logger.info("Settings seeded (%d keys)", len(_SEED_SETTINGS))
+
+
+_ORIGIN_SHARE_KEY = "context_origin_percent"
+_ORIGIN_SHARE_DEFAULT = 10
+_WORK_SHARE_KEY = "context_work_percent"
+# The other shares a work turn adds up (core/context_budget.py check_shares).
+_WORK_TURN_SHARE_KEYS = ("context_reply_percent", "context_task_log_percent", _WORK_SHARE_KEY, "context_result_percent")
+
+
+def reconcile_context_origin_share() -> None:
+    """Seed "Conversation before the task" into the room an existing install has free, once.
+
+    Why: a work turn adds up Reply + Conversation before the task + Task log
+    + Work + Largest result, and that total must stay at or under 100%. An
+    install whose other four shares already total more than 90% would break
+    the rule with the default 10%, and every turn would then fail with
+    ``ConfigError``; the Context Window rev 2 rollout had to be fixed by hand
+    for exactly that. So the share takes the room that is free instead:
+
+    - 10% or more free: 10;
+    - 1-9% free: all of it, logged at INFO;
+    - nothing free: 1, and Work is lowered by 1, logged as a warning naming
+      the old and the new Work;
+    - already over 100%: 1, nothing else changed, logged as a warning (the
+      Context Window tab already reports the settings and shows the fix).
+
+    Runs first in :func:`seed_defaults`, before the seed loop. The key's
+    presence is the marker: once it exists, this does nothing. On a fresh
+    database (any of the four shares missing) it does nothing either: the
+    loop seeds every key at the Medium preset, which fits. A share that is
+    not a whole number is left for the Context Window tab to report, with a
+    warning here; the loop then seeds the default.
+    """
+    if query_one("SELECT key FROM settings WHERE key = $1", [_ORIGIN_SHARE_KEY]) is not None:
+        return
+    rows = {
+        key: query_one("SELECT value, category FROM settings WHERE key = $1", [key])
+        for key in _WORK_TURN_SHARE_KEYS
+    }
+    if any(row is None for row in rows.values()):
+        return
+    try:
+        shares = {key: int(str(row["value"]).strip()) for key, row in rows.items()}
+    except ValueError:
+        logger.warning(
+            "A work-turn Context Window share is not a whole number (%s); %s is seeded at its default "
+            "and Settings → Context Window shows what to fix",
+            ", ".join(f"{key}={row['value']!r}" for key, row in rows.items()),
+            _ORIGIN_SHARE_KEY,
+        )
+        return
+    total = sum(shares.values())
+    free = 100 - total
+    if free >= _ORIGIN_SHARE_DEFAULT:
+        value = _ORIGIN_SHARE_DEFAULT
+    elif free >= 1:
+        value = free
+        logger.info(
+            "%s seeded at %d%%: the other work-turn shares total %d%%, so that is the room left free",
+            _ORIGIN_SHARE_KEY, value, total,
+        )
+    elif free == 0:
+        value = 1
+        old_work = shares[_WORK_SHARE_KEY]
+        set_setting(_WORK_SHARE_KEY, str(old_work - 1), str(rows[_WORK_SHARE_KEY]["category"]))
+        logger.warning(
+            "%s seeded at 1%%: the work-turn shares already totalled 100%%, so Work was lowered from %d%% to %d%%",
+            _ORIGIN_SHARE_KEY, old_work, old_work - 1,
+        )
+    else:
+        value = 1
+        logger.warning(
+            "%s seeded at 1%% and nothing else changed: the Context Window settings were already over 100%% "
+            "for a work turn (%d%%); Settings → Context Window shows the fix",
+            _ORIGIN_SHARE_KEY, total,
+        )
+    set_setting(_ORIGIN_SHARE_KEY, str(value), _SEED_SETTING_DEFAULTS[_ORIGIN_SHARE_KEY][1])
 
 
 # The shipped cap before Talk/Work/Paused. Only this factory value is raised.
@@ -1335,6 +1419,71 @@ def reconcile_task_request_prompt_lines() -> None:
         _TASK_REQUEST_PROMPT_LINES_RECONCILED,
         missing_row_label="task request",
         missing_line_label="task request",
+    )
+
+
+# The conversation before a task is saved with it and shown in its work
+# turns (core/agent_loop/origin_conversation.py), so the field notes for
+# ``desc``, a child's ``desc`` and an assign's ``desc`` say so. Each old line
+# is one of the task-request pass's new lines (split at its "\n" joins), so
+# this pass runs after that one; each pair is copied verbatim from the
+# shipped file before and after the edit.
+_TASK_ORIGIN_PROMPT_LINE_EDITS: dict[str, tuple[tuple[str, str], ...]] = {
+    "runtime_contract_decision": (
+        (
+            "- `data.task.desc` is your brief for the work. The message you are answering is saved with the task "
+            "word for word and shown whenever the task is worked, so do not copy it into the brief. Write what "
+            "that message does not say: details from earlier in the conversation, and the exact files, paths, "
+            "items and limits you agreed on.",
+            "- `data.task.desc` is your brief for the work. The message you are answering is saved with the task "
+            "word for word, with the newest part of this conversation before it (as much as fits), and both are "
+            "shown whenever the task is worked, so do not copy them into the brief. Write what they leave "
+            "unclear: what was decided, and the exact files, paths, items and limits you agreed on, including "
+            "any finished task's document the work builds on.",
+        ),
+        (
+            "- A child task's `desc` is that teammate's whole brief for their part. They also see the message "
+            "you are answering, but not the rest of this conversation or anything you looked up. Name the exact "
+            "files, paths, items and limits they need.",
+            "- A child task's `desc` is that teammate's brief for their part. They also see the message you are "
+            "answering and the newest part of this conversation (as much as fits), but nothing you looked up. "
+            "Name the exact files, paths, items and limits they need.",
+        ),
+    ),
+    "runtime_contract_execution": (
+        (
+            "  - assign + desc: data.task.desc is the teammate's whole brief. They also see the request your task "
+            "came from, when there is one, but not your conversation or anything you read. Name the exact files, "
+            "paths, items and limits they need.",
+            "  - assign + desc: data.task.desc is the teammate's brief. They also see the request your task came "
+            "from and the conversation before it, when there is one, but nothing you read while working. Name "
+            "the exact files, paths, items and limits they need.",
+        ),
+    ),
+}
+_TASK_ORIGIN_PROMPT_LINES_RECONCILED = "task_origin_prompt_lines_reconciled"
+
+
+def reconcile_task_origin_prompt_lines() -> None:
+    """Teach the stored prompts that a task keeps the conversation before it, once.
+
+    The same line-level, marker-guarded pass as
+    :func:`reconcile_task_request_prompt_lines`, driven by
+    ``_TASK_ORIGIN_PROMPT_LINE_EDITS``: the decision contract's notes on
+    ``data.task.desc`` and on a child's ``desc``, and the execution
+    contract's note on an assign's ``desc``, say that the newest part of the
+    conversation is saved and shown with the task, so the brief need not
+    repeat it. Runs after that pass, whose new lines are this pass's old
+    lines. A row equal to the shipped default is skipped. A row without an
+    exact old line keeps its bytes for that line, and a warning names the
+    key and the line, so the operator can review it by hand. Later calls,
+    once the marker is recorded, are no-ops.
+    """
+    _reconcile_prompt_lines(
+        _TASK_ORIGIN_PROMPT_LINE_EDITS,
+        _TASK_ORIGIN_PROMPT_LINES_RECONCILED,
+        missing_row_label="task origin",
+        missing_line_label="task origin",
     )
 
 

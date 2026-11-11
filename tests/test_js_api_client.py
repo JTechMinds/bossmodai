@@ -132,6 +132,9 @@ API_BY_INJECTION = {
     # the api the task detail hands them.
     "places/tasks/task-steps.js",
     "places/tasks/task-steps-history.js",
+    # Before this task reads its conversation through the api the task
+    # detail hands it.
+    "places/tasks/task-origin.js",
     "places/tasks/assign-form.js",
     "places/tasks/tasks-cancel.js",
     "places/tasks/tasks-complete.js",
@@ -249,6 +252,7 @@ def test_modules_below_the_shell_take_api_by_injection() -> None:
                  "places/tasks/task-events.js",
                  "places/tasks/task-steps.js",
                  "places/tasks/task-steps-history.js",
+                 "places/tasks/task-origin.js",
                  "places/tasks/assign-form.js",
                  "places/tasks/tasks-cancel.js",
                  "places/tasks/tasks-complete.js",

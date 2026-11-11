@@ -451,8 +451,8 @@ def test_fresh_db_seeds_the_standing_prefs_limits() -> None:
 
 
 # Every Context Window setting, in the panel's order: the Model card, Chat mode
-# (History, its fine-tuning, When you ask), Work mode (Task log, Work, its
-# fine-tuning), then what is in every prompt.
+# (History, its fine-tuning, When you ask), Work mode (Conversation before the
+# task, Task log, Work, its fine-tuning), then what is in every prompt.
 CONTEXT_SLOTS = [
     "context_window_tokens",
     "context_reply_percent",
@@ -464,6 +464,7 @@ CONTEXT_SLOTS = [
     "conversation_notes_max_percent",
     "conversation_history_ceiling_percent",
     "context_asked_percent",
+    "context_origin_percent",
     "context_task_log_percent",
     "context_work_percent",
     "work_snapshot_trim_percent",
@@ -534,21 +535,22 @@ def test_context_window_shows_the_budget_numbers_and_both_bars() -> None:
         "context_result_percent": "= 6,400 tokens",
         "context_history_percent": "= 25,600 tokens (up to 32,000)",
         "context_asked_percent": "= 32,000 tokens",
+        "context_origin_percent": "= 12,800 tokens",
         "context_task_log_percent": "= 6,400 tokens",
         "context_work_percent": "= 76,800 tokens",
     }
     assert panel["usable"] == ["Usable window: 128,000 tokens (context window minus reserved instructions)"]
-    assert panel["worst"] == ["Worst case: 85,760 tokens (67%)", "Worst case: 104,960 tokens (82%)"]
+    assert panel["worst"] == ["Worst case: 85,760 tokens (67%)", "Worst case: 117,760 tokens (92%)"]
     assert panel["bars"] == [
         "A chat turn at its largest, out of a 128,000-token window: Instructions 0, Reply 15,360, "
         "History, at its hard limit 32,000, When you ask 32,000, Largest result 6,400, Free 42,240 tokens.",
         "A work turn at its largest, out of a 128,000-token window: Instructions 0, Reply 15,360, "
-        "Task log 6,400, Work 76,800, Largest result 6,400, Free 23,040 tokens.",
+        "Before the task 12,800, Task log 6,400, Work 76,800, Largest result 6,400, Free 10,240 tokens.",
     ]
     # The legend repeats every number as text: the bar is never colour-only.
     assert panel["legends"] == [
         ["0", "15,360", "32,000", "32,000", "6,400", "42,240"],
-        ["0", "15,360", "6,400", "76,800", "6,400", "23,040"],
+        ["0", "15,360", "12,800", "6,400", "76,800", "6,400", "10,240"],
     ]
     assert panel["summaries"] == [
         "Summarizing: at 80%, keep 50% + 10% notes, hard limit 125%",
@@ -570,7 +572,7 @@ def test_a_starting_point_is_pressed_and_a_click_applies_it() -> None:
     assert after["posts"] == [{"url": "/api/settings/context-presets/large", "method": "POST"}]
     assert "/api/settings/context-budget" in after["refetched"], "the tab re-renders with the new numbers"
     assert [preset["pressed"] for preset in after["panel"]["presets"]] == ["false", "false", "true"]
-    assert after["panel"]["worst"] == ["Worst case: 171,520 tokens (67%)", "Worst case: 209,920 tokens (82%)"]
+    assert after["panel"]["worst"] == ["Worst case: 171,520 tokens (67%)", "Worst case: 235,520 tokens (92%)"]
     assert after["panel"]["derived"]["context_work_percent"] == "= 153,600 tokens"
 
 
@@ -599,7 +601,7 @@ def test_settings_that_break_a_rule_render_the_recovery_card_with_standard_rows(
     after = recovery["afterPreset"]
     assert after["titles"] == ["Model", "Chat mode", "Work mode", "Also in every prompt"]
     assert [preset["pressed"] for preset in after["presets"]] == ["false", "false", "true"]
-    assert after["worst"] == ["Worst case: 171,520 tokens (67%)", "Worst case: 209,920 tokens (82%)"]
+    assert after["worst"] == ["Worst case: 171,520 tokens (67%)", "Worst case: 235,520 tokens (92%)"]
 
 
 def test_the_history_budget_is_a_share_of_the_usable_window() -> None:

@@ -41,7 +41,8 @@ HARNESS_MODULES = [
     TASKS / "task-card.js", TASKS / "task-deliverables.js", TASKS / "task-events.js",
     # The detail's Recent steps and the step history layer it opens.
     TASKS / "task-steps.js", TASKS / "task-steps-history.js",
-    TASKS / "task-detail-sections.js", TASKS / "task-request.js", TASKS / "task-detail.js",
+    TASKS / "task-detail-sections.js", TASKS / "task-message.js", TASKS / "task-request.js",
+    TASKS / "task-origin.js", TASKS / "task-detail.js",
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
     TASKS / "tasks-cancel.js", TASKS / "tasks-complete.js",
@@ -72,12 +73,15 @@ DETAIL_MODULES = [
     # The detail's Recent steps and the step history layer it opens.
     TASKS / "task-steps.js", TASKS / "task-steps-history.js",
     TASKS / "task-detail-sections.js",
-    # The Request section the detail draws above the task's description.
-    TASKS / "task-request.js",
+    # The Request section the detail draws above the task's description, and
+    # the saved-message row it shares with Before this task.
+    TASKS / "task-message.js", TASKS / "task-request.js",
     # Edit mode ranks assignees as the assign dialog does, so it loads after
     # assign-form.js; the detail builds it when Edit mode is picked.
     TASKS / "assign-outcomes.js", TASKS / "assign-form.js",
     TASKS / "task-file-picker.js", TASKS / "task-edit-files.js", TASKS / "task-edit-mode.js",
+    # Before this task, which the detail builds once per open.
+    TASKS / "task-origin.js",
     TASKS / "task-detail.js",
     # The operator's actions the detail's Edit mode asks for, built for real
     # so the harness drives its saves, status actions, the completer, the
@@ -543,6 +547,13 @@ def test_task_detail_harness() -> None:
     Cancel sends nothing, and a blank why is sent as none. Release posts at
     once when nothing it waits on is unfinished; otherwise "Start it now?"
     names what is unfinished, and only Start now posts.
+
+    The Request's messages are drawn by task-message.js, which Before this
+    task shares. Before this task loads once per open, right after the
+    Request: it removes itself when the task has no conversation, starts
+    collapsed behind "Show N messages" (a real button whose aria-expanded and
+    aria-controls follow it), names the parent when the conversation is
+    forwarded, and says so, with a retry, when it cannot load.
     """
     args = ["node", str(DETAIL_HARNESS)] + [str(path) for path in DETAIL_MODULES]
     result = subprocess.run(args, check=False, capture_output=True, text=True)
@@ -621,6 +632,12 @@ def test_task_detail_harness() -> None:
         "noRequestNoSection": True,
         "malformedRequestThrows": True,
         "requestSitsAboveTheTaskInViewAndEditMode": True,
+        # Before this task (task-origin.js): its four states, the toggle's
+        # aria-expanded, and the forwarded label.
+        "originLoadsThenRemovesItselfWhenNone": True,
+        "originOwnIsCollapsedThenShown": True,
+        "originForwardedNamesTheParent": True,
+        "originErrorSaysSoAndRetries": True,
     }
 
 

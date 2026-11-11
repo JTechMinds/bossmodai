@@ -53,9 +53,9 @@ const NAMES = [
     "BossModClampedMarkdown",
     "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
-    "BossModTaskRequest",
+    "BossModTaskMessage", "BossModTaskRequest",
     "BossModAssignOutcomes", "BossModAssignForm",
-    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskDetail",
+    "BossModTaskFilePicker", "BossModTaskEditFiles", "BossModTaskEditMode", "BossModTaskOrigin", "BossModTaskDetail",
     "BossModTasksCancel", "BossModTasksComplete", "BossModTasksHold", "BossModTasksRelease",
     "BossModTaskActions",
 ];
@@ -187,6 +187,11 @@ const PROJECTS = {
 /** Every desk listing the file picker asked for: `{agent, path}`. */
 const deskReads = [];
 
+/** Every Before this task request, in order. */
+const originReads = [];
+/** How GET …/origin-conversation answers: none, unless originSection() swaps it. */
+let originReply = () => Promise.resolve({ ok: true, json: () => Promise.resolve({ origin: null }) });
+
 /** Every steps request, in order. */
 const stepReads = [];
 /** How GET …/steps/recent and …/steps answer; steps() swaps it per case. */
@@ -204,6 +209,10 @@ function api(url) {
     if (/^\/api\/tasks\/[^/]+\/steps/.test(String(url))) {
         stepReads.push(String(url));
         return stepsReply(String(url));
+    }
+    if (/^\/api\/tasks\/[^/]+\/origin-conversation$/.test(String(url))) {
+        originReads.push(String(url));
+        return originReply(String(url));
     }
     const desk = /^\/api\/agents\/([^/]+)\/desk\?path=(.*)$/.exec(String(url));
     if (desk) {
@@ -456,6 +465,7 @@ async function main() {
     const holdRelease = await holdAndRelease();
     const stepCases = await steps();
     const requestCases = await requestSection();
+    const originCases = await originSection();
 
     process.stdout.write(JSON.stringify({
         ok: true,
@@ -482,6 +492,7 @@ async function main() {
         deliverablesCounted,
         ...stepCases,
         ...requestCases,
+        ...originCases,
     }));
 }
 
@@ -507,8 +518,8 @@ async function requestSection() {
 
     // ── ownRequestReadsAsAsked ──────────────────────────────────────────
     const own = REQUEST.section(ASKED, { tasks, colorOf });
-    const authors = own.element.querySelectorAll(".task-detail-request-author");
-    const texts = own.element.querySelectorAll(".task-detail-request-text");
+    const authors = own.element.querySelectorAll(".task-detail-message-author");
+    const texts = own.element.querySelectorAll(".task-detail-message-text");
     const ownRequestReadsAsAsked = own.element.querySelector(".task-detail-heading").textContent === "Request"
         && own.element.querySelector(".task-detail-meta").textContent === "What was asked, word for word."
         && authors.length === 2
@@ -537,7 +548,7 @@ async function requestSection() {
     const forwardedRequestNamesTheParent = Boolean(forwarded)
         && forwarded.element.querySelector(".task-detail-meta").textContent
             === "From the parent task, “Review the rubric”, word for word."
-        && same(forwarded.element.querySelectorAll(".task-detail-request-text").map((node) => node.textContent),
+        && same(forwarded.element.querySelectorAll(".task-detail-message-text").map((node) => node.textContent),
             ASKED.request_messages.map((item) => item.content));
     if (!forwardedRequestNamesTheParent) fail("a child without a request did not show its parent's");
 
@@ -580,7 +591,7 @@ async function requestSection() {
     const inEdit = Boolean(panel.querySelector(".edit-field-multiline")) && same(headings(), ["Request", "Task"])
         && adjacent() && editing.querySelectorAll("input").length === 0
         && editing.querySelectorAll("textarea").length === 0
-        && editing.querySelectorAll(".task-detail-request").length === 2;
+        && editing.querySelectorAll(".task-detail-message").length === 2;
     const requestSitsAboveTheTaskInViewAndEditMode = inView && inEdit;
     if (!requestSitsAboveTheTaskInViewAndEditMode) fail(`request placement: view ${inView}, edit ${inEdit}`);
     await click(panel.querySelector("#ct-edit-discard"), "✕");
@@ -594,6 +605,173 @@ async function requestSection() {
         noRequestNoSection,
         malformedRequestThrows,
         requestSitsAboveTheTaskInViewAndEditMode,
+    };
+}
+
+/**
+ * Before this task (task-origin.js): the conversation the task came from, as
+ * the agent's work turns see it. Loading, then none (the section removes
+ * itself), the task's own (collapsed, then shown), the parent's when
+ * forwarded, and an error that says so and retries; read-only and right
+ * after the Request in view and in Edit mode alike.
+ */
+async function originSection() {
+    const ASKED = {
+        ...BLOCKED, id: "t-origin", title: "Compress the model",
+        request_messages: [{ author_type: "human", author_agent_id: null, author_name: "Boss", content: "go" }],
+    };
+    const CHILD = { ...CHILD_OPEN, id: "c-origin", parent_task_id: ASKED.id, request_messages: [] };
+    const tasks = [ASKED, CHILD];
+    const colorOf = (agentId) => (agentId === "a1" ? "#3b82f6" : undefined);
+    const MESSAGES = [
+        { author_type: "human", author_agent_id: null, author_name: "Boss",
+            content: "Try the LFM2 Q4_K_XL build; it must stay under 3 ms." },
+        { author_type: "agent", author_agent_id: "a1", author_name: "Jim",
+            content: "Survey written to /projects/jtech/reports/research-survey.md." },
+    ];
+    const answer = (body) => () => Promise.resolve({ ok: true, json: () => Promise.resolve(body) });
+    const openOn = async (task) => {
+        global.BossModTaskDetail.openTaskDetail({
+            api, bus, taskId: task.id, tasks, colorOf, onNavigate: () => {}, actions: recordingActions().actions,
+            onOpenChat: () => {},
+        });
+        await drain();
+        return top();
+    };
+    const closeTop = async () => {
+        top().querySelector(".modal-close").dispatchClick();
+        await drain();
+    };
+    const columnOf = (panel) => panel.querySelector(".task-detail-column");
+    const headedSection = (panel, label) => columnOf(panel).children
+        .find((node) => node.children[0] && node.children[0].textContent === label) || null;
+    const nextHeading = (panel, node) => {
+        const children = columnOf(panel).children;
+        const next = children[children.indexOf(node) + 1];
+        return next && next.children[0] ? next.children[0].textContent : null;
+    };
+
+    // ── originLoadsThenRemovesItselfWhenNone ────────────────────────────
+    let settle;
+    originReply = () => new Promise((resolve) => { settle = resolve; });
+    const readsBefore = originReads.length;
+    const loadingPanel = await openOn(ASKED);
+    const loadingNode = columnOf(loadingPanel).children
+        .find((node) => node.textContent === "Loading the conversation before this task…") || null;
+    const loadingShown = Boolean(loadingNode) && loadingNode.querySelector(".task-detail-meta") !== null
+        && columnOf(loadingPanel).children.indexOf(loadingNode)
+            === columnOf(loadingPanel).children.indexOf(headedSection(loadingPanel, "Request")) + 1
+        && same(originReads.slice(readsBefore), ["/api/tasks/t-origin/origin-conversation"]);
+    settle({ ok: true, json: () => Promise.resolve({ origin: null }) });
+    await drain();
+    const goneInView = !loadingNode.parentNode && !headedSection(loadingPanel, "Before this task")
+        && nextHeading(loadingPanel, headedSection(loadingPanel, "Request")) === "Task";
+    await click(loadingPanel.querySelector("#ct-edit-mode-btn"), "the pencil");
+    const goneInEdit = !headedSection(loadingPanel, "Before this task")
+        && !columnOf(loadingPanel).children.includes(loadingNode);
+    await click(loadingPanel.querySelector("#ct-edit-discard"), "✕");
+    await closeTop();
+    const originLoadsThenRemovesItselfWhenNone = loadingShown && goneInView && goneInEdit;
+    if (!originLoadsThenRemovesItselfWhenNone) {
+        fail(`origin none: loading ${loadingShown}, gone in view ${goneInView}, in edit ${goneInEdit}`);
+    }
+
+    // ── originOwnIsCollapsedThenShown ───────────────────────────────────
+    originReply = answer({ origin: {
+        task_id: ASKED.id, parent_title: null, where: "the DM between Boss and Jim", messages: MESSAGES,
+    } });
+    const panel = await openOn(ASKED);
+    const origin = headedSection(panel, "Before this task");
+    const toggle = origin && origin.querySelector(".task-detail-origin-toggle");
+    const list = origin && origin.querySelector(".task-detail-origin-messages");
+    const collapsed = Boolean(toggle) && toggle.tagName === "BUTTON" && toggle.getAttribute("type") === "button"
+        && toggle.textContent === "Show 2 messages" && toggle.getAttribute("aria-expanded") === "false"
+        && toggle.getAttribute("aria-controls") === list.getAttribute("id") && Boolean(list.getAttribute("id"))
+        && list.hidden === true
+        && origin.querySelector(".task-detail-meta").textContent
+            === "The conversation this task came from (the DM between Boss and Jim), as the agent sees it while it works."
+        // Right after the Request, before the Task.
+        && nextHeading(panel, headedSection(panel, "Request")) === "Before this task"
+        && nextHeading(panel, origin) === "Task";
+    const texts = origin.querySelectorAll(".task-detail-message-text");
+    // The first message overflows its clamp; it is measured when first shown.
+    texts[0].scrollHeight = 400;
+    texts[0].clientHeight = 100;
+    texts[1].scrollHeight = 20;
+    texts[1].clientHeight = 20;
+    const unmeasured = origin.querySelectorAll(".clamped-more").every((more) => more.hidden === true);
+    await click(toggle, "Show 2 messages");
+    const authors = origin.querySelectorAll(".task-detail-message-author");
+    const shown = toggle.getAttribute("aria-expanded") === "true" && toggle.textContent === "Hide messages"
+        && list.hidden === false
+        && authors.length === 2 && authors[0].textContent === "You" && !authors[0].querySelector(".avatar")
+        && authors[1].textContent.endsWith("Jim") && Boolean(authors[1].querySelector(".avatar"))
+        && same(texts.map((node) => node.textContent), MESSAGES.map((item) => item.content))
+        && origin.querySelectorAll(".clamped-more").length === 1
+        && origin.querySelector(".clamped-more").hidden === false && texts[0].classList.contains("is-clamped");
+    await click(toggle, "Hide messages");
+    const hiddenAgain = toggle.getAttribute("aria-expanded") === "false" && toggle.textContent === "Show 2 messages"
+        && list.hidden === true;
+    // Edit mode: the same node, still read-only, still right after the Request.
+    await click(panel.querySelector("#ct-edit-mode-btn"), "the pencil");
+    const inEdit = headedSection(panel, "Before this task") === origin
+        && origin.querySelectorAll("input").length === 0 && origin.querySelectorAll("textarea").length === 0
+        && nextHeading(panel, headedSection(panel, "Request")) === "Before this task";
+    await click(panel.querySelector("#ct-edit-discard"), "✕");
+    await closeTop();
+    const originOwnIsCollapsedThenShown = collapsed && unmeasured && shown && hiddenAgain && inEdit;
+    if (!originOwnIsCollapsedThenShown) {
+        fail(`origin own: collapsed ${collapsed}, unmeasured ${unmeasured}, shown ${shown}, `
+            + `hidden again ${hiddenAgain}, edit ${inEdit}`);
+    }
+
+    // ── originForwardedNamesTheParent ───────────────────────────────────
+    originReply = answer({ origin: {
+        task_id: ASKED.id, parent_title: "Compress the model", where: "the thread \"Compression Engine\"",
+        messages: [MESSAGES[1]],
+    } });
+    const childPanel = await openOn(CHILD);
+    const forwarded = headedSection(childPanel, "Before this task");
+    const originForwardedNamesTheParent = Boolean(forwarded)
+        && forwarded.querySelector(".task-detail-meta").textContent
+            === "From the parent task, “Compress the model”: the conversation it came from "
+            + "(the thread \"Compression Engine\"), as the agent sees it."
+        && forwarded.querySelector(".task-detail-origin-toggle").textContent === "Show 1 message";
+    await closeTop();
+    if (!originForwardedNamesTheParent) fail("a child without a conversation did not show its parent's, named");
+
+    // ── originErrorSaysSoAndRetries ─────────────────────────────────────
+    const detail = "The Context Window settings are invalid. Fix them in Settings → Context Window.";
+    originReply = () => Promise.resolve({ ok: false, status: 500, json: () => Promise.resolve({ detail }) });
+    const errorPanel = await openOn(ASKED);
+    const errorNode = columnOf(errorPanel).children
+        .find((node) => node.querySelector && node.querySelector(".place-error-detail")) || null;
+    const alertLine = errorNode && errorNode.querySelector(".place-error-detail");
+    const retry = errorNode && errorNode.querySelectorAll("button").find((button) => button.textContent === "Retry");
+    const errorShown = Boolean(alertLine) && alertLine.getAttribute("role") === "alert"
+        && alertLine.textContent === `Couldn't load the conversation before this task: ${detail}` && Boolean(retry);
+    originReply = answer({ origin: { task_id: ASKED.id, parent_title: null, where: "the DM between Boss and Jim",
+        messages: [{ author_type: "agent", author_agent_id: "a1", author_name: "Jim", content: "" }] } });
+    await click(retry, "Retry");
+    // A malformed message is an error too, never a made-up row.
+    const malformedShown = Boolean(errorNode.querySelector(".place-error-detail"))
+        && !headedSection(errorPanel, "Before this task");
+    originReply = answer({ origin: null });
+    await click(errorNode.querySelectorAll("button").find((button) => button.textContent === "Retry"), "Retry");
+    const retriedToNone = !errorNode.parentNode;
+    await closeTop();
+    const originErrorSaysSoAndRetries = errorShown && malformedShown && retriedToNone;
+    if (!originErrorSaysSoAndRetries) {
+        fail(`origin error: shown ${errorShown}, malformed ${malformedShown}, retried ${retriedToNone}`);
+    }
+
+    originReply = answer({ origin: null });
+    if (top() !== null) fail("an origin case outlived its close");
+    return {
+        originLoadsThenRemovesItselfWhenNone,
+        originOwnIsCollapsedThenShown,
+        originForwardedNamesTheParent,
+        originErrorSaysSoAndRetries,
     };
 }
 

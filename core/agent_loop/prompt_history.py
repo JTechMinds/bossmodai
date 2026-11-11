@@ -14,10 +14,13 @@ from core.agent_loop.conversation_notes import (
     load_thread_window,
     maybe_schedule_compaction,
     render_history_entry,
+    trigger_conversation_scope,
     window_entries,
 )
+from core.agent_loop.origin_conversation import origin_history_entry
 from core.agent_loop.sticky_slots import compose_channel_sticky_slots, compose_task_sticky_slots
 from core.agent_loop.task_thread_history import load_task_thread_history
+from core.context_budget import ContextBudget
 from core.models import Agent, Notification
 
 # Rows a budgeted reader (task thread, meeting) asks for per step, and the
@@ -39,27 +42,32 @@ def build_prompt_history_view(
     trigger: dict[str, Any],
     *,
     token_model: str | None = None,
-    budget_tokens: int,
+    budget: ContextBudget,
     work_turn: bool,
 ) -> PromptHistoryView:
     """Build the prompt-visible history view for one agent turn.
 
-    The turn's kind picks the history budget (``core.agent_loop.loop`` decides
-    it): a work turn, an execution turn that restores a work activity, gets
-    Task log; every other turn gets History. Task and meeting history is
-    windowed to ``budget_tokens`` and its sticky-slot pressure measured
+    The turn's kind (``core.agent_loop.loop`` decides it) picks the history
+    budget here: a work turn, an execution turn that restores a work
+    activity, gets Task log; every other turn gets History. Task and meeting
+    history is windowed to that budget and its sticky-slot pressure measured
     against it. DM and channel history is the conversation-memory window
     (History, with its hard limit); on a work turn the consent or approval
-    fallback to that history is windowed to ``budget_tokens`` as well, so a
-    work turn never shows more than Task log.
+    fallback to that history is windowed to Task log as well, so a work turn
+    never shows more than Task log of it.
+
+    A work turn on a task also gets the conversation the task came from as
+    its first entry, before the task thread, sized by its own share
+    (Conversation before the task, ``budget.origin``;
+    ``core.agent_loop.origin_conversation``). It is one history entry, so it
+    never counts toward the measured instructions.
 
     Args:
         agent: The agent whose turn this is.
         trigger: The live trigger.
         token_model: The turn's model, for sticky-slot token counts.
-        budget_tokens: The history budget for this turn, in tokens
-            (``ContextBudget.task_log`` on a work turn, else
-            ``ContextBudget.history``).
+        budget: The turn's context budget: ``task_log`` or ``history`` sizes
+            the history, ``origin`` the conversation before the task.
         work_turn: Whether this is a work turn.
 
     Returns:
@@ -68,10 +76,15 @@ def build_prompt_history_view(
     Raises:
         core.config.ConfigError: A conversation-memory or Context Window
             setting is missing or invalid.
+        pydantic.ValidationError: The task's stored conversation before it is
+            malformed.
     """
     policy = db.ensure_agent_prompt_history_policy(agent.id)
     conversation_history = _load_conversation_history(
-        agent, trigger, policy, token_model=token_model, budget_tokens=budget_tokens, work_turn=work_turn,
+        agent, trigger, policy, token_model=token_model,
+        budget_tokens=budget.task_log if work_turn else budget.history,
+        origin_budget_tokens=budget.origin,
+        work_turn=work_turn,
     )
     prompt_notifications: list[Notification] = []
     if policy.include_notifications:
@@ -89,9 +102,15 @@ def _load_conversation_history(
     *,
     token_model: str | None = None,
     budget_tokens: int,
+    origin_budget_tokens: int,
     work_turn: bool,
 ) -> list[dict[str, Any]]:
-    """The history this trigger shows; ``budget_tokens`` and ``work_turn`` as for :func:`build_prompt_history_view`."""
+    """The history this trigger shows.
+
+    ``budget_tokens`` is the history budget :func:`build_prompt_history_view`
+    picked, ``origin_budget_tokens`` the conversation-before-the-task budget,
+    and ``work_turn`` as there.
+    """
     trigger_type = trigger.get("type")
 
     if trigger_type == "activity_resumed" and trigger.get("task_id"):
@@ -104,7 +123,7 @@ def _load_conversation_history(
             budget_tokens,
             agent.id,
         )
-        return _finish_history(
+        history = _finish_history(
             thread,
             agent.id,
             policy,
@@ -112,6 +131,9 @@ def _load_conversation_history(
             scope_kind="task",
             scope_id=str(trigger["task_id"]),
             budget_tokens=budget_tokens,
+        )
+        return _with_task_origin(
+            history, str(trigger["task_id"]), work_turn=work_turn, budget_tokens=origin_budget_tokens,
         )
 
     if trigger_type in {"task_assigned", "task_follow_up", "task_update"} and trigger.get("task_id"):
@@ -136,33 +158,33 @@ def _load_conversation_history(
             budget_tokens=budget_tokens,
         )
 
-    if trigger_type in ("human_chat", "watchdog_status_ping"):
+    if trigger_type == "watchdog_status_ping":
         return _thread_history(
             ThreadScope.human_dm(agent.id),
             agent,
             earliest_ts=policy.earliest_ts_allowed,
-            exclude_message_id=trigger.get("source_message_id") if trigger_type == "human_chat" else None,
+            exclude_message_id=None,
         )
 
-    if trigger_type == "peer_message" and trigger.get("from_agent"):
+    # The same mapping the conversation saved when this turn takes on a task
+    # uses (origin_conversation.save_turn_origin), so the two never drift.
+    scope = trigger_conversation_scope(agent.id, trigger)
+    if scope is not None and scope.kind == "channel":
+        return _channel_history(
+            scope.key,
+            agent,
+            policy,
+            token_model=token_model,
+            exclude_message_id=trigger.get("source_message_id"),
+            budget_tokens=budget_tokens,
+        )
+    if scope is not None:
         return _thread_history(
-            ThreadScope.agent_dm(agent.id, str(trigger["from_agent"])),
+            scope,
             agent,
             earliest_ts=policy.earliest_ts_allowed,
             exclude_message_id=trigger.get("source_message_id"),
         )
-
-    if trigger_type in {"channel_message", "channel_response"}:
-        channel_id = trigger.get("channel_id")
-        if channel_id:
-            return _channel_history(
-                str(channel_id),
-                agent,
-                policy,
-                token_model=token_model,
-                exclude_message_id=trigger.get("source_message_id"),
-                budget_tokens=budget_tokens,
-            )
 
     if trigger_type in {"session_message", "session_response"}:
         session_id = trigger.get("session_id")
@@ -225,6 +247,7 @@ def _load_conversation_history(
             policy,
             token_model=token_model,
             budget_tokens=budget_tokens,
+            origin_budget_tokens=origin_budget_tokens,
             work_turn=work_turn,
         )
 
@@ -238,6 +261,7 @@ def _load_consent_or_approval_history(
     *,
     token_model: str | None = None,
     budget_tokens: int,
+    origin_budget_tokens: int,
     work_turn: bool,
 ) -> list[dict[str, Any]]:
     """Load the conversation the consent/approval wake is resuming.
@@ -247,10 +271,12 @@ def _load_consent_or_approval_history(
     Prefer the bound task thread when one exists, then the originating
     channel thread, otherwise human chat.
 
-    The task thread is windowed to ``budget_tokens``. The channel and DM
-    fallbacks are conversation-memory windows sized by History; on a work
-    turn they are windowed to ``budget_tokens`` (Task log) too, so the
-    fallback never breaks the work-turn budget.
+    The task thread is windowed to ``budget_tokens``, and on a work turn the
+    conversation before the task comes first (``origin_budget_tokens``), as
+    on any work turn. The channel and DM fallbacks are conversation-memory
+    windows sized by History; on a work turn they are windowed to
+    ``budget_tokens`` (Task log) too, so the fallback never breaks the
+    work-turn budget.
     """
     task_id = trigger.get("task_id")
     if task_id:
@@ -264,7 +290,7 @@ def _load_consent_or_approval_history(
             agent.id,
         )
         if thread:
-            return _finish_history(
+            history = _finish_history(
                 thread,
                 agent.id,
                 policy,
@@ -272,6 +298,9 @@ def _load_consent_or_approval_history(
                 scope_kind="task",
                 scope_id=str(task_id),
                 budget_tokens=budget_tokens,
+            )
+            return _with_task_origin(
+                history, str(task_id), work_turn=work_turn, budget_tokens=origin_budget_tokens,
             )
 
     channel_id = trigger.get("channel_id")
@@ -294,6 +323,26 @@ def _load_consent_or_approval_history(
         exclude_message_id=None,
     )
     return _apply_budget_window(history, agent.id, budget_tokens) if work_turn else history
+
+
+def _with_task_origin(
+    history: list[dict[str, Any]],
+    task_id: str,
+    *,
+    work_turn: bool,
+    budget_tokens: int,
+) -> list[dict[str, Any]]:
+    """On a work turn, put the conversation the task came from first, ahead of its thread.
+
+    Called on a finished task-thread history (after :func:`_finish_history`),
+    so sticky slots never see the entry, and the thread's window is not
+    shared with it: it has its own budget, ``budget_tokens``. Any other turn,
+    or a task with nothing to show, gets ``history`` unchanged.
+    """
+    if not work_turn:
+        return history
+    entry = origin_history_entry(task_id, budget_tokens=budget_tokens)
+    return history if entry is None else [entry, *history]
 
 
 def _thread_history(

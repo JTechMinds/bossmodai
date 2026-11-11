@@ -6,12 +6,14 @@ from collections.abc import Sequence
 from typing import Any
 
 import db
+from core.agent_loop.deliverables import format_deliverables_for_context
 from core.boss import boss_label
 from core.bm_cli.results import success_result, trim
 from core.bm_cli.types import BossModCliResult, CliExecutionContext, ParsedCliCommand
 from core.default_prompts import load_default_prompt
 from core.tasking.board import build_task_board, serialize_task_board
 from core.tasking.checklist import format_checklist_for_context
+from core.tasking.finished import finished_task_row, format_finished_task_lines
 from core.tasking.references import REFERENCES_HEADING, format_references_for_context
 from core.tasking.requests import format_request_for_context, request_payload_for_task
 from core.world.tilemap import get_room_at
@@ -44,7 +46,7 @@ def handle_status(context: CliExecutionContext, parsed: ParsedCliCommand, conten
         sections=[
             ("RUNTIME STATUS", _runtime_lines(snapshot["runtime"])),
             ("OPEN TASKS", _task_table_lines(snapshot["open_tasks"], description_label="description")),
-            ("RECENT COMPLETED TASKS", _completed_task_table_lines(snapshot["recent_completed_tasks"])),
+            ("RECENT COMPLETED TASKS", format_finished_task_lines(snapshot["recent_completed_tasks"], summary_chars=240)),
             ("RECENT WORK ARTIFACTS", _artifact_table_lines(snapshot["recent_work_artifacts"])),
         ],
         authoritative_note=_AUTHORITATIVE_NOTES["status"],
@@ -111,7 +113,7 @@ def handle_tasks(context: CliExecutionContext, parsed: ParsedCliCommand, content
         },
         sections=[
             ("OPEN TASKS", _task_table_lines(snapshot["open_tasks"], description_label="description")),
-            ("RECENT COMPLETED TASKS", _completed_task_table_lines(snapshot["recent_completed_tasks"])),
+            ("RECENT COMPLETED TASKS", format_finished_task_lines(snapshot["recent_completed_tasks"], summary_chars=240)),
         ],
         authoritative_note=_AUTHORITATIVE_NOTES["tasks"],
         cwd=context.cwd,
@@ -130,7 +132,7 @@ def handle_recent_work(context: CliExecutionContext, parsed: ParsedCliCommand, c
             "recent_work_artifacts": snapshot["recent_work_artifacts"],
         },
         sections=[
-            ("RECENT COMPLETED TASKS", _completed_task_table_lines(snapshot["recent_completed_tasks"])),
+            ("RECENT COMPLETED TASKS", format_finished_task_lines(snapshot["recent_completed_tasks"], summary_chars=240)),
             ("RECENT WORK ARTIFACTS", _artifact_table_lines(snapshot["recent_work_artifacts"])),
         ],
         authoritative_note=_AUTHORITATIVE_NOTES["recent_work"],
@@ -228,7 +230,8 @@ def handle_task_detail(context: CliExecutionContext, parsed: ParsedCliCommand, c
     The TASK section reads as the prompt's Current Task block does: the
     request (its own, or the one behind its parent;
     ``core/tasking/requests.py``) above the description, and the references
-    after it.
+    after it, then the deliverables, so a finished task's result can be
+    found by its paths.
     """
     task_id = parsed.args[0].strip() if parsed.args else ""
     if not task_id:
@@ -256,6 +259,10 @@ def handle_task_detail(context: CliExecutionContext, parsed: ParsedCliCommand, c
         request_lines=format_request_for_context(request_payload_for_task(task)),
         reference_lines=(
             [REFERENCES_HEADING, *format_references_for_context(task.references)] if task.references else ()
+        ),
+        deliverable_lines=(
+            ["deliverables:", *format_deliverables_for_context(task)]
+            if task.work_contract is not None and task.work_contract.deliverables else ()
         ),
     )
     sections = [("TASK", lines)]
@@ -329,15 +336,7 @@ def _build_status_snapshot(context: CliExecutionContext) -> dict[str, Any]:
             }
             for task in open_tasks[-5:]
         ],
-        "recent_completed_tasks": [
-            {
-                "created_at": task.get("last_activity") or task.get("created_at"),
-                "status": str(task.get("status") or "unknown"),
-                "title": str(task.get("title") or "Untitled"),
-                "summary": task.get("completion_summary") or task.get("status_note") or "-",
-            }
-            for task in recent_completed
-        ],
+        "recent_completed_tasks": [finished_task_row(task) for task in recent_completed],
         "recent_work_artifacts": [
             {
                 "created_at": artifact["created_at"],
@@ -382,18 +381,22 @@ def _current_task_lines(
     *,
     request_lines: Sequence[str] = (),
     reference_lines: Sequence[str] = (),
+    deliverable_lines: Sequence[str] = (),
 ) -> list[str]:
     """Render current task detail lines, ending with the task's checklist when it has one.
 
     Only ``task <id>`` passes ``request_lines`` (after ``status``, before
-    ``description``) and ``reference_lines`` (right after ``description``):
-    ``current-task`` and the board are compact views of work whose full form
-    is already in the prompt's ``{{task}}`` block.
+    ``description``), ``reference_lines`` (right after ``description``) and
+    ``deliverable_lines`` (right after the references): ``current-task`` and
+    the board are compact views of work whose full form is already in the
+    prompt's ``{{task}}`` block.
 
     Args:
         task: The task's fields, as a dict.
         request_lines: The request, as ``format_request_for_context`` gives it.
         reference_lines: The references heading and one line per reference.
+        deliverable_lines: The deliverables heading and one line per
+            deliverable (``format_deliverables_for_context``).
 
     Returns:
         The lines, in order.
@@ -405,6 +408,7 @@ def _current_task_lines(
         *request_lines,
         f"description: {task['description']}",
         *reference_lines,
+        *deliverable_lines,
     ]
     if task.get("completion_summary"):
         lines.append(f"completion_summary: {task['completion_summary']}")
@@ -430,26 +434,6 @@ def _task_table_lines(tasks: list[dict[str, Any]], *, description_label: str) ->
                     str(task["status"]),
                     str(task["title"]),
                     trim(str(task.get("description") or "-")),
-                ]
-            )
-        )
-    return lines
-
-
-def _completed_task_table_lines(tasks: list[dict[str, Any]]) -> list[str]:
-    """Render recent completed tasks as a compact table."""
-    lines = ["datetime | status | task name | summary"]
-    if not tasks:
-        lines.append("none")
-        return lines
-    for task in tasks:
-        lines.append(
-            " | ".join(
-                [
-                    _fmt_time(task["created_at"]),
-                    str(task["status"]),
-                    str(task["title"]),
-                    trim(str(task["summary"])),
                 ]
             )
         )

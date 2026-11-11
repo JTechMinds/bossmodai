@@ -9,14 +9,11 @@
  * prompt follows, so the operator sees what the assignee is working from.
  *
  * Read-only in view and in Edit mode alike: nobody edits a request. Each
- * message is markdown clamped the way the instructions are
- * (core/clamped-markdown.js), since a pasted log can run very long.
+ * message is drawn by task-message.js, the row the conversation before the
+ * task (task-origin.js) uses too.
  */
 const BossModTaskRequest = (() => {
     const { h } = BossModDom;
-
-    /** The authors a saved message can have: TaskRequestMessage.author_type. */
-    const AUTHOR_TYPES = new Set(['human', 'agent', 'system']);
 
     /**
      * The messages to show: the task's own, else its parent's.
@@ -32,23 +29,6 @@ const BossModTaskRequest = (() => {
         const parent = task.parent_task_id ? tasks.find((item) => item.id === task.parent_task_id) : null;
         const inherited = (parent && parent.request_messages) || [];
         return inherited.length > 0 ? { messages: inherited, parent } : { messages: [], parent: null };
-    }
-
-    /**
-     * Who wrote one message: "You" for the operator (the word the facts use),
-     * an agent's chip and name, or a system author's name.
-     *
-     * @param {object} message
-     * @param {(agentId: string) => (string|undefined)} colorOf
-     * @returns {string|Array<Node|string>}
-     */
-    function authorOf(message, colorOf) {
-        if (message.author_type === 'human') return 'You';
-        if (message.author_type === 'system') return message.author_name;
-        return [
-            BossModAvatar.create({ name: message.author_name, color: colorOf(message.author_agent_id), size: 'chip' }),
-            message.author_name,
-        ];
     }
 
     /**
@@ -74,25 +54,10 @@ const BossModTaskRequest = (() => {
         if (typeof colorOf !== 'function') throw new Error('[task-request] section needs colorOf');
         const { messages, parent } = sourceOf(task, tasks);
         if (messages.length === 0) return null;
-        const rows = messages.map((message, index) => {
-            const named = message.author_type === 'human'
-                || (typeof message.author_name === 'string' && message.author_name.trim() !== '');
-            if (!AUTHOR_TYPES.has(message.author_type) || typeof message.content !== 'string'
-                || !message.content.trim() || !named) {
-                throw new Error(`[task-request] message ${index + 1} of task "${task.id}" is malformed`);
-            }
-            const clamp = BossModClampedMarkdown.create({
-                text: message.content,
-                className: 'task-detail-request-text',
-                moreLabel: 'Show the full message',
-            });
-            return {
-                clamp,
-                element: h('div', { class: 'task-detail-request' },
-                    h('p', { class: 'task-detail-request-author' }, authorOf(message, colorOf)),
-                    clamp.element),
-            };
-        });
+        const rows = messages.map((message) => BossModTaskMessage.row(message, {
+            colorOf,
+            moreLabel: 'Show the full message',
+        }));
         const what = parent
             ? `From the parent task, “${parent.title || 'Untitled task'}”, word for word.`
             : 'What was asked, word for word.';
@@ -101,7 +66,7 @@ const BossModTaskRequest = (() => {
                 h('p', { class: 'task-detail-heading' }, 'Request'),
                 h('p', { class: 'task-detail-meta' }, what),
                 ...rows.map((row) => row.element)),
-            measure: () => rows.forEach((row) => row.clamp.measure()),
+            measure: () => rows.forEach((row) => row.measure()),
         };
     }
 

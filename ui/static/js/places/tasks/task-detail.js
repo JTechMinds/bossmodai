@@ -3,12 +3,14 @@
  *
  * A panel modal whose body is one centred column: the status line, the facts,
  * the one callout the state calls for, what it waits on, the request, the
- * task itself, its references, the deliverables, the assignee's checklist,
- * its recent steps, the subtasks, what counts as done, and the activity. The
- * title is the modal's own head and is not repeated below it. The sections
- * are pure builders in task-detail-sections.js and, for the request,
- * task-request.js; this file composes them, owns the modal, and owns the
- * head's tools: the pencil that enters Edit mode, and its ✓ and ✕.
+ * conversation before the task, the task itself, its references, the
+ * deliverables, the assignee's checklist, its recent steps, the subtasks,
+ * what counts as done, and the activity. The title is the modal's own head
+ * and is not repeated below it. The sections are pure builders in
+ * task-detail-sections.js and, for the request, task-request.js; the
+ * conversation before the task (task-origin.js) fetches its own, once per
+ * open. This file composes them, owns the modal, and owns the head's tools:
+ * the pencil that enters Edit mode, and its ✓ and ✕.
  *
  * Recent steps (task-steps.js) is the one live part: built once, it follows
  * the `task_step` topic for as long as the detail is open, and its "See all
@@ -83,6 +85,8 @@ const BossModTaskDetail = (() => {
         if (!task) throw new Error(`[task-detail] no task "${taskId}" in the current list`);
 
         const events = BossModTaskEvents.createTaskEvents({ api, taskId: task.id, colorOf });
+        // Built once per open, not per repaint: it fetches, and it is read-only.
+        const origin = BossModTaskOrigin.section({ api, taskId: task.id, colorOf });
         const recent = BossModTaskSteps.createRecent({
             api, bus, taskId: task.id, onSeeAll: () => BossModTaskStepsHistory.open({ api, bus, task }),
         });
@@ -125,6 +129,9 @@ const BossModTaskDetail = (() => {
                 SECTIONS.waitingOn(current, tasks, onNavigate),
                 // What was asked, word for word, above the agent's brief of it.
                 request && request.element,
+                // What was said before it, as the agent's work turns see it;
+                // read-only in Edit mode too.
+                origin.isEmpty() ? null : origin.element,
                 editing ? editMode.descriptionSection : (instructions && instructions.element),
                 // What to read first comes before what to produce.
                 SECTIONS.references(current, api),
@@ -246,6 +253,7 @@ const BossModTaskDetail = (() => {
                 closed = true;
                 if (editMode) editMode.destroy();
                 events.destroy();
+                origin.destroy();
                 recent.destroy();
                 if (onClose) onClose();
             },

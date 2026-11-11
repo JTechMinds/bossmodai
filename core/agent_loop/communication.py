@@ -11,6 +11,7 @@ import db
 from core.boss import boss_label
 from core.models import Agent, AgentState, Task
 from core.tasking import build_project_summary, build_task_board, serialize_task_board
+from core.tasking.finished import finished_task_files
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,6 +107,8 @@ def build_communication_snapshot(
             "status": item.get("status"),
             "summary": item.get("completion_summary") or item.get("status_note") or "-",
             "created_at": item.get("last_activity") or item.get("created_at"),
+            # The finished document(s), so the agent can open what it is asked about.
+            "files": finished_task_files(item),
         }
         for item in recent_completed_rows
     ]

@@ -165,7 +165,7 @@ def _task_history(agent, task_id: str) -> list[dict]:
     view = build_prompt_history_view(
         agent,
         {"type": "task_assigned", "task_id": task_id},
-        budget_tokens=read_context_budget().history,
+        budget=read_context_budget(),
         work_turn=False,
     )
     return view.conversation_history
@@ -175,7 +175,7 @@ def _channel_history(agent, channel_id: str) -> list[dict]:
     view = build_prompt_history_view(
         agent,
         {"type": "channel_message", "channel_id": channel_id},
-        budget_tokens=read_context_budget().history,
+        budget=read_context_budget(),
         work_turn=False,
     )
     return view.conversation_history
@@ -700,7 +700,7 @@ def test_slots_stay_off_prefs_notes_human_chat_and_soft_block(
             message_type="human",
         )
     human = build_prompt_history_view(
-        agent, {"type": "human_chat"}, budget_tokens=read_context_budget().history, work_turn=False,
+        agent, {"type": "human_chat"}, budget=read_context_budget(), work_turn=False,
     ).conversation_history
     assert all(not str(item["id"]).startswith(SLOT_ID_PREFIX) for item in human)
     assert all(blocker.id not in item["content"] for item in human)

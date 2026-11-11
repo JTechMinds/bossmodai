@@ -94,6 +94,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/tasks/{task_id}/events", "get_task_events"),
     (("GET",), "/api/tasks/{task_id}/steps/recent", "get_recent_task_steps"),
     (("GET",), "/api/tasks/{task_id}/steps", "get_task_steps"),
+    (("GET",), "/api/tasks/{task_id}/origin-conversation", "get_origin_conversation"),
     (("GET",), "/api/tasks/{task_id}", "get_task"),
     (("GET",), "/api/agents/{agent_id}/schedules", "list_agent_schedules"),
     (("POST",), "/api/agents/{agent_id}/schedules", "create_agent_schedule"),

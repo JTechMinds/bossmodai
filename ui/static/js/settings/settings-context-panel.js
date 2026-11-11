@@ -5,7 +5,9 @@
  * card (starting points, the window, the two shared shares, and the reserved
  * instructions: measured every turn, read-only, naming the agent they are
  * based on), then Chat mode and Work mode side by side, each with a bar of its
- * largest possible request, then the settings that are in every prompt.
+ * largest possible request (Work mode's conversation part is the conversation
+ * the task came from, then its task log), then the settings that are in every
+ * prompt.
  * When the stored settings break a rule (the payload's `problems`), no number
  * can be worked out, so the tab is a recovery Model card instead: the
  * problems, the starting points and the fields that fix them.
@@ -47,6 +49,7 @@ const BossModContextPanel = (() => {
             barLabel: 'A work turn at its largest',
             segments: [
                 { budget: 'reply', label: 'Reply', tone: 'reply' },
+                { budget: 'origin', label: 'Before the task', tone: 'conversation' },
                 { budget: 'task_log', label: 'Task log', tone: 'conversation' },
                 { budget: 'work', label: 'Work', tone: 'work' },
                 { budget: 'result', label: 'Largest result', tone: 'result' },
@@ -194,7 +197,8 @@ const BossModContextPanel = (() => {
         const v = budget.values;
         const summarizing = `Summarizing: keep ${v.work_snapshot_trim_percent}%, summary ${v.work_snapshot_summary_percent}%`;
         return {
-            conversation: field('context_task_log_percent', `= ${tokens(budget.task_log)} tokens`),
+            conversation: field('context_origin_percent', `= ${tokens(budget.origin)} tokens`)
+                + field('context_task_log_percent', `= ${tokens(budget.task_log)} tokens`),
             work: field('context_work_percent', `= ${tokens(budget.work)} tokens`)
                 + details(summarizing, ['work_snapshot_trim_percent', 'work_snapshot_summary_percent']),
         };

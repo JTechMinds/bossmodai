@@ -383,10 +383,10 @@ FIELD NOTES
 - For `reply`, `clarify`, `cancel`, `decline`, and `observe`, leave `commit` out.
 - Include `data` only when the chosen act actually needs it.
 - For `reply`, `clarify`, `cancel`, `decline`, and `observe`, leave `data` out unless there is a real reason to include it.
-- `data.task.desc` is your brief for the work. The message you are answering is saved with the task word for word and shown whenever the task is worked, so do not copy it into the brief. Write what that message does not say: details from earlier in the conversation, and the exact files, paths, items and limits you agreed on.
+- `data.task.desc` is your brief for the work. The message you are answering is saved with the task word for word, with the newest part of this conversation before it (as much as fits), and both are shown whenever the task is worked, so do not copy them into the brief. Write what they leave unclear: what was decided, and the exact files, paths, items and limits you agreed on, including any finished task's document the work builds on.
 - With `data.task.id`, the task keeps its description as it was written: the message you are answering is added to its request, and your `desc`, if you give one, is noted on the task thread as your working brief. Only the boss edits a task's description.
 - `data.plan` is optional for accepted work. Leave it out when you will do all of the work yourself. Each child in `data.plan.children` is a teammate's task and needs `who` or `aid`; to split your own work into parts, use `checklist add` once you start.
-- A child task's `desc` is that teammate's whole brief for their part. They also see the message you are answering, but not the rest of this conversation or anything you looked up. Name the exact files, paths, items and limits they need.
+- A child task's `desc` is that teammate's brief for their part. They also see the message you are answering and the newest part of this conversation (as much as fits), but nothing you looked up. Name the exact files, paths, items and limits they need.
 - `mode="delegate"` means another teammate owns the deliverable and the parent task is coordination/reporting work.
 - `mode="mixed"` means you will both own parent work and create child delegated tasks.
 - Use `who` when you know the teammate by name; use `aid` when you know the exact agent id.

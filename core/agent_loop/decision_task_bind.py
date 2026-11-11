@@ -7,6 +7,7 @@ from typing import Any
 import db
 from core.agent_loop.decision_contract import ConversationDecision
 from core.agent_loop.deliverables import build_work_contract
+from core.agent_loop.origin_conversation import save_turn_origin
 from core.agent_loop.task_origins import (
     task_notification_channel_id_for_trigger,
     task_notification_policy_for_trigger,
@@ -62,28 +63,43 @@ def _ambiguous_match_feedback(
         "expected_action": "clarify",
     }
 
-def _save_turn_request(task: Task, trigger: dict[str, Any]) -> Task:
-    """Save the message(s) this turn answered on ``task`` as its request, word for word.
+def _save_turn_request(task: Task, trigger: dict[str, Any], *, agent: Agent) -> Task:
+    """Save the message(s) this turn answered on ``task`` as its request, and the conversation before them.
 
-    The agent's ``desc`` is its own brief on top of them
-    (``core/tasking/requests.py``). It runs on the task an accept or defer
-    lands on, before an accept's plan children are created, so each child's
-    ``task_assigned`` wake already carries the request behind its parent;
-    and outside any transaction, since the append opens its own.
+    The request is word for word (``core/tasking/requests.py``); the agent's
+    ``desc`` is its own brief on top of it. Then the conversation the turn
+    was shown is saved as the conversation before the task
+    (``core/agent_loop/origin_conversation.py``), which every work turn of
+    the task shows. It runs on the task an accept or defer lands on, before
+    an accept's plan children are created, so each child's ``task_assigned``
+    wake already carries the request behind its parent; and outside any
+    transaction, since the append opens its own.
+
+    Args:
+        task: The task the accept or defer landed on.
+        trigger: The turn's live trigger.
+        agent: The agent whose turn this is; its conversation is saved.
+
+    Returns:
+        The task as stored after its request was appended.
 
     Raises:
         ValueError: The task vanished before its request was saved.
+        core.config.ConfigError: A conversation-memory or Context Window
+            setting is missing or invalid.
     """
-    return append_task_request(task.id, request_messages_for_trigger(trigger))
+    saved = append_task_request(task.id, request_messages_for_trigger(trigger))
+    save_turn_origin(agent, trigger, saved.id)
+    return saved
 
 
-def _task_from_creation(creation, *, agent_name: str, trigger: dict[str, Any]) -> dict[str, Any]:
+def _task_from_creation(creation, *, agent: Agent, trigger: dict[str, Any]) -> dict[str, Any]:
     """Unwrap a create-or-bind result into a task, honest clarify feedback, or on-hold feedback.
 
     A bind by title can land on an open held task (``held`` is an open
     status); that is refused. A task created here has no prerequisites, so
     it is never held. The task the agent may act on gets the turn's request
-    saved on it (:func:`_save_turn_request`).
+    and the conversation before it saved on it (:func:`_save_turn_request`).
     """
     if creation.outcome == "clarify_ambiguous_match" or creation.task is None:
         title = (
@@ -93,16 +109,16 @@ def _task_from_creation(creation, *, agent_name: str, trigger: dict[str, Any]) -
         )
         return {
             "error_result": _ambiguous_match_feedback(
-                agent_name=agent_name,
+                agent_name=agent.name,
                 title=title,
                 candidates=creation.resolution.candidates,
                 context="Clarify which existing task to use instead of creating a duplicate.",
             )
         }
-    unreleased = _unreleased_task_feedback(creation.task, agent_name=agent_name)
+    unreleased = _unreleased_task_feedback(creation.task, agent_name=agent.name)
     if unreleased is not None:
         return unreleased
-    return {"task": _save_turn_request(creation.task, trigger)}
+    return {"task": _save_turn_request(creation.task, trigger, agent=agent)}
 
 def _follow_up_parent_task_for_trigger(agent: Agent, trigger: dict[str, Any]):
     """Return the completed task that a revision-style follow-up should attach to."""
@@ -156,7 +172,8 @@ def _resolve_or_create_work_task(
     A new task's description is the agent's brief (``desc``) alone, or none;
     the requester's own words are saved on the task this creates or binds,
     as its request (:func:`_save_turn_request`). A task wake answers no
-    message, so it saves none.
+    message, so it saves none. A turn that answers a DM or thread also saves
+    the conversation it was shown as the conversation before the task.
     """
     if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
@@ -209,7 +226,7 @@ def _resolve_or_create_work_task(
                 audit_source_trigger_id=trigger.get("trigger_id"),
                 origin_attachment_ids=origin_attachment_ids,
             ),
-            agent_name=agent.name,
+            agent=agent,
             trigger=trigger,
         )
     return _task_from_creation(
@@ -232,7 +249,7 @@ def _resolve_or_create_work_task(
             audit_source_trigger_id=trigger.get("trigger_id"),
             origin_attachment_ids=origin_attachment_ids,
         ),
-        agent_name=agent.name,
+        agent=agent,
         trigger=trigger,
     )
 
@@ -260,7 +277,9 @@ def _bind_named_task(
     open task assigned to this agent. A task the boss held since validation
     is refused first, so nothing on it changes: no comment and no request.
     The accept path then activates the bound task: it resumes paused work,
-    or pauses a different current task.
+    or pauses a different current task. An accept from a DM or thread also
+    replaces the task's saved conversation before it with this one, when
+    this one yields anything (``origin_conversation.save_turn_origin``).
 
     Args:
         agent: The accepting agent; it authors the working-brief comment.
@@ -298,7 +317,7 @@ def _bind_named_task(
         )
     # Saved after the comment: it re-reads the task, so the row returned
     # carries the activity time the comment stamped.
-    return {"task": _save_turn_request(task, trigger)}
+    return {"task": _save_turn_request(task, trigger, agent=agent)}
 
 def _ensure_deferred_task(
     agent: Agent,
@@ -315,7 +334,8 @@ def _ensure_deferred_task(
     requester's words are saved on it as its request
     (:func:`_save_turn_request`), and it keeps the files attached to the
     message it came from (``origin_attachment_ids``), so the work starts
-    later with them.
+    later with them. The conversation the turn was shown is saved with it
+    too, as the conversation before the task.
     """
     if trigger.get("type") in {"task_assigned", "task_follow_up"} and trigger.get("task_id"):
         task = db.get_task(trigger["task_id"])
@@ -356,7 +376,7 @@ def _ensure_deferred_task(
                 audit_source_trigger_id=trigger.get("trigger_id"),
                 origin_attachment_ids=trigger.get("attachment_ids"),
             ),
-            agent_name=agent.name,
+            agent=agent,
             trigger=trigger,
         )
     return _task_from_creation(
@@ -379,6 +399,6 @@ def _ensure_deferred_task(
             audit_source_trigger_id=trigger.get("trigger_id"),
             origin_attachment_ids=trigger.get("attachment_ids"),
         ),
-        agent_name=agent.name,
+        agent=agent,
         trigger=trigger,
     )

@@ -94,8 +94,8 @@ def test_a_work_share_that_lets_a_work_turn_outgrow_the_window_is_refused() -> N
     res = _put_setting("context_work_percent", "85", "context")
     assert res.status_code == 400
     assert res.json()["detail"] == (
-        "A work turn could use 107% of the usable window (Reply 12% + Task log 5% + Work 85% + "
-        "Largest result 5%). Lower one so the total is 100% or less."
+        "A work turn could use 117% of the usable window (Reply 12% + Conversation before the task 10% + "
+        "Task log 5% + Work 85% + Largest result 5%). Lower one so the total is 100% or less."
     )
     config.reload()
     assert config.get("context_work_percent") == "60", "a refused value is never stored"
@@ -166,6 +166,8 @@ def test_a_consistent_work_set_is_saved_and_read_by_the_summary() -> None:
         res = _put_setting(key, value, "simulation")
         assert res.status_code == 200, res.text
         assert res.json()["category"] == "simulation"
+    # Work 70% fits a work turn once Conversation before the task leaves it room (12 + 5 + 5 + 70 + 5).
+    assert _put_setting("context_origin_percent", "5", "context").status_code == 200
     assert _put_setting("context_work_percent", "70", "context").status_code == 200
     limits = read_summary_limits()
     # 70% of Medium's 128,000 tokens, all usable while nothing is measured.
@@ -173,6 +175,8 @@ def test_a_consistent_work_set_is_saved_and_read_by_the_summary() -> None:
 
 
 def test_each_work_setting_resets_to_its_default() -> None:
+    # Room for Work 70% in a work turn (12 + 5 + 5 + 70 + 5).
+    assert _put_setting("context_origin_percent", "5", "context").status_code == 200
     for key, value in (
         ("work_snapshot_trim_percent", "75"),
         ("work_snapshot_summary_percent", "15"),

@@ -120,11 +120,7 @@ def _build_and_record(
         The built prompt and the reserve it was sized with.
     """
     budget = read_context_budget()
-    view = build_prompt_history_view(
-        agent, trigger, token_model=token_model,
-        budget_tokens=budget.task_log if work_turn else budget.history,
-        work_turn=work_turn,
-    )
+    view = build_prompt_history_view(agent, trigger, token_model=token_model, budget=budget, work_turn=work_turn)
     paused = render_paused_work_for_agent(agent.id) if decision_contract else None
     context = context_builder.build_context(make_turn(view, paused))
     tokens = measure_instruction_tokens(context, history_count=len(view.conversation_history), paused_work=paused)
@@ -144,8 +140,9 @@ def build_turn_prompt(
     """Build a turn's prompt with budgets sized around its own measured instructions.
 
     At most two passes. Each pass reads the context budget (the reserve is
-    the largest stored measurement), builds the history view with the turn's
-    history budget (Task log on a work turn, else History), renders the
+    the largest stored measurement), builds the history view with it (the
+    view picks Task log on a work turn, else History, and sizes a work
+    turn's conversation before the task by its own share), renders the
     paused-work view on a decision turn, builds the prompt, measures its
     instructions and records them for the agent. When the instructions fit
     the reserve the pass was sized with, that prompt is the turn's. Otherwise
@@ -160,7 +157,8 @@ def build_turn_prompt(
         trigger: The live trigger.
         token_model: The turn's model, for sticky-slot token counts.
         work_turn: Whether this turn resumes frozen work (its history is
-            windowed to Task log instead of History).
+            windowed to Task log instead of History, after the conversation
+            the task came from).
         decision_contract: Whether the turn uses the decision contract, the
             only kind that shows the paused-work view.
         make_turn: Builds the turn's ``TurnContext`` from the history view

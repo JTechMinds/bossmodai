@@ -502,6 +502,38 @@ def window_entries(window: ThreadWindow) -> list[dict[str, Any]]:
     return [window.notes_entry, *window.rows]
 
 
+def trigger_conversation_scope(agent_id: str, trigger: dict[str, Any]) -> ThreadScope | None:
+    """The one conversation a message trigger answers, or ``None`` for any other trigger.
+
+    The single mapping from a trigger to its DM or thread, so the history a
+    turn is shown (``core.agent_loop.prompt_history``) and the conversation
+    saved when that turn takes on a task
+    (``core.agent_loop.origin_conversation``) always read the same
+    conversation.
+
+    Args:
+        agent_id: The agent whose turn this is.
+        trigger: The live trigger.
+
+    Returns:
+        ``human_chat`` -> the operator's DM with the agent; ``peer_message``
+        with a non-blank ``from_agent`` -> the DM between the two agents;
+        ``channel_message`` / ``channel_response`` with a non-blank
+        ``channel_id`` -> that thread. ``None`` for anything else, including
+        a peer or channel trigger missing its sender or thread.
+    """
+    trigger_type = trigger.get("type")
+    if trigger_type == "human_chat":
+        return ThreadScope.human_dm(agent_id)
+    if trigger_type == "peer_message":
+        other = str(trigger.get("from_agent") or "").strip()
+        return ThreadScope.agent_dm(agent_id, other) if other else None
+    if trigger_type in {"channel_message", "channel_response"}:
+        channel_id = str(trigger.get("channel_id") or "").strip()
+        return ThreadScope.channel(channel_id) if channel_id else None
+    return None
+
+
 # ─── Scheduling ───
 
 

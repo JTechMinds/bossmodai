@@ -34,6 +34,10 @@ const BossModContextSettingsMeta = (() => {
             label: 'When you ask (% of usable window)',
             description: 'When you message an agent mid-task, how much of its work it sees while it answers: its summary first, then its newest steps. Default 25.',
         },
+        context_origin_percent: {
+            label: 'Conversation before the task (% of usable window)',
+            description: 'When a task came from a DM or thread, how much of that conversation the agent keeps in view while it works on it: the newest messages before you asked, as they stood when it took the task on. Default 10.',
+        },
         context_task_log_percent: {
             label: 'Task log (% of usable window)',
             description: 'While an agent works, how much of the task\'s log it sees: your comments on the task, its status lines and teammates\' results, newest first. Default 5.',

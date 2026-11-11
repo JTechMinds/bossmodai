@@ -14,11 +14,14 @@ less the reserved instructions (measured):
                                                            (hard cap = history x Hard limit %)
                 asked    = usable x When you ask %      -> summary + newest steps, when you
                                                            message a working agent
-    Work mode:  task_log = usable x Task log %          -> the task's event log in a work turn
+    Work mode:  origin   = usable x Conversation before the task %
+                                                        -> the conversation a task came from,
+                                                           in its work turns
+                task_log = usable x Task log %          -> the task's event log in a work turn
                 work     = usable x Work %              -> saved work: summary + steps + what
                                                            you told it during the work
     worst chat turn = reserved + reply + history cap + asked + result
-    worst work turn = reserved + reply + task_log + work + result
+    worst work turn = reserved + reply + origin + task_log + work + result
 
 The reserve is measured, never set: every turn measures its agent's
 instructions (``core.agent_loop.turn_prompt``) and stores them per agent
@@ -56,6 +59,7 @@ RESULT_SETTING = "context_result_percent"
 HISTORY_SETTING = "context_history_percent"
 ASKED_SETTING = "context_asked_percent"
 TASK_LOG_SETTING = "context_task_log_percent"
+ORIGIN_SETTING = "context_origin_percent"
 WORK_SETTING = "context_work_percent"
 HISTORY_CEILING_SETTING = "conversation_history_ceiling_percent"
 WORK_TRIM_SETTING = "work_snapshot_trim_percent"
@@ -73,6 +77,7 @@ _SHARE_FIELDS: Mapping[str, str] = MappingProxyType({
     "history_ceiling": HISTORY_CEILING_SETTING,
     "asked": ASKED_SETTING,
     "task_log": TASK_LOG_SETTING,
+    "origin": ORIGIN_SETTING,
     "work": WORK_SETTING,
     "work_trim": WORK_TRIM_SETTING,
     "work_summary": WORK_SUMMARY_SETTING,
@@ -101,13 +106,14 @@ SETTING_LABELS: Mapping[str, str] = MappingProxyType({
     HISTORY_CEILING_SETTING: "Hard limit",
     ASKED_SETTING: "When you ask",
     TASK_LOG_SETTING: "Task log",
+    ORIGIN_SETTING: "Conversation before the task",
     WORK_SETTING: "Work",
     WORK_TRIM_SETTING: "Work kept after summarizing",
     WORK_SUMMARY_SETTING: "Work summary size",
 })
 
 # The shares of the usable window that must each be a whole percent from 1 to 99.
-_USABLE_SHARES = ("reply", "result", "history", "asked", "task_log", "work")
+_USABLE_SHARES = ("reply", "result", "history", "asked", "task_log", "origin", "work")
 
 _CUT_SEPARATOR = "\n\n"
 _CUT_NOTE = (
@@ -128,6 +134,8 @@ class ContextShares:
         history_ceiling: Hard limit, as a percent of History.
         asked: When you ask, as a percent of the usable window.
         task_log: Task log, as a percent of the usable window.
+        origin: Conversation before the task, as a percent of the usable
+            window.
         work: Work, as a percent of the usable window.
         work_trim: Work kept after summarizing, as a percent of Work.
         work_summary: Work summary size, as a percent of Work.
@@ -140,6 +148,7 @@ class ContextShares:
     history_ceiling: int
     asked: int
     task_log: int
+    origin: int
     work: int
     work_trim: int
     work_summary: int
@@ -153,12 +162,12 @@ class ContextBudget:
 
     - ``usable = window - reserved``, where ``reserved`` is the largest
       instructions any agent measured (0 before any measurement);
-    - ``reply``, ``result``, ``history``, ``asked``, ``task_log`` and ``work``
-      are ``pct`` of their share;
+    - ``reply``, ``result``, ``history``, ``asked``, ``task_log``, ``origin``
+      and ``work`` are ``pct`` of their share;
     - ``history_cap = history * history_ceiling // 100``, the most history a
       chat turn can show while conversation memory catches up;
     - ``worst_chat_turn = reserved + reply + history_cap + asked + result``;
-    - ``worst_work_turn = reserved + reply + task_log + work + result``.
+    - ``worst_work_turn = reserved + reply + origin + task_log + work + result``.
 
     Attributes:
         window: The model's context window.
@@ -172,6 +181,8 @@ class ContextBudget:
         history_cap: History at its hard limit.
         asked: The paused-work view a working agent sees when messaged.
         task_log: The task's event log in a work turn.
+        origin: The conversation a task came from, shown in its work turns
+            (``core.agent_loop.origin_conversation``).
         work: Saved work in a work turn: summary, steps and what the
             operator told it during the work.
         worst_chat_turn: The biggest chat-turn request.
@@ -187,6 +198,7 @@ class ContextBudget:
     history_cap: int
     asked: int
     task_log: int
+    origin: int
     work: int
     worst_chat_turn: int
     worst_work_turn: int
@@ -243,6 +255,7 @@ def compute_budget(shares: ContextShares, *, reserved: int) -> ContextBudget:
     history_cap = history * shares.history_ceiling // 100
     asked = pct(shares.asked)
     task_log = pct(shares.task_log)
+    origin = pct(shares.origin)
     work = pct(shares.work)
     return ContextBudget(
         window=shares.window,
@@ -254,9 +267,10 @@ def compute_budget(shares: ContextShares, *, reserved: int) -> ContextBudget:
         history_cap=history_cap,
         asked=asked,
         task_log=task_log,
+        origin=origin,
         work=work,
         worst_chat_turn=reserved + reply + history_cap + asked + result,
-        worst_work_turn=reserved + reply + task_log + work + result,
+        worst_work_turn=reserved + reply + origin + task_log + work + result,
     )
 
 
@@ -271,12 +285,12 @@ def check_shares(shares: ContextShares, *, reserved: int, reserved_by: str | Non
     - ``window > reserved``, naming the agent whose instructions are the
       reserve (checked only once something is measured: before that the
       reserve is 0 and ``window >= 1`` covers it);
-    - Reply, Largest command result, History, When you ask, Task log and
-      Work are each 1-99;
+    - Reply, Largest command result, History, When you ask, Task log,
+      Conversation before the task and Work are each 1-99;
     - Hard limit is 100-300;
     - ``1 <= work_summary < work_trim <= 99``;
     - chat: ``reply + history * history_ceiling / 100 + asked + result <= 100``;
-    - work: ``reply + task_log + work + result <= 100``;
+    - work: ``reply + origin + task_log + work + result <= 100``;
     - ``asked >= ceil(work * work_summary / 100)``, so the whole work summary
       fits the paused-work view;
     - ``usable * work // 100 * work_summary // 100 >= 1`` with
@@ -335,11 +349,12 @@ def check_shares(shares: ContextShares, *, reserved: int, reserved_by: str | Non
             f"When you ask {shares.asked}% + Largest result {shares.result}%). "
             "Lower one so the total is 100% or less."
         )
-    work_total = shares.reply + shares.task_log + shares.work + shares.result
+    work_total = shares.reply + shares.origin + shares.task_log + shares.work + shares.result
     if work_total > 100:
         problems.append(
             f"A work turn could use {work_total}% of the usable window "
-            f"(Reply {shares.reply}% + Task log {shares.task_log}% + Work {shares.work}% + "
+            f"(Reply {shares.reply}% + Conversation before the task {shares.origin}% + "
+            f"Task log {shares.task_log}% + Work {shares.work}% + "
             f"Largest result {shares.result}%). Lower one so the total is 100% or less."
         )
     needed_asked = math.ceil(shares.work * shares.work_summary / 100)
@@ -470,6 +485,7 @@ _PRESET_COMMON: Mapping[str, int] = MappingProxyType({
     HISTORY_CEILING_SETTING: 125,
     ASKED_SETTING: 25,
     TASK_LOG_SETTING: 5,
+    ORIGIN_SETTING: 10,
     WORK_TRIM_SETTING: 60,
     WORK_SUMMARY_SETTING: 20,
     COMPACTION_START_SETTING: 80,

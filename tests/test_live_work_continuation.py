@@ -908,7 +908,7 @@ async def test_a_work_turn_windows_its_task_log_to_the_task_log_budget(monkeypat
     await run_turn(agent, db.get_agent_state(agent.id), _start_resume(agent.id, task.id))
 
     (view,) = seen
-    assert (view["budget_tokens"], view["work_turn"]) == (500, True)
+    assert (view["budget"], view["work_turn"]) == (budget, True)
     rows = [row for row in view["history"] if not str(row.get("id") or "").startswith("sticky-slot:")]
     assert rows, "the newest task-log rows are shown"
     assert _history_tokens(rows, agent.id) <= 500
@@ -930,7 +930,7 @@ async def test_a_chat_turn_on_the_same_task_uses_the_history_budget(monkeypatch:
     )
 
     (view,) = seen
-    assert (view["budget_tokens"], view["work_turn"]) == (budget.history, False)
+    assert (view["budget"], view["work_turn"]) == (budget, False)
 
 
 @pytest.mark.asyncio
@@ -947,7 +947,7 @@ async def test_a_meeting_execution_turn_uses_the_history_budget(monkeypatch: pyt
     await run_turn(agent, db.get_agent_state(agent.id), {"type": "activity_resumed", "content": "Resume."})
 
     (view,) = seen
-    assert (view["budget_tokens"], view["work_turn"]) == (budget.history, False)
+    assert (view["budget"], view["work_turn"]) == (budget, False)
 
 
 def test_a_work_turn_channel_fallback_is_windowed_to_the_task_log_budget() -> None:
@@ -965,8 +965,8 @@ def test_a_work_turn_channel_fallback_is_windowed_to_the_task_log_budget() -> No
     budget = set_context_budget(usable=10_000, task_log=5, history=40)
     trigger = {"type": "host_path_consent_resolved", "channel_id": channel.id, "payload": {"status": "allowed"}}
 
-    chat = build_prompt_history_view(agent, trigger, budget_tokens=budget.history, work_turn=False)
-    work = build_prompt_history_view(agent, trigger, budget_tokens=budget.task_log, work_turn=True)
+    chat = build_prompt_history_view(agent, trigger, budget=budget, work_turn=False)
+    work = build_prompt_history_view(agent, trigger, budget=budget, work_turn=True)
 
     assert _history_tokens(chat.conversation_history, agent.id) > budget.task_log
     assert 0 < _history_tokens(work.conversation_history, agent.id) <= budget.task_log

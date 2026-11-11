@@ -8,6 +8,7 @@ it is 0; a test that needs one records an agent's instruction size.
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -16,12 +17,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import db
+import db.settings as settings_db
 from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from core.context_budget import (
     CONTEXT_PRESETS,
+    ORIGIN_SETTING,
     PRESET_SETTINGS,
+    SETTING_LABELS,
     SHARE_SETTINGS,
     ContextShares,
     active_preset,
@@ -77,15 +81,27 @@ def _shares(preset_id: str, **changes: int) -> ContextShares:
     ("preset_id", "reserved", "expected"),
     [
         # Nothing measured yet: the shares divide the whole window.
-        ("small", 0, (32_000, 0, 32_000, 4_800, 1_600, 4_800, 6_000, 8_000, 1_600, 17_600, 20_400, 25_600)),
-        ("medium", 0, (128_000, 0, 128_000, 15_360, 6_400, 25_600, 32_000, 32_000, 6_400, 76_800, 85_760, 104_960)),
-        ("large", 0, (256_000, 0, 256_000, 30_720, 12_800, 51_200, 64_000, 64_000, 12_800, 153_600, 171_520, 209_920)),
+        (
+            "small", 0,
+            (32_000, 0, 32_000, 4_800, 1_600, 4_800, 6_000, 8_000, 1_600, 3_200, 17_600, 20_400, 28_800),
+        ),
+        (
+            "medium", 0,
+            (128_000, 0, 128_000, 15_360, 6_400, 25_600, 32_000, 32_000, 6_400, 12_800, 76_800, 85_760, 117_760),
+        ),
+        (
+            "large", 0,
+            (256_000, 0, 256_000, 30_720, 12_800, 51_200, 64_000, 64_000, 12_800, 25_600, 153_600, 171_520, 235_520),
+        ),
         # The plan's example (D15): Large with a 10,000-token reserve.
         (
             "large", 10_000,
-            (256_000, 10_000, 246_000, 29_520, 12_300, 49_200, 61_500, 61_500, 12_300, 147_600, 174_820, 211_720),
+            (256_000, 10_000, 246_000, 29_520, 12_300, 49_200, 61_500, 61_500, 12_300, 24_600, 147_600, 174_820, 236_320),
         ),
-        ("small", 10_000, (32_000, 10_000, 22_000, 3_300, 1_100, 3_300, 4_125, 5_500, 1_100, 12_100, 24_025, 27_600)),
+        (
+            "small", 10_000,
+            (32_000, 10_000, 22_000, 3_300, 1_100, 3_300, 4_125, 5_500, 1_100, 2_200, 12_100, 24_025, 29_800),
+        ),
     ],
 )
 def test_each_preset_computes_its_numbers_around_the_reserve(
@@ -94,15 +110,15 @@ def test_each_preset_computes_its_numbers_around_the_reserve(
     budget = compute_budget(_shares(preset_id), reserved=reserved)
     assert (
         budget.window, budget.reserved, budget.usable, budget.reply, budget.result, budget.history,
-        budget.history_cap, budget.asked, budget.task_log, budget.work, budget.worst_chat_turn,
+        budget.history_cap, budget.asked, budget.task_log, budget.origin, budget.work, budget.worst_chat_turn,
         budget.worst_work_turn,
     ) == expected
 
 
 def test_the_message_being_answered_has_the_free_room() -> None:
-    """D14: Large with a 10,000-token reserve leaves 44,280 free on the worst work turn, 81,180 on chat."""
+    """D14: Large with a 10,000-token reserve leaves 19,680 free on the worst work turn, 81,180 on chat."""
     budget = compute_budget(_shares("large"), reserved=10_000)
-    assert budget.window - budget.worst_work_turn == 44_280
+    assert budget.window - budget.worst_work_turn == 19_680
     assert budget.window - budget.worst_chat_turn == 81_180
 
 
@@ -156,9 +172,11 @@ def test_every_preset_keeps_the_conversation_memory_order() -> None:
         ),
         (
             {"work": 85},
-            "A work turn could use 107% of the usable window (Reply 12% + Task log 5% + Work 85% + "
-            "Largest result 5%). Lower one so the total is 100% or less.",
+            "A work turn could use 117% of the usable window (Reply 12% + Conversation before the task 10% + "
+            "Task log 5% + Work 85% + Largest result 5%). Lower one so the total is 100% or less.",
         ),
+        ({"origin": 0}, "Conversation before the task must be a whole number from 1 to 99."),
+        ({"origin": 100}, "Conversation before the task must be a whole number from 1 to 99."),
         (
             {"asked": 11},
             "When you ask (11%) must be at least 12% (Work 60% × Work summary size 20%), "
@@ -198,7 +216,7 @@ def test_a_reserve_must_name_its_agent_and_cannot_be_negative() -> None:
 
 
 def test_a_total_of_exactly_100_percent_is_allowed() -> None:
-    assert check_shares(_shares("medium", work=78), reserved=0, reserved_by=None) == []  # 12 + 5 + 78 + 5 = 100
+    assert check_shares(_shares("medium", work=68), reserved=0, reserved_by=None) == []  # 12 + 10 + 5 + 68 + 5 = 100
 
 
 # ─── reading the stored settings ───
@@ -275,7 +293,7 @@ def test_read_shares_takes_overrides_and_refuses_unknown_keys() -> None:
 
 
 def test_invalid_stored_settings_raise_with_every_problem() -> None:
-    db.set_setting("context_work_percent", "95", "context")  # 0 + 5 + 95 + 5 = 105
+    db.set_setting("context_work_percent", "95", "context")  # 0 + 10 + 5 + 95 + 5 = 115
     db.set_setting("context_reply_percent", "0", "context")
     config.reload()
     with pytest.raises(config.ConfigError) as excinfo:
@@ -304,6 +322,143 @@ def test_find_preset_and_active_preset() -> None:
     values["context_work_percent"] = 59
     assert active_preset(values) is None, "one edit makes it Custom"
     assert active_preset({}) is None
+    # Conversation before the task is a preset value like any other.
+    values = dict(find_preset("medium").values)
+    assert active_preset(values) == "medium"
+    values["context_origin_percent"] = 5
+    assert active_preset(values) is None
+
+
+# ─── Conversation before the task (Work mode) ───
+
+
+def test_conversation_before_the_task_is_a_work_turn_share() -> None:
+    assert SETTING_LABELS[ORIGIN_SETTING] == "Conversation before the task"
+    assert ORIGIN_SETTING in SHARE_SETTINGS and ORIGIN_SETTING in PRESET_SETTINGS
+    budget = compute_budget(_shares("medium", origin=15), reserved=8_000)
+    assert budget.origin == 120_000 * 15 // 100
+    assert budget.worst_work_turn == (
+        budget.reserved + budget.reply + budget.origin + budget.task_log + budget.work + budget.result
+    )
+    # It is not part of a chat turn.
+    assert budget.worst_chat_turn == compute_budget(_shares("medium", origin=1), reserved=8_000).worst_chat_turn
+    assert get_seed_setting_default(ORIGIN_SETTING) == ("10", "context")
+
+
+def test_every_preset_gives_conversation_before_the_task_ten_percent_and_fits_a_work_turn() -> None:
+    totals = {}
+    for preset in CONTEXT_PRESETS:
+        values = preset.values
+        assert values[ORIGIN_SETTING] == 10, preset.id
+        totals[preset.id] = sum(values[key] for key in (
+            "context_reply_percent", ORIGIN_SETTING, "context_task_log_percent", "context_work_percent",
+            "context_result_percent",
+        ))
+        assert check_shares(_shares(preset.id), reserved=0, reserved_by=None) == [], preset.id
+    assert totals == {"small": 90, "medium": 92, "large": 92}
+
+
+def test_the_work_rule_counts_conversation_before_the_task() -> None:
+    assert check_shares(_shares("medium", origin=19), reserved=0, reserved_by=None) == [
+        "A work turn could use 101% of the usable window (Reply 12% + Conversation before the task 19% + "
+        "Task log 5% + Work 60% + Largest result 5%). Lower one so the total is 100% or less."
+    ]
+    assert check_shares(_shares("medium", origin=18), reserved=0, reserved_by=None) == []  # 12 + 18 + 5 + 60 + 5
+
+
+# ─── seeding Conversation before the task on an existing install ───
+
+
+def _existing_install(**values: str) -> None:
+    """A database from before the share: no context_origin_percent, these work-turn shares stored."""
+    db.execute("DELETE FROM settings WHERE key = $1", [ORIGIN_SETTING])
+    for key, value in values.items():
+        db.set_setting(key, value, "context")
+
+
+def _stored(key: str) -> str | None:
+    row = query_one("SELECT value FROM settings WHERE key = $1", [key])
+    return None if row is None else str(row["value"])
+
+
+def _messages(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
+    return [record.getMessage() for record in caplog.records if record.levelno == level and record.name == "db.settings"]
+
+
+def test_a_fresh_database_seeds_ten_percent() -> None:
+    assert _stored(ORIGIN_SETTING) == "10"
+    assert read_context_budget().origin == 128_000 * 10 // 100
+
+
+def test_an_install_at_95_percent_gets_the_5_percent_free_at_boot(caplog: pytest.LogCaptureFixture) -> None:
+    """The live install: Reply 12 + Task log 8 + Work 70 + Result 5 = 95."""
+    _existing_install(
+        context_reply_percent="12", context_task_log_percent="8", context_work_percent="70",
+        context_result_percent="5",
+    )
+    db.close_connection()
+    with caplog.at_level(logging.INFO, logger="db.settings"):
+        db.init_db()
+    config.reload()
+    assert _stored(ORIGIN_SETTING) == "5"
+    assert _stored("context_work_percent") == "70"
+    assert any(ORIGIN_SETTING in message and "5%" in message for message in _messages(caplog, logging.INFO))
+    assert _messages(caplog, logging.WARNING) == []
+    assert read_context_budget().worst_work_turn == 128_000, "exactly the whole window"
+
+
+def test_an_install_with_ten_percent_free_gets_ten() -> None:
+    _existing_install(
+        context_reply_percent="12", context_task_log_percent="5", context_work_percent="60",
+        context_result_percent="5",
+    )
+    settings_db.reconcile_context_origin_share()
+    assert _stored(ORIGIN_SETTING) == "10"
+
+
+def test_an_install_at_100_percent_gets_one_percent_from_work(caplog: pytest.LogCaptureFixture) -> None:
+    _existing_install(
+        context_reply_percent="12", context_task_log_percent="8", context_work_percent="75",
+        context_result_percent="5",
+    )
+    with caplog.at_level(logging.INFO, logger="db.settings"):
+        settings_db.reconcile_context_origin_share()
+    assert (_stored(ORIGIN_SETTING), _stored("context_work_percent")) == ("1", "74")
+    (warning,) = _messages(caplog, logging.WARNING)
+    assert "from 75% to 74%" in warning
+    config.reload()
+    assert read_context_budget().worst_work_turn == 128_000
+
+
+def test_an_install_already_over_100_percent_gets_one_and_nothing_else(caplog: pytest.LogCaptureFixture) -> None:
+    _existing_install(
+        context_reply_percent="12", context_task_log_percent="8", context_work_percent="80",
+        context_result_percent="5",
+    )
+    with caplog.at_level(logging.INFO, logger="db.settings"):
+        settings_db.reconcile_context_origin_share()
+    assert (_stored(ORIGIN_SETTING), _stored("context_work_percent")) == ("1", "80")
+    (warning,) = _messages(caplog, logging.WARNING)
+    assert "already over 100%" in warning and "105%" in warning
+
+
+def test_a_present_share_is_never_touched() -> None:
+    db.set_setting(ORIGIN_SETTING, "7", "context")
+    db.set_setting("context_work_percent", "75", "context")  # 12 + 7 + 5 + 75 + 5 = 104: left for the tab.
+    settings_db.reconcile_context_origin_share()
+    assert (_stored(ORIGIN_SETTING), _stored("context_work_percent")) == ("7", "75")
+
+
+def test_a_share_that_is_not_a_number_is_left_to_the_tab(caplog: pytest.LogCaptureFixture) -> None:
+    _existing_install(context_work_percent="lots")
+    with caplog.at_level(logging.INFO, logger="db.settings"):
+        settings_db.reconcile_context_origin_share()
+    assert _stored(ORIGIN_SETTING) is None, "nothing inserted here"
+    (warning,) = _messages(caplog, logging.WARNING)
+    assert "not a whole number" in warning and "'lots'" in warning
+    # The seed loop then writes the default, and the tab reports the bad Work.
+    settings_db.seed_defaults()
+    assert (_stored(ORIGIN_SETTING), _stored("context_work_percent")) == ("10", "lots")
 
 
 # ─── fit_command_result ───
@@ -371,12 +526,13 @@ def test_the_budget_route_returns_the_numbers_and_the_presets() -> None:
     # Nothing measured yet: the shares divide the whole window.
     assert {key: body[key] for key in (
         "window", "reserved", "reserved_by", "usable", "reply", "result", "history", "history_cap", "asked",
-        "task_log", "work", "worst_chat_turn", "worst_work_turn", "worst_chat_percent", "worst_work_percent",
+        "task_log", "origin", "work", "worst_chat_turn", "worst_work_turn", "worst_chat_percent",
+        "worst_work_percent",
     )} == {
         "window": 128_000, "reserved": 0, "reserved_by": None, "usable": 128_000, "reply": 15_360,
         "result": 6_400, "history": 25_600, "history_cap": 32_000, "asked": 32_000, "task_log": 6_400,
-        "work": 76_800, "worst_chat_turn": 85_760, "worst_work_turn": 104_960, "worst_chat_percent": 67,
-        "worst_work_percent": 82,
+        "origin": 12_800, "work": 76_800, "worst_chat_turn": 85_760, "worst_work_turn": 117_760,
+        "worst_chat_percent": 67, "worst_work_percent": 92,
     }
     assert body["active_preset"] == "medium"
     assert body["presets"] == [
@@ -405,7 +561,7 @@ def test_the_budget_route_names_the_agent_the_reserve_is_based_on() -> None:
 
 
 _BUDGET_KEYS = (
-    "window", "usable", "reply", "result", "history", "history_cap", "asked", "task_log", "work",
+    "window", "usable", "reply", "result", "history", "history_cap", "asked", "task_log", "origin", "work",
     "worst_chat_turn", "worst_work_turn", "worst_chat_percent", "worst_work_percent", "values",
 )
 
@@ -476,7 +632,7 @@ def test_a_missing_row_is_reported_and_a_preset_restores_it(key: str) -> None:
     restored = applied.json()
     assert restored["problems"] == []
     assert restored["active_preset"] == "large"
-    assert (restored["worst_work_turn"], restored["worst_work_percent"]) == (209_920, 82)
+    assert (restored["worst_work_turn"], restored["worst_work_percent"]) == (235_520, 92)
     assert restored["values"][key] == find_preset("large").values[key]
 
 
@@ -550,7 +706,7 @@ def test_the_large_preset_writes_every_value_and_becomes_active() -> None:
     body = res.json()
     assert body["active_preset"] == "large"
     assert (body["worst_chat_turn"], body["worst_chat_percent"]) == (171_520, 67)
-    assert (body["worst_work_turn"], body["worst_work_percent"]) == (209_920, 82)
+    assert (body["worst_work_turn"], body["worst_work_percent"]) == (235_520, 92)
     config.reload()
     for key, value in find_preset("large").values.items():
         assert config.require_int(key) == value, key
@@ -577,13 +733,13 @@ def test_a_put_that_makes_the_work_total_101_percent_is_refused() -> None:
     client, headers = _client()
 
     res = client.put(
-        "/api/settings/context_work_percent", params={"value": "79", "category": "context"}, headers=headers,
+        "/api/settings/context_work_percent", params={"value": "69", "category": "context"}, headers=headers,
     )
 
     assert res.status_code == 400
     assert res.json()["detail"] == (
-        "A work turn could use 101% of the usable window (Reply 12% + Task log 5% + Work 79% + "
-        "Largest result 5%). Lower one so the total is 100% or less."
+        "A work turn could use 101% of the usable window (Reply 12% + Conversation before the task 10% + "
+        "Task log 5% + Work 69% + Largest result 5%). Lower one so the total is 100% or less."
     )
     config.reload()
     assert config.require_int("context_work_percent") == 60
@@ -686,18 +842,23 @@ def test_the_panel_lays_out_both_modes_with_every_slot_and_number() -> None:
         "context_window_tokens", "context_reply_percent", "context_result_percent",
         "context_history_percent", "conversation_compaction_enabled", "conversation_compaction_start_percent",
         "conversation_compaction_keep_percent", "conversation_notes_max_percent",
-        "conversation_history_ceiling_percent", "context_asked_percent", "context_task_log_percent",
-        "context_work_percent", "work_snapshot_trim_percent", "work_snapshot_summary_percent",
+        "conversation_history_ceiling_percent", "context_asked_percent", "context_origin_percent",
+        "context_task_log_percent", "context_work_percent", "work_snapshot_trim_percent",
+        "work_snapshot_summary_percent",
         "context_recent_work_artifacts", "context_recent_completed_tasks", "standing_prefs_line_max_chars",
         "standing_prefs_section_max_chars",
     ]
     assert medium["derived"] == [
         "= 15,360 tokens", "= 6,400 tokens", "= 25,600 tokens (up to 32,000)", "= 32,000 tokens",
-        "= 6,400 tokens", "= 76,800 tokens",
+        "= 12,800 tokens", "= 6,400 tokens", "= 76,800 tokens",
     ]
     assert len(medium["bars"]) == 2
     assert medium["bars"][0].startswith("A chat turn at its largest, out of a 128,000-token window: Instructions 0,")
-    assert medium["bars"][1].endswith("Largest result 6,400, Free 23,040 tokens.")
+    # The work bar's conversation part is the conversation before the task, then the task log.
+    assert medium["bars"][1] == (
+        "A work turn at its largest, out of a 128,000-token window: Instructions 0, Reply 15,360, "
+        "Before the task 12,800, Task log 6,400, Work 76,800, Largest result 6,400, Free 10,240 tokens."
+    )
     assert medium["legend"][0] == "Instructions", "the first segment is the instructions"
     assert medium["details"] == 2 and len(medium["summaries"]) == 2
     assert medium["alert"] == 1, "the starting points have their own alert line"

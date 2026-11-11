@@ -1114,7 +1114,7 @@ def test_later_route_names_someone_the_first_slice_left_out(
             "channel_id": channel.id,
             "source_message_id": message.id,
         },
-        budget_tokens=read_context_budget().history,
+        budget=read_context_budget(),
         work_turn=False,
     )
     heard = " ".join(str(item.get("content") or "") for item in history.conversation_history)

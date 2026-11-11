@@ -843,7 +843,7 @@ def test_consent_and_approval_resume_load_human_chat_history() -> None:
     for trigger_type in ("host_path_consent_resolved", "cli_approval_resolved"):
         trigger = {"type": trigger_type, "payload": {"status": "always_allowed"}}
         history = build_prompt_history_view(
-            agent, trigger, budget_tokens=read_context_budget().history, work_turn=False,
+            agent, trigger, budget=read_context_budget(), work_turn=False,
         )
         contents = [str(item.get("content") or "") for item in history.conversation_history]
         assert any(ask in content for content in contents), trigger_type
@@ -952,7 +952,7 @@ def test_consent_resolved_loads_origin_channel_thread(tmp_path: Path) -> None:
             "channel_id": channel.id,
             "payload": {"status": "always_allowed"},
         },
-        budget_tokens=read_context_budget().history,
+        budget=read_context_budget(),
         work_turn=False,
     )
     contents = [str(item.get("content") or "") for item in history.conversation_history]
@@ -995,7 +995,7 @@ def test_consent_resolved_prefers_bound_task_thread(tmp_path: Path) -> None:
             "channel_id": channel.id,
             "payload": {"status": "always_allowed"},
         },
-        budget_tokens=read_context_budget().history,
+        budget=read_context_budget(),
         work_turn=False,
     )
     contents = [str(item.get("content") or "") for item in history.conversation_history]
