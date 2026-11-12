@@ -266,6 +266,7 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     _ensure_meeting_host_nullable(con)
     _ensure_cli_approval_origin_schema(con)
     _ensure_memory_notification_schema(con)
+    _ensure_checklist_notification_kind(con)
     _ensure_runtime_command_types(con)
     _add_column_if_missing(
         con, "agent_triggers", "retry_count",
@@ -1652,6 +1653,68 @@ def _ensure_memory_notification_schema(con: SQLiteCompatConnection) -> None:
             logger.info("Migration: rebuilt notification_links to add memory")
         finally:
             con.execute("PRAGMA foreign_keys = ON")
+
+
+def _ensure_checklist_notification_kind(con: SQLiteCompatConnection) -> None:
+    """Allow a ``checklist`` notification kind.
+
+    An agent's ``checklist done <n>`` / ``checklist skip <n>`` posts a system
+    line in its DM with the boss (core/agent_loop/checklist_notices.py), of
+    the operator-only kind ``checklist``. SQLite cannot widen a CHECK in
+    place, so a notifications table whose DDL does not yet name
+    ``'checklist'`` is rebuilt: a new table with the current schema.sql
+    columns, every row copied as it is, the old table dropped, the new one
+    renamed. It only adds an allowed value, so no stored row can fail the
+    new CHECK. notification_links is untouched: the line links nothing.
+
+    Idempotent: a table whose DDL already names ``'checklist'`` (every fresh
+    database, and any database this has already run on) is left alone. The
+    notifications index is recreated after the rebuild because schema.sql,
+    which created it on the old table, runs before the migrations.
+    """
+    if "'checklist'" in _table_sql(con, "notifications"):
+        return
+    con.execute("PRAGMA foreign_keys = OFF")
+    try:
+        con.execute(
+            """
+            CREATE TABLE IF NOT EXISTS notifications__new (
+                id                VARCHAR PRIMARY KEY DEFAULT (gen_random_uuid()),
+                agent_id          VARCHAR NOT NULL REFERENCES agents(id),
+                task_id           VARCHAR REFERENCES tasks(id),
+                activity_id       VARCHAR REFERENCES activities(id),
+                kind              VARCHAR NOT NULL
+                                     CHECK (kind IN ('receipt', 'completion', 'blocked', 'handoff', 'abandoned', 'task_update', 'host_path_consent', 'cli_approval', 'queue_visibility', 'memory', 'checklist')),
+                content           TEXT NOT NULL,
+                source_channel    VARCHAR NOT NULL,
+                policy            VARCHAR NOT NULL
+                                     CHECK (policy IN ('none', 'completion_blocked', 'all')),
+                chat_visible      BOOLEAN DEFAULT TRUE,
+                prompt_visibility BOOLEAN DEFAULT FALSE,
+                created_at        TIMESTAMP DEFAULT current_timestamp
+            )
+            """
+        )
+        con.execute(
+            """
+            INSERT INTO notifications__new (
+                id, agent_id, task_id, activity_id, kind, content,
+                source_channel, policy, chat_visible, prompt_visibility, created_at
+            )
+            SELECT
+                id, agent_id, task_id, activity_id, kind, content,
+                source_channel, policy, chat_visible, prompt_visibility, created_at
+            FROM notifications
+            """
+        )
+        con.execute("DROP TABLE notifications")
+        con.execute("ALTER TABLE notifications__new RENAME TO notifications")
+        con.execute(
+            "CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications (created_at)"
+        )
+        logger.info("Migration: rebuilt notifications to add checklist")
+    finally:
+        con.execute("PRAGMA foreign_keys = ON")
 
 
 _AGENT_TEMPLATE_INDEXES = (

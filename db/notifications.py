@@ -4,13 +4,18 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from core.models.notification import Notification
+from core.models.notification import OPERATOR_ONLY_NOTIFICATION_KINDS, Notification
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query_one
 
 _NOTIFICATION_COLUMNS = (
     "id, agent_id, task_id, activity_id, kind, content, "
     "source_channel, policy, chat_visible, prompt_visibility, created_at"
 )
+
+
+def _sql_in(values: frozenset[str]) -> str:
+    """A SQL ``IN`` list of these module constants (literals, never user input)."""
+    return ", ".join(f"'{value}'" for value in sorted(values))
 
 
 def create_notification(
@@ -57,10 +62,32 @@ def list_notifications(
     chat_visible: bool | None = None,
     prompt_visible: bool | None = None,
     earliest_ts: datetime | None = None,
+    include_operator_only: bool = False,
 ) -> list[Notification]:
-    """Return notifications for an agent, newest first unless reversed by caller."""
+    """Return notifications for an agent, newest first unless reversed by caller.
+
+    The default is what may reach an agent: rows of an
+    ``OPERATOR_ONLY_NOTIFICATION_KINDS`` kind (checklist check-offs) are left
+    out, so a reader that forgets the flag can only hide a line from the
+    operator, never leak one into a prompt. Operator views (the DM transcript
+    and the notifications list) pass ``include_operator_only=True``.
+
+    Args:
+        agent_id: The agent whose notifications to read.
+        limit: The most rows to return.
+        chat_visible: Only rows with this ``chat_visible``; ``None`` for both.
+        prompt_visible: Only rows with this ``prompt_visibility``; ``None``
+            for both.
+        earliest_ts: Only rows created at or after this time.
+        include_operator_only: Also return operator-only rows.
+
+    Returns:
+        The matching rows, newest first.
+    """
     conditions = ["agent_id = $1"]
     params: list[object] = [agent_id]
+    if not include_operator_only:
+        conditions.append(f"kind NOT IN ({_sql_in(OPERATOR_ONLY_NOTIFICATION_KINDS)})")
     if chat_visible is not None:
         params.append(chat_visible)
         conditions.append(f"chat_visible = ${len(params)}")

@@ -1293,7 +1293,9 @@ async def get_agent_messages(agent_id: str, limit: int = 50):
     window = _human_dm_window(agent_id)
     fetch = limit + len(window.rows)
     thread = db.get_human_chat_thread(agent_id, limit=fetch)
-    notifications = db.list_notifications(agent_id=agent_id, limit=fetch, chat_visible=True)
+    notifications = db.list_notifications(
+        agent_id=agent_id, limit=fetch, chat_visible=True, include_operator_only=True,
+    )
     notification_links = db.list_notification_links([item.id for item in notifications])
     notifications.reverse()
     formatted = db.get_formatted_messages(thread, human_label=boss_label())
@@ -1464,6 +1466,7 @@ async def get_agent_notifications(
         limit=min(limit, max_limit),
         chat_visible=chat_visible,
         prompt_visible=prompt_visible,
+        include_operator_only=True,
     )
     notification_links = db.list_notification_links([item.id for item in notifications])
     return [

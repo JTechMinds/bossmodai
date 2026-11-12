@@ -269,8 +269,10 @@ const BossModEventCards = (() => {
             // Recorded even when nothing can act on it, so the path is never
             // lost between the phase that reads it and the phase that opens it.
             const openableFile = Boolean(filePath);
+            const noteClass = openableFile ? 'note note-ok' : 'note';
+            // note-milestone is a marker for note-group.js (never folded), not a style.
             const note = h('div', {
-                class: openableFile ? 'note note-ok' : 'note',
+                class: message.milestone ? `${noteClass} note-milestone` : noteClass,
                 'data-desk-path': deskPath,
                 'data-task-id': taskId,
                 'data-tone': openableFile ? 'ok' : null,

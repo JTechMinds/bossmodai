@@ -21,14 +21,16 @@ const BossModNoteGroup = (() => {
 
     /**
      * Is this node an action receipt eligible for grouping? The green Done
-     * receipt and the compaction divider are milestones, not receipts, so
-     * they always stay visible on their own.
+     * receipt, a checklist check-off (`.note-milestone`) and the compaction
+     * divider are milestones, not receipts, so they always stay visible on
+     * their own and split receipt runs.
      * @param {Node|null} node
      * @returns {boolean}
      */
     function isGroupable(node) {
         return Boolean(node && node.nodeType === 1 && node.classList.contains('note')
             && !node.classList.contains('note-ok')
+            && !node.classList.contains('note-milestone')
             && !node.classList.contains('conversation-notes'));
     }
 

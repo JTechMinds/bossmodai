@@ -6,16 +6,20 @@ numbered parts it checks off (core/tasking/checklist.py holds the rules).
 and ``checklist done <n>`` / ``checklist skip <n>`` resolve an item with the
 body as its note. The command acts only on the turn's bound task
 (``work_binding.bound_task_id``), so a detached turn has none and a
-checklist can never land on the wrong task. This module is transport only:
-it parses, calls the domain, and formats.
+checklist can never land on the wrong task. A check-off (``done`` or
+``skip``) also posts one system line in the boss's DM with the agent
+(core/agent_loop/checklist_notices.py) and declares it as
+``data["origin_chrome"]`` for the turn to broadcast. This module is
+transport only: it parses, calls the domain and the notice, and formats.
 """
 
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import Any, Literal
 
 import db
+from core.agent_loop.checklist_notices import note_checklist_change
 from core.agent_loop.work_binding import bound_task_id
 from core.bm_cli.command_registry import CHECKLIST_FORMS
 from core.bm_cli.results import error_result, success_result
@@ -64,8 +68,11 @@ def handle_checklist(
         ``checklist`` for the view and ``add``, and
         ``checklist_item_resolved`` for ``done`` and ``skip`` (liveness
         counts that kind as progress). ``add``, ``done`` and ``skip`` declare
-        a ``task_updated`` activity so the Tasks place refreshes. Every user
-        error is an ``error_result``: no current task, an
+        a ``task_updated`` activity so the Tasks place refreshes. ``done``
+        and ``skip`` also post one system line in the boss's DM with the
+        agent and declare it as ``data["origin_chrome"]`` for the turn to
+        broadcast (see core/agent_loop/cli_turn_result.py); an error posts
+        nothing. Every user error is an ``error_result``: no current task, an
         unknown form (with the forms listed), a missing or malformed item
         number, an empty ``add`` or ``skip`` body, or the domain's
         ``ChecklistError`` sentence (an item number past the end, a task
@@ -150,6 +157,7 @@ def _resolve(
         _item, items = resolve_checklist_item(task.id, number, status=status, note=note)
     except ChecklistError as exc:
         return error_result(parsed.raw, str(exc), cwd=context.cwd)
+    posted = note_checklist_change(context.agent, task, number, items)
     return _answer(
         context,
         parsed,
@@ -158,6 +166,7 @@ def _resolve(
         kind="checklist_item_resolved",
         detail=f"marked checklist item {number} {status}",
         changed=True,
+        origin_chrome=posted["chat_message"],
     )
 
 
@@ -170,12 +179,20 @@ def _answer(
     kind: str,
     detail: str,
     changed: bool = False,
+    origin_chrome: dict[str, Any] | None = None,
 ) -> BossModCliResult:
-    """The success result: the checklist section and the declared side effects."""
+    """The success result: the checklist section and the declared side effects.
+
+    ``origin_chrome`` is a line the caller already persisted, put in
+    ``data`` as the persist helper returned it (the cli_turn_result
+    contract), for the turn to broadcast.
+    """
     data: dict[str, object] = {
         "task_id": task.id,
         "checklist": [item.model_dump() for item in items],
     }
+    if origin_chrome is not None:
+        data["origin_chrome"] = origin_chrome
     if changed:
         data["activity"] = {
             "event": "task_updated",

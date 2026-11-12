@@ -122,6 +122,9 @@ const BossModAgentSource = (() => {
                 // a row without any has none, which the renderer skips.
                 attachments: Array.isArray(raw.attachments) ? raw.attachments : null,
                 systemReceipt: isSystem && !isWalkReceipt && !card && !isQueue && !isDecisionAsk && !isGateNote,
+                // A checklist check-off is progress the operator watches for,
+                // so the transcript never folds it into a run of receipts.
+                milestone: raw.notification_kind === 'checklist',
                 live: isQueue,
                 cleared: isQueue && !String(text).trim(),
             };

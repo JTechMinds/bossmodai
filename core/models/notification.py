@@ -8,7 +8,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
 
-NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "task_update", "host_path_consent", "cli_approval", "queue_visibility", "memory"]
+NotificationKind = Literal["receipt", "completion", "blocked", "handoff", "abandoned", "task_update", "host_path_consent", "cli_approval", "queue_visibility", "memory", "checklist"]
+# Kinds the operator sees in chat and no model input ever reads: not agent
+# prompts, not the communication snapshot, not prompt notifications.
+# db/notifications.py filters on this one set.
+OPERATOR_ONLY_NOTIFICATION_KINDS: frozenset[str] = frozenset({"checklist"})
 NotificationSourceChannel = Literal["chat", "channel", "api", "slack", "telegram", "peer", "task", "work", "meeting", "system"]
 TaskNotificationPolicy = Literal["none", "completion_blocked", "all"]
 

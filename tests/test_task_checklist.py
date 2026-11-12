@@ -11,6 +11,7 @@ isolated test database and roots (conftest.py). No LLM.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -20,8 +21,9 @@ from pydantic import ValidationError
 
 import db
 from core import config
-from core.agent_loop import activity_runtime
+from core.agent_loop import activity_runtime, decision_turn
 from core.agent_loop.actions import execute_action
+from core.agent_loop.loop import run_turn
 from core.agent_loop.liveness import command_mutates_project
 from core.agent_loop.turn_context import _get_current_task
 from core.agent_loop.work_binding import bind_turn
@@ -29,10 +31,12 @@ from core.bm_cli.checklist_commands import parse_checklist_body
 from core.bm_cli.command_registry import CHECKLIST_FORMS
 from core.bm_cli.runtime import execute_bm_cli
 from core.bm_cli.types import BossModCliResult
+from core.llm.client import LLMResponse
 from core.llm.context_builder import _format_task
 from core.models import Agent, Task
 from core.models.message import HUMAN_SENDER_ID
 from core.models.task import TaskChecklistItem
+from core.runtime.events import NullRuntimeEventSink, runtime_events
 from core.tasking import (
     ChecklistError,
     add_checklist_items,
@@ -42,6 +46,7 @@ from core.tasking import (
     resolve_checklist_item,
 )
 from core.tasking.operator_actions import complete_task_as_operator
+from core.tasking.service import create_or_bind_task
 from tests._connections import model_connection
 
 _DETACHED = {"type": "extension_event", "source_channel": "system", "task_id": None}
@@ -330,6 +335,8 @@ def test_malformed_calls_error_in_the_agents_words(command: str, body: str | Non
     assert not result.ok
     assert result.data == {"error": message}
     assert [item.status for item in db.get_task(task.id).checklist] == ["open"]
+    # An error posts no DM line.
+    assert _check_off_lines(agent.id) == []
 
 
 def test_an_unknown_form_or_a_stray_body_lists_the_forms() -> None:
@@ -369,6 +376,192 @@ def test_changes_and_check_offs_declare_task_updated() -> None:
     assert done.data["activity"]["event"] == "task_updated"
     skipped = _cli(agent, "checklist skip 2", "not needed")
     assert skipped.data["activity"]["event"] == "task_updated"
+
+
+# ─── the boss's DM line ───
+
+
+class _RecordingSink(NullRuntimeEventSink):
+    def __init__(self) -> None:
+        self.chat: list[dict[str, Any]] = []
+        self.channel: list[dict[str, Any]] = []
+
+    async def broadcast_chat_message(self, **kwargs: Any) -> None:
+        self.chat.append(kwargs)
+
+    async def broadcast_channel_message(self, **kwargs: Any) -> None:
+        self.channel.append(kwargs)
+
+
+@pytest.fixture()
+def sink() -> _RecordingSink:
+    recording = _RecordingSink()
+    runtime_events.set_sink(recording)
+    yield recording
+    runtime_events.set_sink(NullRuntimeEventSink())
+
+
+def _check_off_lines(agent_id: str) -> list[str]:
+    """The agent's ``checklist`` DM lines, sorted (an operator-only read).
+
+    Sorted because rows stored within one second have no stable order.
+    """
+    notes = db.list_notifications(agent_id=agent_id, limit=50, include_operator_only=True)
+    return sorted(note.content for note in notes if note.kind == "checklist")
+
+
+def _assert_declared(result: BossModCliResult, agent: Agent, task: Task, line: str) -> None:
+    """The result declares the persisted DM line as its origin_chrome."""
+    chrome = result.data["origin_chrome"]
+    assert (chrome["agent_id"], chrome["content"], chrome["notification_kind"], chrome["task_id"]) == (
+        agent.id, line, "checklist", task.id,
+    )
+    (row,) = [
+        note for note in db.list_notifications(agent_id=agent.id, limit=50, include_operator_only=True)
+        if note.id == chrome["message_id"]
+    ]
+    assert (row.kind, row.content, row.task_id, row.prompt_visibility) == ("checklist", line, task.id, False)
+
+
+def test_each_check_off_posts_one_line_in_the_assignees_dm() -> None:
+    agent, task = _working()
+    view = _cli(agent, "checklist")
+    added = _cli(agent, "checklist add", _AUDIT)
+    assert "origin_chrome" not in view.data and "origin_chrome" not in added.data
+    assert _check_off_lines(agent.id) == []
+
+    noted = _cli(agent, "checklist done 1", "3 issues, in /projects/app/audit.md")
+    bare = _cli(agent, "checklist done 2")
+    skipped = _cli(agent, "checklist skip 3", "The boss wants the raw notes only.")
+
+    lines = [
+        'Charles checked off item 1 of 3 on "Audit the codebase": Audit core/tasking — 3 issues, in /projects/app/audit.md',
+        'Charles checked off item 2 of 3 on "Audit the codebase": Audit db/tasks.py',
+        'Charles skipped item 3 of 3 on "Audit the codebase": Write the findings summary — The boss wants the raw notes only.',
+    ]
+    assert _check_off_lines(agent.id) == sorted(lines)
+    for result, line in zip((noted, bare, skipped), lines, strict=True):
+        _assert_declared(result, agent, task, line)
+
+
+def test_a_thread_born_tasks_check_off_goes_to_the_dm_not_the_thread() -> None:
+    agent = _agent("Ava")
+    channel = db.create_channel(name="Backend", member_agent_ids=[agent.id], created_by=HUMAN_SENDER_ID)
+    task = create_or_bind_task(
+        title="Backend audit", description="Audit the backend.", project=None, assigned_to=agent.id,
+        requester_id=HUMAN_SENDER_ID, owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None,
+        work_contract=None, source_channel="channel", notification_policy="all",
+        notification_channel_id=channel.id, audit_author_name="Human Operator", audit_author_type="human",
+    ).task
+    activity_runtime.activate_work_activity(agent.id, task, task_status="active")
+    assert _cli(agent, "checklist add", "Audit core\nAudit db").ok
+    thread_before = [(m.id, m.content) for m in db.list_channel_messages(channel.id)]
+
+    result = _cli(agent, "checklist done 2", "clean")
+
+    line = 'Ava checked off item 2 of 2 on "Backend audit": Audit db — clean'
+    assert _check_off_lines(agent.id) == [line]
+    _assert_declared(result, agent, task, line)
+    assert "channel_id" not in result.data["origin_chrome"]
+    assert [(m.id, m.content) for m in db.list_channel_messages(channel.id)] == thread_before
+
+
+def test_a_delegated_childs_check_off_goes_to_the_workers_dm_only() -> None:
+    owner = _agent("Olivia")
+    worker = _agent("Wes")
+    parent = _task(owner, title="Coordinate the audit", owner_id=owner.id)
+    child = db.create_task(
+        title="Audit the db layer", description="Your part of the audit.", assigned_to=worker.id,
+        requester_id=owner.id, owner_id=owner.id, created_by=owner.id, parent_task_id=parent.id,
+    )
+    activity_runtime.activate_work_activity(worker.id, child, task_status="active")
+    assert _cli(worker, "checklist add", "Audit tasks.py\nAudit settings.py").ok
+
+    result = _cli(worker, "checklist skip 2", "Settings are out of scope.")
+
+    line = 'Wes skipped item 2 of 2 on "Audit the db layer": Audit settings.py — Settings are out of scope.'
+    assert _check_off_lines(worker.id) == [line]
+    _assert_declared(result, worker, child, line)
+    assert _check_off_lines(owner.id) == []
+
+
+def _script(monkeypatch: pytest.MonkeyPatch, contents: list[str], on_call: Any = None) -> None:
+    queue = list(contents)
+    calls = 0
+
+    async def _fake_completion(**kwargs: Any) -> LLMResponse:
+        nonlocal calls
+        if not queue:
+            raise AssertionError("unexpected extra LLM completion")
+        calls += 1
+        if on_call is not None:
+            on_call(calls)
+        return LLMResponse(content=queue.pop(0), model="test/mock", prompt_tokens=8,
+                           completion_tokens=4, total_tokens=12)
+
+    monkeypatch.setattr("core.llm.client.completion", _fake_completion)
+
+
+def _check_off_step() -> str:
+    return json.dumps({"act": "cli", "data": {"cmd": "checklist done 1", "body": "2 issues"}, "th": "item 1 done"})
+
+
+_TURN_LINE = 'Charles checked off item 1 of 3 on "Audit the codebase": Audit core/tasking — 2 issues'
+
+
+@pytest.mark.asyncio
+async def test_an_execution_turn_check_off_is_broadcast_in_the_same_step(sink, monkeypatch) -> None:
+    agent, task = _working()
+    add_checklist_items(task.id, _AUDIT.split("\n"))
+    seen_at_next_step: list[list[str]] = []
+
+    def _on_call(index: int) -> None:
+        if index == 2:
+            seen_at_next_step.append([item["content"] for item in sink.chat])
+
+    # idle is refused on an active task; each refusal is fed back until the
+    # repair budget is spent, which ends the turn.
+    _script(monkeypatch, [_check_off_step(), *['{"act":"idle","data":{},"th":"done"}'] * 3], on_call=_on_call)
+    trigger = {"type": "activity_resumed", "task_id": task.id, "content": "Resume.", "source_channel": "work"}
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    # Sent by the step that ran the command, before the model's next call.
+    assert seen_at_next_step and _TURN_LINE in seen_at_next_step[0]
+    sent = [item for item in sink.chat if item["content"] == _TURN_LINE]
+    assert len(sent) == 1
+    assert (sent[0]["agent_id"], sent[0]["notification_kind"], sent[0]["task_id"]) == (agent.id, "checklist", task.id)
+    assert not any(item["content"] == _TURN_LINE for item in sink.channel)
+    assert _check_off_lines(agent.id) == [_TURN_LINE]
+
+
+@pytest.mark.asyncio
+async def test_a_decision_turn_check_off_is_broadcast_with_the_cli_side_effects(sink, monkeypatch) -> None:
+    agent, task = _working()
+    add_checklist_items(task.id, _AUDIT.split("\n"))
+    declared: list[list[str]] = []
+    original = decision_turn.broadcast_cli_side_effects
+
+    async def _spy(sink_arg: Any, result: dict[str, Any], *, agent: Agent) -> None:
+        declared.append([item["content"] for item in result.get("origin_status_messages") or []])
+        await original(sink_arg, result, agent=agent)
+
+    monkeypatch.setattr(decision_turn, "broadcast_cli_side_effects", _spy)
+    _script(monkeypatch, [
+        _check_off_step(),
+        '{"act":"reply","work_commit":false,"intent":"question","msg":"Item 1 is done.","th":"done"}',
+    ])
+    trigger = {
+        "type": "human_chat", "content": "Check off the core audit.", "from_name": "Human",
+        "from_id": HUMAN_SENDER_ID, "source_channel": "chat", "author_type": "human",
+    }
+    await run_turn(agent, db.get_agent_state(agent.id), trigger)
+
+    assert declared == [[_TURN_LINE]]
+    sent = [item for item in sink.chat if item["content"] == _TURN_LINE]
+    assert len(sent) == 1
+    assert (sent[0]["agent_id"], sent[0]["notification_kind"], sent[0]["task_id"]) == (agent.id, "checklist", task.id)
+    assert not any(item["content"] == _TURN_LINE for item in sink.channel)
+    assert _check_off_lines(agent.id) == [_TURN_LINE]
 
 
 # ─── liveness ───

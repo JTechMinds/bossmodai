@@ -31,6 +31,7 @@ NotificationKind = Literal[
     "cli_approval",
     "queue_visibility",
     "memory",
+    "checklist",
 ]
 
 _DESTINATION_LABELS = {

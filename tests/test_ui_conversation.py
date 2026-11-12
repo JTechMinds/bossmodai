@@ -153,6 +153,46 @@ def test_agent_source_mention_scope_is_the_full_roster_without_everyone() -> Non
     assert json.loads(result.stdout.strip().splitlines()[-1]) == {"everyone": False, "memberIds": None}
 
 
+def test_agent_source_marks_only_checklist_lines_as_milestones() -> None:
+    """A checklist check-off is the one milestone note; the toggle still hides it like a task line."""
+    script = (
+        "const fs = require('fs');"
+        "eval(fs.readFileSync(process.argv[4], 'utf8') + ';global.BossModConsentCard = BossModConsentCard;');"
+        "eval(fs.readFileSync(process.argv[2], 'utf8') + ';global.BossModAgentRequests = BossModAgentRequests;');"
+        "eval(fs.readFileSync(process.argv[1], 'utf8') + ';global.BossModAgentSource = BossModAgentSource;');"
+        "eval(fs.readFileSync(process.argv[3], 'utf8') + ';global.BossModAgentMenu = BossModAgentMenu;');"
+        "const api = async () => ({ ok: true });"
+        "const store = { getState: () => ({ roster: [] }) };"
+        "const agentMenu = BossModAgentMenu.create({ api, store, navigate: () => {} });"
+        "const source = BossModAgentSource.createAgentSource('joey', {"
+        " api, bus: {}, store, presence: {}, agentMenu });"
+        "const seen = [];"
+        "const live = source.subscribe({ message: (m) => seen.push(m), reset() {}, presence() {}, chrome() {} });"
+        "for (const kind of ['checklist', 'task_update', 'completion', 'memory', null]) {"
+        " live.onLiveEvent('chat_message', { agent_id: 'joey', message_id: `m-${kind}`, content: 'line',"
+        " from_type: 'system', message_type: 'system', notification_kind: kind });"
+        "}"
+        "live.onLiveEvent('chat_message', { agent_id: 'joey', message_id: 'reply', content: 'hi', from_type: 'agent' });"
+        "console.log(JSON.stringify(seen.map((m) => [m.key, m.kind, m.milestone, m.systemReceipt])));"
+    )
+    result = subprocess.run(
+        ["node", "-e", script, str(SOURCES / "agent-source.js"), str(SOURCES / "agent-requests.js"),
+         str(JS / "context" / "agent-menu.js"), str(JS / "core" / "consent-card.js")],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert json.loads(result.stdout.strip().splitlines()[-1]) == [
+        ["m-checklist", "note", True, True],
+        ["m-task_update", "note", False, True],
+        ["m-completion", "note", False, True],
+        ["m-memory", "note", False, True],
+        ["m-null", "note", False, True],
+        ["reply", "message", False, False],
+    ]
+
+
 def test_sources_never_touch_the_dom() -> None:
     """The adapter boundary, asserted rather than trusted.
 

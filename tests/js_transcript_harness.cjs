@@ -564,6 +564,8 @@ const groupTranscript = BossModTranscript.createTranscript({
         }
         const node = receipt(m.key);
         node.textContent = m.text;
+        // As event-cards.js marks a checklist check-off.
+        if (m.milestone) node.setAttribute("class", "note note-milestone");
         return node;
     },
 });
@@ -592,6 +594,33 @@ if (groupTranscript.messageCount() !== 9) throw new Error("grouping must not cha
 // Done receipts and non-receipts break a run.
 groupTranscript.setMessages([...notes(2), message("d1", "done", "done"), ...notes(2, 3)]);
 if (groupList.querySelector("[data-note-group]")) throw new Error("a note-ok must split runs");
+
+// A checklist check-off is a milestone: never folded, it splits the run and
+// stays in the list between the groups on either side of it.
+const milestone = (key) => Object.assign(message(key, key, "note"), { milestone: true });
+groupTranscript.setMessages([...notes(5), milestone("c1"), ...notes(5, 6)]);
+const aroundMilestone = groupList.querySelectorAll("[data-note-group]");
+if (aroundMilestone.length !== 2) throw new Error(`a milestone must split 5+5 into 2 groups, got ${aroundMilestone.length}`);
+const milestoneNode = groupList.querySelector('[data-message-key="c1"]');
+if (!milestoneNode || milestoneNode.parentNode !== groupList) throw new Error("a milestone must sit in the list itself");
+if (aroundMilestone.some((g) => g.querySelector('[data-message-key="c1"]'))) {
+    throw new Error("a milestone must never be inside a group");
+}
+if (groupList.children.map((n) => n.getAttribute("data-message-key")).indexOf("c1") !== 1) {
+    throw new Error("a milestone must sit between the two groups");
+}
+groupTranscript.setMessages([...notes(2), milestone("c1"), ...notes(2, 3)]);
+if (groupList.querySelector("[data-note-group]")) throw new Error("a milestone must split runs");
+// Live: a milestone after a group neither joins nor extends it.
+groupTranscript.setMessages(notes(4));
+groupTranscript.append(milestone("c2"));
+const beforeMilestone = groupList.querySelector("[data-note-group]");
+if (groupList.querySelectorAll("[data-note-group]").length !== 1 || slotKeys(beforeMilestone, "note-group-last").join() !== "n4") {
+    throw new Error("a live milestone must not extend the group before it");
+}
+if (groupList.querySelector('[data-message-key="c2"]').parentNode !== groupList) {
+    throw new Error("a live milestone must land in the list itself");
+}
 
 // Live append: the 4th consecutive receipt promotes, the 5th extends.
 groupTranscript.setMessages([message("u2", "hi"), ...notes(3)]);
