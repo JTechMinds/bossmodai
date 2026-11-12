@@ -40,6 +40,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/channels/{channel_id}/open-tasks", "list_channel_open_tasks"),
     (("DELETE",), "/api/channels/{channel_id}", "delete_channel"),
     (("POST",), "/api/channels/{channel_id}/messages", "create_channel_message"),
+    (("POST",), "/api/channels/{channel_id}/rewind", "rewind_channel_thread"),
     (("POST",), "/api/channels/{channel_id}/members", "seat_channel_member"),
     (("DELETE",), "/api/channels/{channel_id}/members/{agent_id}", "remove_channel_member"),
     (("GET",), "/api/agents/{agent_id}/prompt-history-policy", "get_agent_prompt_history_policy"),

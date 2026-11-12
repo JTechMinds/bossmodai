@@ -1,7 +1,7 @@
 /**
- * Node harness: the agent DM's Rewind — its flow, its dialog, and where the
- * conversation offers it. Invoked by tests/test_ui_conversation.py with the
- * same module list as js_conversation_harness.cjs. Not a browser bundle.
+ * Node harness: Rewind on an agent DM and on a thread — its flow, its dialog,
+ * and where the conversation offers it. Invoked by tests/test_ui_conversation.py
+ * with the same module list as js_conversation_harness.cjs. Not a browser bundle.
  *
  * The flow (chat-rewind.js) is driven with fake source, composer and needs,
  * because what it promises is about the order it calls them in. The dialog and
@@ -76,6 +76,8 @@ function fakes({ fail = false, unremoved = 0 } = {}) {
     const log = [];
     const source = {
         id: "a",
+        kind: "agent",
+        canSend: () => true,
         async rewindPoints() { return POINTS.slice(); },
         async rewind(key) {
             log.push(`rewind:${key}`);
@@ -97,7 +99,8 @@ async function flowCases() {
     let refusesHalfSource = false;
     try {
         BossModChatRewind.createChatRewind({
-            source: { id: "a" }, agentName: () => "Ada", composer: fakes().composer, needs: fakes().needs,
+            source: { id: "a", kind: "agent", canSend: () => true }, subjectName: () => "Ada",
+            composer: fakes().composer, needs: fakes().needs,
         });
     } catch (err) {
         refusesHalfSource = /rewindPoints/.test(String(err.message));
@@ -106,13 +109,14 @@ async function flowCases() {
 
     const base = fakes();
     const flow = BossModChatRewind.createChatRewind({
-        source: base.source, agentName: () => "Ada", composer: base.composer, needs: base.needs,
+        source: base.source, subjectName: () => "Ada", composer: base.composer, needs: base.needs,
     });
-    const menu = flow.menuAction();
-    const menuActionShape = menu.id === "agent-chat-rewind" && menu.label === "Rewind…"
+    const menus = flow.menuActions();
+    const menu = menus[0] || {};
+    const menuActionShape = menus.length === 1 && menu.id === "conversation-rewind" && menu.label === "Rewind…"
         && menu.icon === "rotate-ccw" && menu.slot === "menu" && menu.section === "chat"
         && typeof menu.onSelect === "function";
-    check(menuActionShape, `menu action shape: ${JSON.stringify(menu)}`);
+    check(menuActionShape, `menu action shape: ${JSON.stringify(menus)}`);
 
     const errorNeed = { id: "d1", kind: "error", agentId: "a", groupedIds: ["d1"] };
     const cardActionsOnlyForThisAgentsErrors = flow.cardActions(errorNeed).length === 1
@@ -136,7 +140,7 @@ async function flowCases() {
     const typed = fakes();
     typed.composer.draft = { text: "half a new thought", attachments: [{ id: "up1" }] };
     const typedFlow = BossModChatRewind.createChatRewind({
-        source: typed.source, agentName: () => "Ada", composer: typed.composer, needs: typed.needs,
+        source: typed.source, subjectName: () => "Ada", composer: typed.composer, needs: typed.needs,
     });
     await typedFlow.open({});
     await settle();
@@ -152,7 +156,7 @@ async function flowCases() {
     const agentRow = fakes();
     agentRow.composer.draft = { text: "keep me", attachments: [] };
     const agentFlow = BossModChatRewind.createChatRewind({
-        source: agentRow.source, agentName: () => "Ada", composer: agentRow.composer, needs: agentRow.needs,
+        source: agentRow.source, subjectName: () => "Ada", composer: agentRow.composer, needs: agentRow.needs,
     });
     await agentFlow.open({});
     await settle();
@@ -167,7 +171,7 @@ async function flowCases() {
     // after the server said yes.
     const card = fakes();
     const cardFlow = BossModChatRewind.createChatRewind({
-        source: card.source, agentName: () => "Ada", composer: card.composer, needs: card.needs,
+        source: card.source, subjectName: () => "Ada", composer: card.composer, needs: card.needs,
     });
     await cardFlow.cardActions(errorNeed)[0].onSelect();
     await settle();
@@ -182,7 +186,7 @@ async function flowCases() {
     const refused = fakes({ fail: true });
     refused.composer.draft = { text: "untouched", attachments: [] };
     const refusedFlow = BossModChatRewind.createChatRewind({
-        source: refused.source, agentName: () => "Ada", composer: refused.composer, needs: refused.needs,
+        source: refused.source, subjectName: () => "Ada", composer: refused.composer, needs: refused.needs,
     });
     await refusedFlow.cardActions(errorNeed)[0].onSelect();
     await settle();
@@ -199,7 +203,7 @@ async function flowCases() {
     // Files the server could not delete: a done state the operator reads.
     const leftover = fakes({ unremoved: 2 });
     const leftoverFlow = BossModChatRewind.createChatRewind({
-        source: leftover.source, agentName: () => "Ada", composer: leftover.composer, needs: leftover.needs,
+        source: leftover.source, subjectName: () => "Ada", composer: leftover.composer, needs: leftover.needs,
     });
     await leftoverFlow.open({});
     await settle();
@@ -231,7 +235,8 @@ async function dialogCases() {
     // Loading: the copy and the status, and nothing to confirm yet.
     let resolveConfirm = null;
     const dialog = BossModChatRewindDialog.open({
-        agentName: "Ada",
+        kind: "agent",
+        subjectName: "Ada",
         onConfirm: () => new Promise((resolve, reject) => { resolveConfirm = { resolve, reject }; }),
     });
     const honesty = documentStub.body.querySelector(".chat-rewind-note").textContent;
@@ -286,7 +291,7 @@ async function dialogCases() {
     check(dialogEl() === null, "close() must close the dialog");
 
     // Preselection from the error card: the newest OWN row, not the newest row.
-    const pre = BossModChatRewindDialog.open({ agentName: "Ada", preselectLatestHuman: true, onConfirm: async () => ({}) });
+    const pre = BossModChatRewindDialog.open({ kind: "agent", subjectName: "Ada", preselectLatestHuman: true, onConfirm: async () => ({}) });
     pre.setPoints(POINTS.slice());
     const preselectsNewestHuman = radios().filter((node) => node.checked).map((node) => node.getAttribute("value")).join() === "m3"
         && removedFlags().join() === "true,true,false,false";
@@ -294,12 +299,12 @@ async function dialogCases() {
     pre.close();
 
     // Empty and load-error states keep Rewind disabled.
-    const empty = BossModChatRewindDialog.open({ agentName: "Ada", onConfirm: async () => ({}) });
+    const empty = BossModChatRewindDialog.open({ kind: "agent", subjectName: "Ada", onConfirm: async () => ({}) });
     empty.setPoints([]);
     const emptyState = statusText() === "Nothing to rewind yet." && confirmBtn().disabled === true && radios().length === 0;
     check(emptyState, `empty: ${statusText()}`);
     empty.close();
-    const failed = BossModChatRewindDialog.open({ agentName: "Ada", onConfirm: async () => ({}) });
+    const failed = BossModChatRewindDialog.open({ kind: "agent", subjectName: "Ada", onConfirm: async () => ({}) });
     failed.setLoadError("Agent chat is unavailable.");
     const loadErrorState = errorText() === "Agent chat is unavailable." && confirmBtn().disabled === true
         && documentStub.body.querySelector(".chat-rewind-list").hidden === true;
@@ -319,6 +324,20 @@ async function dialogCases() {
 
 async function conversationCases() {
     const posted = [];
+    const threadPosted = [];
+    let threadLoads = 0;
+    // The thread's transcript, oldest first: a round marker and the members'
+    // and operator's own lines. A rewind cuts it as the server would.
+    let threadRows = [
+        { id: "tm1", channel_id: "t1", author_type: "human", author_name: "Human Operator",
+          content: "kick off the plan", created_at: "2026-10-08T11:00:00" },
+        { id: "tm2", channel_id: "t1", author_type: "system", author_name: "BossMod",
+          notification_kind: "channel_round_marker", content: "Round 1", created_at: "2026-10-08T11:00:01" },
+        { id: "tm3", channel_id: "t1", author_type: "agent", author_agent_id: "a", author_name: "Ada",
+          content: "on it", created_at: "2026-10-08T11:00:02" },
+        { id: "tm4", channel_id: "t1", author_type: "human", author_name: "Human Operator",
+          content: "actually, wait", created_at: "2026-10-08T11:00:03" },
+    ];
     const api = async (url, init) => {
         const text = String(url);
         // What the agents see (conversation-window.js): no notes, nothing dropped.
@@ -344,11 +363,37 @@ async function conversationCases() {
         if (/^\/api\/agents\/[^/?]+$/.test(text)) {
             return { ok: true, async json() { return { cli_auto_approve_dm: false, cli_auto_approve_global: false }; } };
         }
-        if (/^\/api\/channels\/t1$/.test(text)) {
+        if (text === "/api/channels/t1/rewind") {
+            const body = JSON.parse(init.body);
+            threadPosted.push(body);
+            const at = threadRows.findIndex((row) => row.id === body.from_message_id);
+            const removed = threadRows.length - at;
+            threadRows = threadRows.slice(0, at);
             return {
                 ok: true,
                 async json() {
-                    return { channel: { id: "t1", name: "Standup", status: "active", members: [] }, messages: [] };
+                    return {
+                        status: "ok", removed_messages: removed, removed_attachments: 0,
+                        unremoved_files: 0, stopped_agents: 0, dropped_wakes: 0,
+                    };
+                },
+            };
+        }
+        if (/^\/api\/channels\/t1$/.test(text)) {
+            threadLoads += 1;
+            const messages = threadRows.slice();
+            return {
+                ok: true,
+                async json() {
+                    return { channel: { id: "t1", name: "Standup", status: "active", members: [] }, messages };
+                },
+            };
+        }
+        if (/^\/api\/channels\/t2$/.test(text)) {
+            return {
+                ok: true,
+                async json() {
+                    return { channel: { id: "t2", name: "Old plan", status: "archived", members: [] }, messages: [] };
                 },
             };
         }
@@ -451,11 +496,58 @@ async function conversationCases() {
         && composerInput.value === "please summarise" && acknowledged.join() === "d9" && dialogEl() === null;
     check(cardRewindRestoresAndAcknowledges, `card rewind: ${JSON.stringify(posted)} / ${composerInput.value} / ${acknowledged}`);
 
+    // A live thread offers Rewind… in its `⋯` too.
     store.setState({ conversationId: "t1", conversationKind: "thread" });
     await conversation.open("t1", "thread");
     await settle();
-    const menuOmitsRewindOnThreads = !(await menuNames()).split("|").includes("Rewind…");
-    check(menuOmitsRewindOnThreads, `thread menu: ${await menuNames()}`);
+    const menuOffersRewindOnLiveThread = (await menuNames()).split("|").includes("Rewind…");
+    check(menuOffersRewindOnLiveThread, `thread menu: ${await menuNames()}`);
+
+    // End to end through the real thread source: the thread's own copy, only
+    // the operator's and members' lines (no round marker), the POST names the
+    // chosen row, and the operator's own text comes back into the composer.
+    const dots = conversation.element.querySelector("#conversation-view-options");
+    await dots.dispatchClick();
+    await conversation.element.querySelector("#conversation-rewind").dispatchClick();
+    await settle();
+    const threadTitle = (documentStub.body.querySelector(".modal-title") || {}).textContent;
+    const threadSubtitle = (documentStub.body.querySelector(".modal-subtitle") || {}).textContent;
+    const threadCopy = documentStub.body.querySelector(".chat-rewind-note").textContent;
+    const threadOffered = radios().map((node) => node.getAttribute("value")).join();
+    choose("tm4");
+    await confirmBtn().dispatchClick();
+    await settle();
+    const threadRewindPostsAndRestores = threadTitle === "Rewind thread" && threadSubtitle === "Standup"
+        && threadCopy === "Rewind this thread to an earlier message. Only this thread is rewound. "
+            + "Anything its members have already done (tasks, files, memory, approvals, other messages) "
+            + "stays as it is."
+        && threadOffered === "tm4,tm3,tm1"
+        && threadPosted.length === 1 && threadPosted[0].from_message_id === "tm4"
+        && composerInput.value === "actually, wait" && dialogEl() === null;
+    check(threadRewindPostsAndRestores, `thread rewind: ${threadTitle} / ${threadSubtitle} / ${threadCopy} / `
+        + `${threadOffered} / ${JSON.stringify(threadPosted)} / ${composerInput.value}`);
+
+    // The server's channel_reset reloads the open thread, and only that one;
+    // the restored draft survives the reload.
+    const loadsBefore = threadLoads;
+    bus.publish("channel_reset", { channel_id: "t9" });
+    await settle();
+    const otherThreadIgnored = threadLoads === loadsBefore;
+    bus.publish("channel_reset", { channel_id: "t1" });
+    await settle();
+    const bodies = conversation.element.querySelectorAll(".msg-body").map((node) => node.textContent).join("|");
+    const channelResetReopensThread = otherThreadIgnored && threadLoads === loadsBefore + 1
+        && !bodies.includes("actually, wait") && bodies.includes("on it")
+        && composerInput.value === "actually, wait";
+    check(channelResetReopensThread, `channel_reset: ${otherThreadIgnored} / ${threadLoads - loadsBefore} / `
+        + `${bodies} / ${composerInput.value}`);
+
+    // A sealed thread takes no writes: no Rewind… until it is reopened.
+    store.setState({ conversationId: "t2", conversationKind: "thread" });
+    await conversation.open("t2", "thread");
+    await settle();
+    const menuOmitsRewindOnArchivedThread = !(await menuNames()).split("|").includes("Rewind…");
+    check(menuOmitsRewindOnArchivedThread, `archived thread menu: ${await menuNames()}`);
 
     conversation.destroy();
     return {
@@ -463,7 +555,10 @@ async function conversationCases() {
         menuOffersRewindWhileThinking,
         errorCardOffersRewind,
         cardRewindRestoresAndAcknowledges,
-        menuOmitsRewindOnThreads,
+        menuOffersRewindOnLiveThread,
+        menuOmitsRewindOnArchivedThread,
+        threadRewindPostsAndRestores,
+        channelResetReopensThread,
     };
 }
 

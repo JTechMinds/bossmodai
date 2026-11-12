@@ -22,6 +22,7 @@ const BossModBus = (() => {
         'agent_presence',
         'presence_snapshot',
         'channel_updated',
+        'channel_reset',
         'diagnostic',
         'agent_thought',
         'activity',

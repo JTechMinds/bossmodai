@@ -338,6 +338,13 @@ class ConnectionManager:
         """Broadcast a channel summary update to all connected clients."""
         await self.broadcast({"type": "channel_updated", "data": channel})
 
+    async def broadcast_channel_reset(self, channel_id: str) -> None:
+        """Broadcast that a thread's transcript was rewound, so open views reload it."""
+        await self.broadcast({
+            "type": "channel_reset",
+            "data": {"channel_id": channel_id},
+        })
+
     async def broadcast_floors_updated(self, floors: list[dict[str, Any]]) -> None:
         """Broadcast the full floor list after a floor was created, renamed, or deleted.
 

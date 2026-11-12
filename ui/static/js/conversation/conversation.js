@@ -44,7 +44,7 @@ const BossModConversation = (() => {
         let liveSink = null;
         let currentId = null;
         let currentKind = null;
-        let rewind = null;  // the open agent DM's Rewind flow (chat-rewind.js); null on threads
+        let rewind = null;  // the open conversation's Rewind flow (chat-rewind.js)
         // Live messages that land between subscribing and the first paint are
         // buffered rather than dropped; setMessages would otherwise erase them.
         let pendingLive = null;
@@ -118,7 +118,7 @@ const BossModConversation = (() => {
             const view = source ? source.chrome() : null;
             if (!view) return;
             chrome.apply(rewind
-                ? { ...view, actions: [...view.actions, rewind.menuAction()] }
+                ? { ...view, actions: [...view.actions, ...rewind.menuActions()] }
                 : view);
         }
 
@@ -288,14 +288,12 @@ const BossModConversation = (() => {
             currentKind = kind;
             cardCtx.agentId = kind === 'agent' ? id : null;
             source = buildSource(id, kind);
-            rewind = kind === 'agent'
-                ? BossModChatRewind.createChatRewind({
-                    source,
-                    agentName: () => source.chrome().title,
-                    composer,
-                    needs,
-                })
-                : null;
+            rewind = BossModChatRewind.createChatRewind({
+                source,
+                subjectName: () => source.chrome().title,
+                composer,
+                needs,
+            });
             // The bar rendered on the switch before this conversation's Rewind existed.
             needsBar.refresh();
             pendingLive = [];

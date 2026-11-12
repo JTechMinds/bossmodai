@@ -7,7 +7,7 @@ import logging
 from datetime import datetime
 
 from core.models import ChannelResponseCandidate, ChannelResponseRound
-from db.crud import query
+from db.crud import execute, query
 import db.response_rounds as shared
 
 logger = logging.getLogger(__name__)
@@ -159,14 +159,81 @@ def close_orphaned_channel_rounds(*, created_before: datetime) -> int:
         round_id = str(row["id"])
         if round_id in live_round_ids:
             continue
-        for candidate in list_channel_response_candidates(round_id):
-            if str(candidate.status or "") in _OPEN_CANDIDATE_STATUSES:
-                mark_channel_candidate_observed(round_id=round_id, agent_id=candidate.agent_id)
-        complete_channel_response_round(round_id)
+        _close_round_now(round_id)
         closed += 1
     if closed:
         logger.info("Closed %d orphaned channel response round(s) with no live trigger", closed)
     return closed
+
+
+def close_active_channel_rounds(channel_id: str) -> int:
+    """Complete every active response round of one thread, now.
+
+    Each round is closed the way an orphaned one is: every candidate still
+    open (``pending``, ``queued`` or ``responding``) is marked observed and
+    the round is completed, so the thread no longer reads as busy. Used by a
+    thread rewind, which re-wakes nobody.
+
+    The caller must already have removed every wake bound to the thread
+    (queued and claimed). A wake left behind would run against a completed
+    round, and its speaker would find no slot to answer in.
+
+    Args:
+        channel_id: The thread whose active rounds are closed.
+
+    Returns:
+        The number of rounds completed.
+    """
+    rounds = list_channel_response_rounds(channel_id, status="active")
+    for round_record in rounds:
+        _close_round_now(round_record.id)
+    return len(rounds)
+
+
+def delete_channel_rounds_for_sources(source_message_ids: list[str]) -> int:
+    """Delete the response rounds started by these thread messages, with their candidates.
+
+    ``channel_response_rounds.source_message_id`` references
+    ``channel_messages(id)`` and foreign keys are enforced, so a cut that
+    removes a round's source message must remove the round first; and
+    candidates reference their round, so they go before it.
+
+    Must run inside the caller's ``transaction()``: the two deletes and the
+    caller's message delete stand or fall together.
+
+    Args:
+        source_message_ids: Thread message ids. Duplicates are fine. An empty
+            list deletes nothing and runs no query.
+
+    Returns:
+        The number of rounds removed.
+    """
+    unique = list(dict.fromkeys(source_message_ids))
+    if not unique:
+        return 0
+    placeholders = ", ".join(f"${index + 1}" for index in range(len(unique)))
+    execute(
+        f"""
+        DELETE FROM channel_response_candidates
+        WHERE round_id IN (
+            SELECT id FROM channel_response_rounds WHERE source_message_id IN ({placeholders})
+        )
+        """,
+        unique,
+    )
+    removed = query(
+        f"DELETE FROM channel_response_rounds WHERE source_message_id IN ({placeholders}) RETURNING id",
+        unique,
+    )
+    return len(removed)
+
+
+def _close_round_now(round_id: str) -> None:
+    """Mark every open candidate of one round observed, then complete the round."""
+    for candidate in list_channel_response_candidates(round_id):
+        if str(candidate.status or "") in _OPEN_CANDIDATE_STATUSES:
+            mark_channel_candidate_observed(round_id=round_id, agent_id=candidate.agent_id)
+    complete_channel_response_round(round_id)
 
 
 def _payload(raw: object) -> dict:

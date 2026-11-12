@@ -1,5 +1,5 @@
 /**
- * BossMod AI — the Rewind dialog for an agent DM.
+ * BossMod AI — the Rewind dialog for an agent DM or a thread.
  *
  * Presentation only: it fetches nothing and knows no store or composer. The
  * flow that opens it, loads its rows and acts on the choice is
@@ -14,10 +14,21 @@
 const BossModChatRewindDialog = (() => {
     const { h, clear } = BossModDom;
 
-    /** What a rewind does and does not undo, said before every cut. */
-    const HONESTY_COPY = (name) => 'Rewind this conversation to an earlier message. '
-        + `Only this conversation is rewound. Anything ${name} has already done `
-        + '(tasks, files, memory, approvals, other messages) stays as it is.';
+    /**
+     * What a rewind does and does not undo, said before every cut.
+     * @param {'agent'|'thread'} kind  What is rewound.
+     * @param {string} name  Who the DM is with; a thread's copy names its members instead.
+     * @returns {string}
+     */
+    const HONESTY_COPY = (kind, name) => (kind === 'thread'
+        ? 'Rewind this thread to an earlier message. Only this thread is rewound. '
+            + 'Anything its members have already done '
+            + '(tasks, files, memory, approvals, other messages) stays as it is.'
+        : 'Rewind this conversation to an earlier message. '
+            + `Only this conversation is rewound. Anything ${name} has already done `
+            + '(tasks, files, memory, approvals, other messages) stays as it is.');
+    /** The dialog's title, by what is rewound; also the list of kinds it accepts. */
+    const TITLES = Object.freeze({ agent: 'Rewind chat', thread: 'Rewind thread' });
     /** Shown while the selected row is the operator's own. */
     const RESTORE_COPY = 'Your message goes back in the message box so you can edit it. '
         + 'Attachments aren\'t kept.';
@@ -48,7 +59,9 @@ const BossModChatRewindDialog = (() => {
      * Open the dialog in its loading state.
      *
      * @param {object} options
-     * @param {string} options.agentName  Who the DM is with; the copy names them.
+     * @param {'agent'|'thread'} options.kind  What is rewound: it picks the title and the copy.
+     * @param {string} options.subjectName  Who the DM is with, or the thread's
+     *   name: the subtitle, and the author of a row that names none.
      * @param {boolean} [options.preselectLatestHuman=false]  Select the newest
      *   operator row once the rows arrive (the error card's entry point).
      * @param {(point: object) => Promise<{warning?: string}|void>} options.onConfirm
@@ -58,10 +71,14 @@ const BossModChatRewindDialog = (() => {
      * @returns {{setPoints: (points: object[]) => void,
      *            setLoadError: (message: string) => void, close: () => void}}
      *   `setPoints` takes Messages oldest first, as the source returns them.
-     * @throws {Error} When agentName or onConfirm is missing.
+     * @throws {Error} When kind is not 'agent' or 'thread', or subjectName or
+     *   onConfirm is missing.
      */
-    function open({ agentName, preselectLatestHuman, onConfirm } = {}) {
-        if (!agentName) throw new Error('[chat-rewind-dialog] agentName is required');
+    function open({ kind, subjectName, preselectLatestHuman, onConfirm } = {}) {
+        if (!Object.prototype.hasOwnProperty.call(TITLES, kind)) {
+            throw new Error(`[chat-rewind-dialog] kind must be 'agent' or 'thread', got ${String(kind)}`);
+        }
+        if (!subjectName) throw new Error('[chat-rewind-dialog] subjectName is required');
         if (typeof onConfirm !== 'function') throw new Error('[chat-rewind-dialog] onConfirm is required');
 
         groupCount += 1;
@@ -84,15 +101,15 @@ const BossModChatRewindDialog = (() => {
         restoreEl.hidden = true;
         const errorEl = h('p', { class: 'chat-rewind-error', role: 'alert' });
         const contentEl = h('div', { class: 'chat-rewind' },
-            h('p', { class: 'chat-rewind-note' }, HONESTY_COPY(agentName)),
+            h('p', { class: 'chat-rewind-note' }, HONESTY_COPY(kind, subjectName)),
             statusEl, listEl, restoreEl, errorEl);
 
         // Rewind first and Cancel last: with nothing focusable in the loading
         // body, createModal focuses the LAST action, and the safe one should
         // take the keyboard on a destructive dialog (thread-archive.js too).
         const modal = BossModOverlays.createModal({
-            title: 'Rewind chat',
-            subtitle: agentName,
+            title: TITLES[kind],
+            subtitle: subjectName,
             body: contentEl,
             actions: [
                 { id: CONFIRM_ID, label: 'Rewind', tone: 'danger', keepOpen: true, onSelect: () => { void confirm(); } },
@@ -142,7 +159,7 @@ const BossModChatRewindDialog = (() => {
         }
 
         function buildRow(point) {
-            const who = point.author === 'human' ? 'You' : (point.authorName || agentName);
+            const who = point.author === 'human' ? 'You' : (point.authorName || subjectName);
             const input = h('input', {
                 type: 'radio',
                 name: groupName,

@@ -1,7 +1,7 @@
 /**
  * BossMod AI — the shared-thread conversation adapter.
  *
- * Adapts `GET/POST /api/channels/{id}` and the two `channel_*` broadcasts to
+ * Adapts `GET/POST /api/channels/{id}` and the `channel_*` broadcasts to
  * the one Message shape the renderer understands. It is a data adapter and
  * nothing else: it never touches the DOM. That boundary is the point of the
  * consolidation — the three renderers it replaces each knew their own wire
@@ -43,9 +43,9 @@ const BossModThreadSource = (() => {
             throw new Error('[thread-source] ctx.forgetCache is required');
         }
 
-        // Rename, pause, resume, auto-approve, Yolo and reopen: the HTTP half
-        // of each header action. What stays here is adopting the answer.
-        const requests = BossModThreadRequests.createThreadRequests({ api, threadId });
+        // Rename, pause, resume, auto-approve, Yolo, reopen and Rewind: the HTTP
+        // half of each header action. What stays here is adopting the answer.
+        const requests = BossModThreadRequests.createThreadRequests({ api, threadId, toMessage });
 
         let channel = null;
         let signals = null;
@@ -197,8 +197,8 @@ const BossModThreadSource = (() => {
         }
 
         /**
-         * Subscribe to this thread's live traffic: its posts and channel
-         * updates. Presence is not live traffic here — it is the page's store
+         * Subscribe to this thread's live traffic: its posts, channel updates
+         * and rewinds. Presence is not live traffic here — it is the page's store
          * slice, read through presenceFor — so `on.presence` only asks for a
          * repaint, when the room seals.
          * @param {{message: Function, reset: Function, presence: Function, chrome: Function}} on
@@ -215,6 +215,10 @@ const BossModThreadSource = (() => {
                     }
                     if (isRoundMarker(data)) return;
                     on.message(toMessage(data));
+                    return;
+                }
+                if (topic === 'channel_reset') {
+                    if (data && data.channel_id === threadId) on.reset();
                     return;
                 }
                 if (topic === 'channel_updated') {
@@ -372,6 +376,8 @@ const BossModThreadSource = (() => {
             kind: 'thread',
             load,
             send,
+            rewindPoints: requests.rewindPoints,
+            rewind: requests.rewind,
             context,
             subscribe,
             presenceFor,

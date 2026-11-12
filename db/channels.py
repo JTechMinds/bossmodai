@@ -14,6 +14,7 @@ from core.models import (
     THREAD_STALE_SKIP_KIND,
     THREAD_STALE_SKIP_LINE,
 )
+from db.channel_response_rounds import delete_channel_rounds_for_sources
 from db.connection import get_connection, transaction
 from db.conversation_notes import AnchorMissing, delete_conversation_notes, get_conversation_notes
 from db.crud import execute, fetch_all, fetch_one, insert_returning, query, query_one
@@ -496,6 +497,55 @@ def delete_channel_message(message_id: str) -> ChannelMessage | None:
         if notes is not None and notes.get("through_message_id") == removed.id:
             delete_conversation_notes("channel", removed.channel_id)
     return removed
+
+
+def delete_channel_messages_from(channel_id: str, from_message_id: str) -> list[str]:
+    """Delete one thread message and every later message of the same thread.
+
+    This is the one definition of a thread rewind cut. "Later" is the
+    thread's own order, ``(julianday(created_at), rowid)`` (see
+    ``list_thread_rows_newest_first``): ``julianday()`` compares the
+    timestamps as instants rather than as text, and ``rowid`` breaks a tie in
+    insertion order. Rows of every author go, system lines and request cards
+    included. Response rounds started by a removed row are deleted first,
+    with their candidates, because their ``source_message_id`` references it.
+
+    Must run inside the caller's ``transaction()``: the lookup and the
+    deletes are several statements, and the caller also removes the thread's
+    wakes, closes its remaining active rounds and deletes the attachments of
+    the removed rows.
+
+    Args:
+        channel_id: The thread that is rewound.
+        from_message_id: The first message to remove.
+
+    Returns:
+        The ids of the removed messages, in no particular order.
+
+    Raises:
+        LookupError: ``from_message_id`` does not exist, or is not a message
+            of this thread. Nothing is deleted.
+    """
+    cut = query_one(
+        "SELECT julianday(created_at) AS cut_day, rowid AS cut_rowid "
+        "FROM channel_messages WHERE id = $1 AND channel_id = $2",
+        [from_message_id, channel_id],
+    )
+    if cut is None:
+        raise LookupError(f"Message {from_message_id!r} is not in thread {channel_id!r}")
+    later = (
+        "channel_id = $1 AND (julianday(created_at) > $2 "
+        "OR (julianday(created_at) = $2 AND rowid >= $3))"
+    )
+    params = [channel_id, cut["cut_day"], cut["cut_rowid"]]
+    ids = [str(row["id"]) for row in query(f"SELECT id FROM channel_messages WHERE {later}", params)]
+    delete_channel_rounds_for_sources(ids)
+    rows = query(f"DELETE FROM channel_messages WHERE {later} RETURNING id", params)
+    # Unconditional, even when the cut lies after the notes' anchor: the
+    # rewound rows may be folded into the notes, and the next turn above the
+    # start threshold compacts again from the rows that remain.
+    delete_conversation_notes("channel", channel_id)
+    return [str(row["id"]) for row in rows]
 
 
 def list_queue_visibility_channel_messages(agent_id: str) -> list[ChannelMessage]:

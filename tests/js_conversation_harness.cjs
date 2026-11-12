@@ -1000,10 +1000,10 @@ async function main() {
         throw new Error(`a live thread's row must be empty at rest, got ${actionNames().join("|")}`);
     }
     // The panel, in DOM order: the Thread section (Add people…, Pause, then
-    // Archive), then the Chat section's switches, then Advanced's Yolo mode.
-    // Archive is in there and nowhere on the row.
+    // Archive), then the Chat section (Rewind…, then its switches), then
+    // Advanced's Yolo mode. Archive is in there and nowhere on the row.
     const archiveLivesInTheMenu = await menuActionNames()
-        === "Add people…|Pause thread|Archive|Auto-approve safe commands|Show system notifications|Yolo mode";
+        === "Add people…|Pause thread|Archive|Rewind…|Auto-approve safe commands|Show system notifications|Yolo mode";
     if (!archiveLivesInTheMenu) {
         throw new Error(`Archive must be behind the \`⋯\`, got ${await menuActionNames()}`);
     }
@@ -1428,7 +1428,7 @@ async function main() {
         && menu.panel.querySelectorAll(".menu-divider").length === 2
         && sectionRows(threadSections[0]).join("|") === "Add people…|Pause thread|Archive"
         && sectionRows(threadSections[2]).join("|")
-            === "Auto-approve safe commands|Show system notifications"
+            === "Rewind…|Auto-approve safe commands|Show system notifications"
         && sectionRows(threadSections[4]).join("|") === "Yolo mode"
         && sectionIsLabelled(threadSections[0]) && sectionIsLabelled(threadSections[2])
         && sectionIsLabelled(threadSections[4])

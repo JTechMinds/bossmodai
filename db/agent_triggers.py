@@ -979,6 +979,85 @@ def take_open_human_chat_triggers(
     return triggers
 
 
+# A thread conversation wake: its payload's ``channel_id`` names the thread.
+# A payload that is not valid JSON never matches (the CASE keeps json_extract
+# from raising on it), as in ``channel_has_open_trigger``.
+_CHANNEL_WAKE_MATCH = (
+    "trigger_type IN ('" + "', '".join(sorted(_CHANNEL_PEER_TRIGGER_TYPES)) + "') "
+    "AND TRIM(CASE WHEN json_valid(payload) THEN json_extract(payload, '$.channel_id') END) = $1"
+)
+
+
+def take_open_channel_wakes(channel_id: str, *, statuses: tuple[str, ...]) -> list[AgentTrigger]:
+    """Delete one thread's open conversation wakes, of every agent, and return them.
+
+    A conversation wake is a ``channel_message`` or ``channel_response``
+    trigger whose payload ``channel_id`` is this thread. Task work, other
+    threads, DMs and extension events are never taken. One statement deletes
+    and returns, so a caller that may have to queue them again (a thread
+    rewind whose cancel or cut failed) does so with the exact rows it removed.
+
+    Args:
+        channel_id: The thread whose wakes are taken.
+        statuses: Which open rows to take: ``("queued",)``, ``("claimed",)``
+            or both. A claimed row is a turn that is running, or one that was
+            cancelled and left behind.
+
+    Returns:
+        The removed rows, payloads included, oldest first.
+
+    Raises:
+        ValueError: ``channel_id`` is blank, or ``statuses`` is empty or names
+            a status that is not open.
+    """
+    token = (channel_id or "").strip()
+    if not token:
+        raise ValueError("take_open_channel_wakes needs a channel_id")
+    if not statuses or not set(statuses) <= _OPEN_TRIGGER_STATUSES:
+        raise ValueError(f"statuses must be a non-empty subset of {sorted(_OPEN_TRIGGER_STATUSES)}: {statuses!r}")
+    wanted = list(dict.fromkeys(statuses))
+    placeholders = ", ".join(f"${i + 2}" for i in range(len(wanted)))
+    rows = query(
+        f"""
+        DELETE FROM agent_triggers
+        WHERE {_CHANNEL_WAKE_MATCH}
+          AND status IN ({placeholders})
+        RETURNING {_TRIGGER_COLUMNS}
+        """,
+        [token, *wanted],
+    )
+    triggers = [AgentTrigger.model_validate(row) for row in rows]
+    # RETURNING has no ORDER BY; oldest first is the order they were sent in.
+    triggers.sort(key=lambda trigger: (trigger.created_at, trigger.id))
+    return triggers
+
+
+def list_agents_with_claimed_channel_wake(channel_id: str) -> list[str]:
+    """Return the agents whose claimed conversation wake is for this thread.
+
+    A claimed ``channel_message`` or ``channel_response`` trigger whose
+    payload ``channel_id`` is this thread is a turn in this thread that is
+    running (or was cancelled and left behind). A blank id names no thread.
+
+    Returns:
+        Distinct agent ids, sorted.
+    """
+    token = (channel_id or "").strip()
+    if not token:
+        return []
+    rows = query(
+        f"""
+        SELECT DISTINCT agent_id
+        FROM agent_triggers
+        WHERE {_CHANNEL_WAKE_MATCH}
+          AND status = 'claimed'
+        ORDER BY agent_id
+        """,
+        [token],
+    )
+    return [str(row["agent_id"]) for row in rows]
+
+
 def delete_open_triggers(agent_id: str) -> int:
     """Delete queued or claimed triggers for an agent and return rows removed."""
     row = query_one(

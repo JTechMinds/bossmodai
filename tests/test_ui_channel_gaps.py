@@ -79,6 +79,9 @@ CONVERSATION_STACK = [
     JS / "conversation" / "sources" / "agent-source.js",
     JS / "conversation" / "conversation-focus-invalidate.js",
     JS / "conversation" / "conversation-window.js",
+    # Every conversation, a thread included, builds its Rewind on open.
+    JS / "conversation" / "chat-rewind-dialog.js",
+    JS / "conversation" / "chat-rewind.js",
     JS / "conversation" / "conversation.js",
     # The agent `⋯` every conversation is handed; a thread never paints its
     # rows, so the menu alone (it names nothing else until a row is picked).

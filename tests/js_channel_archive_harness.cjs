@@ -36,7 +36,8 @@ const NAMES = [
     "BossModEmptyState", "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",     "BossModDesktopClipboard", "BossModComposerAttachments", "BossModComposerHistory", "BossModMentionDraft", "BossModComposer", "BossModSystemReceipts",
     "BossModNeedShape", "BossModNeedsBar", "BossModThreadArchive", "BossModThreadSeat", "BossModThreadRequests", "BossModApprovalControls", "BossModThreadMembers", "BossModThreadSource",
-    "BossModAgentSource", "BossModConversationFocus", "BossModConversationWindow", "BossModConversation",
+    "BossModAgentSource", "BossModConversationFocus", "BossModConversationWindow",
+    "BossModChatRewindDialog", "BossModChatRewind", "BossModConversation",
     "BossModAgentMenu",
 ];
 if (paths.length !== NAMES.length) {
@@ -88,6 +89,8 @@ BossModOperatorInvalidate.attach({ bus });
 const needsStub = {
     refresh: () => Promise.resolve(),
     resolve: () => Promise.resolve(),
+    // A thread builds its Rewind on open, which takes the store's acknowledge.
+    acknowledge: () => {},
     getError: () => "",
     subscribeError: () => () => {},
     destroy: () => {},

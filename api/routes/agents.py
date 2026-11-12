@@ -19,6 +19,7 @@ from api.websocket import manager
 from core import config
 from core.boss import boss_label, ensure_agent_name_allowed
 from core.chat_rewind import rewind_human_chat
+from core.thread_rewind import rewind_thread
 from core.agent_loop import activity_runtime
 from core.agent_loop.standing_prefs import MemoryNotFoundError, list_memories, remove_memory
 from core.agent_loop.conversation_notes import ThreadScope, ThreadWindow, load_thread_window
@@ -37,6 +38,7 @@ from core.models import (
     AgentUpdate,
 )
 from core.models.agent_template import AgentTemplate
+from core.models.channel import ChannelArchivedError
 from core.models.message import HUMAN_SENDER_ID
 from core.agent_loop.channel_host import is_thread_paused, pause_thread, paused_thread_ids, resume_thread
 from core.channel_archive import archive_thread_as_operator, reopen_thread_as_operator
@@ -128,6 +130,12 @@ class CliYoloBody(BaseModel):
 
 class ChannelMemberBody(BaseModel):
     agent_id: str
+
+
+class ChatRewindBody(BaseModel):
+    """The message a rewind starts at; it and everything after it go."""
+
+    from_message_id: str = Field(min_length=1)
 
 
 class AgentDeskSaveBody(BaseModel):
@@ -609,6 +617,75 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
             message, get_attachments_for_messages([message.id])[message.id],
         ),
         "member_count": len(result["members"]),
+    }
+
+
+@router.post("/channels/{channel_id}/rewind")
+async def rewind_channel_thread(channel_id: str, body: ChatRewindBody):
+    """Rewind a thread to before one message.
+
+    Deletes the message and every later row of the thread with their
+    attachments, stops the thread's live replies, and closes its active
+    rounds. Nobody is woken again: the operator sends again for fresh
+    replies. See ``core.thread_rewind.rewind_thread`` for the ordering. When
+    a reply was stopped, it also sends the world snapshot: the agents'
+    status was refreshed in this process, where runtime events reach no
+    client.
+
+    Returns:
+        ``{status, removed_messages, removed_attachments, unremoved_files,
+        stopped_agents, dropped_wakes}``; ``stopped_agents`` and
+        ``dropped_wakes`` are counts.
+
+    Raises:
+        HTTPException: 404 when the thread is missing or the message is not
+            in it; 409 when the thread is archived; 503 when a live reply
+            could not be stopped (the thread's queued wakes were put back,
+            nothing was deleted).
+    """
+    channel = db.get_channel(channel_id)
+    if channel is None:
+        raise HTTPException(404, "Thread not found")
+    if channel.status == "archived":
+        raise HTTPException(409, "Thread archived")
+    try:
+        result = await rewind_thread(channel.id, body.from_message_id, services=runtime_services)
+    except ChannelArchivedError as exc:
+        # Archived after the check above: the same answer as before it.
+        raise HTTPException(409, "Thread archived") from exc
+    except LookupError as exc:
+        raise HTTPException(404, "Message not found in this thread") from exc
+    except RuntimeError as exc:
+        raise HTTPException(503, f"Could not stop the thread's replies: {exc}") from exc
+
+    removed = len(result.removed_message_ids)
+    stopped = bool(result.stopped_agent_ids)
+    await manager.broadcast_channel_reset(channel.id)
+    await manager.broadcast_channel_updated(_serialize_channel_summary(
+        channel,
+        members=db.list_channel_member_details(channel.id),
+        latest_message=db.get_latest_channel_message(channel.id),
+    ))
+    await manager.broadcast_activity(
+        event="thread_rewound",
+        detail=(
+            f'Thread "{channel.name}" rewound ({removed} messages removed'
+            f'{", replies stopped" if stopped else ""})'
+        ),
+        agent_name=None,
+    )
+    if stopped:
+        # The rewind refreshed the stopped agents' status in this, the app
+        # process, where runtime_events has no sink: the snapshot that
+        # refresh asked for reaches no client, so the route sends it.
+        await manager.broadcast_world_state()
+    return {
+        "status": "ok",
+        "removed_messages": removed,
+        "removed_attachments": result.removed_attachments,
+        "unremoved_files": result.unremoved_files,
+        "stopped_agents": len(result.stopped_agent_ids),
+        "dropped_wakes": result.dropped_wakes,
     }
 
 
@@ -1884,12 +1961,6 @@ async def clear_agent_chat_history(agent_id: str):
         "deleted_messages": deleted,
         "deleted_notifications": deleted_notifications,
     }
-
-
-class ChatRewindBody(BaseModel):
-    """The message a DM rewind starts at; it and everything after it go."""
-
-    from_message_id: str = Field(min_length=1)
 
 
 @router.post("/agents/{agent_id}/chat-rewind")

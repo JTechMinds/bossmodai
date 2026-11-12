@@ -544,7 +544,7 @@ def test_conversation_harness() -> None:
 
 
 def test_chat_rewind_harness() -> None:
-    """The agent DM's Rewind: its flow, its dialog, and where it is offered.
+    """Rewind on an agent DM and on a thread: its flow, its dialog, and where it is offered.
 
     The flow runs on fake source, composer and needs, because its promise is
     the order it calls them in; the dialog and the conversation are real.
@@ -578,14 +578,19 @@ def test_chat_rewind_harness() -> None:
         "choosingMarksNewerRows": True,
         "rejectedConfirmKeepsModal": True,
         "warningShowsDoneState": True,
-        # conversation.js: the `⋯` on agent DMs (thinking included), never on
-        # threads, and the open agent's error card, in the chat place's order
-        # (the bar renders before the conversation opens).
+        # conversation.js: the `⋯` on agent DMs (thinking included) and the
+        # open agent's error card, in the chat place's order (the bar renders
+        # before the conversation opens); the `⋯` on a live thread, never on
+        # an archived one, its cut through the real thread source, and the
+        # reload its channel_reset broadcast triggers.
         "menuOffersRewindOnAgentDm": True,
         "menuOffersRewindWhileThinking": True,
         "errorCardOffersRewind": True,
         "cardRewindRestoresAndAcknowledges": True,
-        "menuOmitsRewindOnThreads": True,
+        "menuOffersRewindOnLiveThread": True,
+        "menuOmitsRewindOnArchivedThread": True,
+        "threadRewindPostsAndRestores": True,
+        "channelResetReopensThread": True,
     }
 
 

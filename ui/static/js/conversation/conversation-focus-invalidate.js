@@ -12,6 +12,7 @@ const BossModConversationFocus = (() => {
         'chat_reset',
         'channel_message',
         'channel_updated',
+        'channel_reset',
         'meeting_message',
         'conversation_notes_updated',
         'resync',
