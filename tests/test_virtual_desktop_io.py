@@ -127,6 +127,12 @@ def test_the_prompt_and_help_say_how_to_leave_something_running() -> None:
     assert advice in ENTRY.manifest.command.help
 
 
+def test_the_prompt_and_help_say_the_desktop_has_its_own_disk() -> None:
+    advice = "The desktop has its own disk, separate from your BossMod files"
+    assert advice in (Path(PACKAGE.__file__).with_name("prompt.md")).read_text(encoding="utf-8")
+    assert advice in ENTRY.manifest.command.help
+
+
 def test_run_takes_one_quoted_command_several_words_or_the_body(env) -> None:
     env["run"]('vm run "ls -la && pwd"')
     env["run"]("vm run python -c 'print(1)'")
