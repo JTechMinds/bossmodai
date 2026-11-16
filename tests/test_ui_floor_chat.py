@@ -37,6 +37,7 @@ def test_floor_chat_behaviour() -> None:
         "crossFloorOpenFollows": True,
         "unknownConversationRecordsOnTheCurrentFloor": True,
         "noOpOpenDoesNotNotify": True,
+        "suspendedFloorConversationCloses": True,
         "destroyDrainsTheStore": True,
     }
 

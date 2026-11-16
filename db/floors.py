@@ -6,13 +6,15 @@ existing agent and thread lands on, so nothing is left without a home.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from core.models.floor import Floor
-from db.crud import execute, fetch_all, fetch_one
+from db.crud import execute, fetch_all, fetch_one, query
 
 LOBBY_ID = "lobby"
 LOBBY_NAME = "Lobby"
 
-_COLUMNS = "id, name, created_at"
+_COLUMNS = "id, name, created_at, suspended_at"
 
 
 def ensure_lobby() -> str:
@@ -56,7 +58,11 @@ def get_floor_by_name(name: str) -> Floor | None:
 
 
 def list_floors() -> list[Floor]:
-    """Return every floor, Lobby first, then by name."""
+    """Return every floor, Lobby first, then by name.
+
+    Suspended floors are included; each row carries ``suspended_at`` (None
+    while active), so a caller splits active from suspended itself.
+    """
     ensure_lobby()
     return fetch_all(
         f"""
@@ -67,6 +73,42 @@ def list_floors() -> list[Floor]:
         [LOBBY_ID],
         Floor,
     )
+
+
+def set_floor_suspended(floor_id: str, suspended_at: datetime | None) -> Floor:
+    """Suspend one floor (``suspended_at`` set) or resume it (``None``).
+
+    Only writes the flag; the clean stop and the resume rules live in
+    ``core/floor_suspend.py``.
+
+    Args:
+        floor_id: The floor to change.
+        suspended_at: The instant it was suspended, or ``None`` to resume.
+
+    Returns:
+        The floor as stored after the write.
+
+    Raises:
+        ValueError: The floor is Lobby, which must always stay active.
+        LookupError: No floor has this id.
+    """
+    token = (floor_id or "").strip()
+    if token == LOBBY_ID:
+        raise ValueError("Lobby cannot be suspended")
+    updated = fetch_one(
+        f"UPDATE floors SET suspended_at = $1 WHERE id = $2 RETURNING {_COLUMNS}",
+        [suspended_at, token],
+        Floor,
+    )
+    if updated is None:
+        raise LookupError("Floor not found")
+    return updated
+
+
+def suspended_floor_ids() -> frozenset[str]:
+    """Return the ids of every suspended floor, in one query."""
+    rows = query("SELECT id FROM floors WHERE suspended_at IS NOT NULL")
+    return frozenset(str(row["id"]) for row in rows)
 
 
 class FloorNameTaken(ValueError):
@@ -90,10 +132,23 @@ def _normalize_name(name: str) -> str:
 
 
 def create_floor(name: str) -> Floor:
-    """Create a labeled floor, or return the one that already has this name."""
+    """Create a labeled floor, or return the active one that already has this name.
+
+    The label is normalized and validated (``_normalize_name``). An active
+    floor with the same name, ignoring case, is returned unchanged. A
+    suspended one is refused instead: returning it would put the operator on
+    a floor that is off the list.
+
+    Raises:
+        ValueError: The label is blank or too long.
+        FloorNameTaken: A suspended floor already uses the label, ignoring case.
+        RuntimeError: The insert returned no row.
+    """
     label = _normalize_name(name)
     existing = get_floor_by_name(label)
     if existing is not None:
+        if existing.suspended_at is not None:
+            raise FloorNameTaken("A suspended floor already uses that name. Resume it from Suspended floors.")
         return existing
     import uuid
 

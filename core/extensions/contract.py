@@ -35,9 +35,10 @@ refuses an instance that lacks the Protocol its manifest declares:
 - ``settings`` → :class:`SupportsSettings` (extension-wide values the host
   stores wrapped at rest and verifies through the extension on save; the
   extension reads them only through ``ExtensionContext.read_settings``);
-- :class:`SupportsPromptState`, :class:`SupportsAgentConfigChanged` and
-  :class:`SupportsAgentReconcile` need no manifest flag (the last two are
-  called in the runtime worker by ``core.extensions.agent_hooks``).
+- :class:`SupportsPromptState`, :class:`SupportsAgentConfigChanged`,
+  :class:`SupportsAgentReconcile` and :class:`SupportsAgentRelease` need no
+  manifest flag (the last three are called in the runtime worker by
+  ``core.extensions.agent_hooks``).
 """
 
 from __future__ import annotations
@@ -363,6 +364,33 @@ class SupportsAgentReconcile(Protocol):
         ...
 
 
+@runtime_checkable
+class SupportsAgentRelease(Protocol):
+    """Optional: an extension that runs something per agent (a desktop, a browser session).
+
+    Needs no manifest flag. Called when agents leave service (their floor is
+    suspended, or they go on vacation) but still exist, so unlike
+    :class:`SupportsAgentReconcile` nothing they own is deleted.
+    """
+
+    def release_agents(self, agent_ids: frozenset[str]) -> None:
+        """Stop what this extension runs for these agents and keep their stored data.
+
+        The agents still exist and may use it again: a desktop is powered
+        down with its disk kept, a browser session is closed. Called in the
+        runtime worker, off its loop. Must be idempotent: an agent with
+        nothing running is skipped.
+
+        Args:
+            agent_ids: The agents leaving service.
+
+        Raises:
+            Exception: The extension's own errors. The host logs them with
+                the traceback and moves on to the next extension.
+        """
+        ...
+
+
 class ConfigError(Exception):
     """A config (per-agent or extension-wide) failed verification; the message is shown to the operator verbatim."""
 
@@ -548,8 +576,8 @@ class SupportsWake(Protocol):
     def skip_wake(self, agent_id: str) -> None:
         """Advance this agent's cursor to now without delivering anything (no network call).
 
-        Called instead of ``poll_wake`` while the agent is on vacation, so
-        what arrives meanwhile never wakes it.
+        Called instead of ``poll_wake`` while the agent is on vacation or its
+        floor is suspended, so what arrives meanwhile never wakes it.
         """
         ...
 

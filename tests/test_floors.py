@@ -35,10 +35,10 @@ from core.floors import (
     FloorOccupantsChoiceRequired,
     delete_floor,
     keep_one_floor,
-    send_home,
     shared_floor_id,
 )
 from core.messaging import route_human_dm
+from core.models.channel import THREAD_ARCHIVED_CANCEL_LINE
 from core.models.agent import AgentUpdate
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
@@ -47,6 +47,7 @@ from db.sticky_slots import list_sticky_slots, upsert_sticky_slots
 from integrations.telegram.bot import cmd_channels, cmd_join, cmd_thread
 from integrations.telegram.join_list import reset_channel_list_snapshots
 from integrations.telegram.sessions import get_session
+from tests._stand_down import send_on_vacation
 
 
 def setup_function() -> None:
@@ -302,13 +303,13 @@ def test_a_peer_reply_is_announced_whether_or_not_it_wakes_the_sender() -> None:
         assert (peer["from_agent_id"], peer["to_agent_id"]) == (ada.id, bob.id)
 
 
-def test_shared_floor_id_names_the_floor_only_when_both_agents_live_on_it() -> None:
+async def test_shared_floor_id_names_the_floor_only_when_both_agents_live_on_it() -> None:
     finance = create_floor("Finance")
     ada = _agent("Ada", 1)
     bob = _agent("Bob", 2)
     cy = _agent("Cy", 3, floor_id=finance.id)
     away = _agent("Away", 4)
-    send_home(away.id)
+    await send_on_vacation(away.id)
 
     assert shared_floor_id(ada.id, bob.id) == LOBBY_ID
     assert shared_floor_id(ada.id, cy.id) is None
@@ -541,18 +542,22 @@ class _Services:
     """Records runtime resets. The floor delete must cancel a live turn per agent.
 
     Also records each extensions reconcile with the agent ids that existed
-    when it was filed.
+    when it was filed, and each extensions release (a send-home's stand-down).
     """
 
     def __init__(self) -> None:
         self.resets: list[str] = []
         self.reconciled: list[list[str]] = []
+        self.released: list[list[str]] = []
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         self.resets.append(agent_id)
 
     def extensions_reconcile(self) -> None:
         self.reconciled.append(sorted(agent.id for agent in db.list_agents()))
+
+    def extensions_release_agents(self, agent_ids: list[str]) -> None:
+        self.released.append(list(agent_ids))
 
     async def enqueue_trigger(self, **_kwargs: object) -> None:
         raise AssertionError("a floor delete must not wake anyone")
@@ -671,6 +676,153 @@ async def test_delete_floor_send_home_discards_the_cancelled_turns_claim() -> No
     assert db.get_agent_trigger(row.id) is None
 
 
+def _dm_task(title: str, assignee_id: str):
+    """A task the operator asked for in the agent's DM: it has no thread, so only its assignee ties it here."""
+    return create_or_bind_task(
+        title=title, description="Work", project=None, assigned_to=assignee_id, requester_id=HUMAN_SENDER_ID,
+        owner_id=None, created_by=HUMAN_SENDER_ID, parent_task_id=None, work_contract=None,
+        source_channel="chat", notification_policy="completion_blocked", notification_channel_id=None,
+        audit_author_name="Human Operator", audit_author_type="human",
+    ).task
+
+
+async def test_send_home_closes_every_gate_in_one_go_before_any_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    import core.stand_down as stand_down_module
+    from core.floors import FLOOR_DELETED, send_home
+
+    finance = create_floor("Finance")
+    ada, bob = _agent("Ada", 1, floor_id=finance.id), _agent("Bob", 2, floor_id=finance.id)
+    desk = db.create_channel(name="Desk", member_agent_ids=[ada.id, bob.id], created_by=ada.id)
+
+    with pytest.raises(LookupError, match="nobody"):
+        await send_home([ada.id, "nobody"], why=FLOOR_DELETED, extra_task_ids=[], services=_Services())
+    assert db.get_agent(ada.id).floor_id == finance.id, "an unknown id is refused before anything is written"
+
+    seen: dict[str, object] = {}
+    real = stand_down_module.stand_down
+
+    async def _spy(agent_ids: list[str], **kwargs: object):
+        for agent_id in agent_ids:
+            agent = db.get_agent(agent_id)
+            seen[agent_id] = (agent.floor_id, agent.vacation_since is not None)
+        seen["members"] = db.list_channel_members(desk.id)
+        return await real(agent_ids, **kwargs)
+
+    monkeypatch.setattr(stand_down_module, "stand_down", _spy)
+    services = _Services()
+
+    sent = await send_home([ada.id, bob.id], why=FLOOR_DELETED, extra_task_ids=[], services=services)
+
+    assert seen == {ada.id: (None, True), bob.id: (None, True), "members": []}
+    assert sent.agent_ids == [ada.id, bob.id]
+    assert services.released == [[ada.id, bob.id]]
+
+
+async def test_sending_a_floor_home_ends_their_work() -> None:
+    """Vacation is a clean stop: nothing is left waiting on someone who is never woken."""
+    finance = create_floor("Finance")
+    ada, bob = _agent("Ada", 1, floor_id=finance.id), _agent("Bob", 2, floor_id=finance.id)
+    desk = db.create_channel(name="Desk", member_agent_ids=[ada.id, bob.id], created_by=ada.id)
+    dm_task = _dm_task("Quarterly report", ada.id)
+    bound = _bind(title="Thread card", assigned_to=bob.id, owner_id=None, channel_id=desk.id)
+    approval = db.create_cli_approval_request(agent_id=ada.id, command="make deploy")
+    consent = db.create_consent_request(agent_id=bob.id, path="/srv/data", grant_root="/srv/data", reason="Read")
+    [session] = db.query(
+        "INSERT INTO meeting_sessions (room_id, title, status) VALUES ('meeting_room', 'Sync', 'active') RETURNING id",
+    )
+    db.execute(
+        "INSERT INTO meeting_session_meta (session_id, host_agent_id, meeting_mode, phase) "
+        "VALUES ($1, $2, 'room', 'active')",
+        [session["id"], ada.id],
+    )
+    services = _Services()
+    painted: list[list[dict[str, object]]] = []
+
+    async def _paint(lines: list[dict[str, object]]) -> None:
+        painted.append(lines)
+
+    result = await delete_floor(finance.id, occupants="send_home", services=services, on_before_seal=_paint)
+
+    assert sorted(result.tasks_cancelled) == sorted([dm_task.id, bound.task.id])
+    for task_id in (dm_task.id, bound.task.id):
+        task = db.get_task(task_id)
+        assert (task.status, task.status_note) == ("cancelled", "Cancelled: the floor was deleted")
+    assert db.get_cli_approval_request(approval.id).status == "rejected"
+    assert (db.get_consent_request(consent.id).status, db.get_consent_request(consent.id).decision_by) == (
+        "denied", "system",
+    )
+    assert db.get_meeting_session_meta(session["id"])["phase"] == "ended"
+    assert services.released == [[ada.id, bob.id]]
+    # The stand-down's lines are painted first, before any thread seals; the
+    # archive then finds nothing open and paints no cancel line of its own.
+    first = painted[0]
+    dm_line = next(item["chat_message"] for item in first if "chat_message" in item)
+    assert dm_line["agent_id"] == ada.id and "Cancelled: the floor was deleted" in dm_line["content"]
+    assert any("meeting_message" in item for item in first)
+    assert painted[1:] == [[]]
+    thread_lines = [item.content for item in db.list_channel_messages(desk.id, limit=50)]
+    assert len([line for line in thread_lines if "Cancelled" in line]) == 1
+    assert THREAD_ARCHIVED_CANCEL_LINE not in thread_lines
+
+
+async def test_the_watchdog_leaves_a_vacationer_alone() -> None:
+    from datetime import datetime, timedelta, timezone
+
+    from core.agent_loop.watchdog import TaskWatchdog
+
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    task = _dm_task("Quarterly report", ada.id)
+    long_ago = datetime.now(timezone.utc) - timedelta(days=2)
+    db.update_task(
+        task.id, status="accepted", last_progress_at=long_ago, last_heartbeat_at=long_ago, watchdog_pinged_at=long_ago,
+    )
+
+    await delete_floor(finance.id, occupants="send_home", services=_Services())
+    await TaskWatchdog()._check_tasks()
+
+    assert db.get_task(task.id).status == "cancelled", "not stalled"
+    assert db.list_agent_triggers(ada.id, status="queued") == [], "not pinged"
+
+
+async def test_a_vacationer_comes_back_idle_and_seated() -> None:
+    from core.floors import bring_back
+
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 4, floor_id=finance.id)
+    db.create_runtime_activity(ada.id, "movement", title="Walk", destination="Kitchen")
+    await delete_floor(finance.id, occupants="send_home", services=_Services())
+
+    returned = bring_back(ada.id, LOBBY_ID)
+
+    assert returned.floor_id == LOBBY_ID
+    assert [item for item in db.list_activities(agent_id=ada.id, limit=20) if item.status in {"active", "paused"}] == []
+    state = db.get_agent_state(ada.id)
+    assert (state.x, state.y) == (returned.desk_x, returned.desk_y)
+    assert state.status == "idle"
+
+
+def test_floor_delete_api_announces_cancelled_tasks(monkeypatch: pytest.MonkeyPatch) -> None:
+    services = _Services()
+    monkeypatch.setattr("api.routes.floors.runtime_services", services)
+    activities: list[tuple[str, str]] = []
+
+    async def _activity(event: str, detail: str, **_kwargs: object) -> None:
+        activities.append((event, detail))
+
+    monkeypatch.setattr("api.routes.floors.manager.broadcast_activity", _activity)
+    finance = create_floor("Finance")
+    ada = _agent("Ada", 1, floor_id=finance.id)
+    task = _dm_task("Quarterly report", ada.id)
+    client, headers = _client()
+
+    response = client.delete(f"/api/floors/{finance.id}?occupants=send_home", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["tasks_cancelled"] == [task.id]
+    assert ("task_cancelled", "Cancelled 1 task: the floor was deleted") in activities
+
+
 async def test_delete_floor_can_delete_its_agents() -> None:
     finance = create_floor("Finance")
     ada = _agent("Ada", 1, floor_id=finance.id)
@@ -698,6 +850,7 @@ def test_floor_delete_api_reports_what_it_did(monkeypatch: pytest.MonkeyPatch) -
         "threads_archived": [desk.id],
         "folder_archived": True,
         "process_stopped_agent_ids": [],
+        "tasks_cancelled": [],
     }
 
 
@@ -767,9 +920,9 @@ def test_floor_create_rename_delete_each_broadcast_the_whole_list(
     assert listed() == {(LOBBY_ID, lobby_name)}
 
 
-def test_init_db_never_pulls_a_vacationer_back_into_lobby() -> None:
+async def test_init_db_never_pulls_a_vacationer_back_into_lobby() -> None:
     ada = _agent("Ada", 1)
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
     db.init_db()
     agent = db.get_agent(ada.id)
     assert agent.floor_id is None
@@ -779,8 +932,12 @@ def test_init_db_never_pulls_a_vacationer_back_into_lobby() -> None:
 async def test_a_vacationer_is_hidden_unassignable_and_never_woken() -> None:
     ada = _agent("Ada", 1)
     bob = _agent("Bob", 2)
-    send_home(ada.id)
-    assert send_home(ada.id).vacation_since is not None  # idempotent
+    await send_on_vacation(ada.id)
+    since = db.get_agent(ada.id).vacation_since
+    assert since is not None
+    again = await send_on_vacation(ada.id)  # idempotent
+    assert again.agent_ids == [ada.id] and again.tasks_cancelled == []
+    assert db.get_agent(ada.id).vacation_since == since
 
     assert ada.id not in {row["id"] for row in db.get_world_state()}
     assert bob.id in {row["id"] for row in db.get_world_state()}
@@ -810,7 +967,7 @@ async def test_a_vacationer_is_hidden_unassignable_and_never_woken() -> None:
 
 async def test_dispatcher_fails_a_trigger_written_for_a_vacationer() -> None:
     ada = _agent("Ada", 1)
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
     # Written straight to the queue, the way a row from before the vacation
     # or from a path that bypasses enqueue would be.
     row = db.create_agent_trigger(
@@ -825,11 +982,11 @@ async def test_dispatcher_fails_a_trigger_written_for_a_vacationer() -> None:
     assert failed.failure_reason == VACATION_DENY
 
 
-def test_vacation_api_lists_and_brings_back() -> None:
+async def test_vacation_api_lists_and_brings_back() -> None:
     ada = _agent("Ada", 1)
     bob = _agent("Bob", 2)
     finance = create_floor("Finance")
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
     client, headers = _client()
 
     listed = client.get("/api/agents/vacation", headers=headers)
@@ -851,16 +1008,16 @@ def test_vacation_api_lists_and_brings_back() -> None:
     assert client.get("/api/agents/vacation", headers=headers).json() == []
 
 
-def test_activate_answers_409_for_a_vacationer() -> None:
+async def test_activate_answers_409_for_a_vacationer() -> None:
     ada = _agent("Ada", 1)
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
     client, headers = _client()
     response = client.post(f"/api/agents/{ada.id}/activate", headers=headers, json={"content": "hi"})
     assert response.status_code == 409
     assert response.json()["detail"] == VACATION_DENY
 
 
-def test_bring_back_moves_a_returner_off_a_chair_taken_on_the_target_floor() -> None:
+async def test_bring_back_moves_a_returner_off_a_chair_taken_on_the_target_floor() -> None:
     """A vacationer keeps its old desk; on the floor it returns to that chair
     may belong to someone else, and two bodies on one chair is the stack."""
     from core.floors import bring_back
@@ -868,7 +1025,7 @@ def test_bring_back_moves_a_returner_off_a_chair_taken_on_the_target_floor() -> 
     # The returner is the EARLIER hire and still yields: residents keep their
     # desks, newcomers take the next free one.
     away = db.create_agent("Away", desk_x=3, desk_y=4)
-    send_home(away.id)
+    await send_on_vacation(away.id)
     finance = create_floor("Finance")
     sitter = db.create_agent("Sitter", desk_x=3, desk_y=4, floor_id=finance.id)
 
@@ -883,11 +1040,11 @@ def test_bring_back_moves_a_returner_off_a_chair_taken_on_the_target_floor() -> 
     assert (state.x, state.y) == (7, 4)
 
 
-def test_bring_back_keeps_a_desk_that_is_free_on_the_target_floor() -> None:
+async def test_bring_back_keeps_a_desk_that_is_free_on_the_target_floor() -> None:
     from core.floors import bring_back
 
     away = db.create_agent("Away", desk_x=11, desk_y=4)
-    send_home(away.id)
+    await send_on_vacation(away.id)
     finance = create_floor("Finance")
     db.create_agent("Sitter", desk_x=3, desk_y=4, floor_id=finance.id)
 

@@ -10,7 +10,6 @@ import pytest
 
 import db
 from core import config
-from core.floors import send_home
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import RecurrenceRule
 from core.models.task import TaskRequestMessage
@@ -26,6 +25,7 @@ from core.scheduling.runner import (
 )
 from core.tasking.service import create_or_bind_task
 from core.tasking.transitions import transition_task
+from tests._stand_down import send_on_vacation
 
 TIMING = ScheduleTiming(max_sleep_seconds=60, grace_seconds=120)
 DUE = datetime(2026, 9, 30, 10, 0, tzinfo=timezone.utc)
@@ -153,14 +153,65 @@ def test_an_open_previous_run_skips_until_it_is_finished() -> None:
     assert db.get_schedule(schedule.id).last_task_id == fired.task.id
 
 
-def test_a_vacationing_agent_is_skipped() -> None:
+async def test_a_vacationing_agent_is_skipped() -> None:
     ada = _agent()
     schedule = _schedule(ada.id)
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
 
     run = run_occurrence(schedule.id, due_at=DUE, now=DUE, timing=TIMING)
 
     assert run.outcome == "skipped_vacation" and run.task is None
+    assert db.list_tasks(assigned_to=ada.id) == []
+
+
+def _on_suspended_floor(name: str = "Ada"):
+    """An agent whose floor is then suspended."""
+    from db.floors import create_floor, set_floor_suspended
+
+    finance = create_floor("Finance")
+    agent = db.create_agent(name, role="Operator", floor_id=finance.id)
+    return agent, lambda: set_floor_suspended(finance.id, datetime.now(timezone.utc))
+
+
+async def test_the_timetable_leaves_out_a_suspended_floor_and_keeps_a_vacationer() -> None:
+    lobby = _schedule(_agent("Lobby").id)
+    away = _agent("Away")
+    vacation = _schedule(away.id)
+    off = _schedule(_agent("Off").id, enabled=False)
+    ada, suspend = _on_suspended_floor()
+    suspended = _schedule(ada.id)
+    await send_on_vacation(away.id)
+
+    # Rows made in the same second tie on created_at, so compare sets.
+    assert {item.id for item in db.list_schedules_to_run()} == {lobby.id, vacation.id, suspended.id}
+    suspend()
+    # The vacationer stays: its occurrences are recorded as skipped_vacation.
+    assert {item.id for item in db.list_schedules_to_run()} == {lobby.id, vacation.id}
+    assert off.id not in {item.id for item in db.list_schedules_to_run()}
+
+
+def test_a_suspended_floors_due_run_records_nothing_and_drops_its_entry() -> None:
+    ada, suspend = _on_suspended_floor()
+    schedule = _schedule(ada.id)
+    suspend()
+
+    assert run_occurrence(schedule.id, due_at=DUE, now=DUE, timing=TIMING) is None
+    row = db.get_schedule(schedule.id)
+    assert (row.last_outcome, row.last_occurrence_at) == (None, None)
+    assert db.list_tasks(assigned_to=ada.id) == []
+
+
+def test_run_now_refuses_a_suspended_floor_and_records_nothing() -> None:
+    ada, suspend = _on_suspended_floor()
+    schedule = _schedule(ada.id)
+    suspend()
+
+    with pytest.raises(ScheduleRunRefused) as refused:
+        run_now(schedule.id, now=DUE)
+
+    assert (refused.value.reason, refused.value.task_id) == ("suspended", None)
+    assert refused.value.message == "Ada's floor is suspended"
+    assert db.get_schedule(schedule.id).last_outcome is None
     assert db.list_tasks(assigned_to=ada.id) == []
 
 
@@ -295,10 +346,10 @@ def test_run_now_works_on_a_disabled_schedule_and_leaves_it_disabled() -> None:
     assert db.get_schedule(schedule.id).enabled is False
 
 
-def test_run_now_refuses_a_vacation_and_records_nothing() -> None:
+async def test_run_now_refuses_a_vacation_and_records_nothing() -> None:
     ada = _agent()
     schedule = _schedule(ada.id)
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
     with pytest.raises(ScheduleRunRefused) as refused:
         run_now(schedule.id, now=DUE)
     assert (refused.value.reason, refused.value.task_id) == ("vacation", None)

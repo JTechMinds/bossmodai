@@ -87,6 +87,7 @@ from db.host_path_consent import (
     create_once_grant,
     abandon_unposted_consent,
     delete_agent_consent,
+    deny_pending_for_agent as deny_pending_consent_for_agent,
     find_denied_for_scope,
     find_pending_for_grant_root_scope,
     find_pending_for_path,
@@ -111,6 +112,7 @@ from db.cli_approval_requests import (
     get_approval_request as get_cli_approval_request,
     list_approval_requests as list_cli_approval_requests,
     list_human_cli_decisions,
+    reject_pending_for_agent as reject_pending_cli_approvals_for_agent,
     reject_request as reject_cli_approval_request,
 )
 from db.notifications import (
@@ -457,8 +459,8 @@ from db.agent_schedules import (
     delete_schedule,
     find_schedules_by_prefix,
     get_schedule,
-    list_enabled_schedules,
     list_schedules_for_agent,
+    list_schedules_to_run,
     record_outcome,
     update_schedule,
 )
@@ -803,8 +805,8 @@ __all__ = [
     "delete_schedule",
     "find_schedules_by_prefix",
     "get_schedule",
-    "list_enabled_schedules",
     "list_schedules_for_agent",
+    "list_schedules_to_run",
     "record_outcome",
     "update_schedule",
     # Diagnostics
@@ -834,6 +836,7 @@ __all__ = [
     "create_once_grant",
     "abandon_unposted_consent",
     "delete_agent_consent",
+    "deny_pending_consent_for_agent",
     "find_denied_for_scope",
     "find_pending_for_grant_root_scope",
     "find_pending_for_path",
@@ -858,6 +861,7 @@ __all__ = [
     "list_cli_approval_requests",
     "list_human_cli_decisions",
     "reject_cli_approval_request",
+    "reject_pending_cli_approvals_for_agent",
     # Metrics
     "get_agent_stats_batch",
     "get_dashboard_metrics",

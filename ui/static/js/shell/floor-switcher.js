@@ -2,10 +2,14 @@
  * BossMod AI — the header floor switcher.
  *
  * One trigger naming the floor the operator is on. It opens a panel listing
- * EVERY floor with its agent count and a check on the current one, a `⋯` per
- * row to open that floor's settings (shell/floor-settings.js), and a
- * `+ New floor` door that turns into an inline name field in place. There is no browse mode: the
- * operator is always on exactly one floor (`state.currentFloorId`).
+ * every ACTIVE floor with its agent count and a check on the current one, a
+ * `⋯` per row to open that floor's settings (shell/floor-settings.js), a
+ * `+ New floor` door that turns into an inline name field in place, and, only
+ * while any floor is suspended, a "Suspended floors" door to the view that
+ * resumes them (shell/floor-suspended.js). There is no browse mode: the
+ * operator is always on exactly one active floor (`state.currentFloorId`).
+ * The server's list holds both kinds; `applyFloors` splits it into `floors`
+ * and `suspendedFloors`.
  *
  * The panel hangs off `.floor-switcher`, a positioned host wrapping the
  * trigger — the core/menu-select.js pattern. It used to be appended to
@@ -14,13 +18,16 @@
  *
  * Requests go through shell/floor-api.js; this file draws.
  *
- * LIVE. A floor created, renamed or deleted in one window reaches every other
- * one: the server broadcasts the whole list as `floors_updated` after each
- * change, and a `resync` (a reconnect that may have missed some) re-reads it.
+ * LIVE. A floor created, renamed, deleted, suspended or resumed in one window
+ * reaches every other one: the server broadcasts the whole list as
+ * `floors_updated` after each change, and a `resync` (a reconnect that may
+ * have missed some) re-reads it. The window that made the change reloads it
+ * itself (`loadFloors`, handed to settings and the Suspended floors view), so
+ * it never waits on the socket.
  *
  * Choosing another floor, or creating one, leaves the Settings takeover,
  * because the operator asked to see that floor. The fallback to Lobby when
- * their floor was deleted is not a choice, and leaves Settings up.
+ * their floor was deleted or suspended is not a choice, and leaves Settings up.
  */
 const BossModFloorSwitcher = (() => {
     const { h, clear } = BossModDom;
@@ -39,8 +46,9 @@ const BossModFloorSwitcher = (() => {
      * Mount the switcher.
      *
      * @param {object} deps
-     * @param {object} deps.store  Reads `floors`, `currentFloorId`, `roster`;
-     *   writes `floors` and `currentFloorId`.
+     * @param {object} deps.store  Reads `floors`, `suspendedFloors`,
+     *   `currentFloorId`, `roster`; writes `floors`, `suspendedFloors` and
+     *   `currentFloorId`.
      * @param {Function} deps.apiFetch  The shell's authenticated fetch.
      * @param {object} deps.bus  Topic bus. `floors_updated` replaces the list;
      *   `resync` re-reads it.
@@ -112,29 +120,38 @@ const BossModFloorSwitcher = (() => {
         }
 
         /**
-         * Put a floor list into the store. A current floor that is not in it
-         * (deleted elsewhere) falls back to Lobby.
+         * Put a floor list into the store, split into the active floors
+         * (`floors`) and the suspended ones (`suspendedFloors`). A current
+         * floor that is not active (deleted or suspended elsewhere) falls back
+         * to Lobby, so suspending the floor you are on moves every window off it.
          *
          * An open panel is closed first: its rows were built from the old
          * list, and a row for a floor that was just deleted is a control
          * pointed at nothing.
          *
-         * @param {Array<{id: string, name: string}>} rows  The whole list.
+         * @param {Array<{id: string, name: string, suspended_at: (string|null)}>} rows
+         *   The whole list, suspended floors included.
          * @returns {void}
-         * @throws {Error} When `rows` is not a non-empty array of floors —
-         *   Lobby always exists, so anything else is a broken payload, and
-         *   adopting it would empty the switcher.
+         * @throws {Error} When `rows` is not a non-empty array of floors each
+         *   carrying `suspended_at` as a string or null, or has no active
+         *   floor — Lobby always exists and is never suspended, so anything
+         *   else is a broken payload, and adopting it would empty the switcher.
          */
         function applyFloors(rows) {
             const valid = Array.isArray(rows) && rows.length > 0
                 && rows.every((floor) => floor && typeof floor.id === 'string'
-                    && typeof floor.name === 'string');
-            if (!valid) throw new Error('The floor list arrived malformed.');
+                    && typeof floor.name === 'string'
+                    && (floor.suspended_at === null || typeof floor.suspended_at === 'string'));
+            const active = valid ? rows.filter((floor) => floor.suspended_at === null) : [];
+            if (active.length === 0) throw new Error('The floor list arrived malformed.');
             close();
             clearLoadError();
-            const patch = { floors: rows };
+            const patch = {
+                floors: active,
+                suspendedFloors: rows.filter((floor) => floor.suspended_at !== null),
+            };
             const current = store.getState().currentFloorId;
-            if (!rows.some((floor) => floor.id === current)) patch.currentFloorId = LOBBY_ID;
+            if (!active.some((floor) => floor.id === current)) patch.currentFloorId = LOBBY_ID;
             store.setState(patch);
         }
 
@@ -260,6 +277,27 @@ const BossModFloorSwitcher = (() => {
             return slot;
         }
 
+        /**
+         * The "Suspended floors" door, with its count; null while none is,
+         * so the panel offers no door to an empty view.
+         */
+        function suspendedDoor(state) {
+            const count = Array.isArray(state.suspendedFloors) ? state.suspendedFloors.length : 0;
+            if (count === 0) return null;
+            return h('button', {
+                class: 'menu-door floor-suspended-door',
+                type: 'button',
+                'aria-label': `Suspended floors, ${count}`,
+                onclick: () => {
+                    close();
+                    BossModFloorSuspended.open({ store, floorApi, reloadFloors: loadFloors });
+                },
+            },
+                h('i', { 'data-lucide': 'circle-pause', 'aria-hidden': 'true' }),
+                h('span', {}, 'Suspended floors'),
+                h('span', { class: 'menu-action-count', 'aria-hidden': 'true' }, String(count)));
+        }
+
         async function create(input, error) {
             const name = String(input.value || '').trim();
             if (!name) {
@@ -304,7 +342,8 @@ const BossModFloorSwitcher = (() => {
                     h('div', { class: 'menu-actions' }, rows),
                     h('hr', { class: 'menu-divider' }),
                     newFloorSlot(),
-                ],
+                    suspendedDoor(state),
+                ].filter(Boolean),
                 onClose: () => {
                     menu = null;
                     trigger.setAttribute('aria-expanded', 'false');

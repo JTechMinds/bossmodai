@@ -46,8 +46,9 @@ from core.bm_cli.project_repo import project_directory_for
 from core.bm_cli.runtime import execute_approved_command, execute_bm_cli
 from core.bm_cli.shell_executor import allowed_shell_roots
 from core.bm_cli.virtual_fs import resolve_cli_path, virtual_root_entries
-from core.floors import delete_floor, send_home
+from core.floors import delete_floor
 from db.floors import LOBBY_ID, create_floor
+from tests._stand_down import send_on_vacation
 
 
 @pytest.fixture(autouse=True)
@@ -70,16 +71,20 @@ def _fresh_company(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 class _Services:
-    """Records runtime resets; a floor delete must not wake anyone."""
+    """Records runtime resets and extension releases; a floor delete must not wake anyone."""
 
     def __init__(self) -> None:
         self.resets: list[str] = []
+        self.released: list[list[str]] = []
 
     async def reset_agent_runtime(self, agent_id: str) -> None:
         self.resets.append(agent_id)
 
     async def enqueue_trigger(self, **_kwargs: object) -> None:
         raise AssertionError("a floor delete must not wake anyone")
+
+    def extensions_release_agents(self, agent_ids: list[str]) -> None:
+        self.released.append(list(agent_ids))
 
 
 def _client() -> tuple[TestClient, dict[str, str]]:
@@ -183,9 +188,9 @@ def test_shell_jail_refuses_git_on_another_floors_project() -> None:
     assert project_directory_for(bob.storage_key, theirs) == theirs.resolve()
 
 
-def test_an_agent_on_vacation_has_no_projects() -> None:
+async def test_an_agent_on_vacation_has_no_projects() -> None:
     _finance, ada, _bob, _secret = _two_floors()
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
 
     with pytest.raises(PathOutsideRootsError, match="no floor"):
         resolve_cli_path(ada.storage_key, "/", "/projects")

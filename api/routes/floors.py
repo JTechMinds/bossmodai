@@ -1,4 +1,9 @@
-"""Floor list, create, rename and delete, and moving people, threads and projects between floors."""
+"""Floor list, create, rename, suspend, resume and delete, and moving people, threads and projects between floors.
+
+Every floor row the UI reads (the GET and the ``floors_updated`` broadcast)
+carries ``suspended_at``: an ISO string while the floor is suspended, else
+null.
+"""
 
 import logging
 from dataclasses import asdict
@@ -20,11 +25,18 @@ from core.floor_moves import (
     move_project,
     plan_move,
 )
-from core.floors import FLOOR_MOVE_STOP_REASON, AgentOnVacation, FloorOccupantsChoiceRequired, delete_floor
+from core.floor_suspend import FLOOR_SUSPENDED, FloorSuspendConflict, resume_floor, suspend_floor
+from core.floors import (
+    FLOOR_DELETED,
+    FLOOR_MOVE_STOP_REASON,
+    AgentOnVacation,
+    FloorOccupantsChoiceRequired,
+    delete_floor,
+)
 from core.models.floor import Floor
 from core.runtime import runtime_services
 from core.tasking.transitions import IllegalTaskTransition
-from db.floors import FloorNameTaken, create_floor, list_floors, rename_floor
+from db.floors import FloorNameTaken, create_floor, get_floor, list_floors, rename_floor
 import db
 
 logger = logging.getLogger(__name__)
@@ -48,17 +60,23 @@ async def _announce_process_stops(agent_ids: list[str], reason: str) -> None:
         )
 
 
-def _floor_payloads() -> list[dict]:
-    """Every floor as the UI reads it: the row plus ``has_folder``.
+def _floor_payload(floor: Floor) -> dict:
+    """One floor as the UI reads it: ``id``, ``name``, ``created_at``, ``suspended_at`` and ``has_folder``.
 
-    ``has_folder`` says whether the floor's company folder is on disk, which
-    is what the Delete layer uses to say its files move to Archived floors.
+    ``suspended_at`` is an ISO string while the floor is suspended, else
+    None. ``has_folder`` says whether the floor's company folder is on disk,
+    which is what the Delete layer uses to say its files move to Archived
+    floors.
+    """
+    return {**floor.model_dump(mode="json"), "has_folder": floor_folder_exists(floor.id)}
+
+
+def _floor_payloads() -> list[dict]:
+    """Every floor, active and suspended, in the ``_floor_payload`` row shape.
+
     One builder for the GET and the broadcast, so the two never disagree.
     """
-    return [
-        {**floor.model_dump(mode="json"), "has_folder": floor_folder_exists(floor.id)}
-        for floor in list_floors()
-    ]
+    return [_floor_payload(floor) for floor in list_floors()]
 
 
 async def _broadcast_floors() -> None:
@@ -76,15 +94,22 @@ class FloorRenameBody(BaseModel):
 
 @router.get("/floors")
 async def get_floors() -> list[dict]:
-    """Return every co-mingle domain, each with ``has_folder``. Lobby is always present."""
+    """Return every co-mingle domain, each with ``suspended_at`` and ``has_folder``. Lobby is always present."""
     return _floor_payloads()
 
 
 @router.post("/floors", status_code=201)
 async def post_floor(body: FloorCreateBody) -> Floor:
-    """Create a labeled floor and its company folder. An existing name returns that floor."""
+    """Create a labeled floor and its company folder. An existing active name returns that floor.
+
+    409 when a suspended floor already has the name (ignoring case), 400 when
+    the name is blank or too long.
+    """
     try:
         floor = create_floor(body.name)
+    except FloorNameTaken as exc:
+        # Before ValueError: FloorNameTaken is one, and it is a conflict.
+        raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     floor_root(floor.id)
@@ -111,6 +136,89 @@ async def patch_floor(floor_id: str, body: FloorRenameBody) -> Floor:
     return floor
 
 
+@router.post("/floors/{floor_id}/suspend")
+async def post_floor_suspend(floor_id: str) -> dict:
+    """Suspend one floor: a clean stop of everyone on it (core/floor_suspend.py).
+
+    Work in progress ends, open tasks are cancelled, pending approvals and
+    consents close, and desktops and browsers shut down. Broadcasts the
+    cancel and meeting lines, the world, the floor list, each stopped
+    desk's processes and a ``floor_suspended`` activity.
+
+    Returns:
+        ``floor_id`` and what the stand-down did: ``agent_ids``,
+        ``tasks_cancelled``, ``meetings_ended``, ``approvals_closed``,
+        ``consents_closed`` and ``process_stopped_agent_ids``. The posted
+        lines are broadcast, not returned.
+
+    Raises:
+        HTTPException: 400 for Lobby, 404 for a missing floor, 409 when it
+            is already suspended or a cancel hit a task mid-transition.
+    """
+    # Imported here for the reason remove_floor gives: one painter, not two.
+    from api.routes.agents import _broadcast_archive_side_effects
+
+    # Read for the activity line only; suspend_floor validates.
+    floor = get_floor(floor_id)
+    try:
+        result = await suspend_floor(floor_id, services=runtime_services)
+    except FloorSuspendConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except IllegalTaskTransition as exc:
+        # Same answer the floor delete route gives.
+        raise HTTPException(
+            409,
+            f"Illegal task status transition: {exc.from_status} → {exc.to_status}",
+        ) from exc
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    stood_down = result.stand_down
+    await _broadcast_archive_side_effects(stood_down.posted_lines)
+    await manager.broadcast_world_state()
+    await _broadcast_floors()
+    await _announce_process_stops(stood_down.process_stopped_agent_ids, FLOOR_SUSPENDED.label)
+    if floor is None:
+        # suspend_floor raises LookupError for a missing floor before its
+        # first await, so a successful suspend always found it here too.
+        raise RuntimeError(f"Floor {result.floor_id} was suspended but not read before the suspend")
+    await manager.broadcast_activity(event="floor_suspended", detail=f'Floor "{floor.name}" suspended')
+    return {
+        "floor_id": result.floor_id,
+        "agent_ids": stood_down.agent_ids,
+        "tasks_cancelled": stood_down.tasks_cancelled,
+        "meetings_ended": stood_down.meetings_ended,
+        "approvals_closed": stood_down.approvals_closed,
+        "consents_closed": stood_down.consents_closed,
+        "process_stopped_agent_ids": stood_down.process_stopped_agent_ids,
+    }
+
+
+@router.post("/floors/{floor_id}/resume")
+async def post_floor_resume(floor_id: str) -> dict:
+    """Resume a suspended floor: a fresh start, nothing is woken (core/floor_suspend.py).
+
+    Broadcasts the world, the floor list and a ``floor_resumed`` activity.
+
+    Returns:
+        The floor in the ``GET /floors`` row shape.
+
+    Raises:
+        HTTPException: 404 for a missing floor, 409 when it is not suspended.
+    """
+    try:
+        floor = resume_floor(floor_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except FloorSuspendConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
+    await manager.broadcast_world_state()
+    await _broadcast_floors()
+    await manager.broadcast_activity(event="floor_resumed", detail=f'Floor "{floor.name}" resumed')
+    return _floor_payload(floor)
+
+
 @router.delete("/floors/{floor_id}")
 async def remove_floor(floor_id: str, occupants: str | None = None):
     """Delete one floor. Its active threads are archived, its open work cancelled.
@@ -121,6 +229,9 @@ async def remove_floor(floor_id: str, occupants: str | None = None):
     ``{code: "occupants_choice_required", agent_count}``. Lobby and an
     unknown ``occupants`` value answer 400, a missing floor 404. The floor's
     company folder moves to Company › Archived floors (``folder_archived``).
+    A send-home cancels its residents' and the floor's open tasks
+    (``tasks_cancelled``); their lines are painted through
+    ``on_before_seal`` before the threads seal.
     """
     # Imported here, not at module top: api.routes.agents is a sibling router
     # module, and these two helpers are the thread-archive broadcasts the
@@ -174,7 +285,14 @@ async def remove_floor(floor_id: str, occupants: str | None = None):
         await manager.broadcast_channel_updated(summary)
     await manager.broadcast_world_state()
     await _broadcast_floors()
-    await _announce_process_stops(result.process_stopped_agent_ids, FLOOR_MOVE_STOP_REASON)
+    await _announce_process_stops(result.process_stopped_agent_ids, FLOOR_DELETED.label)
+    if result.tasks_cancelled:
+        # The event the board cancel route sends, so Tasks and Needs re-read.
+        count = len(result.tasks_cancelled)
+        await manager.broadcast_activity(
+            event="task_cancelled",
+            detail=f"Cancelled {count} task{'s' if count != 1 else ''}: {FLOOR_DELETED.phrase}",
+        )
     for agent_id in result.agents_deleted:
         name = doomed.get(agent_id, agent_id)
         await manager.broadcast_activity(

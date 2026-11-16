@@ -421,8 +421,15 @@ def _pending_all() -> list[HostPathConsentRequest]:
 
 
 def _denied_for_scope(agent_id: str, *, task_id: str | None) -> HostPathConsentRequest | None:
+    """The operator's sticky Shell Executor deny in this task/turn scope, else None.
+
+    A deny BossMod made (``decision_by='system'``: a thread archive, an
+    agent leaving service) is not sticky and is skipped.
+    """
     for row in db.list_consent_requests(agent_id=agent_id, status="denied", limit=80):
         if (row.card_kind or "") != SHELL_EXECUTOR_KIND:
+            continue
+        if row.decision_by == "system":
             continue
         if task_id:
             if row.task_id == task_id:

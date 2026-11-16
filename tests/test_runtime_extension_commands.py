@@ -59,6 +59,9 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> list[tuple]:
     monkeypatch.setattr(
         worker, "reconcile_agents", lambda: log.append(("reconcile",)) or frozenset({"desk", "browser"}),
     )
+    monkeypatch.setattr(
+        worker, "release_agents", lambda ids: log.append(("release", ids)) or frozenset({"desk", "browser"}),
+    )
     return log
 
 
@@ -110,6 +113,24 @@ async def test_extensions_reconcile_queues_apply_then_reconcile_then_one_nudge_e
     assert calls == [], "the command returned before the hooks ran"
     await _drain(runtime_worker._controller.extension_lane)
     assert calls == [("apply",), ("reconcile",), ("live", "browser", None), ("live", "desk", None)]
+
+
+@pytest.mark.asyncio
+async def test_extensions_release_agents_queues_the_release_then_one_nudge_each(
+    calls: list[tuple], runtime_worker,
+) -> None:
+    await runtime_worker._execute("extensions_release_agents", {"agent_ids": ["a1", "a2"]})
+    assert calls == [], "the command returned before the hook ran"
+    await _drain(runtime_worker._controller.extension_lane)
+    assert calls == [
+        ("release", frozenset({"a1", "a2"})), ("live", "browser", None), ("live", "desk", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_extensions_release_agents_without_its_payload_fails_loudly(calls: list[tuple], runtime_worker) -> None:
+    with pytest.raises(KeyError):
+        await runtime_worker._execute("extensions_release_agents", {})
 
 
 @pytest.mark.asyncio

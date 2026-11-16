@@ -13,6 +13,8 @@ from typing import Any
 from fastapi import APIRouter
 
 import db
+from core.floors import is_on_vacation
+from db.floors import suspended_floor_ids
 
 router = APIRouter()
 
@@ -50,6 +52,20 @@ def _who_waits(agent_names: list[str], *, system_ai: bool) -> str | None:
     if len(parts) == 1:
         return parts[0]
     return f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+def _out_of_service_agent_ids() -> frozenset[str]:
+    """The agents nobody can ask anything: on vacation, or living on a suspended floor.
+
+    The ``core.floors.wake_refusal`` rule, read in two queries for the whole
+    roster instead of one floor read per agent.
+    """
+    suspended = suspended_floor_ids()
+    return frozenset(
+        agent.id
+        for agent in db.list_agents()
+        if is_on_vacation(agent) or (agent.floor_id or "") in suspended
+    )
 
 
 def _connection_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
@@ -413,6 +429,12 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     are server-described so the client never hardcodes a resolution URL per
     kind. A blocked task with no assignee has no action.
 
+    Items about an agent out of service (on vacation, or on a suspended
+    floor: the wake gates' rule) are left out, before the limit applies.
+    Leaving service closes that agent's approvals, consents and tasks; this
+    is the backstop for what it does not close (a work-summary advisory),
+    so the bell and the tray badge never ask about someone who cannot act.
+
     :param limit: maximum items returned, clamped to 200.
     """
     cache: dict[str, str] = {}
@@ -424,5 +446,7 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
         + _blocked_needs(cache)
         + _process_checkin_needs(cache)
     )
+    dormant = _out_of_service_agent_ids()
+    needs = [item for item in needs if item.get("agent_id") not in dormant]
     needs.sort(key=lambda item: item.get("created_at") or "", reverse=True)
     return needs[:min(max(limit, 0), MAX_LIMIT)]

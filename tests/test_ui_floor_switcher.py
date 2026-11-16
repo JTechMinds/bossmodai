@@ -1,4 +1,4 @@
-"""shell/floor-switcher.js — one trigger, every floor, a panel that hangs off its host, and the settings its `⋯` opens."""
+"""shell/floor-switcher.js — one trigger, every active floor, a panel that hangs off its host, the settings its `⋯` opens, and the Suspended floors door."""
 
 from __future__ import annotations
 
@@ -28,12 +28,14 @@ MODULES = [
     JS / "shell" / "floor-scope.js",
     JS / "shell" / "floor-api.js",
     JS / "shell" / "floor-delete.js",
+    JS / "shell" / "floor-suspend.js",
     JS / "shell" / "floor-picker.js",
     JS / "shell" / "floor-move-confirm.js",
     JS / "shell" / "floor-people.js",
     JS / "shell" / "floor-threads.js",
     JS / "shell" / "floor-projects.js",
     JS / "shell" / "floor-settings.js",
+    JS / "shell" / "floor-suspended.js",
     JS / "shell" / "floor-switcher.js",
 ]
 
@@ -51,6 +53,7 @@ def test_floor_switcher_behaviour() -> None:
         "floorsLoadIntoTheStore": True,
         "panelHangsOffTheSwitcherHost": True,
         "everyFloorIsARowWithItsCount": True,
+        "noSuspendedDoorWhileNoneIs": True,
         "everyRowHasANamedSettingsButton": True,
         "pickingARowSetsTheCurrentFloor": True,
         # Moving to another floor, or creating one, leaves the Settings
@@ -65,11 +68,31 @@ def test_floor_switcher_behaviour() -> None:
         "deleteLayerWaitsForTheAgentsChoice": True,
         "deleteLayerSaysTheFilesAreArchived": True,
         "deleteThemWarnsToBackUp": True,
+        # Vacation ends the agents' work now (plan step 41).
+        "sendThemHomeSaysTheirWorkEnds": True,
         "choosingEnablesDelete": True,
         "aRenameElsewhereRepaintsTheTrigger": True,
         "aDeleteElsewhereMovesTheOperatorToLobby": True,
         "aDeleteElsewhereLeavesTheTakeoverUp": True,
+        # A suspended floor leaves the rows for the "Suspended floors" door;
+        # the operator on it falls back to Lobby, which is not a choice.
+        "aSuspendElsewhereSplitsTheListAndMovesTheOperatorToLobby": True,
+        "aSuspendFallbackLeavesTheTakeoverUp": True,
+        "suspendedFloorsAreADoorNotRows": True,
+        "suspendedViewRequiresReloadFloors": True,
+        "theDoorClosesThePanelAndOpensTheView": True,
+        "theViewListsEachFloorInTheSettingsRows": True,
+        "resumeIsBusyWhileItRuns": True,
+        "aFailedResumeSaysWhyOnItsRow": True,
+        # A resume reloads the list like Rename and Delete, so a down socket
+        # cannot leave its row behind; a failed reload is said, not hidden.
+        "aResumeReloadsTheListAndItsRowLeaves": True,
+        "aResumeWhoseReloadFailsSaysSoAndStaysDone": True,
+        "theLastResumeShowsTheEmptyState": True,
+        "closingTheViewDrainsTheStore": True,
+        "theDoorLeavesWithTheLastSuspendedFloor": True,
         "aMalformedBroadcastIsNotAdopted": True,
+        "aListWithoutSuspendedAtOrAnActiveFloorIsNotAdopted": True,
         "resyncReReadsTheFloors": True,
         "destroyDrainsTheBus": True,
         "aFailedLoadIsShownAndLogged": True,

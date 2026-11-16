@@ -12,7 +12,12 @@
  * confirm until the operator has said what happens to the agents, and that a
  * `floors_updated` broadcast (a change made in another window) repaints the
  * trigger, closes a stale panel, and moves the operator to Lobby when their
- * floor is gone.
+ * floor is gone. A floor suspended elsewhere leaves the rows for the
+ * "Suspended floors" door, which shows only while one is suspended and opens
+ * the view that resumes them (shell/floor-suspended.js): busy while a resume
+ * runs, its error on its own row with no reload, a landed resume reloading the
+ * list so its row leaves, a failed reload said on the row, and rows that leave
+ * live with the broadcast.
  *
  * Invoked by tests/test_ui_floor_switcher.py. Not a browser bundle.
  */
@@ -27,10 +32,13 @@ const NAMES = [
     "BossModDom", "BossModStore", "BossModBus", "BossModFormat", "BossModAvatar", "BossModSearchField",
     "BossModInlineRename",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModAgentApi",
-    "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
+    "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorSuspend", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
-    "BossModFloorSettings", "BossModFloorSwitcher",
+    "BossModFloorSettings", "BossModFloorSuspended", "BossModFloorSwitcher",
 ];
+if (process.argv.length - 2 !== NAMES.length) {
+    throw new Error(`expected ${NAMES.length} module paths, got ${process.argv.length - 2}`);
+}
 process.argv.slice(2).forEach((path, index) => {
     eval(`${fs.readFileSync(path, "utf8")}\n;global.${NAMES[index]} = ${NAMES[index]};\n`);
 });
@@ -48,9 +56,15 @@ function response(status, body) {
     };
 }
 
-let floors = [{ id: "lobby", name: "Lobby", has_folder: true }, { id: "fin", name: "Finance", has_folder: true }];
+let floors = [
+    { id: "lobby", name: "Lobby", has_folder: true, suspended_at: null },
+    { id: "fin", name: "Finance", has_folder: true, suspended_at: null },
+];
 let failFloors = false;
 const calls = [];
+// POST /api/floors/{id}/resume answers, per floor id, in order: a response or
+// a promise of one (to hold a resume in flight).
+const resumeAnswers = {};
 function apiFetch(url, init) {
     const method = (init && init.method) || "GET";
     calls.push({ url, method, body: init && init.body ? JSON.parse(init.body) : null });
@@ -67,9 +81,19 @@ function apiFetch(url, init) {
         return Promise.resolve(response(200, []));
     }
     if (url === "/api/floors" && method === "POST") {
-        const created = { id: "ops", name: JSON.parse(init.body).name };
+        const created = { id: "ops", name: JSON.parse(init.body).name, suspended_at: null };
         floors = floors.concat([created]);
         return Promise.resolve(response(201, created));
+    }
+    const resume = /^\/api\/floors\/([^/]+)\/resume$/.exec(url);
+    if (resume && method === "POST" && (resumeAnswers[resume[1]] || []).length) {
+        // The server's list follows a resume that lands, so a reload reads it.
+        return Promise.resolve(resumeAnswers[resume[1]].shift()).then((answer) => {
+            if (answer.ok) {
+                floors = floors.map((floor) => (floor.id === resume[1] ? { ...floor, suspended_at: null } : floor));
+            }
+            return answer;
+        });
     }
     return Promise.reject(new Error(`unexpected request ${method} ${url}`));
 }
@@ -146,6 +170,8 @@ async function submit(form) {
         && choices[0].getAttribute("aria-pressed") === "true"
         && choices[1].getAttribute("aria-pressed") === "false"
         && documentStub.activeElement === choices[0];
+    verdict.noSuspendedDoorWhileNoneIs = !panel.querySelector(".floor-suspended-door")
+        && store.getState().suspendedFloors.length === 0;
     // Each row's `⋯` is the shared inline trigger.
     const more = panel.querySelectorAll(".menu-trigger");
     verdict.everyRowHasANamedSettingsButton = more.length === 2
@@ -227,6 +253,10 @@ async function submit(form) {
     const deleteHint = layer.querySelectorAll(".floor-delete-option")[1].querySelector(".field-hint").textContent;
     verdict.deleteThemWarnsToBackUp = deleteHint.includes("back up anything you need")
         && deleteHint.includes("cancels their open tasks");
+    // Vacation now ends their work too.
+    const homeHint = layer.querySelectorAll(".floor-delete-option")[0].querySelector(".field-hint").textContent;
+    verdict.sendThemHomeSaysTheirWorkEnds = homeHint === "They go on vacation: their work stops and their "
+        + "open tasks are cancelled. Bring them back from People ⋯ → On vacation.";
     (radios[0].listeners.change || []).forEach((fn) => fn({ target: radios[0] }));
     verdict.choosingEnablesDelete = layer.querySelector("#floor-delete-confirm").disabled === false;
     // ✕ on the top layer closes every layer.
@@ -237,7 +267,9 @@ async function submit(form) {
     await trigger.dispatchClick();
     const openBeforeRename = Boolean(switcher.element.querySelector(".menu"));
     bus.publish("floors_updated", [
-        { id: "lobby", name: "Lobby" }, { id: "fin", name: "Accounts" }, { id: "ops", name: "Ops" },
+        { id: "lobby", name: "Lobby", suspended_at: null },
+        { id: "fin", name: "Accounts", suspended_at: null },
+        { id: "ops", name: "Ops", suspended_at: null },
     ]);
     await drain();
     verdict.aRenameElsewhereRepaintsTheTrigger = openBeforeRename
@@ -248,13 +280,148 @@ async function submit(form) {
         && trigger.getAttribute("aria-expanded") === "false";
 
     // ─── Live: another window deleted it ───
-    bus.publish("floors_updated", [{ id: "lobby", name: "Lobby" }, { id: "ops", name: "Ops" }]);
+    bus.publish("floors_updated", [
+        { id: "lobby", name: "Lobby", suspended_at: null }, { id: "ops", name: "Ops", suspended_at: null },
+    ]);
     await drain();
     verdict.aDeleteElsewhereMovesTheOperatorToLobby = store.getState().currentFloorId === "lobby"
         && store.getState().floors.every((floor) => floor.id !== "fin")
         && trigger.getAttribute("aria-label") === "Floor: Lobby";
     // Falling back to Lobby is not the operator choosing to go somewhere.
     verdict.aDeleteElsewhereLeavesTheTakeoverUp = takeover.closes === 2;
+
+    // ─── Live: another window suspended the floor the operator is on ───
+    store.setState({ currentFloorId: "ops" });
+    const OPS_AT = "2026-11-16T09:30:00+00:00";
+    const MKT_AT = "2026-11-15T17:05:00+00:00";
+    // What the server now holds: a reload reads this list.
+    floors = [
+        { id: "lobby", name: "Lobby", suspended_at: null },
+        { id: "ops", name: "Ops", suspended_at: OPS_AT },
+        { id: "mkt", name: "Marketing", suspended_at: MKT_AT },
+    ];
+    bus.publish("floors_updated", floors);
+    await drain();
+    const ids = (rows) => rows.map((floor) => floor.id).join("|");
+    verdict.aSuspendElsewhereSplitsTheListAndMovesTheOperatorToLobby = store.getState().currentFloorId === "lobby"
+        && ids(store.getState().floors) === "lobby"
+        && ids(store.getState().suspendedFloors) === "ops|mkt"
+        && trigger.getAttribute("aria-label") === "Floor: Lobby";
+    verdict.aSuspendFallbackLeavesTheTakeoverUp = takeover.closes === 2;
+
+    // ─── The panel: active floors are rows; the door, last, has the count ───
+    await trigger.dispatchClick();
+    panel = switcher.element.querySelector(".menu");
+    const door = panel.querySelector(".floor-suspended-door");
+    verdict.suspendedFloorsAreADoorNotRows = panel.querySelectorAll(".floor-choice").length === 1
+        && Boolean(door)
+        && door.classList.contains("menu-door")
+        && door.getAttribute("aria-label") === "Suspended floors, 2"
+        && door.querySelector(".menu-action-count").textContent === "2"
+        && door.querySelector(".menu-action-count").getAttribute("aria-hidden") === "true"
+        && door.querySelector("[data-lucide=\"circle-pause\"]") !== null
+        && /Suspended floors/.test(door.textContent)
+        && panel.children[panel.children.length - 1] === door
+        && panel.children[panel.children.length - 2].classList.contains("floor-new");
+
+    // ─── The door opens the Suspended floors view ───
+    // It cannot open without the loader a resume reloads through.
+    let viewWithoutReloadThrows = false;
+    try {
+        BossModFloorSuspended.open({ store, floorApi: BossModFloorApi.createFloorApi({ apiFetch }) });
+    } catch (err) {
+        viewWithoutReloadThrows = /deps\.reloadFloors is required/.test(String(err && err.message));
+    }
+    verdict.suspendedViewRequiresReloadFloors = viewWithoutReloadThrows
+        && documentStub.body.querySelectorAll(".modal-panel").length === 0;
+    const storeSubscribers = store.subscriberCount();
+    await door.dispatchClick();
+    const view = documentStub.body.querySelectorAll(".modal-panel").find((node) => !node.hidden);
+    const items = () => view.querySelectorAll(".floor-item");
+    const resumeOf = (item) => item.querySelector("button");
+    const alertOf = (item) => item.querySelector("[role=\"alert\"]");
+    verdict.theDoorClosesThePanelAndOpensTheView = !switcher.element.querySelector(".menu")
+        && Boolean(view) && view.getAttribute("aria-label") === "Suspended floors";
+    const [opsRow, mktRow] = items();
+    verdict.theViewListsEachFloorInTheSettingsRows = Boolean(view.querySelector(".floor-item-list"))
+        && items().length === 2
+        && items().every((item) => item.parentNode.classList.contains("floor-item-list")
+            && Boolean(item.querySelector(".floor-item-who")))
+        && items().map((item) => item.querySelector(".floor-item-name").textContent).join("|") === "Ops|Marketing"
+        && opsRow.querySelector(".floor-item-meta").textContent
+            === `Suspended ${BossModFormat.formatDateTime(OPS_AT)}`
+        && BossModFormat.formatDateTime(OPS_AT) !== ""
+        && items().map((item) => resumeOf(item).getAttribute("aria-label")).join("|")
+            === "Resume Ops|Resume Marketing"
+        && items().every((item) => resumeOf(item).textContent === "Resume" && !resumeOf(item).disabled)
+        && alertOf(opsRow).textContent === "";
+
+    // ─── Resume: busy while it runs, and a refusal is said on its own row ───
+    const floorReads = () => calls.filter((call) => call.url === "/api/floors" && call.method === "GET").length;
+    const readsBeforeResume = floorReads();
+    let refuse;
+    resumeAnswers.ops = [new Promise((resolve) => { refuse = resolve; })];
+    await resumeOf(opsRow).dispatchClick();
+    verdict.resumeIsBusyWhileItRuns = resumeOf(opsRow).disabled === true
+        && resumeOf(mktRow).disabled === false
+        && calls.some((call) => call.url === "/api/floors/ops/resume" && call.method === "POST");
+    const errorBefore409 = console.error;
+    const resumeLogged = [];
+    console.error = (...args) => { resumeLogged.push(args.join(" ")); };
+    refuse(response(409, { detail: "Ops is not suspended." }));
+    await drain();
+    console.error = errorBefore409;
+    verdict.aFailedResumeSaysWhyOnItsRow = alertOf(opsRow).textContent === "Ops is not suspended."
+        && resumeOf(opsRow).disabled === false
+        && alertOf(mktRow).textContent === ""
+        && items().length === 2
+        && resumeLogged.some((line) => line.includes("[floor-suspended] could not resume the floor"))
+        // A refused resume changed nothing, so nothing is reloaded.
+        && floorReads() === readsBeforeResume;
+
+    // ─── A resume that lands reloads the list, and its row leaves with no broadcast ───
+    resumeAnswers.mkt = [response(200, { id: "mkt", name: "Marketing", suspended_at: null })];
+    await resumeOf(mktRow).dispatchClick();
+    await drain();
+    // The kept row is the same node, so its error (and a focus on it) survives.
+    verdict.aResumeReloadsTheListAndItsRowLeaves = floorReads() === readsBeforeResume + 1
+        && items().length === 1
+        && items()[0] === opsRow
+        && alertOf(opsRow).textContent === "Ops is not suspended."
+        && ids(store.getState().floors) === "lobby|mkt"
+        && ids(store.getState().suspendedFloors) === "ops";
+
+    // ─── A resume that lands but whose reload fails says so, and stays done ───
+    resumeAnswers.ops = [response(200, { id: "ops", name: "Ops", suspended_at: null })];
+    failFloors = true;
+    const errorBeforeReload = console.error;
+    const reloadLogged = [];
+    console.error = (...args) => { reloadLogged.push(args.join(" ")); };
+    await resumeOf(opsRow).dispatchClick();
+    await drain();
+    console.error = errorBeforeReload;
+    failFloors = false;
+    verdict.aResumeWhoseReloadFailsSaysSoAndStaysDone = floorReads() === readsBeforeResume + 2
+        && alertOf(opsRow).textContent === "Resumed, but the floor list could not reload."
+        && resumeOf(opsRow).disabled === true
+        && items().length === 1
+        && trigger.getAttribute("data-error") === "true"
+        && reloadLogged.some((line) => line.includes("[floor-switcher] could not load floors"));
+
+    // ─── The broadcast catches up: the last row leaves, the empty state ───
+    bus.publish("floors_updated", floors);
+    await drain();
+    verdict.theLastResumeShowsTheEmptyState = items().length === 0
+        && !view.querySelector(".floor-item-list")
+        && view.querySelector(".modal-body").textContent === "No floors are suspended."
+        && !trigger.hasAttribute("data-error");
+    await view.querySelector(".modal-close").dispatchClick();
+    verdict.closingTheViewDrainsTheStore = store.subscriberCount() === storeSubscribers
+        && documentStub.body.querySelectorAll(".modal-panel").length === 0;
+    await trigger.dispatchClick();
+    verdict.theDoorLeavesWithTheLastSuspendedFloor = !switcher.element.querySelector(".floor-suspended-door")
+        && switcher.element.querySelectorAll(".floor-choice").length === 3;
+    await trigger.dispatchClick();
 
     // ─── A malformed broadcast is shown and logged, never adopted ───
     const floorsBefore = store.getState().floors;
@@ -263,10 +430,20 @@ async function submit(form) {
     console.error = (...args) => { malformedLogged.push(args.join(" ")); };
     bus.publish("floors_updated", []);
     await drain();
-    console.error = errorBefore;
     verdict.aMalformedBroadcastIsNotAdopted = store.getState().floors === floorsBefore
         && trigger.getAttribute("data-error") === "true"
         && malformedLogged.some((line) => line.includes("[floor-switcher] could not load floors"));
+    // A row with no `suspended_at`, and a list with no active floor, are
+    // broken payloads too: Lobby is always there and never suspended.
+    const suspendedBefore = store.getState().suspendedFloors;
+    const loggedBefore = malformedLogged.length;
+    bus.publish("floors_updated", [{ id: "lobby", name: "Lobby" }]);
+    bus.publish("floors_updated", [{ id: "lobby", name: "Lobby", suspended_at: "2026-11-16T09:30:00+00:00" }]);
+    await drain();
+    console.error = errorBefore;
+    verdict.aListWithoutSuspendedAtOrAnActiveFloorIsNotAdopted = store.getState().floors === floorsBefore
+        && store.getState().suspendedFloors === suspendedBefore
+        && malformedLogged.length === loggedBefore + 2;
 
     // ─── A reconnect re-reads the list: broadcasts sent while down are gone ───
     const readsBefore = calls.filter((call) => call.url === "/api/floors" && call.method === "GET").length;

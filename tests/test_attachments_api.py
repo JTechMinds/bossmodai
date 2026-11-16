@@ -21,8 +21,8 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from core.bm_cli.floor_roots import floor_root
-from core.floors import send_home
 from db import attachments as db_att
+from tests._stand_down import send_on_vacation
 
 
 def setup_function() -> None:
@@ -143,9 +143,9 @@ def test_upload_with_a_traversal_id_is_404_and_writes_nothing(client, kind):
     assert db.query("SELECT id FROM attachments") == []
 
 
-def test_upload_for_a_vacationing_agent_is_409(client):
+async def test_upload_for_a_vacationing_agent_is_409(client):
     ada = _agent()
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
     r = _upload(client, {"type": "direct", "id": ada.id}, "x.txt", b"hi")
     assert r.status_code == 409
 

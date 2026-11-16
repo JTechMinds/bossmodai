@@ -157,14 +157,28 @@ def find_schedules_by_prefix(agent_id: str, prefix: str) -> list[AgentSchedule]:
     return [_schedule_from_row(row) for row in rows]
 
 
-def list_enabled_schedules() -> list[AgentSchedule]:
-    """Return every enabled schedule, oldest first: the worker's timetable load.
+def list_schedules_to_run() -> list[AgentSchedule]:
+    """Return the schedules the worker's timetable runs, oldest first.
+
+    Every enabled schedule except those whose agent lives on a suspended
+    floor: a suspended floor is off the timetable until it is resumed, so
+    occurrences inside the suspension are never recorded. A vacationer
+    (no floor) is still listed, because its occurrences are recorded as
+    ``skipped_vacation``.
 
     Raises:
         pydantic.ValidationError: A stored rule is corrupt.
     """
+    columns = ", ".join(f"s.{column.strip()}" for column in _SCHEDULE_COLUMNS.split(","))
     rows = query(
-        f"SELECT {_SCHEDULE_COLUMNS} FROM agent_schedules WHERE enabled = 1 ORDER BY created_at, id",
+        f"""
+        SELECT {columns}
+        FROM agent_schedules s
+        LEFT JOIN agents a ON a.id = s.agent_id
+        LEFT JOIN floors f ON f.id = a.floor_id
+        WHERE s.enabled = 1 AND f.suspended_at IS NULL
+        ORDER BY s.created_at, s.id
+        """,
     )
     return [_schedule_from_row(row) for row in rows]
 

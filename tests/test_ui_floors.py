@@ -146,5 +146,11 @@ def test_floor_scope_script_loads_before_the_header() -> None:
     assert scope < api < min(settings_parts)
     assert max(settings_parts) < switcher < header
     assert api < vacation < people_menu
+    # The settings open the Suspend layer and the switcher opens the Suspended
+    # floors view: each loads ahead of its caller.
+    suspend = HTML.index("js/shell/floor-suspend.js")
+    suspended = HTML.index("js/shell/floor-suspended.js")
+    assert api < suspend < HTML.index("js/shell/floor-settings.js")
+    assert api < suspended < switcher
     assert "js/shell/floor-edit.js" not in HTML
     assert "js/context/agent-floor.js" not in HTML

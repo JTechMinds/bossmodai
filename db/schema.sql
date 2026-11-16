@@ -10,7 +10,9 @@
 CREATE TABLE IF NOT EXISTS floors (
     id          VARCHAR PRIMARY KEY,
     name        VARCHAR NOT NULL UNIQUE,
-    created_at  TIMESTAMP DEFAULT current_timestamp
+    created_at  TIMESTAMP DEFAULT current_timestamp,
+    -- Set while the floor is suspended (out of service); NULL = active.
+    suspended_at TIMESTAMP
 );
 
 -- ───────────────────────────────────────────────────────────────────────────
@@ -744,7 +746,8 @@ CREATE TABLE IF NOT EXISTS runtime_commands (
                           'shutdown_runtime',
                           'reload_schedules',
                           'extension_config_changed',
-                          'extensions_reconcile'
+                          'extensions_reconcile',
+                          'extensions_release_agents'
                       )),
     payload        TEXT NOT NULL,
     status         VARCHAR NOT NULL DEFAULT 'queued'

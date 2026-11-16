@@ -726,6 +726,28 @@ def test_unset_system_ai_warns_once_and_records_the_check(
     assert idle_db.get_channel_idle_check(channel.id)["checked_message_id"] == latest.id
 
 
+def test_scan_skips_a_suspended_floors_threads_before_any_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    from db.floors import create_floor, set_floor_suspended
+
+    finance = create_floor("Finance")
+    ada = db.create_agent("Ada", role="Engineer", desk_x=1, desk_y=1)
+    bob = db.create_agent("Bob", role="Engineer", desk_x=2, desk_y=1, floor_id=finance.id)
+    lobby_thread = db.create_channel(name="Lobby work", member_agent_ids=[ada.id], created_by=ada.id)
+    db.create_channel(name="Books", member_agent_ids=[bob.id], created_by=bob.id)
+    set_floor_suspended(finance.id, datetime.now(timezone.utc))
+    _no_judge(monkeypatch)
+    checked: list[str] = []
+
+    def _check(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
+        checked.append(channel_id)
+        return []
+
+    monkeypatch.setattr(channel_idle_check, "check_channel", _check)
+    assert scan_idle_channels(_later()) == []
+    # Skipped before check_channel, so no System AI call is made for it.
+    assert checked == [lobby_thread.id]
+
+
 def test_disabled_scan_touches_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
     harley, charles, _brian, channel = _team()
     _enable_system_ai()

@@ -592,6 +592,8 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
     if not content and not body.attachment_ids:
         raise HTTPException(400, "Channel message content cannot be empty")
 
+    from core.floors import FloorSuspended
+
     try:
         result = await route_human_channel_message(
             channel_id=channel.id,
@@ -603,6 +605,8 @@ async def create_channel_message(channel_id: str, body: ChannelMessageBody):
         )
     except AttachmentLinkError as exc:
         raise HTTPException(422, _attachment_link_detail(exc)) from exc
+    except FloorSuspended as exc:
+        raise HTTPException(409, str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(409, str(exc))
 
@@ -1022,8 +1026,8 @@ class VacationReturnBody(BaseModel):
 async def return_agent_from_vacation(agent_id: str, body: VacationReturnBody) -> Agent:
     """Bring one agent back from vacation onto a floor.
 
-    404 when the agent or the floor is missing, 409 when the agent is not
-    on vacation.
+    404 when the agent or the floor is missing, 409 when the floor is
+    suspended or the agent is not on vacation.
     """
     from core.floors import bring_back
 
@@ -1826,7 +1830,7 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
     content = body.content if body else "You have been manually activated."
     attachment_ids = body.attachment_ids if body else None
 
-    from core.floors import AgentOnVacation
+    from core.floors import AgentOnVacation, FloorSuspended
 
     try:
         await route_human_dm(
@@ -1836,7 +1840,7 @@ async def activate_agent(agent_id: str, body: ActivationBody | None = None):
             services=runtime_services,
             attachment_ids=attachment_ids,
         )
-    except AgentOnVacation as exc:
+    except (AgentOnVacation, FloorSuspended) as exc:
         raise HTTPException(409, str(exc)) from exc
     except AttachmentLinkError as exc:
         raise HTTPException(422, _attachment_link_detail(exc)) from exc

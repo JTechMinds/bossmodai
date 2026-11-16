@@ -248,7 +248,12 @@ def find_denied_for_scope(
     *,
     task_id: str | None,
 ) -> HostPathConsentRequest | None:
-    """Return a sticky deny for this agent + path in the current task/turn scope."""
+    """Return a sticky deny for this agent + path in the current task/turn scope.
+
+    Only the operator's denies stick. A row with ``decision_by='system'``
+    records that BossMod closed the card (a thread archive, an agent leaving
+    service), not that the operator said no, so it never blocks a later ask.
+    """
     if task_id:
         return fetch_one(
             f"""
@@ -257,6 +262,7 @@ def find_denied_for_scope(
             WHERE agent_id = $1 AND path = $2 AND status = 'denied'
               AND task_id = $3
               AND COALESCE(card_kind, 'host_path') = 'host_path'
+              AND COALESCE(decision_by, '') != 'system'
             ORDER BY decided_at DESC
             LIMIT 1
             """,
@@ -270,6 +276,7 @@ def find_denied_for_scope(
         WHERE agent_id = $1 AND path = $2 AND status = 'denied'
           AND task_id IS NULL
           AND COALESCE(card_kind, 'host_path') = 'host_path'
+          AND COALESCE(decision_by, '') != 'system'
         ORDER BY decided_at DESC
         LIMIT 1
         """,
@@ -457,6 +464,10 @@ def find_workspace_preference_for_scope(
     Branch/workspace-copy locks are not read here: they last only while
     their copy exists, which ``runtime_core.locked_workspace_copies``
     checks, so a deleted copy cannot keep blocking through this lookup.
+
+    A ``denied`` row counts only when the operator made it: one with
+    ``decision_by='system'`` (BossMod closed the card) is not sticky.
+    ``edit_host`` rows are always the operator's and always count.
     """
     if task_id:
         return fetch_one(
@@ -466,6 +477,7 @@ def find_workspace_preference_for_scope(
             WHERE agent_id = $1 AND path = $2
               AND card_kind = '{_WORKSPACE_KIND}'
               AND status IN ('edit_host', 'denied')
+              AND (status = 'edit_host' OR COALESCE(decision_by, '') != 'system')
               AND task_id = $3
             ORDER BY decided_at DESC
             LIMIT 1
@@ -480,6 +492,7 @@ def find_workspace_preference_for_scope(
         WHERE agent_id = $1 AND path = $2
           AND card_kind = '{_WORKSPACE_KIND}'
           AND status IN ('edit_host', 'denied')
+          AND (status = 'edit_host' OR COALESCE(decision_by, '') != 'system')
           AND task_id IS NULL
         ORDER BY decided_at DESC
         LIMIT 1
@@ -487,6 +500,33 @@ def find_workspace_preference_for_scope(
         [agent_id, path],
         HostPathConsentRequest,
     )
+
+
+def deny_pending_for_agent(agent_id: str, *, decision_note: str) -> int:
+    """Deny every pending consent card of one agent, of every kind, as BossMod.
+
+    For an agent leaving service (``core/stand_down.py``): its waiting turn
+    is already cancelled, so nothing is resumed or woken. Rows are marked
+    ``decision_by='system'``, which no sticky-deny lookup counts: the
+    operator never said no, so the same ask is not blocked later.
+
+    Args:
+        agent_id: The agent whose pending cards close.
+        decision_note: Why, shown on the closed card.
+
+    Returns:
+        How many cards were denied.
+    """
+    rows = query(
+        """
+        UPDATE host_path_consent_requests
+        SET status = 'denied', decision_by = 'system', decision_note = $1, decided_at = $2
+        WHERE agent_id = $3 AND status = 'pending'
+        RETURNING id
+        """,
+        [decision_note, datetime.now(timezone.utc), agent_id],
+    )
+    return len(rows)
 
 
 def abandon_unposted_consent(request_id: str) -> None:

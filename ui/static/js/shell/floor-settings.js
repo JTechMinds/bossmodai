@@ -3,9 +3,10 @@
  *
  * Opened from a floor row's `⋯` in the header switcher. One panel-size modal
  * titled with the floor's name, with no footer: its only ways out are the
- * head's ✕ and, for any floor but Lobby, the head's trash tool, which opens
- * the Delete layer (shell/floor-delete.js) — the "are you sure" step. The
- * name renames in place (core/inline-rename.js). People, Threads and
+ * head's ✕ and, for any floor but Lobby, the head's two tools — Suspend,
+ * which opens the Suspend layer (shell/floor-suspend.js), and trash, which
+ * opens the Delete layer (shell/floor-delete.js), each the "are you sure"
+ * step. The name renames in place (core/inline-rename.js). People, Threads and
  * Projects are lists (shell/floor-people.js, floor-threads.js,
  * floor-projects.js) whose rows each carry a `⋯` → Move to…, and whose
  * headers each carry an Add door that picks from the other floors
@@ -25,6 +26,7 @@ const BossModFloorSettings = (() => {
     const { h, clear } = BossModDom;
     const NAME_ID = 'floor-settings-name';
     const DELETE_LABEL = 'Delete floor';
+    const SUSPEND_LABEL = 'Suspend floor';
     /** Matches db/floors.py FLOOR_NAME_MAX_LENGTH. */
     const NAME_MAX_LENGTH = 80;
     // Generated, never built from a row's data: a project's name is a folder
@@ -180,7 +182,7 @@ const BossModFloorSettings = (() => {
         const nameSection = h('div', { class: 'floor-name' },
             nameField.element,
             isLobby
-                ? h('p', { class: 'field-hint' }, "Lobby is the default floor and can't be deleted.")
+                ? h('p', { class: 'field-hint' }, "Lobby is the default floor and can't be suspended or deleted.")
                 : null,
             nameNotice);
 
@@ -203,6 +205,13 @@ const BossModFloorSettings = (() => {
             nameSection, people.element, threads.element, projects.element);
 
         // Before the frame's ✕, the task detail's `⋯` shape. Lobby has none.
+        const suspendTool = isLobby ? null : h('button', {
+            class: 'header-icon-btn floor-suspend-tool',
+            type: 'button',
+            'aria-label': SUSPEND_LABEL,
+            'data-tooltip': SUSPEND_LABEL,
+            onclick: () => openSuspend(),
+        }, h('i', { 'data-lucide': 'circle-pause', 'aria-hidden': 'true' }));
         const deleteTool = isLobby ? null : h('button', {
             class: 'header-icon-btn floor-delete-tool',
             type: 'button',
@@ -215,8 +224,8 @@ const BossModFloorSettings = (() => {
             title: floor.name,
             size: 'panel',
             body: content,
-            tools: deleteTool ? [deleteTool] : [],
-            // No footer: Close would repeat the head's ✕, and Delete is a tool.
+            tools: isLobby ? [] : [suspendTool, deleteTool],
+            // No footer: Close would repeat the head's ✕; Suspend and Delete are tools.
             actions: [],
             // The body's first control is the name, which reads as text: a
             // text field counts as :focus-visible even when focused by script,
@@ -261,6 +270,10 @@ const BossModFloorSettings = (() => {
             modal.setTitle(name);
             const loaded = await reloadFloors();
             if (!loaded) nameNotice.textContent = 'Renamed, but the floor list could not reload.';
+        }
+
+        function openSuspend() {
+            BossModFloorSuspend.open({ floorApi, floor, reloadFloors, onSuspended: () => modal.close() });
         }
 
         function openDelete() {

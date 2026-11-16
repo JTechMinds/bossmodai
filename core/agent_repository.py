@@ -111,7 +111,7 @@ class AgentRepository:
             The created agent, with a storage key the ledger has never issued.
 
         Raises:
-            ValueError: The named floor does not exist, or ``name`` is
+            ValueError: The named floor does not exist or is suspended, or ``name`` is
                 reserved for the boss (``Boss`` or the boss's own name;
                 :func:`core.boss.ensure_agent_name_allowed`).
             core.config.ConfigError: The ``boss_name`` settings row is missing.

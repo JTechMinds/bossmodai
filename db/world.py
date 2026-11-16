@@ -72,9 +72,10 @@ def _latest_human_chat_times() -> dict[str, datetime]:
 def get_world_state() -> list[dict[str, Any]]:
     """Return every working agent joined with their state for WebSocket broadcast.
 
-    Agents on vacation are left out: they are off every floor and hidden
+    Agents on vacation or on a suspended floor are left out: they are hidden
     from the roster, the office and Telegram until an operator brings them
-    back (core/floors.py ``bring_back``).
+    back (core/floors.py ``bring_back``) or resumes their floor
+    (core/floor_suspend.py ``resume_floor``). One rule for both.
 
     A pure read: one roster query plus the batched last-chat query, and no
     writes. Seating is enforced where desks are written (core/world/seating.py),
@@ -94,7 +95,8 @@ def get_world_state() -> list[dict[str, Any]]:
         LEFT JOIN agent_state s ON s.agent_id = a.id
         LEFT JOIN activities act
             ON act.agent_id = a.id AND act.status = 'active'
-        WHERE a.vacation_since IS NULL
+        LEFT JOIN floors f ON f.id = a.floor_id
+        WHERE a.vacation_since IS NULL AND f.suspended_at IS NULL
         ORDER BY a.created_at
         """,
     )

@@ -1,8 +1,9 @@
 /**
  * BossMod AI — floor and vacation requests.
  *
- * I/O only: the header switcher, the floor settings and the On vacation
- * view draw; this file talks to /api/floors, the active thread list, and the
+ * I/O only: the header switcher, the floor settings, the Suspend layer, the
+ * Suspended floors view and the On vacation view draw; this file talks to
+ * /api/floors (suspend and resume included), the active thread list, and the
  * agent vacation routes.
  * Every non-2xx becomes a thrown Error carrying the server's own message,
  * so a caller can never mistake a refused request for an empty answer.
@@ -43,10 +44,13 @@ const BossModFloorApi = (() => {
      * @param {object} deps
      * @param {Function} deps.apiFetch  The shell's authenticated fetch.
      * @returns {{
-     *   listFloors: () => Promise<Array<{id: string, name: string}>>,
+     *   listFloors: () => Promise<Array<{id: string, name: string, created_at: string,
+     *     has_folder: boolean, suspended_at: (string|null)}>>,
      *   createFloor: (name: string) => Promise<object>,
      *   renameFloor: (id: string, name: string) => Promise<object>,
      *   deleteFloor: (id: string, occupants: ('send_home'|'delete'|null)) => Promise<object>,
+     *   suspendFloor: (id: string) => Promise<object>,
+     *   resumeFloor: (id: string) => Promise<object>,
      *   listVacation: () => Promise<Array<object>>,
      *   returnFromVacation: (agentId: string, floorId: string) => Promise<object>,
      *   listActiveThreads: () => Promise<Array<object>>,
@@ -56,7 +60,10 @@ const BossModFloorApi = (() => {
      *   moveProject: (floorId: string, project: string, fromFloorId: string) => Promise<object>,
      * }} Each rejects with the Error from `failure` on a non-2xx, and with the
      *   network error itself when the request never completed. A move whose
-     *   plan went stale rejects with `code` `plan_changed`. `MoveChoice` is
+     *   plan went stale rejects with `code` `plan_changed`. `listFloors` returns
+     *   suspended floors too; `suspended_at` is null on an active one. Suspend
+     *   and resume refuse Lobby (400), a missing floor (404), and a floor
+     *   already in the asked state (409). `MoveChoice` is
      *   `{agentIds: string[], channelIds: string[], excludeCompanionIds: string[]}`:
      *   what moves TO `floorId`.
      * @throws {Error} When apiFetch is missing.
@@ -79,7 +86,7 @@ const BossModFloorApi = (() => {
             });
         }
 
-        /** Every floor, Lobby first. */
+        /** Every floor, Lobby first, suspended ones included. */
         async function listFloors() {
             const rows = await json('/api/floors');
             if (!Array.isArray(rows) || rows.length === 0) {
@@ -109,6 +116,8 @@ const BossModFloorApi = (() => {
                 const qs = occupants ? `?occupants=${encodeURIComponent(occupants)}` : '';
                 return json(`/api/floors/${encodeURIComponent(id)}${qs}`, { method: 'DELETE' });
             },
+            suspendFloor: (id) => json(floorUrl(id, '/suspend'), { method: 'POST' }),
+            resumeFloor: (id) => json(floorUrl(id, '/resume'), { method: 'POST' }),
             listVacation: () => json('/api/agents/vacation'),
             returnFromVacation: (agentId, floorId) => send(
                 'POST', `/api/agents/${encodeURIComponent(agentId)}/return`, { floor_id: floorId },

@@ -289,6 +289,23 @@ class BrowserVisionCommands:
             for agent_id, info in ended.items():
                 self._end_session(agent_id, info.session_id)
 
+    def release(self, agent_ids: frozenset[str]) -> None:
+        """Close the open browser session of each of these agents (they left service).
+
+        Each session ends as ``bv close`` ends it: the browser context
+        closes (website logins held in it are lost), the view settings are
+        forgotten, and the session's screenshots and marker go. An agent
+        with no open session is skipped.
+
+        Raises:
+            BrowserActionError: The browser did not answer or a close failed.
+            OSError: A screenshot folder cannot be removed.
+        """
+        open_sessions = self._host.sessions()
+        for agent_id in sorted(agent_ids):
+            if agent_id in open_sessions:
+                self._close_session(agent_id)
+
     def state_line(self, agent_id: str) -> str:
         """The agent's real browser state, for the start of its turn.
 
@@ -638,12 +655,7 @@ class BrowserVisionCommands:
         )
 
     def _close(self, ctx: CliExecutionContext, parsed: ParsedCliCommand, args: tuple[str, ...], body: str | None) -> BossModCliResult:
-        session = self._host.sessions().get(ctx.agent.id)
-        closed = self._host.close(ctx.agent.id)
-        with self._lock:
-            self._views.pop(ctx.agent.id, None)
-        if session is not None:
-            self._end_session(ctx.agent.id, session.session_id)
+        closed = self._close_session(ctx.agent.id)
         return success_result(
             command=parsed.raw,
             detail="Browser Vision: close",
@@ -654,6 +666,20 @@ class BrowserVisionCommands:
         )
 
     # ── helpers ────────────────────────────────────────────────────────────
+
+    def _close_session(self, agent_id: str) -> bool:
+        """Close the agent's browser context, forget its view, end its session's files.
+
+        Returns:
+            Whether a context was open.
+        """
+        session = self._host.sessions().get(agent_id)
+        closed = self._host.close(agent_id)
+        with self._lock:
+            self._views.pop(agent_id, None)
+        if session is not None:
+            self._end_session(agent_id, session.session_id)
+        return closed
 
     def _record_session(self, agent_id: str, session: SessionInfo) -> None:
         """Write the session's marker: this process holds it open, at its current URL."""

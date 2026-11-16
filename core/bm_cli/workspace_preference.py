@@ -106,6 +106,11 @@ def _resolved_preference_for_write(
     path: str,
     task_id: str | None,
 ) -> HostPathConsentRequest | None:
+    """The operator's standing Edit-host or Cancel choice for this write, else None.
+
+    A ``denied`` row BossMod made (``decision_by='system'``: a thread
+    archive, an agent leaving service) is not sticky and is skipped.
+    """
     exact = db.find_workspace_preference_for_scope(agent_id, path, task_id=task_id)
     if exact is not None:
         return exact
@@ -113,6 +118,8 @@ def _resolved_preference_for_write(
         if (row.card_kind or "") != WORKSPACE_PREFERENCE_KIND:
             continue
         if row.status not in {"edit_host", "denied"}:
+            continue
+        if row.status == "denied" and row.decision_by == "system":
             continue
         if task_id:
             if row.task_id != task_id:

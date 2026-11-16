@@ -12,7 +12,10 @@ thread via ``asyncio.to_thread``):
   extension the operator turned off), then :func:`reconcile_agents` (drop
   what extensions hold for agents that no longer exist). The worker's boot
   job, the lane's first once the worker reports ready, runs
-  :func:`reconcile_agents` too.
+  :func:`reconcile_agents` too;
+- ``extensions_release_agents`` → :func:`release_agents`: stop what
+  extensions run for agents leaving service (a suspended floor, vacation),
+  keeping their data.
 
 Every function is synchronous and never broadcasts. Each returns the ids of
 the live-view extensions it called a hook on, so the async caller can tell
@@ -26,7 +29,7 @@ from __future__ import annotations
 import logging
 
 import db
-from core.extensions.contract import SupportsAgentConfigChanged, SupportsAgentReconcile
+from core.extensions.contract import SupportsAgentConfigChanged, SupportsAgentReconcile, SupportsAgentRelease
 from core.extensions.loader import ExtensionLoadError, load_extension, loaded_extensions, unload_extension
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery
 
@@ -180,6 +183,54 @@ def reconcile_agents() -> frozenset[str]:
             # Extension code may raise anything; one extension's failure must
             # not keep the others from releasing what deleted agents held.
             logger.exception("Extension %s failed to reconcile its agents", entry.id)
+        called.append(entry)
+    return _live_view_ids(called)
+
+
+def release_agents(agent_ids: frozenset[str]) -> frozenset[str]:
+    """Tell every enabled extension to stop what it runs for these agents, keeping their data.
+
+    Loads each valid, enabled extension and, when it implements
+    ``SupportsAgentRelease``, calls ``release_agents(agent_ids)``. Run after
+    agents leave service but still exist (``core.stand_down.stand_down``):
+    a desktop powers down with its disk kept, a browser session closes.
+
+    Failure modes:
+        - An extension that cannot load is logged at ERROR with the
+          traceback, and the next extension still runs.
+        - An exception from ``release_agents`` (e.g. Docker not running) is
+          logged at ERROR with the traceback, and the next extension still
+          runs; what it runs for those agents stays until the worker stops.
+
+    Args:
+        agent_ids: The agents leaving service.
+
+    Returns:
+        The ids of the extensions whose hook was called (even if it raised)
+        that declare a live view.
+
+    Raises:
+        core.extensions.registry.ExtensionSettingError: The enabled setting
+            is unreadable.
+    """
+    enabled = enabled_ids()
+    called: list[ExtensionEntry] = []
+    for entry in get_discovery().valid_entries():
+        if entry.id not in enabled:
+            continue
+        try:
+            instance = load_extension(entry)
+        except ExtensionLoadError:
+            logger.exception("Extension %s could not load to release its agents", entry.id)
+            continue
+        if not isinstance(instance, SupportsAgentRelease):
+            continue
+        try:
+            instance.release_agents(agent_ids)
+        except Exception:
+            # Extension code may raise anything; one extension's failure must
+            # not keep the others from stopping what they run for these agents.
+            logger.exception("Extension %s failed to release agents %s", entry.id, ", ".join(sorted(agent_ids)))
         called.append(entry)
     return _live_view_ids(called)
 

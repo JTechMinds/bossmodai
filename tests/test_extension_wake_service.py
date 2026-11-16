@@ -17,8 +17,8 @@ from core.extensions import wake_service
 from core.extensions.contract import WakeBatch
 from core.extensions.manifest import ExtensionManifest
 from core.extensions.registry import Discovery, ExtensionEntry
-from core.floors import send_home
 from core.runtime.events import NullRuntimeEventSink, runtime_events
+from tests._stand_down import send_on_vacation
 
 EXT = "fake-wake"
 SENTENCE = "Couldn't reach Microsoft 365. Check your internet connection and try again."
@@ -386,12 +386,27 @@ async def test_a_wake_without_desk_status_records_nothing_but_logs_failures_once
 async def test_a_vacationer_is_skipped_not_polled_and_unconfigured_agents_are_ignored(env) -> None:
     away = _agent("Iris")
     db.create_agent("Nobody", role="Writer")  # no stored config
-    send_home(away.id)
+    await send_on_vacation(away.id)
     db.record_wake_check(EXT, away.id, ok=True, error=None, new_count=0)
     before = db.get_wake_status(EXT, away.id)
     await env.watch.run_once()
     assert env.ext.calls == [("skip", away.id)]
     assert db.get_wake_status(EXT, away.id) == before, "a skip records nothing"
+
+
+@pytest.mark.asyncio
+async def test_a_suspended_floors_agent_is_skipped_not_polled(env) -> None:
+    from datetime import datetime, timezone
+
+    from db.floors import create_floor, set_floor_suspended
+
+    finance = create_floor("Finance")
+    away = _agent("Iris")
+    db.update_agent(away.id, floor_id=finance.id)
+    set_floor_suspended(finance.id, datetime.now(timezone.utc))
+    await env.watch.run_once()
+    assert env.ext.calls == [("skip", away.id)], "mail arriving meanwhile never wakes it"
+    assert _events(away.id) == []
 
 
 @pytest.mark.asyncio

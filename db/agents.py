@@ -109,9 +109,11 @@ def create_agent(
 ) -> Agent:
     """Insert a new agent, its companion state rows and its snapshot atomically.
 
-    Home floor defaults to Lobby. A named floor must already exist.
-    ``connection_id`` is stored as given; the API checks that it names a
-    usable connection before it gets here.
+    Home floor defaults to Lobby. A named floor must already exist and must
+    not be suspended: this is the one choke point for every hire path (the
+    form, a pack install, a Recent re-hire). ``connection_id`` is stored as
+    given; the API checks that it names a usable connection before it gets
+    here.
 
     ``pack_link`` records the pack a hire came from, for pack updates: a
     mapping with exactly the keys ``pack_id``, ``pack_source_url``,
@@ -125,8 +127,11 @@ def create_agent(
 
     ensure_lobby()
     home = (floor_id or "").strip() or LOBBY_ID
-    if get_floor(home) is None:
+    floor = get_floor(home)
+    if floor is None:
         raise ValueError("Floor not found")
+    if floor.suspended_at is not None:
+        raise ValueError("Floor is suspended")
     link = _checked_pack_link(pack_link) if pack_link is not None else dict.fromkeys(_PACK_LINK_KEYS)
     with transaction():
         created = insert_returning_dict(

@@ -161,6 +161,19 @@ def _require_floor(floor_id: str) -> Any:
     return floor
 
 
+def _refuse_suspended(floor_id: str) -> None:
+    """Refuse a move that touches a suspended floor; a blank or missing floor is not one.
+
+    Raises:
+        MoveRefused: ``floor_id`` names a suspended floor.
+    """
+    from db.floors import get_floor
+
+    floor = get_floor(floor_id) if floor_id else None
+    if floor is not None and floor.suspended_at is not None:
+        raise MoveRefused(f"{floor.name} is suspended. Resume it first.")
+
+
 def _fingerprint(plan: MovePlan) -> str:
     """sha256 over every id the plan lists, list by list, each list sorted.
 
@@ -238,12 +251,17 @@ def plan_move(
         LookupError: The target floor, an agent, or a thread does not exist.
         AgentOnVacation: A picked agent is on vacation (``bring_back`` is the way).
         MoveRefused: Nothing was chosen; a thread is archived; an agent or a
-            thread is already on the target; an excluded id is not a companion.
+            thread is already on the target; an excluded id is not a companion;
+            the target floor, or a picked agent's or thread's floor, is
+            suspended (moving a thread off a suspended floor would carry its
+            suspended members onto an active one).
     """
     import db
     from core.tasking.resolution import OPEN_TASK_STATUSES
 
-    target = _require_floor(target_floor_id).id
+    target_floor = _require_floor(target_floor_id)
+    _refuse_suspended(target_floor.id)
+    target = target_floor.id
     picked_ids = _unique(agent_ids)
     thread_ids = _unique(channel_ids)
     excluded = set(_unique(exclude_companion_ids))
@@ -258,6 +276,7 @@ def plan_move(
             raise LookupError(f"Agent not found: {agent_id}")
         if is_on_vacation(agent):
             raise AgentOnVacation(f"{agent.name} is on vacation. Bring them back first.")
+        _refuse_suspended(_floor_of(agent))
         if _floor_of(agent) == target:
             already_there.append(agent.name)
         agents[agent.id] = agent
@@ -269,6 +288,7 @@ def plan_move(
             raise LookupError(f"Thread not found: {channel_id}")
         if channel.status != "active":
             raise MoveRefused(f"Thread {channel.name} is archived and cannot move")
+        _refuse_suspended(_floor_of(channel))
         if _floor_of(channel) == target:
             already_there.append(channel.name)
         threads[channel.id] = channel

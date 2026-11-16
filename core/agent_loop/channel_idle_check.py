@@ -57,6 +57,7 @@ from core.llm.call_budget import budget, max_concurrent_model_calls
 from core.llm.system_completion import complete_text, system_ai_is_configured
 from core.time import ensure_utc
 from db import channel_idle_checks as idle_db
+from db.floors import suspended_floor_ids
 
 logger = logging.getLogger(__name__)
 
@@ -371,14 +372,19 @@ def check_channel(channel_id: str, *, now: datetime) -> list[dict[str, Any]]:
 def scan_idle_channels(now: datetime) -> list[dict[str, Any]]:
     """Run :func:`check_channel` on every active thread and return all triggers.
 
-    Disabled returns ``[]`` without reading any thread. A failure on one
-    thread is logged with its traceback and that thread is skipped, so one
-    bad thread cannot stop the others.
+    Disabled returns ``[]`` without reading any thread. A thread on a
+    suspended floor is skipped before any System AI call (the wake gate
+    would only stop the wake, not the judge call). A failure on one thread
+    is logged with its traceback and that thread is skipped, so one bad
+    thread cannot stop the others.
     """
     if not idle_check_enabled():
         return []
+    suspended = suspended_floor_ids()
     triggers: list[dict[str, Any]] = []
     for channel in db.list_channels(status="active"):
+        if channel.floor_id in suspended:
+            continue
         try:
             triggers.extend(check_channel(channel.id, now=now))
         except Exception:

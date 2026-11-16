@@ -33,10 +33,10 @@ from core.bm_cli.shell_executor import execute_shell_script
 from core.bm_cli.shell_script import parse_shell_script
 from core.bm_cli.virtual_fs import resolve_cli_path
 from core.floor_moves import plan_move
-from core.floors import send_home
 from db.crud import query_one
 from db.floors import LOBBY_ID, create_floor
 from db.settings import seed_defaults
+from tests._stand_down import StandDownServices, send_on_vacation
 
 
 def setup_function() -> None:
@@ -173,11 +173,6 @@ def test_the_retention_setting_is_seeded_and_must_be_positive() -> None:
 # ── step 23: lifecycle stops are announced ────────────────────────────
 
 
-class _Services:
-    async def reset_agent_runtime(self, agent_id: str) -> None:
-        return None
-
-
 def _record_announcements(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
     calls: list[dict] = []
 
@@ -185,7 +180,7 @@ def _record_announcements(monkeypatch: pytest.MonkeyPatch) -> list[dict]:
         calls.append(kwargs)
 
     monkeypatch.setattr("api.routes.floors.announce_processes_changed", _record)
-    monkeypatch.setattr("api.routes.floors.runtime_services", _Services())
+    monkeypatch.setattr("api.routes.floors.runtime_services", StandDownServices())
     return calls
 
 
@@ -213,9 +208,9 @@ def test_a_floor_delete_announces_only_agents_whose_processes_stopped(monkeypatc
     assert response.status_code == 200, response.text
     assert response.json()["process_stopped_agent_ids"] == [busy.id]
     assert calls == [{
-        "agent_id": busy.id, "agent_name": "Ada", "detail": "Background processes stopped: Moved floors",
+        "agent_id": busy.id, "agent_name": "Ada", "detail": "Background processes stopped: Floor deleted",
     }]
-    assert db.get_agent_process(row.id).stop_reason == "Moved floors"
+    assert db.get_agent_process(row.id).stop_reason == "Floor deleted"
 
 
 def test_a_move_announces_only_movers_whose_processes_stopped(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -321,11 +316,12 @@ def test_foreground_and_background_programs_see_the_real_folders() -> None:
     assert _real(agent, "/projects") == str(floor_root(LOBBY_ID))
 
 
-def test_a_vacationing_agent_gets_no_projects_folder() -> None:
+async def test_a_vacationing_agent_gets_no_projects_folder() -> None:
     from core.bm_cli import runtime
 
     agent = _agent("Runner")
-    away = send_home(agent.id)
+    await send_on_vacation(agent.id)
+    away = db.get_agent(agent.id)
 
     env = runtime._agent_path_env(away)
 

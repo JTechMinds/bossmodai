@@ -36,7 +36,6 @@ from core.agent_repository import agent_repository
 from core.bm_cli.floor_roots import projects_root_for_storage_key
 from core.bm_cli.runtime import execute_bm_cli
 from core.default_prompts import load_default_prompt
-from core.floors import send_home
 from core.llm.context_builder import _format_task, _format_trigger
 from core.models import Agent
 from core.models.message import HUMAN_SENDER_ID
@@ -48,6 +47,7 @@ from core.tasking.service import list_open_child_tasks
 from core.tasking.transitions import transition_task
 from db.connection import get_connection
 from db.floors import create_floor
+from tests._stand_down import send_on_vacation
 
 NOW = datetime(2026, 10, 8, 9, 0, tzinfo=timezone.utc)
 REFERENCE = "/projects/webapp/qa/issue-login-500.md"
@@ -219,9 +219,9 @@ def test_filing_the_same_title_again_appends_the_new_message() -> None:
     assert _request_contents(first) == [_ASK["content"], "It also happens on signup."]
 
 
-def test_a_vacationing_agent_has_no_backlog() -> None:
+async def test_a_vacationing_agent_has_no_backlog() -> None:
     qa = _agent("Quinn")
-    send_home(qa.id)
+    await send_on_vacation(qa.id)
     qa = db.get_agent(qa.id)
 
     filed = _cli(qa, "backlog add", {"title": "Anything"})

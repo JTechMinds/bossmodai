@@ -15,7 +15,7 @@ from core import config
 from core.boss import boss_label
 from core.attachments import company_path
 from core.bm_cli.floor_roots import company_root
-from core.floors import AgentOnVacation, agent_id_on_vacation
+from core.floors import FloorSuspended, assert_agent_reachable, channel_floor_id, is_floor_suspended
 from core.agent_loop.channel_host import prepare_human_channel_message
 from core.agent_loop.channel_rounds import start_channel_peer_round
 from core.loop_breathing import off_request_loop
@@ -101,13 +101,13 @@ async def route_human_dm(
 
     Returns a dict with ``message_id``.
 
-    Raises AgentOnVacation before anything is written when the agent is on
-    vacation: a message they will never answer must not look delivered.
-    Raises AttachmentLinkError, with nothing written, broadcast or enqueued,
-    when the attachments cannot all be linked.
+    Raises AgentOnVacation or FloorSuspended before anything is written when
+    the agent is on vacation or its floor is suspended: a message they will
+    never answer must not look delivered. Raises AttachmentLinkError, with
+    nothing written, broadcast or enqueued, when the attachments cannot all
+    be linked.
     """
-    if agent_id_on_vacation(agent_id):
-        raise AgentOnVacation()
+    assert_agent_reachable(agent_id)
     # Validate and link before anything is broadcast or enqueued: a refused
     # link must leave neither a message row nor a wake behind.
     with transaction():
@@ -170,9 +170,14 @@ async def route_human_channel_message(
 
     Returns a dict with ``message_id``, ``round_id``, and ``members`` list.
 
-    Raises AttachmentLinkError, with nothing written, broadcast or enqueued,
-    when the attachments cannot all be linked.
+    Raises FloorSuspended before anything is written when the thread's floor
+    is suspended: as for a vacationer's DM, a message nobody will answer
+    must not look delivered. Raises AttachmentLinkError, with nothing
+    written, broadcast or enqueued, when the attachments cannot all be
+    linked.
     """
+    if is_floor_suspended(channel_floor_id(channel_id)):
+        raise FloorSuspended()
     # Same ordering as a DM: nothing is broadcast or woken for a refused link.
     label = boss_label()
     with transaction():

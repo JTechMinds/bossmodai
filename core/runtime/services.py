@@ -262,10 +262,11 @@ class RuntimeServices:
     ) -> None:
         # Before start(): a trigger that will never be written has no reason
         # to spin the runtime up.
-        from core.floors import agent_id_on_vacation
+        from core.floors import agent_wake_refusal
 
-        if agent_id_on_vacation(agent_id):
-            logger.info("Skipped %s trigger for %s: agent is on vacation", trigger_type, agent_id)
+        refusal = agent_wake_refusal(agent_id)
+        if refusal is not None:
+            logger.info("Skipped %s trigger for %s: %s", trigger_type, agent_id, refusal)
             return
         await self.start()
         if trigger_type == "human_chat":
@@ -371,6 +372,27 @@ class RuntimeServices:
         if not self._process_is_running():
             return
         db.create_runtime_command("extensions_reconcile")
+        self._ring_worker()
+
+    def extensions_release_agents(self, agent_ids: list[str]) -> None:
+        """Ask the worker to stop what extensions run for agents leaving service.
+
+        Files an ``extensions_release_agents`` runtime command with payload
+        ``{"agent_ids": [...]}`` and rings the doorbell. The worker then lets
+        each enabled extension stop what it runs for them, keeping their
+        data (``agent_hooks.release_agents``): a desktop powers down, a
+        browser session closes. Filed by a stand-down (core/stand_down.py).
+        Never de-duplicated, like :meth:`extension_config_changed`. Does
+        nothing when this process runs no worker: desktops are stopped by
+        the boot reconcile (it stops running ones this process did not
+        start), and browser sessions end with the worker.
+
+        Args:
+            agent_ids: The agents leaving service.
+        """
+        if not self._process_is_running():
+            return
+        db.create_runtime_command("extensions_release_agents", {"agent_ids": list(agent_ids)})
         self._ring_worker()
 
     def _guard(self) -> asyncio.Lock:

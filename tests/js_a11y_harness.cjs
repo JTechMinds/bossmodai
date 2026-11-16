@@ -184,7 +184,7 @@ function apiFetch(url) {
     if (url.startsWith("/api/floors")) {
         return Promise.resolve({
             ok: true,
-            json: () => Promise.resolve([{ id: "lobby", name: "Lobby" }]),
+            json: () => Promise.resolve([{ id: "lobby", name: "Lobby", suspended_at: null }]),
         });
     }
     if (url.startsWith("/api/channels")) {

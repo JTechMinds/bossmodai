@@ -32,8 +32,8 @@ from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.shell_executor import execute_shell_script
 from core.bm_cli.shell_script import parse_shell_script
 from core.floor_moves import move_project
-from core.floors import send_home
 from db.floors import LOBBY_ID, create_floor
+from tests._stand_down import send_on_vacation
 
 # Starts a detached `sleep 60` in its own session, prints its pid, then
 # sleeps. Single quotes only: the script passes it inside double quotes.
@@ -293,16 +293,18 @@ def test_deleting_the_agent_stops_its_processes_and_removes_its_rows(tmp_path: P
     assert background_processes.is_alive(theirs)
 
 
-def test_sending_an_agent_home_stops_its_processes(tmp_path: Path, _stop_everything) -> None:
+async def test_sending_an_agent_home_stops_its_processes(tmp_path: Path, _stop_everything) -> None:
     agent = _agent()
     row = _launched(_run(tmp_path, agent, "sleep 30 &"))
     _stop_everything.append(row.pid)
 
-    send_home(agent.id)
+    sent = await send_on_vacation(agent.id)
 
+    assert sent.process_stopped_agent_ids == [agent.id]
     stopped = db.get_agent_process(row.id)
     assert stopped is not None and stopped.status == "stopped"
-    assert stopped.stopped_by == "system" and stopped.stop_reason == "Moved floors"
+    # The stand-down's reason: the one vacation path is a floor delete.
+    assert stopped.stopped_by == "system" and stopped.stop_reason == "Floor deleted"
     assert _gone(row.pid)
 
 

@@ -27,10 +27,11 @@ from core.floor_moves import (
     move_project,
     plan_move,
 )
-from core.floors import CROSS_FLOOR_DENY, AgentOnVacation, send_home, task_floor_id
+from core.floors import CROSS_FLOOR_DENY, AgentOnVacation, task_floor_id
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
 from db.floors import LOBBY_ID, create_floor
+from tests._stand_down import send_on_vacation
 
 
 def setup_function() -> None:
@@ -185,10 +186,10 @@ def test_a_plan_refuses_nothing_chosen_already_there_archived_and_missing() -> N
         plan_move(finance.id, agent_ids=["nobody"], channel_ids=[])
 
 
-def test_a_vacationer_cannot_be_moved() -> None:
+async def test_a_vacationer_cannot_be_moved() -> None:
     ada = _agent("Ada", 1)
     finance = create_floor("Finance")
-    send_home(ada.id)
+    await send_on_vacation(ada.id)
     with pytest.raises(AgentOnVacation):
         plan_move(finance.id, agent_ids=[ada.id], channel_ids=[])
     client, headers = _client()

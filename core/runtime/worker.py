@@ -20,7 +20,12 @@ from core.agent_loop.dispatcher import dispatcher
 from core.agent_loop.meeting_watchdog import meeting_watchdog
 from core.agent_loop.watchdog import watchdog
 from core.bm_cli import background_processes
-from core.extensions.agent_hooks import apply_extension_states, notify_agent_config_changed, reconcile_agents
+from core.extensions.agent_hooks import (
+    apply_extension_states,
+    notify_agent_config_changed,
+    reconcile_agents,
+    release_agents,
+)
 from core.extensions.loader import shutdown_loaded_extensions
 from core.extensions.wake_service import extension_wake_watch
 from core.runtime.events import NullRuntimeEventSink, TransportRuntimeEventSink, runtime_events
@@ -319,6 +324,22 @@ class RuntimeController:
         """
         self.extension_lane.submit(self._reconcile_extensions)
 
+    async def extensions_release_agents(self, agent_ids: list[str]) -> None:
+        """Stop what extensions run for agents leaving service, keeping their data.
+
+        The command comes from ``RuntimeServices.extensions_release_agents``
+        after a stand-down (core/stand_down.py: a suspended floor, vacation).
+        The work is queued in the extension lane and this returns at once;
+        see :meth:`_release_agents`.
+
+        Args:
+            agent_ids: The agents leaving service.
+
+        Raises:
+            RuntimeError: The extension lane is not running.
+        """
+        self.extension_lane.submit(functools.partial(self._release_agents, frozenset(agent_ids)))
+
     async def reconcile_after_boot(self) -> None:
         """The boot job: tell every enabled extension which agents exist.
 
@@ -350,6 +371,16 @@ class RuntimeController:
         released = await asyncio.to_thread(apply_extension_states)
         reconciled = await asyncio.to_thread(reconcile_agents)
         await self._announce_live_views(released | reconciled)
+
+    async def _release_agents(self, agent_ids: frozenset[str]) -> None:
+        """Extension-lane job: release the agents, then nudge live views.
+
+        ``agent_hooks.release_agents`` runs in a thread; open live views of
+        every extension it called then re-read, since a stopped desktop or a
+        closed browser session removes the agent's live item.
+        """
+        released = await asyncio.to_thread(release_agents, agent_ids)
+        await self._announce_live_views(released)
 
     @staticmethod
     async def _announce_live_views(extension_ids: frozenset[str]) -> None:
@@ -596,6 +627,9 @@ class RuntimeWorker:
             return
         if command_type == "extensions_reconcile":
             await self._controller.extensions_reconcile()
+            return
+        if command_type == "extensions_release_agents":
+            await self._controller.extensions_release_agents(payload["agent_ids"])
             return
         if command_type == "reset_agent_runtime":
             await self._controller.reset_agent_runtime(payload["agent_id"])

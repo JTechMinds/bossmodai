@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from core.models.cli_policy import CliApprovalRequest
-from db.crud import fetch_all, fetch_one, insert_returning, query_one
+from db.crud import fetch_all, fetch_one, insert_returning, query, query_one
 
 _ALL_COLUMNS = (
     "id, agent_id, trigger_id, command, content, cwd, matched_rule_id, "
@@ -338,3 +338,28 @@ def reject_request(
         CliApprovalRequest,
     )
 
+
+def reject_pending_for_agent(agent_id: str, *, decision_note: str) -> int:
+    """Reject every pending approval request of one agent, as BossMod.
+
+    For an agent leaving service (``core/stand_down.py``): its waiting turn
+    is already cancelled, so nothing is resumed or woken. Rows are marked
+    ``decision_by='system'``: BossMod closed them, the operator never said no.
+
+    Args:
+        agent_id: The agent whose pending requests close.
+        decision_note: Why, shown on the closed card.
+
+    Returns:
+        How many requests were rejected.
+    """
+    rows = query(
+        """
+        UPDATE cli_approval_requests
+        SET status = 'rejected', decision_by = 'system', decision_note = $1, decided_at = $2
+        WHERE agent_id = $3 AND status = 'pending'
+        RETURNING id
+        """,
+        [decision_note, datetime.now(timezone.utc), agent_id],
+    )
+    return len(rows)

@@ -37,6 +37,8 @@ const BossModShell = (() => {
         // every place reads it.
         currentFloorId: 'lobby',
         floors: [{ id: 'lobby', name: 'Lobby' }],
+        // Off the switcher until resumed (shell/floor-switcher.js splits the list).
+        suspendedFloors: [],
         settingsOpen: false,
         runtimePaused: false,
         hasUsableModel: false,

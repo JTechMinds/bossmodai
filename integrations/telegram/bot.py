@@ -20,7 +20,7 @@ from telegram.ext import (
 )
 
 from core.bm_cli.approvals import resolve_approval_by_unique_prefix, resume_cli_approval
-from core.floors import AgentOnVacation
+from core.floors import AgentOnVacation, FloorSuspended
 from core.messaging import route_human_dm, route_human_channel_message
 from core.models.message import HUMAN_SENDER_ID
 import db
@@ -214,6 +214,16 @@ def _floor_from_args(args: list[str]):
     return get_floor_by_name(label)
 
 
+def _suspended_floor_reply(floor_name: str) -> str:
+    """The reply for a command that names a suspended floor."""
+    return f"{floor_name} is suspended. Resume it in BossMod first."
+
+
+def _agent_floor_suspended_reply(agent_name: str) -> str:
+    """The reply for a DM to an agent whose floor is suspended."""
+    return f"{agent_name}'s floor is suspended. Resume it in BossMod first."
+
+
 def _thread_display_name(agents: list[dict[str, Any]]) -> str:
     """Roster label used when BossMod creates a thread with no custom name."""
     member_names = [str(agent.get("name") or "") for agent in agents]
@@ -305,6 +315,9 @@ async def cmd_thread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if floor is None:
         await update.message.reply_text("No floor with that name.")
         return
+    if floor.suspended_at is not None:
+        await update.message.reply_text(_suspended_floor_reply(floor.name))
+        return
     agents = [
         agent for agent in db.get_world_state()
         if str(agent.get("floor_id") or "") == floor.id
@@ -326,6 +339,9 @@ async def cmd_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     floor = _floor_from_args(context.args or [])
     if floor is None:
         await update.message.reply_text("No floor with that name.")
+        return
+    if floor.suspended_at is not None:
+        await update.message.reply_text(_suspended_floor_reply(floor.name))
         return
     channels = [channel for channel in db.list_channels() if channel.floor_id == floor.id]
     remember_channel_list(
@@ -538,6 +554,10 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
                 clear_session(user_id)
                 await query.edit_message_text(f"{agent.name} is on vacation and cannot answer.")
                 return
+            except FloorSuspended:
+                clear_session(user_id)
+                await query.edit_message_text(_agent_floor_suspended_reply(agent.name))
+                return
             await query.edit_message_text(
                 f"Opened chat with {agent.name} and asked about: {request.command}"
             )
@@ -584,18 +604,31 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
                 "That agent is on vacation. Use /chat <agent> to talk to someone else."
             )
             return
+        except FloorSuspended:
+            clear_session(user_id)
+            agent = db.get_agent(session.target_agent_id)
+            # The refusal read the agent; one deleted since is "That agent",
+            # the words the vacation reply uses.
+            name = agent.name if agent is not None else "That agent"
+            await update.message.reply_text(_agent_floor_suspended_reply(name))
+            return
     elif session.session_type == "group":
         channel = db.get_channel(session.target_channel_id)
         if channel is None or channel.status != "active":
             await update.message.reply_text("Channel no longer active. Use /chat to start a new session.")
             clear_session(user_id)
             return
-        await route_human_channel_message(
-            channel_id=session.target_channel_id,
-            channel_name=channel.name,
-            content=text,
-            broadcast_manager=broadcast_manager,
-            services=services,
-        )
+        try:
+            await route_human_channel_message(
+                channel_id=session.target_channel_id,
+                channel_name=channel.name,
+                content=text,
+                broadcast_manager=broadcast_manager,
+                services=services,
+            )
+        except FloorSuspended:
+            clear_session(user_id)
+            await update.message.reply_text("That thread's floor is suspended.")
+            return
 
     touch_session(user_id)

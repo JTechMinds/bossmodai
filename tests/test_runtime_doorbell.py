@@ -133,6 +133,28 @@ def test_no_worker_means_no_extension_config_command() -> None:
     assert not db.has_open_runtime_command(["extension_config_changed"])
 
 
+@pytest.mark.asyncio
+async def test_an_extensions_release_reaches_the_worker() -> None:
+    db.set_setting(FALLBACK, "30", "advanced")
+    services = RuntimeServices()
+    await services.start()
+    try:
+        await _warm_up(services)
+        services.extensions_release_agents(["agent-1", "agent-2"])
+        [row] = db.query("SELECT id, payload FROM runtime_commands WHERE command_type = 'extensions_release_agents'")
+        assert json.loads(row["payload"]) == {"agent_ids": ["agent-1", "agent-2"]}
+        # Completed, not failed: the worker knows the type and queues the
+        # release in its extension lane (no extension is on, so nothing is called).
+        await _wait_for_status(row["id"], {"completed"}, timeout=5.0)
+    finally:
+        await services.stop()
+
+
+def test_no_worker_means_no_extensions_release_command() -> None:
+    RuntimeServices().extensions_release_agents(["agent-1"])
+    assert not db.has_open_runtime_command(["extensions_release_agents"])
+
+
 def test_an_older_command_table_is_rebuilt_to_accept_the_new_type() -> None:
     con = get_connection()
     con.execute("DROP TABLE runtime_commands")
@@ -159,7 +181,7 @@ def test_an_older_command_table_is_rebuilt_to_accept_the_new_type() -> None:
     kept = db.create_runtime_command("reload_schedules")
     _ensure_runtime_command_types(con)
     assert db.get_runtime_command(kept.id) is not None
-    for command_type in ("extension_config_changed", "extensions_reconcile"):
+    for command_type in ("extension_config_changed", "extensions_reconcile", "extensions_release_agents"):
         added = db.create_runtime_command(command_type)
         assert db.get_runtime_command(added.id).command_type == command_type
 
@@ -175,7 +197,7 @@ def test_a_table_that_lacks_only_the_newest_type_is_rebuilt_too() -> None:
                               CHECK (command_type IN (
                                   'wake_dispatcher', 'pause_runtime', 'resume_runtime',
                                   'reset_agent_runtime', 'shutdown_runtime', 'reload_schedules',
-                                  'extension_config_changed'
+                                  'extension_config_changed', 'extensions_reconcile'
                               )),
             payload        TEXT NOT NULL,
             status         VARCHAR NOT NULL DEFAULT 'queued'
@@ -191,7 +213,8 @@ def test_a_table_that_lacks_only_the_newest_type_is_rebuilt_too() -> None:
     kept = db.create_runtime_command("extension_config_changed", {"extension_id": "x", "agent_id": "a"})
     _ensure_runtime_command_types(con)
     assert db.get_runtime_command(kept.id).payload == kept.payload
-    assert db.get_runtime_command(db.create_runtime_command("extensions_reconcile").id).status == "queued"
+    added = db.create_runtime_command("extensions_release_agents", {"agent_ids": ["a"]})
+    assert db.get_runtime_command(added.id).status == "queued"
 
 
 @pytest.mark.asyncio

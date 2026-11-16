@@ -12,7 +12,7 @@ skipped or failed run is recorded and never retried.
 
 ``run_now`` is the operator's "Run now" (api/routes/schedules.py, in the app
 process): one real occurrence of the saved schedule, enabled or not, created
-through the same ``_fire`` as a scheduled run. It refuses for the same two
+through the same ``_fire`` as a scheduled run. It refuses for the same
 reasons a scheduled run skips (``_refusal``, shared so the paths cannot
 drift), but says so instead of recording a skip.
 """
@@ -27,7 +27,7 @@ from typing import Any, Literal
 import db
 from core import config
 from core.agent_loop.activity_scheduler import assignment_wake_trigger
-from core.floors import is_on_vacation
+from core.floors import is_floor_suspended, is_on_vacation
 from core.models import Task
 from core.models.message import HUMAN_SENDER_ID
 from core.models.schedule import AgentSchedule, RecurrenceRule, ScheduleOutcome
@@ -49,13 +49,16 @@ class ScheduleRunRefused(Exception):
     """A run would not start now, for the reason a scheduled run would skip.
 
     Attributes:
-        reason: ``vacation`` (the agent is on vacation) or ``open`` (the last
-            run's task is still open).
+        reason: ``vacation`` (the agent is on vacation), ``suspended`` (the
+            agent's floor is suspended) or ``open`` (the last run's task is
+            still open).
         message: The operator-facing sentence.
         task_id: The open task for ``open``; ``None`` otherwise.
     """
 
-    def __init__(self, reason: Literal["vacation", "open"], message: str, task_id: str | None = None) -> None:
+    def __init__(
+        self, reason: Literal["vacation", "open", "suspended"], message: str, task_id: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.reason = reason
         self.message = message
@@ -156,10 +159,13 @@ def run_occurrence(
 
     In order: handled later than ``grace_seconds`` after ``due_at`` is
     ``missed`` (the machine slept); the agent on vacation is
-    ``skipped_vacation``; the last fired run's task still open is
-    ``skipped_open``; otherwise a task is created (``fired``) or creating it
-    raised (``failed``, with ``"<Type>: <message>"`` as the detail, logged at
-    warning when the detail changed).
+    ``skipped_vacation``; the agent's floor suspended records nothing and
+    returns ``None`` (the floor is off the timetable: this only happens
+    between the suspend and the worker applying its timetable reload); the
+    last fired run's task still open is ``skipped_open``; otherwise a task is
+    created (``fired``) or creating it raised (``failed``, with
+    ``"<Type>: <message>"`` as the detail, logged at warning when the detail
+    changed).
 
     Args:
         schedule_id: The schedule the timetable says is due.
@@ -168,8 +174,8 @@ def run_occurrence(
         timing: The current timing settings.
 
     Returns:
-        The run, or ``None`` when the schedule was deleted or disabled
-        (the caller drops its entry).
+        The run, or ``None`` when the schedule was deleted or disabled or
+        its agent's floor is suspended (the caller drops its entry).
 
     Raises:
         pydantic.ValidationError: The stored rule is corrupt.
@@ -197,7 +203,14 @@ def run_occurrence(
         return done("missed")
     refusal = _refusal(schedule)
     if refusal is not None:
-        return done("skipped_vacation" if refusal.reason == "vacation" else "skipped_open")
+        if refusal.reason == "suspended":
+            logger.info("Schedule %s (%s): not run, %s", schedule.id, schedule.title, refusal.message)
+            return None
+        if refusal.reason == "vacation":
+            return done("skipped_vacation")
+        if refusal.reason == "open":
+            return done("skipped_open")
+        raise ValueError(f"Unknown schedule refusal: {refusal.reason}")
     try:
         task, trigger, origin_line = _fire(schedule)
     except Exception as exc:
@@ -230,8 +243,9 @@ def run_now(schedule_id: str, *, now: datetime) -> ScheduleRun:
 
     Raises:
         LookupError: No such schedule.
-        ScheduleRunRefused: The agent is on vacation, or the last run's task
-            is still open. Nothing is recorded: no occurrence happened.
+        ScheduleRunRefused: The agent is on vacation, its floor is
+            suspended, or the last run's task is still open. Nothing is
+            recorded: no occurrence happened.
         ScheduleRunFailed: Creating the task raised; ``failed`` was recorded
             with the detail, as for a scheduled run.
         pydantic.ValidationError: The stored rule is corrupt.
@@ -260,9 +274,10 @@ def run_now(schedule_id: str, *, now: datetime) -> ScheduleRun:
 def _refusal(schedule: AgentSchedule) -> ScheduleRunRefused | None:
     """Why a run of ``schedule`` should not start now, or ``None``.
 
-    The one rule both paths apply: the agent on vacation, then the last
-    fired run's task still open (a run is not stacked on a stuck one). A
-    scheduled run records it as a skip; Run now raises it.
+    The one rule both paths apply: the agent on vacation, then the agent's
+    floor suspended, then the last fired run's task still open (a run is not
+    stacked on a stuck one). A scheduled run records a skip (or, for a
+    suspended floor, nothing); Run now raises it.
 
     Returns:
         The refusal (not raised), or ``None`` when a run may start.
@@ -270,6 +285,8 @@ def _refusal(schedule: AgentSchedule) -> ScheduleRunRefused | None:
     agent = db.get_agent(schedule.agent_id)
     if is_on_vacation(agent):
         return ScheduleRunRefused("vacation", f"{agent.name} is on vacation")
+    if agent is not None and is_floor_suspended(agent.floor_id):
+        return ScheduleRunRefused("suspended", f"{agent.name}'s floor is suspended")
     if schedule.last_task_id:
         previous = db.get_task(schedule.last_task_id)
         if previous is not None and previous.status not in TERMINAL_TASK_STATUSES:

@@ -249,6 +249,9 @@ const BossModNeedShape = (() => {
         // A work summary over its limit, and fitting again (core/agent_loop/turn_helpers.py).
         'work_summary_limit_error',
         'work_summary_fits',
+        // A floor suspended (its approvals, tasks and processes closed) and resumed (api/routes/floors.py).
+        'floor_suspended',
+        'floor_resumed',
     ]);
 
     /**

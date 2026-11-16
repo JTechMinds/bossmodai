@@ -437,12 +437,12 @@ def test_a_full_floor_leaves_the_thirteenth_agent_without_a_desk() -> None:
     assert (db.get_agent(seated[0].id).desk_x, db.get_agent(seated[0].id).desk_y) == (3, 4)
 
 
-def test_reconcile_all_desks_skips_vacationers() -> None:
-    from core.floors import send_home
+async def test_reconcile_all_desks_skips_vacationers() -> None:
+    from tests._stand_down import send_on_vacation
 
     working = db.create_agent("Working", desk_x=3, desk_y=4)
     away = db.create_agent("Away", desk_x=3, desk_y=4)
-    send_home(away.id)
+    await send_on_vacation(away.id)
 
     assert reconcile_all_desks() == 0
     # Off every floor, so the shared chair is no collision yet; the desk is

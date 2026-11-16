@@ -15,7 +15,7 @@ from PIL import Image
 import db
 from core import config
 from core.bm_cli.types import CliExecutionContext, ParsedCliCommand
-from core.extensions.contract import ExtensionContext
+from core.extensions.contract import ExtensionContext, SupportsAgentRelease
 from core.extensions.loader import import_package
 from core.extensions.registry import get_discovery
 
@@ -999,6 +999,22 @@ def test_shutdown_deletes_every_session_this_process_has_open(env) -> None:
     env["extension"].shutdown()
     assert ("shutdown",) in env["host"].calls
     assert not Path(opened.image_paths[0]).exists() and not _marker_path(env).exists()
+
+
+def test_release_closes_the_leaving_agents_sessions_and_deletes_their_files(env) -> None:
+    """An agent leaving service (suspended floor, vacation): its browser session ends like ``bv close``."""
+    assert isinstance(env["extension"], SupportsAgentRelease)
+    opened = env["run"]("bv open example.com")
+    env["host"].open["agent-staying"] = "session-staying"
+
+    env["extension"].release_agents(frozenset({env["agent"].id, "agent-without-a-session"}))
+
+    assert env["host"].calls.count(("close",)) == 1, "only the open session is closed"
+    assert env["host"].open == {"agent-staying": "session-staying"}
+    assert not Path(opened.image_paths[0]).exists() and not _shots_dir(env).exists()
+    assert not _marker_path(env).exists()
+    # The view was forgotten too: the agent starts fresh.
+    assert _error(env["run"]("bv view")) == 'NO_PAGE: run "bv open <url>" first'
 
 
 def _leftovers(data_dir: Path) -> tuple[Path, Path]:

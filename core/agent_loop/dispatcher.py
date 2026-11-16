@@ -39,7 +39,7 @@ from core.llm.client import (
 )
 from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.queue_visibility import emit_queue_visibility, schedule_queue_visibility
-from core.floors import VACATION_DENY, agent_id_on_vacation, is_on_vacation
+from core.floors import agent_wake_refusal, wake_refusal
 from core.agent_loop.work_binding import is_detached
 from core.agent_loop.work_snapshot import paused_work_snapshot
 from core.boss import boss_label
@@ -195,7 +195,8 @@ class TurnDispatcher:
         """Persist a trigger and wake the dispatcher.
 
         Writes nothing for a payload aimed at an archived thread or for an
-        agent on vacation; both are expected, documented skips.
+        agent on vacation or on a suspended floor (``agent_wake_refusal``);
+        each is an expected, documented skip.
 
         Returns:
             Whether a trigger row was written (or merged into a queued one by
@@ -203,8 +204,9 @@ class TurnDispatcher:
             that must not lose what it delivers (the extension wake service)
             knows the agent was not told.
         """
-        if agent_id_on_vacation(agent_id):
-            logger.info("Skipped %s trigger for %s: agent is on vacation", trigger_type, agent_id)
+        refusal = agent_wake_refusal(agent_id)
+        if refusal is not None:
+            logger.info("Skipped %s trigger for %s: %s", trigger_type, agent_id, refusal)
             return False
         if trigger_type == "human_chat":
             db.delete_queued_triggers(agent_id, trigger_types=_HUMAN_PREEMPTED_TRIGGER_TYPES)
@@ -982,13 +984,14 @@ class TurnDispatcher:
             ) is not None:
                 self._release_channel_seat(candidate.agent_id, payload)
             return False
-        # Backstop: enqueue already refuses a vacationer, but a row written
-        # before they went home, or by a path that bypasses enqueue, must
-        # still never start a turn.
-        if is_on_vacation(agent):
+        # Backstop: enqueue already refuses a vacationer or a suspended
+        # floor's agent, but a row written before the gate closed, or by a
+        # path that bypasses enqueue, must still never start a turn.
+        refusal = wake_refusal(agent)
+        if refusal is not None:
             if db.fail_agent_trigger(
                 candidate.id,
-                VACATION_DENY,
+                refusal,
                 claim_generation=candidate.claim_generation,
             ) is not None:
                 self._release_channel_seat(agent.id, payload)

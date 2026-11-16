@@ -7,9 +7,10 @@ files for the live view: creating it starts nothing and makes no Docker call.
 
 A desktop starts on the agent's first ``vm`` command and runs until the
 agent stops, restarts or resets it, the operator turns the agent off or
-changes its screen, memory or CPUs (``agent_config_changed``), the agent is
-deleted or the worker boots (``reconcile_agents``), or the worker shuts down
-(``shutdown``). Its files and programs persist across all but a reset and the
+changes its screen, memory or CPUs (``agent_config_changed``), the agent
+leaves service (its floor is suspended or it goes on vacation:
+``release_agents``), the agent is deleted or the worker boots
+(``reconcile_agents``), or the worker shuts down (``shutdown``). Its files and programs persist across all but a reset and the
 agent's deletion. Loaded by the BossMod extension host (``core.extensions``)
 only while enabled or being set up.
 """
@@ -268,7 +269,7 @@ class VirtualDesktopExtension:
         self._idle.mark_reminded(batch.agent_id, batch.cursor)
 
     def skip_wake(self, agent_id: str) -> None:
-        """On vacation: the current idle stretch counts as reminded."""
+        """On vacation or a suspended floor: the current idle stretch counts as reminded."""
         self._idle.skip(agent_id)
 
     def describe_wake_error(self, exc: Exception) -> str:
@@ -296,3 +297,39 @@ class VirtualDesktopExtension:
             for agent_id in before - running:
                 self._idle.forget(agent_id)
                 self._commands.forget(agent_id)
+
+    def release_agents(self, agent_ids: frozenset[str]) -> None:
+        """Power down these agents' desktops, disks kept (runtime worker, under each agent's lock).
+
+        For agents leaving service (a suspended floor, vacation) who still
+        exist: each running desktop stops (its volume is kept, so the next
+        ``vm`` command boots it again with its files), and its screenshots,
+        idle state and command state go, as when the agent is turned off.
+        An agent with no desktop running here only has that state cleared.
+        One agent's failure does not keep the others running.
+
+        Raises:
+            DesktopActionError: Stopping failed for some agents; the message
+                names them (each failure is logged with its traceback).
+            OSError: A screenshot folder cannot be removed.
+        """
+        failed: list[str] = []
+        for agent_id in sorted(agent_ids):
+            try:
+                self._release_one(agent_id)
+            except (DockerUnavailable, DesktopActionError):
+                logger.exception("Virtual Desktop: releasing agent %s's desktop failed", agent_id)
+                failed.append(agent_id)
+        if failed:
+            raise DesktopActionError(f"releasing failed for the desktops of agents {', '.join(failed)}")
+
+    def _release_one(self, agent_id: str) -> None:
+        """Stop one agent's desktop if this worker runs it, then forget its state."""
+        with self._host.agent_lock(agent_id):
+            # Only this worker runs desktops; one it did not start was
+            # stopped by the boot reconcile.
+            if agent_id in self._host.running_here() and self._host.stop(agent_id):
+                logger.info("Virtual Desktop: stopped agent %s's desktop, it left service", agent_id)
+            self._shots.delete(agent_id)
+            self._idle.forget(agent_id)
+            self._commands.forget(agent_id)

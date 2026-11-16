@@ -4,8 +4,8 @@
  * Lists the floor's ACTIVE threads, read from the server rather than the
  * rail's list (which may be showing archives), each with its members' faces
  * and a `⋯` → Move to…. `Add threads` picks active threads from the other
- * floors. A thread brings its members; the move confirm layer
- * (shell/floor-move-confirm.js) shows who and what else.
+ * floors, never a suspended one. A thread brings its members; the move
+ * confirm layer (shell/floor-move-confirm.js) shows who and what else.
  *
  * The frame and row shapes are shell/floor-settings.js's, passed in `ctx`.
  */
@@ -83,8 +83,10 @@ const BossModFloorThreads = (() => {
                 emptyText: 'No active threads on another floor.',
                 load: async () => {
                     const groups = new Map();
+                    // The server refuses a move off a suspended floor; offer none.
+                    const suspended = new Set((ctx.store.getState().suspendedFloors || []).map((item) => item.id));
                     (await floorApi.listActiveThreads())
-                        .filter((thread) => floorOf(thread) !== floor.id)
+                        .filter((thread) => floorOf(thread) !== floor.id && !suspended.has(floorOf(thread)))
                         .forEach((thread) => {
                             const from = floorOf(thread);
                             if (!groups.has(from)) groups.set(from, { label: ctx.floorName(from), items: [] });

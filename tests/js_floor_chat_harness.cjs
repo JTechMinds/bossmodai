@@ -5,8 +5,9 @@
  * store's own reentrant setState, which is what the source text cannot show:
  * that switching floors opens that floor's last chat or the empty state, that
  * opening a conversation records it under its own floor and follows it there,
- * that a stale entry resolves to nothing, and that nothing fires before the
- * lists have loaded.
+ * that a stale entry resolves to nothing, that a conversation on a suspended
+ * floor closes rather than moving the operator there, and that nothing fires
+ * before the lists have loaded.
  *
  * Invoked by tests/test_ui_floor_chat.py. Not a browser bundle.
  */
@@ -189,6 +190,31 @@ result.attachRequiresAStore = true;
     check(notified === 0, `(l) re-opening the recorded chat must not notify (${notified})`);
     check(store.getState().conversationByFloor === before, "(l) the map reference must be kept");
     result.noOpOpenDoesNotNotify = true;
+}
+
+// (n) A conversation on a suspended floor (a restored session, a stale door)
+// closes instead of moving the operator onto a floor that is off the list.
+{
+    const { store, chat } = setup({
+        conversationByFloor: { one: { id: "a1", kind: "agent" } },
+        suspendedFloors: [{ id: "five", name: "Five", suspended_at: "2026-11-16T09:30:00+00:00" }],
+    });
+    chat.settle();
+    const floors = [];
+    store.subscribe((s) => s.currentFloorId, (value) => floors.push(value));
+    store.setState({ conversationId: "t5", conversationKind: "thread" });
+    const state = store.getState();
+    check(state.currentFloorId === "one", "(n) a suspended floor's thread must not move the floor");
+    check(floors.length === 0, `(n) the floor must not change at all: ${floors}`);
+    check(state.conversationId === null && state.conversationKind === null,
+        "(n) the suspended floor's conversation must close");
+    check(!state.conversationByFloor.five, "(n) it must not be recorded under the suspended floor");
+    check(state.conversationByFloor.one.id === "a1", "(n) the current floor's chat must be kept");
+    // The same thread opens normally once its floor is active again.
+    store.setState({ suspendedFloors: [] });
+    store.setState({ conversationId: "t5", conversationKind: "thread" });
+    check(store.getState().currentFloorId === "five", "(n) a resumed floor's thread must follow again");
+    result.suspendedFloorConversationCloses = true;
 }
 
 // (m) destroy() returns the subscriber count to baseline.

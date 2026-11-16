@@ -155,12 +155,13 @@ class ScheduleWatch:
         self._timing = timing
 
     def _sync(self) -> None:
-        """Bring the timetable in step with the enabled schedules (``Timetable.sync``).
+        """Bring the timetable in step with the schedules to run (``Timetable.sync``).
 
         Unchanged schedules keep their ``next_at``; new or edited ones are
-        computed from the clock; deleted or disabled ones are dropped.
+        computed from the clock; deleted or disabled ones, and those of a
+        suspended floor (``db.list_schedules_to_run``), are dropped.
         """
-        schedules = db.list_enabled_schedules()
+        schedules = db.list_schedules_to_run()
         self._timetable.sync(((item.id, item.recurrence) for item in schedules), now=self._clock())
 
     async def _sleep(self) -> None:

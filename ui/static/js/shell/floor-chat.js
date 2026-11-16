@@ -9,8 +9,9 @@
  * - The floor changes: open that floor's remembered chat if it is still
  *   valid, otherwise the empty state.
  * - A conversation opens: record it under its own floor, and when that is
- *   not the current floor, move the operator there. The open conversation
- *   therefore always belongs to `currentFloorId`.
+ *   not the current floor, move the operator there. A conversation on a
+ *   suspended floor closes instead. The open conversation therefore always
+ *   belongs to `currentFloorId`.
  *
  * It draws nothing, and it does nothing until `settle()`: before the roster
  * and thread lists have loaded, no conversation's floor is knowable.
@@ -99,6 +100,13 @@ const BossModFloorChat = (() => {
             // both create on the current floor (hireFloorId, and the server's
             // shared-home rule for threads), so the current floor is its floor.
             const floor = conversationFloor(state, id, kind) || state.currentFloorId;
+            // A restored session or a stale door must never put the operator
+            // on a floor that is off the list: a suspended floor's chat closes.
+            const suspended = Array.isArray(state.suspendedFloors) ? state.suspendedFloors : [];
+            if (suspended.some((item) => item.id === floor)) {
+                store.setState({ conversationId: null, conversationKind: null });
+                return;
+            }
             const map = state.conversationByFloor || {};
             const nextMap = remember(map, floor, id, kind);
             const patch = {};

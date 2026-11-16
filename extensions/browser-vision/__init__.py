@@ -200,6 +200,18 @@ class BrowserVisionExtension:
         self._warned_markers.add(path)
         logger.warning("Browser Vision: ignoring %s, %s", path, reason)
 
+    def release_agents(self, agent_ids: frozenset[str]) -> None:
+        """Close these agents' browser sessions: they left service (``SupportsAgentRelease``).
+
+        Runtime worker only (the hook is called there). Website logins held
+        in those sessions are lost; see ``BrowserVisionCommands.release``.
+
+        Raises:
+            BrowserActionError: The browser did not answer or a close failed.
+            OSError: A screenshot folder cannot be removed.
+        """
+        self._commands.release(agent_ids)
+
     def shutdown(self) -> None:
         """End every browser session this process has open (see ``BrowserVisionCommands.shutdown``).
 

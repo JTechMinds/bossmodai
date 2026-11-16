@@ -77,6 +77,8 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/floors", "get_floors"),
     (("POST",), "/api/floors", "post_floor"),
     (("PATCH",), "/api/floors/{floor_id}", "patch_floor"),
+    (("POST",), "/api/floors/{floor_id}/suspend", "post_floor_suspend"),
+    (("POST",), "/api/floors/{floor_id}/resume", "post_floor_resume"),
     (("DELETE",), "/api/floors/{floor_id}", "remove_floor"),
     (("POST",), "/api/floors/{floor_id}/move-plan", "post_move_plan"),
     (("POST",), "/api/floors/{floor_id}/move", "post_move"),

@@ -13,8 +13,9 @@ trigger. The interval is the agent's own (the manifest's
 - coalesced: new lines merge into the agent's still-queued event from the
   same extension instead of stacking a second wake; a claimed one is never
   touched;
-- vacation: a vacationer's due tick calls ``skip_wake`` instead, so what
-  arrives meanwhile never wakes it;
+- vacation or suspended floor (``core.floors.wake_refusal``): a due tick
+  calls ``skip_wake`` instead, so what arrives meanwhile never wakes the
+  agent (mail stays readable with its own command);
 - health: for a wake with ``desk_status`` (the default), every real check is
   recorded (``db.record_wake_check``) for the desk; a failure is logged at
   warning only when its sentence changes, and at info when it clears. A wake
@@ -27,7 +28,7 @@ trigger. The interval is the agent's own (the manifest's
   ``extension_config_changed`` runtime command), so a tick with nothing due
   reads nothing from the database.
 
-The extension knows only its data source; scheduling, vacation and the
+The extension knows only its data source; scheduling, the wake gate and the
 trigger stay here.
 """
 
@@ -48,7 +49,7 @@ from core.extensions.contract import SupportsWake, WakeBatch
 from core.extensions.loader import ExtensionLoadError, load_extension
 from core.extensions.manifest import config_value
 from core.extensions.registry import ExtensionEntry, enabled_ids, get_discovery
-from core.floors import is_on_vacation
+from core.floors import wake_refusal
 
 logger = logging.getLogger(__name__)
 
@@ -334,7 +335,7 @@ class ExtensionWakeWatch:
             return
         desk_status = entry.manifest.wake.desk_status
 
-        if is_on_vacation(agent):
+        if wake_refusal(agent) is not None:
             # Nothing is recorded: the desk keeps showing the last real check.
             await asyncio.to_thread(instance.skip_wake, agent_id)
             return
@@ -352,8 +353,9 @@ class ExtensionWakeWatch:
         if batch.agent_id != agent_id:
             raise ValueError(f"poll_wake for {agent_id} returned a batch for {batch.agent_id}")
         if not self._deliver(entry, batch):
-            # The agent went on vacation (or the payload was refused) between
-            # the check and the enqueue: not told, so not committed.
+            # The agent's gate closed (vacation, suspended floor) or the payload
+            # was refused between the check and the enqueue: not told, so not
+            # committed.
             return
         await asyncio.to_thread(instance.commit_wake, batch)
         self._record_ok(entry.id, agent_id, len(batch.lines), desk_status=desk_status)

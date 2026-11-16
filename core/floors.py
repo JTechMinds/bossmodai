@@ -13,15 +13,22 @@ from datetime import datetime, timezone
 from typing import Any, Literal
 
 from core.models.message import HUMAN_SENDER_ID
+# Only the two small dataclasses: core/stand_down.py keeps its own heavy
+# dependencies (turn claims, tasking, meetings, seating) inside its functions,
+# so this import does not make this module an import hub.
+from core.stand_down import StandDownResult, StandDownWhy
 from db.floors import LOBBY_ID, LOBBY_NAME
 
 logger = logging.getLogger(__name__)
 
 CROSS_FLOOR_DENY = "Cross-floor access denied"
 VACATION_DENY = "Agent is on vacation"
+FLOOR_SUSPENDED_DENY = "This floor is suspended"
 # Why a floor change stopped an agent's background processes: their
 # /projects root is about to point at another floor's folder, or none.
 FLOOR_MOVE_STOP_REASON = "Moved floors"
+# Why a floor delete's "Send them home" stood its residents down.
+FLOOR_DELETED = StandDownWhy(label="Floor deleted", phrase="the floor was deleted")
 
 FloorOccupants = Literal["send_home", "delete"]
 
@@ -37,6 +44,17 @@ class AgentOnVacation(FloorDenied):
     """The agent is on vacation: off every floor and never woken."""
 
     def __init__(self, message: str = VACATION_DENY) -> None:
+        super().__init__(message)
+
+
+class FloorSuspended(FloorDenied):
+    """The floor is suspended: out of service, its agents never woken.
+
+    A ``FloorDenied``, so every existing ``except FloorDenied`` mapping
+    (thread create, task create and assign → 403) covers it.
+    """
+
+    def __init__(self, message: str = FLOOR_SUSPENDED_DENY) -> None:
         super().__init__(message)
 
 
@@ -65,6 +83,9 @@ class FloorDeleteResult:
     # Agents sent home whose running background processes were stopped,
     # so the API can repaint just those desks.
     process_stopped_agent_ids: list[str] = field(default_factory=list)
+    # Open tasks a send-home cancelled (theirs and the floor's); empty for
+    # the "delete" branch.
+    tasks_cancelled: list[str] = field(default_factory=list)
 
 
 def home_floor_id(agent_id: str | None) -> str | None:
@@ -129,6 +150,10 @@ def require_shared_home(agent_ids: list[str]) -> str:
 
     Mixed homes, a missing agent, or a missing floor deny. An empty list
     denies too: a thread with nobody has no floor to inherit.
+
+    Raises:
+        FloorDenied: Any of the above.
+        FloorSuspended: The one shared floor is suspended.
     """
     unique = list(dict.fromkeys(agent_id for agent_id in agent_ids if agent_id))
     if not unique:
@@ -141,6 +166,8 @@ def require_shared_home(agent_ids: list[str]) -> str:
         floors.append(floor_id)
     if len(set(floors)) != 1:
         raise FloorDenied(CROSS_FLOOR_DENY)
+    if is_floor_suspended(floors[0]):
+        raise FloorSuspended()
     return floors[0]
 
 
@@ -197,12 +224,19 @@ def assert_assignment(
 
     A channel-bound card stays on that channel's floor. Otherwise the
     assignee and the owner, when both are agents, must share a home.
+
+    Raises:
+        FloorDenied: The assignment crosses floors or a floor is missing.
+        FloorSuspended: The bound thread's floor, or the shared home, is
+            suspended.
     """
     bound = (channel_id or "").strip() or (parent_channel_id or "").strip()
     if bound:
         floor_id = channel_floor_id(bound)
         if not floor_id:
             raise FloorDenied(CROSS_FLOOR_DENY)
+        if is_floor_suspended(floor_id):
+            raise FloorSuspended()
         for agent_id in (assignee_id, owner_id):
             token = (agent_id or "").strip()
             if not token or token == HUMAN_SENDER_ID:
@@ -249,11 +283,15 @@ def assert_task_stays_on_floor(task: Any, assignee_id: str | None) -> None:
     Raises:
         FloorDenied: The task has a floor and ``assignee_id`` is an agent
             not living on it.
+        FloorSuspended: The task's floor is suspended (a stale window
+            assigning work there).
     """
     token = (assignee_id or "").strip()
     if not token or token == HUMAN_SENDER_ID:
         return
     floor_id = task_floor_id(task)
+    if floor_id and is_floor_suspended(floor_id):
+        raise FloorSuspended()
     if floor_id and not on_floor(token, floor_id):
         raise FloorDenied(CROSS_FLOOR_DENY)
 
@@ -274,55 +312,130 @@ def is_on_vacation(agent: Any) -> bool:
     return agent is not None and getattr(agent, "vacation_since", None) is not None
 
 
-def agent_id_on_vacation(agent_id: str | None) -> bool:
-    """True when the agent with this id exists and is on vacation.
+def is_floor_suspended(floor_id: str | None) -> bool:
+    """True when ``floor_id`` names a floor that is suspended.
 
-    A missing agent is not "on vacation": that is a different failure, and
-    the paths that read this already have their own not-found handling.
+    A blank or missing floor is not "suspended": that is a different
+    failure, owned by the gates that already deny a missing floor.
+    """
+    token = (floor_id or "").strip()
+    if not token:
+        return False
+    from db.floors import get_floor
+
+    floor = get_floor(token)
+    return floor is not None and floor.suspended_at is not None
+
+
+def wake_refusal(agent: Any) -> str | None:
+    """Why ``agent`` (an Agent or None) must not be woken, or None when it may be.
+
+    The one rule every wake gate asks: on vacation (``VACATION_DENY``), or
+    living on a suspended floor (``FLOOR_SUSPENDED_DENY``). ``None`` agent
+    returns None: not-found is handled by each caller.
+    """
+    if agent is None:
+        return None
+    if is_on_vacation(agent):
+        return VACATION_DENY
+    if is_floor_suspended(getattr(agent, "floor_id", None)):
+        return FLOOR_SUSPENDED_DENY
+    return None
+
+
+def agent_wake_refusal(agent_id: str | None) -> str | None:
+    """``wake_refusal`` for an agent id, read fresh from the database.
+
+    The human sender id, a blank id or a missing agent return None.
     """
     token = (agent_id or "").strip()
     if not token or token == HUMAN_SENDER_ID:
-        return False
+        return None
     import db
 
-    return is_on_vacation(db.get_agent(token))
+    return wake_refusal(db.get_agent(token))
 
 
-def send_home(agent_id: str) -> Any:
-    """Put one agent on vacation: off every floor, out of every thread, never woken.
+# Each wake refusal as the operator-ingress error that carries it.
+_REFUSAL_ERRORS: dict[str, type[FloorDenied]] = {
+    VACATION_DENY: AgentOnVacation,
+    FLOOR_SUSPENDED_DENY: FloorSuspended,
+}
 
-    Sets ``floor_id`` to NULL and stamps ``vacation_since`` together, which is
-    the invariant every floor gate relies on (no floor denies). Every channel
-    membership, active or archived, is released and queued triggers are
-    dropped. Its running background processes are stopped first: on
-    vacation it has no ``/projects``. Tasks stay where they are, the same
-    policy a floor move (core/floor_moves.py) follows. Idempotent: an agent
-    already on vacation is returned unchanged.
+
+def assert_agent_reachable(agent_id: str | None) -> None:
+    """Deny an operator message to an agent that would never answer it.
+
+    The operator-ingress form of ``agent_wake_refusal``: raise before
+    anything is written, so the message never looks delivered.
 
     Raises:
-        LookupError: No agent has this id.
+        AgentOnVacation: The agent is on vacation.
+        FloorSuspended: The agent's floor is suspended.
+    """
+    refusal = agent_wake_refusal(agent_id)
+    if refusal is not None:
+        raise _REFUSAL_ERRORS[refusal]()
+
+
+async def send_home(
+    agent_ids: list[str],
+    *,
+    why: StandDownWhy,
+    extra_task_ids: list[str],
+    services: Any,
+) -> StandDownResult:
+    """Put agents on vacation: off every floor, out of every thread, their work ended.
+
+    Close the gate, then stand down. In one transaction, every agent not
+    already on vacation gets ``floor_id`` NULL and ``vacation_since`` stamped
+    together (the invariant every floor gate relies on: no floor denies) and
+    loses every channel membership, active or archived. Every gate is closed
+    before any stop starts, so no teammate's turn can re-wake an agent that
+    was already stopped. Then ``core.stand_down.stand_down`` ends their work:
+    live turns, queued triggers, background processes, their open assigned
+    tasks (plus ``extra_task_ids``), hosted meetings, pending approvals and
+    consents, activities, and what extensions run for them. Idempotent: an
+    agent already on vacation keeps its row, and the stand-down finds nothing
+    left to stop. A per-agent vacation calls this with one id.
+
+    Args:
+        agent_ids: The agents to send home.
+        why: Why they stood down (e.g. ``FLOOR_DELETED``); every
+            operator-facing line is derived from it.
+        extra_task_ids: More open tasks to cancel with theirs, e.g. a deleted
+            floor's backlog (``core.stand_down.open_task_ids_on_floor``,
+            computed before they left the floor).
+        services: The runtime services (``core.runtime.runtime_services``).
+
+    Returns:
+        What the stand-down did.
+
+    Raises:
+        LookupError: An id names no agent; raised before anything is written.
+        Exception: Whatever ``stand_down`` raises, unchanged; the gates stay
+            closed, which is the safe state, and a retry finishes the job.
     """
     import db
-    from core.bm_cli.background_processes import stop_for_agent
+    from core.stand_down import stand_down
     from db.connection import transaction
 
-    agent = db.get_agent(agent_id)
-    if agent is None:
-        raise LookupError("Agent not found")
-    if is_on_vacation(agent):
-        return agent
-    stop_for_agent(agent.id, reason=FLOOR_MOVE_STOP_REASON)
+    unique = list(dict.fromkeys(agent_id for agent_id in agent_ids if agent_id))
+    agents = []
+    for agent_id in unique:
+        agent = db.get_agent(agent_id)
+        if agent is None:
+            raise LookupError(f"Agent not found: {agent_id}")
+        agents.append(agent)
+    now = datetime.now(timezone.utc)
     with transaction():
-        updated = db.update_agent(
-            agent.id,
-            floor_id=None,
-            vacation_since=datetime.now(timezone.utc),
-        )
-        if updated is None:
-            raise LookupError("Agent not found")
-        _release_all_memberships(updated.id)
-        db.delete_queued_triggers(updated.id)
-    return updated
+        for agent in agents:
+            if is_on_vacation(agent):
+                continue
+            if db.update_agent(agent.id, floor_id=None, vacation_since=now) is None:
+                raise LookupError(f"Agent not found: {agent.id}")
+            _release_all_memberships(agent.id)
+    return await stand_down(unique, why=why, extra_task_ids=extra_task_ids, services=services)
 
 
 def bring_back(agent_id: str, floor_id: str) -> Any:
@@ -336,7 +449,9 @@ def bring_back(agent_id: str, floor_id: str) -> Any:
 
     Raises:
         LookupError: The agent or the floor does not exist.
-        ValueError: The agent is not on vacation.
+        ValueError: The floor is suspended (the agent would land on a floor
+            that is off the list, never woken), or the agent is not on
+            vacation.
     """
     import db
     from core.bm_cli.background_processes import stop_for_agent
@@ -349,6 +464,8 @@ def bring_back(agent_id: str, floor_id: str) -> Any:
     floor = get_floor((floor_id or "").strip())
     if floor is None:
         raise LookupError("Floor not found")
+    if floor.suspended_at is not None:
+        raise ValueError(f"{floor.name} is suspended. Resume it first.")
     if not is_on_vacation(agent):
         raise ValueError("Agent is not on vacation")
     stop_for_agent(agent.id, reason=FLOOR_MOVE_STOP_REASON)
@@ -370,21 +487,28 @@ async def delete_floor(
 ) -> FloorDeleteResult:
     """Delete one floor: its agents go home or are deleted, its threads archive.
 
-    Order matters. Agents leave first (a live turn is cancelled before the
-    agent row changes: for send-home through ``cancel_turn_and_discard_claim``,
-    which also deletes the cancelled turn's claim and closes its channel
-    round seat; for delete through ``services.reset_agent_runtime``, since
-    deleting the agent deletes its triggers), so no turn can re-queue into a
-    thread that is about to seal. A sent-home agent's background processes
-    are stopped just before it goes home; the agents that had any are
-    listed in ``process_stopped_agent_ids``. Then every active
+    Order matters. Agents leave first, so no turn can re-queue into a thread
+    that is about to seal. For send-home, the floor's open tasks are listed
+    while the residents still live here (``open_task_ids_on_floor``), then
+    one ``send_home`` closes every resident's gate and stands them all down
+    (live turns cancelled and their claims discarded, background processes
+    stopped, their open assigned tasks and the floor's tasks cancelled with
+    ``Cancelled: the floor was deleted``, hosted meetings ended, approvals
+    and consents closed, extension resources released); the agents whose
+    processes stopped are listed in ``process_stopped_agent_ids`` and the
+    cancelled tasks in ``tasks_cancelled``. The stand-down's lines go to
+    ``on_before_seal`` before any thread seals. For delete, each live turn
+    is cancelled through ``services.reset_agent_runtime`` (deleting the
+    agent deletes its triggers) and the agent is deleted. Then every active
     thread on the floor is archived through the operator path with its open
-    origin tasks cancelled. Then the floor's company folder, when it has
-    one, moves to ``<company>/.archived-floors/<id>`` (never deleted) and
+    origin tasks cancelled (after a send-home nothing is left open, so no
+    second cancel line is posted). Then the floor's company folder, when it
+    has one, moves to ``<company>/.archived-floors/<id>`` (never deleted) and
     artifact paths under it are rewritten. The floor row goes last.
 
-    ``on_before_seal`` is passed through to ``archive_thread_as_operator`` so
-    an API caller can paint each thread's closing lines live.
+    ``on_before_seal`` is called with the send-home's posted lines and is
+    passed through to ``archive_thread_as_operator``, so an API caller can
+    paint every closing line live.
 
     Raises:
         ValueError: The floor is Lobby, or ``occupants`` is not a known choice.
@@ -392,10 +516,9 @@ async def delete_floor(
         FloorOccupantsChoiceRequired: Agents live here and ``occupants`` is None.
     """
     import db
-    from core.agent_loop.turn_claims import cancel_turn_and_discard_claim
     from core.agent_repository import agent_repository
-    from core.bm_cli.background_processes import stop_for_agent
     from core.channel_archive import archive_thread_as_operator
+    from core.stand_down import open_task_ids_on_floor
     from db.floors import delete_floor_row, get_floor
 
     token = (floor_id or "").strip()
@@ -415,16 +538,23 @@ async def delete_floor(
         raise FloorOccupantsChoiceRequired(len(residents))
 
     result = FloorDeleteResult(floor_id=floor.id)
-    for agent in residents:
-        if occupants == "send_home":
-            await cancel_turn_and_discard_claim(agent.id, services=services)
-            # Stopped here rather than left to send_home so the stopped ids are
-            # known; send_home's own stop then finds nothing running.
-            if stop_for_agent(agent.id, reason=FLOOR_MOVE_STOP_REASON):
-                result.process_stopped_agent_ids.append(agent.id)
-            send_home(agent.id)
-            result.agents_sent_home.append(agent.id)
-        else:
+    if occupants == "send_home":
+        # Before anyone leaves: a resident's backlog item resolves to this
+        # floor only while its reporter still lives here.
+        floor_tasks = open_task_ids_on_floor(floor.id)
+        sent = await send_home(
+            [agent.id for agent in residents],
+            why=FLOOR_DELETED,
+            extra_task_ids=floor_tasks,
+            services=services,
+        )
+        result.agents_sent_home = sent.agent_ids
+        result.process_stopped_agent_ids = sent.process_stopped_agent_ids
+        result.tasks_cancelled = sent.tasks_cancelled
+        if on_before_seal is not None:
+            await on_before_seal(sent.posted_lines)
+    elif occupants == "delete":
+        for agent in residents:
             # Deleting the agent deletes its trigger rows, claim included.
             await services.reset_agent_runtime(agent.id)
             try:
@@ -496,6 +626,8 @@ def same_floor_agents(agent_id: str) -> list[Any]:
 
 __all__ = [
     "CROSS_FLOOR_DENY",
+    "FLOOR_DELETED",
+    "FLOOR_SUSPENDED_DENY",
     "LOBBY_ID",
     "LOBBY_NAME",
     "VACATION_DENY",
@@ -504,7 +636,9 @@ __all__ = [
     "FloorDenied",
     "FloorOccupants",
     "FloorOccupantsChoiceRequired",
-    "agent_id_on_vacation",
+    "FloorSuspended",
+    "agent_wake_refusal",
+    "assert_agent_reachable",
     "assert_assignment",
     "assert_on_channel",
     "assignment_stays_on_floor",
@@ -513,6 +647,7 @@ __all__ = [
     "delete_floor",
     "filter_ids",
     "home_floor_id",
+    "is_floor_suspended",
     "is_on_vacation",
     "keep_one_floor",
     "on_floor",
@@ -522,4 +657,5 @@ __all__ = [
     "send_home",
     "shared_floor_id",
     "task_floor_id",
+    "wake_refusal",
 ]

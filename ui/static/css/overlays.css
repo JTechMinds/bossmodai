@@ -1161,10 +1161,13 @@
 .floor-new-form { display: flex; flex-direction: column; gap: 6px; padding: 4px 0; }
 
 /* The Delete floor layer's choice: two native radios, each a full-row target
-   with its consequence under the label. */
-.floor-delete { display: flex; flex-direction: column; gap: 12px; }
+   with its consequence under the label. The Suspend floor layer
+   (shell/floor-suspend.js) is the same question, so it shares the stack. */
+.floor-delete,
+.floor-suspend { display: flex; flex-direction: column; gap: 12px; }
 
-.floor-delete p { margin: 0; }
+.floor-delete p,
+.floor-suspend p { margin: 0; }
 
 .floor-delete-choice {
   display: flex;

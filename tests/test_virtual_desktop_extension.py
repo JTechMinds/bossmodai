@@ -16,13 +16,15 @@ from core.extensions.contract import (
     SupportsAgentConfig,
     SupportsAgentConfigChanged,
     SupportsAgentReconcile,
+    SupportsAgentRelease,
     SupportsLiveView,
     SupportsPromptState,
     SupportsWake,
 )
-from tests._virtual_desktop_fakes import DEFAULT_SETTINGS, ENTRY, PACKAGE, FakeHost, module, png, types
+from tests._virtual_desktop_fakes import DEFAULT_SETTINGS, ENTRY, PACKAGE, FakeDaemon, FakeHost, module, png, types
 
 docker_access = module("docker_access")
+docker_host = module("docker_host")
 screenshots = module("screenshots")
 settings_module = module("settings")
 
@@ -55,7 +57,7 @@ def test_create_makes_no_docker_call(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr(docker_access.docker, "from_env", no_docker)
     extension = PACKAGE.create(ExtensionContext(manifest=ENTRY.manifest, data_dir=tmp_path, read_agent_config=lambda agent_id: None))
     for protocol in (SupportsLiveView, SupportsAgentConfig, SupportsWake, SupportsPromptState,
-                     SupportsAgentConfigChanged, SupportsAgentReconcile):
+                     SupportsAgentConfigChanged, SupportsAgentReconcile, SupportsAgentRelease):
         assert isinstance(extension, protocol)
     assert extension.live_view() == []
     assert extension.poll_wake("agent-1") is None
@@ -179,6 +181,52 @@ def test_reconcile_deletes_screenshots_of_desktops_not_running_here_even_when_it
     extension.reconcile_agents(frozenset())
     assert ("reconcile", frozenset()) in host.calls
     assert store.agents() == []
+
+
+def test_release_powers_the_desktop_down_and_keeps_its_disk(tmp_path: Path) -> None:
+    """An agent leaving service (suspended floor, vacation) still exists: its files stay."""
+    daemon = FakeDaemon()
+    host = docker_host.DesktopHost(
+        defaults=settings_module.DesktopDefaults.model_validate(ENTRY.manifest.defaults),
+        install_id="abc1234567", image_tag="bossmod/virtual-desktop:1", client_factory=daemon.factory,
+    )
+    host.ensure_running("a1", DEFAULT_SETTINGS)
+    [name] = daemon.containers
+    extension = _extension(tmp_path, {"a1": {}}, host)
+    screenshots.ShotStore(tmp_path / "shots", 20).store("a1", png(4, 4), _meta(os.getpid()))
+
+    extension.release_agents(frozenset({"a1"}))
+
+    container = daemon.containers[name]
+    assert container.status == "exited" and container.calls[-1][0] == "stop"
+    assert daemon.removed == [] and daemon.removed_volumes == [] and len(daemon.volumes) == 1
+    assert host.running_here() == frozenset()
+    assert not (tmp_path / "shots" / "a1").exists()
+    # Idempotent: nothing is running any more, so nothing is stopped again.
+    stops = len([call for call in container.calls if call[0] == "stop"])
+    extension.release_agents(frozenset({"a1"}))
+    assert len([call for call in container.calls if call[0] == "stop"]) == stops
+
+
+def test_release_stops_the_others_when_one_desktop_fails_then_names_it(tmp_path: Path, caplog) -> None:
+    host = FakeHost()
+    host.ensure_running("a1", DEFAULT_SETTINGS)
+    host.ensure_running("a2", DEFAULT_SETTINGS)
+    extension = _extension(tmp_path, {}, host)
+    host.fail["stop"] = types.DesktopActionError("stopping the desktop failed")
+
+    with caplog.at_level(logging.ERROR), pytest.raises(types.DesktopActionError, match="a1"):
+        extension.release_agents(frozenset({"a1", "a2"}))
+
+    assert [call for call in host.calls if call[0] == "stop"] == [("stop", "a1"), ("stop", "a2")]
+    assert host.running_here() == frozenset({"a1"}), "a2 was still stopped"
+    assert any("a1" in record.getMessage() and record.exc_info for record in caplog.records)
+
+
+def test_release_of_an_agent_with_no_desktop_running_makes_no_docker_call(tmp_path: Path) -> None:
+    host = FakeHost()
+    _extension(tmp_path, {}, host).release_agents(frozenset({"a1"}))
+    assert host.calls == []
 
 
 def test_shutdown_stops_the_desktops_and_deletes_every_screenshot(tmp_path: Path) -> None:

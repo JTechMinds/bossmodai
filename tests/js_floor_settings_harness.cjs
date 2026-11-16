@@ -12,6 +12,11 @@
  * stale plan is re-read and said before a second try moves. It also proves
  * core/overlays.js's setTitle on a layered stack (head, ✕, and the ‹ of the
  * layer above), and that a saved rename retitles the settings through it.
+ * Suspend: Lobby offers no Suspend tool and says so; another floor's Suspend
+ * tool sits before the trash and opens a layer that is busy while the request
+ * runs, says a refusal and re-arms without reloading, and on success reloads
+ * the floor list, then closes itself and the settings. The Add threads picker
+ * leaves out suspended floors' threads.
  *
  * Invoked by tests/test_ui_floor_settings.py. Not a browser bundle.
  */
@@ -25,7 +30,7 @@ installIconsStub();
 const NAMES = [
     "BossModDom", "BossModStore", "BossModFormat", "BossModAvatar", "BossModSearchField", "BossModInlineRename",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModAgentApi",
-    "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorPicker",
+    "BossModFloorScope", "BossModFloorApi", "BossModFloorDelete", "BossModFloorSuspend", "BossModFloorPicker",
     "BossModFloorMoveConfirm", "BossModFloorPeople", "BossModFloorThreads", "BossModFloorProjects",
     "BossModFloorSettings",
 ];
@@ -54,6 +59,8 @@ const THREADS = [
     { id: "t1", name: "Books", status: "active", floor_id: "lobby", members: [{ id: "a1", name: "Ada" }, { id: "a2", name: "Bob" }] },
     { id: "t2", name: "Ledger", status: "active", floor_id: "lobby", members: [{ id: "a1", name: "Ada" }] },
     { id: "t3", name: "Audit", status: "active", floor_id: "fin", members: [{ id: "a3", name: "Cy" }] },
+    // On a suspended floor: /api/channels still lists it; the picker must not.
+    { id: "t5", name: "Payroll", status: "active", floor_id: "hr", members: [{ id: "a5", name: "Hal" }] },
 ];
 const PLAN = {
     target_floor_id: "lobby",
@@ -68,6 +75,8 @@ const PLAN = {
 const calls = [];
 let moveAnswers = [];
 let renameRefusals = [];
+// POST /api/floors/fin/suspend answers, in order: a response or a promise of one.
+let suspendAnswers = [];
 function apiFetch(url, init) {
     const method = (init && init.method) || "GET";
     const body = init && init.body ? JSON.parse(init.body) : null;
@@ -99,6 +108,9 @@ function apiFetch(url, init) {
     if (url === "/api/floors/lobby/move" && method === "POST") {
         const answer = moveAnswers.shift();
         return Promise.resolve(answer);
+    }
+    if (url === "/api/floors/fin/suspend" && method === "POST" && suspendAnswers.length) {
+        return Promise.resolve(suspendAnswers.shift());
     }
     return Promise.reject(new Error(`unexpected request ${method} ${url}`));
 }
@@ -135,6 +147,7 @@ function keydown(el, key) {
     const store = BossModStore.createStore({
         currentFloorId: "lobby",
         floors: [{ id: "lobby", name: "Lobby", has_folder: true }, { id: "fin", name: "Finance", has_folder: true }],
+        suspendedFloors: [{ id: "hr", name: "HR", suspended_at: "2026-11-16T09:30:00+00:00" }],
         roster: [
             { id: "a1", name: "Ada", role: "Eng", floor_id: "lobby" },
             { id: "a2", name: "Bob", role: "Ops", floor_id: "lobby" },
@@ -142,7 +155,9 @@ function keydown(el, key) {
         ],
     });
     const floorApi = BossModFloorApi.createFloorApi({ apiFetch });
-    const reloadFloors = async () => true;
+    // The switcher's loader, counted: Suspend reloads after success only.
+    let reloads = 0;
+    const reloadFloors = async () => { reloads += 1; return true; };
 
     // ─── Four sections with their counts; Lobby has no Delete ───
     const settings = BossModFloorSettings.open({ store, floorApi, floorId: "lobby", reloadFloors });
@@ -157,7 +172,9 @@ function keydown(el, key) {
     verdict.lobbyHasNoFooterAndNoDelete = panel.querySelectorAll(".modal-action").length === 0
         && panel.querySelector(".modal-actions").children.length === 0
         && !panel.querySelector(".floor-delete-tool")
-        && /Lobby is the default floor and can't be deleted\./.test(panel.textContent);
+        && /Lobby is the default floor and can't be suspended or deleted\./.test(panel.textContent);
+    verdict.lobbyHasNoSuspend = !panel.querySelector(".floor-suspend-tool")
+        && !panel.querySelector(".modal-tools");
 
     // ─── The name at rest: "Floor:" then the name as text, no ✓ / ✕ ───
     const lobbyName = panel.querySelector("#floor-settings-name");
@@ -240,6 +257,19 @@ function keydown(el, key) {
         && new Set(groupsRead.map((read) => read.captionId)).size === groupsRead.length
         // The project whose folder name has a space still names its group.
         && groupsRead[2].menuLabel === "Move client site to another floor";
+
+    // ─── Add threads leaves out a suspended floor's threads ───
+    const addThreads = panel.querySelectorAll(".floor-section-add")
+        .find((button) => button.textContent === "Add threads");
+    await addThreads.dispatchClick();
+    await drain();
+    const threadPicker = visibleDialog();
+    const threadGroups = threadPicker.querySelectorAll(".floor-pick-group");
+    verdict.threadPickerLeavesOutSuspendedFloors = threadPicker.getAttribute("aria-label") === "Add threads to Lobby"
+        && threadGroups.length === 1
+        && threadGroups[0].querySelector(".floor-pick-group-title").textContent === "Finance"
+        && !/Payroll/.test(threadPicker.textContent);
+    await threadPicker.querySelector(".modal-back").dispatchClick();
 
     // ─── Add people → a picker grouped by floor; Next waits for a choice ───
     const addPeople = panel.querySelectorAll(".floor-section-add")
@@ -337,6 +367,16 @@ function keydown(el, key) {
         && finPanel.contains(openedOn)
         && openedOn.classList.contains("modal-close");
     const trash = finPanel.querySelector(".floor-delete-tool");
+    const suspendTool = finPanel.querySelector(".floor-suspend-tool");
+    verdict.otherFloorsOfferSuspendBeforeTheTrash = Boolean(suspendTool)
+        && suspendTool.parentNode === trash.parentNode
+        && suspendTool.parentNode.children.indexOf(suspendTool) === suspendTool.parentNode.children.indexOf(trash) - 1
+        && suspendTool.classList.contains("header-icon-btn")
+        && suspendTool.getAttribute("type") === "button"
+        && suspendTool.getAttribute("aria-label") === "Suspend floor"
+        && suspendTool.getAttribute("data-tooltip") === "Suspend floor"
+        && suspendTool.querySelector("[data-lucide=\"circle-pause\"]") !== null
+        && !/can't be suspended/.test(finPanel.textContent);
     verdict.otherFloorsOfferDeleteAsAHeadTool = finPanel.querySelectorAll(".modal-action").length === 0
         && Boolean(trash)
         && trash.parentNode.classList.contains("modal-tools")
@@ -422,6 +462,70 @@ function keydown(el, key) {
         && deleteLabels.join("|") === "Delete floor|Cancel"
         && deleteLayer.querySelector("#floor-delete-confirm").classList.contains("danger");
     await back.dispatchClick();
+
+    // ─── Suspend: a question layer over the settings, with ‹ back ───
+    // It cannot open without the loader it reloads through.
+    let suspendWithoutReloadThrows = false;
+    try {
+        BossModFloorSuspend.open({ floorApi, floor: { id: "fin", name: "Money" }, onSuspended: () => {} });
+    } catch (err) {
+        suspendWithoutReloadThrows = /deps\.reloadFloors is required/.test(String(err && err.message));
+    }
+    verdict.suspendLayerRequiresReloadFloors = suspendWithoutReloadThrows && dialogs().length === 1;
+    const reloadsBeforeSuspend = reloads;
+    await suspendTool.dispatchClick();
+    const suspendLayer = visibleDialog();
+    const suspendConfirm = () => suspendLayer.querySelector("#floor-suspend-confirm");
+    const suspendCancel = () => suspendLayer.querySelector("#floor-suspend-cancel");
+    const suspendAlert = () => suspendLayer.querySelector("[role=\"alert\"]");
+    const suspendCalls = () => calls.filter((call) => call.url === "/api/floors/fin/suspend" && call.method === "POST");
+    verdict.suspendToolOpensTheSuspendLayer = dialogs().length === 2
+        && suspendLayer.getAttribute("aria-label") === "Suspend Money?"
+        && suspendLayer.querySelector(".modal-back").hidden === false
+        && suspendLayer.querySelector(".modal-back").getAttribute("aria-label") === "Back to Money"
+        && suspendLayer.querySelectorAll(".modal-action").map((button) => button.textLabel).join("|")
+            === "Suspend floor|Cancel"
+        && suspendConfirm().classList.contains("danger")
+        && suspendCancel().classList.contains("quiet")
+        && suspendLayer.querySelector(".floor-suspend").querySelector("p").textContent
+            === "Everyone on Money stops now: work in progress ends, open tasks are cancelled, and their "
+            + "desktops and browsers shut down. You can resume the floor later from Suspended floors."
+        && suspendAlert().textContent === ""
+        && suspendCalls().length === 0;
+
+    // Busy: both buttons wait while the request runs.
+    let answerSuspend;
+    suspendAnswers = [new Promise((resolve) => { answerSuspend = resolve; })];
+    await suspendConfirm().dispatchClick();
+    verdict.suspendIsBusyWhileItRuns = suspendCalls().length === 1
+        && suspendConfirm().disabled === true
+        && suspendCancel().disabled === true
+        && suspendConfirm().textLabel === "Suspending…"
+        && visibleDialog() === suspendLayer;
+
+    // A refusal is said in the layer, and both buttons come back.
+    const errorBeforeSuspend = console.error;
+    const suspendLogged = [];
+    console.error = (...args) => { suspendLogged.push(args.join(" ")); };
+    answerSuspend(response(409, { detail: "Money is already suspended." }));
+    await drain();
+    console.error = errorBeforeSuspend;
+    verdict.aRefusedSuspendSaysWhyAndReenables = suspendAlert().textContent === "Money is already suspended."
+        && suspendAlert().classList.contains("context-error")
+        && suspendConfirm().disabled === false
+        && suspendCancel().disabled === false
+        && suspendConfirm().textLabel === "Suspend floor"
+        && visibleDialog() === suspendLayer
+        && suspendLogged.some((line) => line.includes("[floor-suspend] could not suspend the floor"))
+        && reloads === reloadsBeforeSuspend;
+
+    // Success reloads the floor list once, then closes the layer and the settings beneath it.
+    suspendAnswers = [response(200, { floor_id: "fin", agent_ids: ["a3"], tasks_cancelled: [] })];
+    await suspendConfirm().dispatchClick();
+    await drain();
+    verdict.aSuspendReloadsThenClosesTheLayerAndTheSettings = suspendCalls().length === 2
+        && reloads === reloadsBeforeSuspend + 1
+        && dialogs().length === 0;
     fin.close();
 
     // setTitle on a layer with another above it: its head, its ✕, and the

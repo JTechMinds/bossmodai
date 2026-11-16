@@ -91,7 +91,7 @@ const BossModFloorDelete = (() => {
                 h('fieldset', { class: 'floor-delete-choice' },
                     h('legend', { class: 'field-label' }, 'What happens to the agents?'),
                     option('send_home', 'Send them home',
-                        'They go on vacation: inactive and off every floor. '
+                        'They go on vacation: their work stops and their open tasks are cancelled. '
                         + 'Bring them back from People ⋯ → On vacation.'),
                     option('delete', 'Delete them', BossModAgentApi.floorAgentsDeleteWarning())),
             );

@@ -68,7 +68,7 @@ class Plain:
 
 
 class Hooked(Plain):
-    """An extension implementing both worker hooks; ``fail`` makes each raise."""
+    """An extension implementing every worker hook; ``fail`` makes each raise."""
 
     def agent_config_changed(self, agent_id: str) -> None:
         self.log.append(("changed", self.ext_id, agent_id))
@@ -77,6 +77,11 @@ class Hooked(Plain):
 
     def reconcile_agents(self, existing_agent_ids: frozenset[str]) -> None:
         self.log.append(("reconcile", self.ext_id, existing_agent_ids))
+        if self.fail:
+            raise RuntimeError(f"{self.ext_id}: Docker is not running")
+
+    def release_agents(self, agent_ids: frozenset[str]) -> None:
+        self.log.append(("release", self.ext_id, agent_ids))
         if self.fail:
             raise RuntimeError(f"{self.ext_id}: Docker is not running")
 
@@ -255,6 +260,37 @@ def test_reconcile_sees_a_deleted_agent_as_missing(host: Host) -> None:
     agent_repository.delete(ada.id)
     agent_hooks.reconcile_agents()
     assert ("reconcile", "desk", frozenset({bob.id})) in host.log
+
+
+# ─── release_agents ───
+
+
+def test_release_tells_only_enabled_implementers_and_logs_failures(
+    host: Host, caplog: pytest.LogCaptureFixture,
+) -> None:
+    host.add(_entry("first", live_view=True), Hooked, fail=True)
+    host.add(_entry("second"), Hooked)
+    host.add(_entry("plain", live_view=True), Plain)
+    host.add(_entry("off", live_view=True), Hooked, enabled=False)
+    host.add(_entry("broken", live_view=True, invalid="missing __init__.py"), Hooked)
+    host.add(_entry("unloadable", live_view=True), Hooked)
+    host.load_errors["unloadable"] = "extension unloadable failed to import: boom"
+    leaving = frozenset({"a1", "a2"})
+
+    with caplog.at_level(logging.ERROR, logger=agent_hooks.__name__):
+        called = agent_hooks.release_agents(leaving)
+
+    # "first" raised and "second" still ran; "plain" has no hook; "off",
+    # "broken" and "unloadable" are never called.
+    assert [item for item in host.log if item[0] == "release"] == [
+        ("release", "first", leaving), ("release", "second", leaving),
+    ]
+    assert ("load", "off") not in host.log and ("load", "broken") not in host.log
+    assert called == frozenset({"first"}), "hooked and live-view; second has no live view"
+    errors = [r.getMessage() for r in caplog.records if r.levelno == logging.ERROR]
+    assert any("first" in message and "release" in message for message in errors)
+    assert any("unloadable" in message and "could not load" in message for message in errors)
+    assert all(record.exc_info for record in caplog.records if record.levelno == logging.ERROR)
 
 
 # ─── the live nudge the worker sends for what the hooks return (plan step 35) ───

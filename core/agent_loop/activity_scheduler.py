@@ -156,10 +156,11 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
     Also reads ``result["auto_github_issue"]``. Auto GH opens only when that
     flag is True. A named next owner or origin line leaves it False.
 
-    A request for an agent on vacation is skipped and logged, like one aimed
-    at an archived thread.
+    A request for an agent on vacation or on a suspended floor
+    (``agent_wake_refusal``) is skipped and logged, like one aimed at an
+    archived thread.
     """
-    from core.floors import agent_id_on_vacation
+    from core.floors import agent_wake_refusal
 
     persisted: list[Any] = []
     seen: set[str] = set()
@@ -180,8 +181,9 @@ def persist_result_triggers(result: dict[str, Any]) -> list[Any]:
             payload = {}
         if db.payload_targets_archived_channel(payload):
             continue
-        if agent_id_on_vacation(agent_id):
-            logger.info("Skipped %s trigger for %s: agent is on vacation", trigger_type, agent_id)
+        refusal = agent_wake_refusal(agent_id)
+        if refusal is not None:
+            logger.info("Skipped %s trigger for %s: %s", trigger_type, agent_id, refusal)
             continue
         persisted.append(
             db.create_agent_trigger(

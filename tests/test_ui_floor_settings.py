@@ -1,4 +1,4 @@
-"""shell/floor-settings.js — People, Threads, Projects, the Add picker, and the move confirm."""
+"""shell/floor-settings.js — People, Threads, Projects, the Add picker, the move confirm, and the Suspend layer."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ MODULES = [
     JS / "shell" / "floor-scope.js",
     JS / "shell" / "floor-api.js",
     JS / "shell" / "floor-delete.js",
+    JS / "shell" / "floor-suspend.js",
     JS / "shell" / "floor-picker.js",
     JS / "shell" / "floor-move-confirm.js",
     JS / "shell" / "floor-people.js",
@@ -45,15 +46,19 @@ def test_floor_settings_behaviour() -> None:
         "ok": True,
         "settingsRenderFourSectionsWithCounts": True,
         "lobbyHasNoFooterAndNoDelete": True,
+        "lobbyHasNoSuspend": True,
         "nameRestsAsTextWithItsVisibleLabelAndNoButtons": True,
         "moveToMenuHangsOffTheRow": True,
         "moveToCaptionIdsAreGeneratedAndDistinct": True,
+        # The server refuses a thread move off a suspended floor (plan step 39).
+        "threadPickerLeavesOutSuspendedFloors": True,
         "pickerGroupsOtherFloorsAndWaits": True,
         "choosingEnablesNext": True,
         "confirmShowsEveryGroup": True,
         "uncheckingACompanionReplansWithItExcluded": True,
         "aStalePlanIsReReadAndSaid": True,
         "aMoveClosesBackToTheSettingsAndRefreshes": True,
+        "otherFloorsOfferSuspendBeforeTheTrash": True,
         "otherFloorsOfferDeleteAsAHeadTool": True,
         "openingDoesNotFocusTheName": True,
         "clickOpensEditWithSaveAndCancel": True,
@@ -62,6 +67,12 @@ def test_floor_settings_behaviour() -> None:
         "enterSavesRetitlesAndRests": True,
         "escCancelsTheRenameNotTheSettings": True,
         "trashOpensTheDeleteLayerWithBack": True,
+        "suspendLayerRequiresReloadFloors": True,
+        "suspendToolOpensTheSuspendLayer": True,
+        "suspendIsBusyWhileItRuns": True,
+        "aRefusedSuspendSaysWhyAndReenables": True,
+        # Reloads like Rename and Delete, so a down socket cannot leave the floor listed.
+        "aSuspendReloadsThenClosesTheLayerAndTheSettings": True,
         "setTitleRenamesHeadCloseAndTheBackAbove": True,
         "closingDrainsTheStore": True,
     }

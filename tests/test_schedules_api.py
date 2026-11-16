@@ -292,8 +292,8 @@ def test_run_now_creates_the_task_and_wakes_the_agent(
     assert [(item["trigger_type"], item["task_id"]) for item in enqueued] == [("task_assigned", body["task"]["id"])]
 
 
-def test_run_now_refusals_are_409_with_a_reason(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    from core.floors import send_home
+async def test_run_now_refusals_are_409_with_a_reason(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
+    from tests._stand_down import send_on_vacation
 
     async def _enqueue(**_kwargs) -> None:
         return None
@@ -311,10 +311,22 @@ def test_run_now_refusals_are_409_with_a_reason(client: TestClient, monkeypatch:
 
     bob = db.create_agent("Bob", role="Operator")
     away = _created(client, bob.id)
-    send_home(bob.id)
+    await send_on_vacation(bob.id)
     vacation = client.post(f"/api/schedules/{away['id']}/run")
     assert vacation.status_code == 409
     assert vacation.json()["detail"] == {"reason": "vacation", "detail": "Bob is on vacation", "task_id": None}
+
+    from datetime import datetime, timezone
+
+    from db.floors import create_floor, set_floor_suspended
+
+    finance = create_floor("Finance")
+    cy = db.create_agent("Cy", role="Operator", floor_id=finance.id)
+    parked = _created(client, cy.id)
+    set_floor_suspended(finance.id, datetime.now(timezone.utc))
+    suspended = client.post(f"/api/schedules/{parked['id']}/run")
+    assert suspended.status_code == 409
+    assert suspended.json()["detail"] == {"reason": "suspended", "detail": "Cy's floor is suspended", "task_id": None}
 
 
 def test_run_now_on_an_unknown_schedule_is_404(client: TestClient) -> None:
