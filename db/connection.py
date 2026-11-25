@@ -915,7 +915,7 @@ def _drop_column_if_present(con: SQLiteCompatConnection, table: str, column: str
 
 
 def _ensure_floors(con: SQLiteCompatConnection) -> None:
-    """Create Lobby and give every existing agent and thread that home.
+    """Create Lobby and give every existing agent, thread and Telegram user that home.
 
     Rows that already name a floor are left alone. Only missing homes are
     filled, so a later boot does not move anyone and does not wipe work. An
@@ -950,6 +950,13 @@ def _ensure_floors(con: SQLiteCompatConnection) -> None:
     )
     con.execute(
         "UPDATE channels SET floor_id = $1 WHERE floor_id IS NULL OR floor_id = ''",
+        ["lobby"],
+    )
+    # A Telegram user's current floor. Existing users start on Lobby, the
+    # default floor, the same way the channels backfill homes old threads.
+    _add_column_if_missing(con, "telegram_sessions", "floor_id", "VARCHAR")
+    con.execute(
+        "UPDATE telegram_sessions SET floor_id = $1 WHERE floor_id IS NULL OR floor_id = ''",
         ["lobby"],
     )
 

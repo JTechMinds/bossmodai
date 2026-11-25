@@ -27,7 +27,7 @@ from core.runtime.services import RuntimeServices
 from core.tasking.service import create_or_bind_task
 from db.floors import LOBBY_ID, FloorNameTaken, create_floor, get_floor, list_floors, set_floor_suspended
 from integrations.telegram.bot import cmd_channels, cmd_thread, handle_plain_text
-from integrations.telegram.sessions import get_session, upsert_session
+from integrations.telegram.sessions import get_session, set_floor, upsert_session
 from tests._stand_down import StandDownServices, send_on_vacation
 
 
@@ -461,21 +461,22 @@ async def test_telegram_says_a_floor_or_its_agent_is_suspended() -> None:
     ada = _agent("Ada", 1, floor_id=finance.id)
     thread = db.create_channel(name="Books", member_agent_ids=[ada.id], created_by=ada.id)
     _flag(finance.id)
+    set_floor(111, finance.id)
 
     for command in (cmd_thread, cmd_channels):
         update = _telegram_update()
-        await command(update, _telegram_context("Finance"))
-        assert update.message.replies == ["Finance is suspended. Resume it in BossMod first."]
+        await command(update, _telegram_context())
+        assert update.message.replies == ["Finance is suspended. Resume it in BossMod, or /floors to switch."]
 
-    upsert_session(111, session_type="dm", target_agent_id=ada.id, agent_names_key="ada")
+    upsert_session(111, session_type="dm", floor_id=finance.id, target_agent_id=ada.id, agent_names_key="ada")
     dm = _telegram_update(text="hi")
     await handle_plain_text(dm, _telegram_context())
     assert dm.message.replies == ["Ada's floor is suspended. Resume it in BossMod first."]
-    assert get_session(111) is None, "the session is cleared"
+    assert get_session(111).session_type == "idle", "the session is closed"
 
-    upsert_session(111, session_type="group", target_channel_id=thread.id, agent_names_key="ada")
+    upsert_session(111, session_type="group", floor_id=finance.id, target_channel_id=thread.id, agent_names_key="ada")
     group = _telegram_update(text="hi")
     await handle_plain_text(group, _telegram_context())
     assert group.message.replies == ["That thread's floor is suspended."]
-    assert get_session(111) is None, "the session is cleared"
+    assert get_session(111).session_type == "idle", "the session is closed"
     assert db.list_channel_messages(thread.id, limit=10) == []

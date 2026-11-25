@@ -246,8 +246,10 @@ def test_thread_hides_round_markers_from_operator_transcript() -> None:
     assert "def _post_round_marker(" in rounds
     assert 'content = f"Round {round_index}"' in rounds
 
+    # Telegram forwards agent-authored thread lines only; a round marker is
+    # a system line, so it never reaches Telegram.
     telegram = _read(ROOT / "integrations" / "telegram" / "bridge.py")
-    assert 'notification_kind") == "channel_round_marker"' in telegram
+    assert 'if data.get("author_type") != "agent":' in telegram
 
     result = subprocess.run(
         [

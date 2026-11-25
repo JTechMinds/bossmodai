@@ -1,10 +1,11 @@
 """BossMod AI — Telegram's background-process check-in card and its buttons.
 
 When the watchdog asks whether a background process should keep running
-(``agent_process_checkin``), the bridge sends this card to every active
-session. **Keep running** re-arms the check-in; **Stop** stops the process as
-the operator. Either answer is announced the way the desk's own buttons
-announce it, so the desk and Needs repaint. An unanswered card does nothing.
+(``agent_process_checkin``), the bridge sends this card once to every
+allowlisted Telegram user. **Keep running** re-arms the check-in; **Stop**
+stops the process as the operator. Either answer is announced the way the
+desk's own buttons announce it, so the desk and Needs repaint. An unanswered
+card does nothing.
 
 Kept out of bot.py, which holds the command handlers.
 """

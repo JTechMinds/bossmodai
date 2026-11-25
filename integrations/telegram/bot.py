@@ -7,9 +7,10 @@ All dependencies (RuntimeServices, ConnectionManager) are injected via
 from __future__ import annotations
 
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
+from typing import Any, NamedTuple
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -22,42 +23,28 @@ from telegram.ext import (
 from core.bm_cli.approvals import resolve_approval_by_unique_prefix, resume_cli_approval
 from core.floors import AgentOnVacation, FloorSuspended
 from core.messaging import route_human_dm, route_human_channel_message
+from core.models.floor import Floor
 from core.models.message import HUMAN_SENDER_ID
 import db
+from db.floors import get_floor, list_floors
 
 from integrations.telegram import formatters
 from integrations.telegram.auth import is_telegram_user_allowed
 from integrations.telegram.join_list import (
     JoinListStatus,
     remember_channel_list,
-    remembered_floor_id,
     resolve_join_ordinal,
 )
 from integrations.telegram.sessions import (
     clear_session,
+    current_floor_id,
     get_session,
+    set_floor,
     touch_session,
     upsert_session,
 )
 
 logger = logging.getLogger(__name__)
-
-# One thread verb. /thread opens the shared channel the BossMod list already
-# shows. It does not create a spatial office meeting, and it does not touch
-# CLI auto-approve, Soft-block, or Deny.
-TELEGRAM_START_COMMAND_HELP = (
-    "Commands:\n"
-    "/help — command map\n"
-    "/agents — list agents\n"
-    "/chat <name> — chat with an agent\n"
-    "/chat <name1> <name2> — thread with those agents\n"
-    "/chat — close active session\n"
-    "/thread — agents on one floor (Lobby, or /thread <floor>)\n"
-    "/channels — one floor's threads, numbered\n"
-    "/join <N> — rejoin list row N\n"
-    "/status — quick summary\n"
-    "/approve — pending approvals"
-)
 
 _JOIN_CLOSED = {
     JoinListStatus.MISSING: "No thread list yet. Send /channels, then /join N.",
@@ -72,20 +59,17 @@ def create_application(
     services: Any,
     broadcast_manager: Any,
 ) -> Application:
-    """Build and configure the Telegram bot application with injected deps."""
+    """Build and configure the Telegram bot application with injected deps.
+
+    Every slash command comes from ``TELEGRAM_COMMANDS``, the same registry
+    ``menu_commands`` reads, so a handler and its menu entry cannot drift.
+    """
     app = Application.builder().token(token).build()
     app.bot_data["services"] = services
     app.bot_data["broadcast_manager"] = broadcast_manager
 
-    app.add_handler(CommandHandler("start", cmd_start))
-    app.add_handler(CommandHandler("help", cmd_help))
-    app.add_handler(CommandHandler("agents", cmd_agents))
-    app.add_handler(CommandHandler("chat", cmd_chat))
-    app.add_handler(CommandHandler("thread", cmd_thread))
-    app.add_handler(CommandHandler("channels", cmd_channels))
-    app.add_handler(CommandHandler("join", cmd_join))
-    app.add_handler(CommandHandler("status", cmd_status))
-    app.add_handler(CommandHandler("approve", cmd_approve))
+    for command in TELEGRAM_COMMANDS:
+        app.add_handler(CommandHandler(command.name, command.handler))
     app.add_handler(CallbackQueryHandler(handle_approval_callback, pattern=r"^(approve|reject|ask):"))
     from integrations.telegram.process_checkin import CALLBACK_PATTERN, handle_process_checkin_callback  # needs _check_auth
     app.add_handler(CallbackQueryHandler(handle_process_checkin_callback, pattern=CALLBACK_PATTERN))
@@ -108,21 +92,70 @@ def _check_auth(update: Update) -> bool:
     return is_telegram_user_allowed(user_id)
 
 
-def _resolve_agent_by_name(name: str) -> dict[str, Any] | None:
-    """Case-insensitive agent lookup. Returns the world-state dict or None."""
+def _resolve_agent_by_name(name: str, floor_id: str) -> dict[str, Any] | None:
+    """Case-insensitive agent lookup on one floor. Returns the world-state dict or None."""
     agents = db.get_world_state()
     name_lower = name.strip().lower()
     for agent in agents:
+        if str(agent.get("floor_id") or "") != floor_id:
+            continue
         if agent.get("name", "").lower() == name_lower:
             return agent
     return None
+
+
+def _current_floor(user_id: int) -> Floor:
+    """The floor this Telegram user is on, read from their session row.
+
+    Raises:
+        LookupError: The stored floor does not exist. A floor delete moves
+            its Telegram users to Lobby first (``db.floors.delete_floor_row``),
+            so this is a bug and is not replaced by Lobby.
+    """
+    floor_id = current_floor_id(user_id)
+    floor = get_floor(floor_id)
+    if floor is None:
+        raise LookupError(f"Telegram user {user_id} is on floor {floor_id!r}, which does not exist")
+    return floor
+
+
+def _active_floors() -> list[Floor]:
+    """Active floors in the app switcher's order: Lobby first, then by name.
+
+    A floor's number in ``/floors`` and ``/floor N`` is its 1-based position
+    in this list, so it matches the number the app's switcher shows.
+    """
+    return [floor for floor in list_floors() if floor.suspended_at is None]
 
 
 # ---------------------------------------------------------------------------
 # /start  (alias: /help)
 # ---------------------------------------------------------------------------
 
+def _open_chat_label(user_id: int) -> str:
+    """Name what this user has open: ``chatting with Ada``, ``in thread Books``, or ``no chat open``.
+
+    A target row that has disappeared reads as no chat open; the stale
+    target is handled when the user next types (``handle_plain_text``).
+    """
+    session = get_session(user_id)
+    if session is not None and session.session_type == "dm" and session.target_agent_id:
+        agent = db.get_agent(session.target_agent_id)
+        if agent is not None:
+            return f"chatting with {agent.name}"
+    if session is not None and session.session_type == "group" and session.target_channel_id:
+        channel = db.get_channel(session.target_channel_id)
+        if channel is not None:
+            return f"in thread {channel.name}"
+    return "no chat open"
+
+
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Greet the user: their Telegram id, and for an allowlisted user the help.
+
+    The help opens with where the user is (floor and open chat), so the
+    reply changes as they move between floors and threads.
+    """
     user_id = update.effective_user.id
 
     if not _check_auth(update):
@@ -133,10 +166,14 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
+    help_text = formatters.format_help(
+        floor_name=_current_floor(user_id).name,
+        open_label=_open_chat_label(user_id),
+    )
     await update.message.reply_text(
         f"Welcome to BossMod AI.\n"
         f"Your Telegram user ID: {user_id}\n\n"
-        f"{TELEGRAM_START_COMMAND_HELP}"
+        f"{help_text}"
     )
 
 
@@ -146,15 +183,86 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 # ---------------------------------------------------------------------------
+# /floors and /floor N
+# ---------------------------------------------------------------------------
+
+async def cmd_floors(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List the active floors, numbered, with the user's floor marked.
+
+    Suspended floors are listed apart and carry no number: ``/floor N``
+    cannot move anyone onto one.
+    """
+    if not _check_auth(update):
+        await update.message.reply_text("Unauthorized.")
+        return
+    active = _active_floors()
+    suspended = [floor for floor in list_floors() if floor.suspended_at is not None]
+    current = _current_floor(update.effective_user.id)
+    text = formatters.format_floor_list(active, suspended, current.id)
+    await update.message.reply_text(text, parse_mode="MarkdownV2")
+
+
+async def cmd_floor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Show the user's floor, or move them to floor N from ``/floors``.
+
+    N resolves against the live active list at call time, not a snapshot
+    like ``/join``: moving floors is harmless and reversible, and the reply
+    names the floor, so a stale number is visible at once. Moving closes an
+    open chat or thread (its target lives on the old floor); asking for the
+    floor the user is already on changes nothing.
+    """
+    if not _check_auth(update):
+        await update.message.reply_text("Unauthorized.")
+        return
+    user_id = update.effective_user.id
+    args = context.args or []
+    if not args:
+        floor = _current_floor(user_id)
+        await update.message.reply_text(
+            f"You're on {floor.name}. /floors lists floors; /floor N moves you."
+        )
+        return
+    # isdecimal, not isdigit: int() rejects digits such as superscripts.
+    if len(args) != 1 or not str(args[0]).isdecimal():
+        await update.message.reply_text("Usage: /floor N — N is a number from /floors.")
+        return
+    ordinal = int(args[0])
+    active = _active_floors()
+    if ordinal < 1 or ordinal > len(active):
+        await update.message.reply_text(f"No floor {ordinal}. Send /floors to see the list.")
+        return
+    target = active[ordinal - 1]
+    if target.id == current_floor_id(user_id):
+        await update.message.reply_text(f"You're already on {target.name}.")
+        return
+    session = get_session(user_id)
+    had_open_chat = session is not None and session.session_type != "idle"
+    set_floor(user_id, target.id)
+    reply = f"Now on {target.name}."
+    if had_open_chat:
+        reply += " Your open chat was closed."
+    reply += "\n/agents shows who's here."
+    await update.message.reply_text(reply)
+
+
+# ---------------------------------------------------------------------------
 # /agents
 # ---------------------------------------------------------------------------
 
 async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List the agents on the user's floor."""
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
         return
-    agents = db.get_world_state()
-    text = formatters.format_agent_list(agents)
+    floor = _current_floor(update.effective_user.id)
+    if floor.suspended_at is not None:
+        await update.message.reply_text(_suspended_floor_reply(floor.name))
+        return
+    agents = [
+        agent for agent in db.get_world_state()
+        if str(agent.get("floor_id") or "") == floor.id
+    ]
+    text = formatters.format_agent_list(agents, floor_name=floor.name)
     await update.message.reply_text(text, parse_mode="MarkdownV2")
 
 
@@ -163,6 +271,11 @@ async def cmd_agents(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ---------------------------------------------------------------------------
 
 async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Open a DM (one name) or a thread (several names) on the user's floor; no name closes it.
+
+    Names resolve only against agents on the user's current floor, so
+    ``/chat Ada`` never reaches an Ada on another floor.
+    """
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
         return
@@ -176,21 +289,29 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("Usage: /chat <agent_name> [agent_name2 ...]")
         return
 
+    user_id = update.effective_user.id
+    floor = _current_floor(user_id)
+    if floor.suspended_at is not None:
+        await update.message.reply_text(_suspended_floor_reply(floor.name))
+        return
+
     resolved: list[dict[str, Any]] = []
     for name in args:
-        agent = _resolve_agent_by_name(name)
+        agent = _resolve_agent_by_name(name, floor.id)
         if agent is None:
-            await update.message.reply_text(f"Agent '{name}' not found.")
+            await update.message.reply_text(
+                f"No agent named '{name}' on {floor.name}. "
+                "/agents lists who's here; /floors to change floors."
+            )
             return
         resolved.append(agent)
-
-    user_id = update.effective_user.id
 
     if len(resolved) == 1:
         agent = resolved[0]
         upsert_session(
             user_id,
             session_type="dm",
+            floor_id=floor.id,
             target_agent_id=agent["id"],
             agent_names_key=agent["name"].lower(),
         )
@@ -200,23 +321,12 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             f"Type anything to message them. /chat to close."
         )
     else:
-        await _open_thread(update, context, user_id, resolved)
-
-
-def _floor_from_args(args: list[str]):
-    """Lobby when no name is given. None when the name is not a floor."""
-    from db.floors import LOBBY_ID, ensure_lobby, get_floor, get_floor_by_name
-
-    ensure_lobby()
-    label = " ".join(args).strip()
-    if not label:
-        return get_floor(LOBBY_ID)
-    return get_floor_by_name(label)
+        await _open_thread(update, context, user_id, resolved, floor_id=floor.id)
 
 
 def _suspended_floor_reply(floor_name: str) -> str:
-    """The reply for a command that names a suspended floor."""
-    return f"{floor_name} is suspended. Resume it in BossMod first."
+    """The reply for a command run on a suspended floor; it names the way out."""
+    return f"{floor_name} is suspended. Resume it in BossMod, or /floors to switch."
 
 
 def _agent_floor_suspended_reply(agent_name: str) -> str:
@@ -262,12 +372,21 @@ async def _open_thread(
     context: ContextTypes.DEFAULT_TYPE,
     user_id: int,
     agents: list[dict[str, Any]],
+    *,
+    floor_id: str,
 ) -> None:
     """Attach this user to the active thread for this roster.
 
     Identity is channel membership, the same lookup the BossMod thread list
     uses. A second open rejoins that row. It does not mint a Telegram-only
     channel, and it does not write cli_auto_approve or clear Soft-block.
+
+    Args:
+        update: The Telegram update to reply to.
+        context: The handler context (its ``bot_data`` carries the broadcast manager).
+        user_id: The Telegram user opening the thread.
+        agents: World-state rows of the roster, all read from ``floor_id``.
+        floor_id: The user's current floor, stored on the session.
     """
     member_ids = [agent["id"] for agent in agents]
     channel = db.find_active_channel_for_members(member_ids)
@@ -282,6 +401,7 @@ async def _open_thread(
                 created_by=HUMAN_SENDER_ID,
             )
         except FloorDenied:
+            # An agent can move floors between the roster read and the create.
             await update.message.reply_text(
                 "Those agents are not on the same floor. A thread stays on one floor."
             )
@@ -290,6 +410,7 @@ async def _open_thread(
     upsert_session(
         user_id,
         session_type="group",
+        floor_id=floor_id,
         target_channel_id=channel.id,
         agent_names_key=names_key,
     )
@@ -303,18 +424,21 @@ async def _open_thread(
 # ---------------------------------------------------------------------------
 
 async def cmd_thread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Open the thread of agents on one floor. This is a channel, not a meeting.
+    """Open the thread of every agent on the user's floor. This is a channel, not a meeting.
 
-    With no floor name the floor is Lobby. Agents on any other floor are
-    not included, so the roster cannot mix.
+    Agents on any other floor are not included, so the roster cannot mix.
+    It takes no arguments: ``/floor N`` changes the floor.
     """
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
         return
-    floor = _floor_from_args(context.args or [])
-    if floor is None:
-        await update.message.reply_text("No floor with that name.")
+    if context.args:
+        await update.message.reply_text(
+            "Usage: /thread — opens a thread with everyone on your floor. /floor N changes floors."
+        )
         return
+    user_id = update.effective_user.id
+    floor = _current_floor(user_id)
     if floor.suspended_at is not None:
         await update.message.reply_text(_suspended_floor_reply(floor.name))
         return
@@ -325,7 +449,7 @@ async def cmd_thread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not agents:
         await update.message.reply_text(f"No agents on {floor.name}.")
         return
-    await _open_thread(update, context, update.effective_user.id, agents)
+    await _open_thread(update, context, user_id, agents, floor_id=floor.id)
 
 
 # ---------------------------------------------------------------------------
@@ -333,13 +457,19 @@ async def cmd_thread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 # ---------------------------------------------------------------------------
 
 async def cmd_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """List the user's floor's threads, numbered for ``/join N``.
+
+    It takes no arguments: ``/floor N`` changes the floor.
+    """
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
         return
-    floor = _floor_from_args(context.args or [])
-    if floor is None:
-        await update.message.reply_text("No floor with that name.")
+    if context.args:
+        await update.message.reply_text(
+            "Usage: /channels — lists your floor's threads. /floor N changes floors."
+        )
         return
+    floor = _current_floor(update.effective_user.id)
     if floor.suspended_at is not None:
         await update.message.reply_text(_suspended_floor_reply(floor.name))
         return
@@ -361,8 +491,10 @@ async def cmd_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
 async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Rejoin one numbered row from the last /channels list.
 
-    The ordinal is valid only while that list's channel ids are unchanged.
-    A stale list, a missing list, or an unknown row joins nothing.
+    The ordinal is valid only while that list's channel ids are unchanged
+    and the list was shown for the user's current floor. A stale list (one
+    from another floor included), a missing list, or an unknown row joins
+    nothing.
     """
     if not _check_auth(update):
         await update.message.reply_text("Unauthorized.")
@@ -372,16 +504,13 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         await update.message.reply_text("Usage: /join N — N is a row from /channels.")
         return
     ordinal = int(args[0])
-    floor_id = remembered_floor_id(update.effective_user.id)
-    if not floor_id:
-        await update.message.reply_text(_JOIN_CLOSED[JoinListStatus.MISSING])
-        return
-    channels = [channel for channel in db.list_channels() if channel.floor_id == floor_id]
+    floor = _current_floor(update.effective_user.id)
+    channels = [channel for channel in db.list_channels() if channel.floor_id == floor.id]
     status, channel_id = resolve_join_ordinal(
         update.effective_user.id,
         ordinal,
         [channel.id for channel in channels],
-        floor_id=floor_id,
+        floor_id=floor.id,
     )
     if status is not JoinListStatus.OK or not channel_id:
         await update.message.reply_text(_JOIN_CLOSED.get(status, _JOIN_CLOSED[JoinListStatus.STALE]))
@@ -397,6 +526,7 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     upsert_session(
         update.effective_user.id,
         session_type="group",
+        floor_id=floor.id,
         target_channel_id=channel.id,
         agent_names_key=names_key or None,
     )
@@ -533,10 +663,20 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
     elif action == "ask":
         agent = db.get_agent(request.agent_id)
         if agent:
+            if agent.floor_id is None:
+                # On vacation: no floor to open the DM on, so nothing is written.
+                await query.edit_message_text(f"{agent.name} is on vacation and cannot answer.")
+                return
+            agent_floor = get_floor(agent.floor_id)
+            if agent_floor is None:
+                raise LookupError(f"Agent {agent.id} is on floor {agent.floor_id!r}, which does not exist")
             user_id = update.effective_user.id
+            # Ask moves the operator to the agent's floor; the reply says so.
+            moved_floor = agent_floor.id != current_floor_id(user_id)
             upsert_session(
                 user_id,
                 session_type="dm",
+                floor_id=agent_floor.id,
                 target_agent_id=agent.id,
                 agent_names_key=agent.name.lower(),
             )
@@ -558,8 +698,9 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
                 clear_session(user_id)
                 await query.edit_message_text(_agent_floor_suspended_reply(agent.name))
                 return
+            where = f" on {agent_floor.name}" if moved_floor else ""
             await query.edit_message_text(
-                f"Opened chat with {agent.name} and asked about: {request.command}"
+                f"Opened chat with {agent.name}{where} and asked about: {request.command}"
             )
         else:
             await query.edit_message_text("Agent not found.")
@@ -576,7 +717,10 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     session = get_session(user_id)
 
     if session is None or session.session_type == "idle":
-        await update.message.reply_text("No active session. Use /chat <agent> to start.")
+        floor = _current_floor(user_id)
+        await update.message.reply_text(
+            f"No chat open. /agents shows who's on {floor.name}; /chat <name> starts one."
+        )
         return
 
     text = (update.message.text or "").strip()
@@ -632,3 +776,52 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
             return
 
     touch_session(user_id)
+
+
+# ---------------------------------------------------------------------------
+# Command registry
+# ---------------------------------------------------------------------------
+
+class TelegramCommand(NamedTuple):
+    """One slash command: its name, its handler, and its Telegram menu text.
+
+    ``menu`` is ``None`` for a command that is registered but not shown in
+    Telegram's command menu (``start``, which Telegram sends on first contact).
+    """
+
+    name: str
+    handler: Callable[[Update, ContextTypes.DEFAULT_TYPE], Awaitable[None]]
+    menu: str | None
+
+
+# The one source for handler names and menu text, in menu order. One thread
+# verb: /thread opens the shared channel the BossMod list already shows. It
+# does not create a spatial office meeting, and it does not touch CLI
+# auto-approve, Soft-block, or Deny.
+TELEGRAM_COMMANDS: tuple[TelegramCommand, ...] = (
+    TelegramCommand("start", cmd_start, None),
+    TelegramCommand("floors", cmd_floors, "List floors and see which one you're on"),
+    TelegramCommand("floor", cmd_floor, "Go to floor N from /floors"),
+    TelegramCommand("agents", cmd_agents, "Agents on your floor"),
+    TelegramCommand("chat", cmd_chat, "Chat with an agent (no name closes it)"),
+    TelegramCommand("thread", cmd_thread, "Thread with everyone on your floor"),
+    TelegramCommand("channels", cmd_channels, "Your floor's threads, numbered"),
+    TelegramCommand("join", cmd_join, "Switch to thread N from /channels"),
+    TelegramCommand("status", cmd_status, "Summary across all floors"),
+    TelegramCommand("approve", cmd_approve, "Pending approvals"),
+    TelegramCommand("help", cmd_help, "How to use this bot"),
+)
+
+
+def menu_commands() -> list[BotCommand]:
+    """The command menu to register with Telegram (``set_my_commands``).
+
+    Returns:
+        One ``BotCommand`` per ``TELEGRAM_COMMANDS`` entry that has menu
+        text, in registry order.
+    """
+    return [
+        BotCommand(command.name, command.menu)
+        for command in TELEGRAM_COMMANDS
+        if command.menu is not None
+    ]

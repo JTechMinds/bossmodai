@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,11 +43,19 @@ from core.models.channel import THREAD_ARCHIVED_CANCEL_LINE
 from core.models.agent import AgentUpdate
 from core.models.message import HUMAN_SENDER_ID
 from core.tasking.service import create_or_bind_task
-from db.floors import LOBBY_ID, FloorNameTaken, create_floor, get_floor, rename_floor
+from db.floors import LOBBY_ID, FloorNameTaken, create_floor, get_floor, rename_floor, set_floor_suspended
 from db.sticky_slots import list_sticky_slots, upsert_sticky_slots
-from integrations.telegram.bot import cmd_channels, cmd_join, cmd_thread
+from integrations.telegram.bot import (
+    cmd_agents,
+    cmd_channels,
+    cmd_chat,
+    cmd_floor,
+    cmd_floors,
+    cmd_join,
+    cmd_thread,
+)
 from integrations.telegram.join_list import reset_channel_list_snapshots
-from integrations.telegram.sessions import get_session
+from integrations.telegram.sessions import get_session, set_floor, upsert_session
 from tests._stand_down import send_on_vacation
 
 
@@ -137,6 +146,20 @@ def test_lobby_migration_fills_only_missing_homes() -> None:
     assert db.get_channel(channel.id).floor_id == LOBBY_ID
     assert db.get_agent(kept.id).floor_id == LOBBY_ID
     assert db.get_agent(stayed.id).floor_id == finance.id
+
+
+def test_lobby_migration_puts_existing_telegram_users_on_lobby_and_keeps_a_chosen_floor() -> None:
+    # A database from before Telegram had a floor: no column, one user.
+    db.execute("ALTER TABLE telegram_sessions DROP COLUMN floor_id")
+    db.execute("INSERT INTO telegram_sessions (telegram_user_id, session_type) VALUES ($1, 'idle')", [111])
+
+    db.init_db()
+
+    assert get_session(111).floor_id == LOBBY_ID
+    finance = create_floor("Finance")
+    set_floor(111, finance.id)
+    db.init_db()
+    assert get_session(111).floor_id == finance.id
 
 
 def test_same_floor_channel_create_stamps_floor_and_mixed_roster_denies() -> None:
@@ -499,7 +522,7 @@ def test_move_api_refuses_a_plan_the_operator_was_not_shown() -> None:
     assert db.get_agent(ada.id).floor_id == LOBBY_ID
 
 
-async def test_telegram_list_and_join_stay_on_the_named_floor() -> None:
+async def test_telegram_list_and_join_stay_on_the_current_floor() -> None:
     ada = _agent("Ada", 1)
     finance = create_floor("Finance")
     bob = _agent("Bob", 2, floor_id=finance.id)
@@ -526,6 +549,7 @@ async def test_telegram_list_and_join_stay_on_the_named_floor() -> None:
     assert session is not None
     assert session.target_channel_id == public.id
     assert session.target_channel_id != secret.id
+    assert session.floor_id == LOBBY_ID
 
     opened = _telegram_update(user_id=222)
     await cmd_thread(opened, _telegram_context())
@@ -533,6 +557,150 @@ async def test_telegram_list_and_join_stay_on_the_named_floor() -> None:
     member_ids = {row["id"] for row in db.list_channel_member_details(opened_channel.id)}
     assert ada.id in member_ids
     assert bob.id not in member_ids
+
+    # On Finance the same commands see Finance only.
+    moved = _telegram_update()
+    await cmd_floor(moved, _telegram_context("2"))
+    await cmd_channels(moved, _telegram_context())
+    text = moved.message.replies[-1]
+    assert "Confidential" in text
+    assert "Lobby desk" not in text
+    await cmd_join(moved, _telegram_context("1"))
+    session = get_session(111)
+    assert (session.target_channel_id, session.floor_id) == (secret.id, finance.id)
+
+
+async def test_telegram_thread_and_channels_take_no_floor_name() -> None:
+    _agent("Ada", 1)
+    create_floor("Finance")
+    for command, usage in (
+        (cmd_thread, "Usage: /thread — opens a thread with everyone on your floor. /floor N changes floors."),
+        (cmd_channels, "Usage: /channels — lists your floor's threads. /floor N changes floors."),
+    ):
+        update = _telegram_update()
+        await command(update, _telegram_context("Finance"))
+        assert update.message.replies == [usage]
+    assert get_session(111) is None
+    assert db.list_channels() == []
+
+
+async def test_telegram_floors_numbers_active_floors_lobby_first_and_lists_suspended_apart() -> None:
+    create_floor("Zeta")
+    create_floor("alpha")
+    paused = create_floor("Paused")
+    set_floor_suspended(paused.id, datetime.now(timezone.utc))
+
+    update = _telegram_update()
+    await cmd_floors(update, _telegram_context())
+
+    assert update.message.replies[-1] == (
+        "*Floors*\n\n"
+        "1\\. Lobby ← you're here\n"
+        "2\\. alpha\n"
+        "3\\. Zeta\n"
+        "\n"
+        "Suspended \\(resume in BossMod\\): Paused\n"
+        "\n"
+        "Go to a floor with /floor N\\."
+    )
+
+    set_floor(111, paused.id)
+    await cmd_floors(update, _telegram_context())
+    listing = update.message.replies[-1]
+    assert "← you're here" not in listing
+    assert "You're on Paused, which is suspended\\." in listing
+
+
+async def test_telegram_floor_n_moves_closes_the_open_chat_and_refuses_a_missing_number() -> None:
+    ada = _agent("Ada", 1)
+    finance = create_floor("Finance")
+    update = _telegram_update()
+    await cmd_chat(update, _telegram_context("Ada"))
+    assert get_session(111).target_agent_id == ada.id
+
+    await cmd_floor(update, _telegram_context())
+    assert update.message.replies[-1] == "You're on Lobby. /floors lists floors; /floor N moves you."
+    for wrong, reply in (
+        ("3", "No floor 3. Send /floors to see the list."),
+        ("0", "No floor 0. Send /floors to see the list."),
+        ("two", "Usage: /floor N — N is a number from /floors."),
+    ):
+        await cmd_floor(update, _telegram_context(wrong))
+        assert update.message.replies[-1] == reply
+    await cmd_floor(update, _telegram_context("1", "2"))
+    assert update.message.replies[-1] == "Usage: /floor N — N is a number from /floors."
+    assert get_session(111).target_agent_id == ada.id, "a refused move keeps the chat"
+
+    await cmd_floor(update, _telegram_context("2"))
+
+    assert update.message.replies[-1] == "Now on Finance. Your open chat was closed.\n/agents shows who's here."
+    session = get_session(111)
+    assert (session.floor_id, session.session_type, session.target_agent_id) == (finance.id, "idle", None)
+
+    await cmd_floor(update, _telegram_context("1"))
+    assert update.message.replies[-1] == "Now on Lobby.\n/agents shows who's here."
+    assert get_session(111).floor_id == LOBBY_ID
+
+
+async def test_telegram_floor_to_the_current_floor_keeps_the_chat() -> None:
+    ada = _agent("Ada", 1)
+    update = _telegram_update()
+    await cmd_chat(update, _telegram_context("Ada"))
+
+    await cmd_floor(update, _telegram_context("1"))
+
+    assert update.message.replies[-1] == "You're already on Lobby."
+    session = get_session(111)
+    assert (session.session_type, session.target_agent_id, session.floor_id) == ("dm", ada.id, LOBBY_ID)
+
+
+async def test_telegram_agents_and_chat_see_only_the_current_floor() -> None:
+    lobby_ada = _agent("Ada", 1)
+    finance = create_floor("Finance")
+    finance_ada = _agent("Ada", 2, floor_id=finance.id)
+    bob = _agent("Bob", 3, floor_id=finance.id)
+    update = _telegram_update()
+
+    await cmd_agents(update, _telegram_context())
+    listing = update.message.replies[-1]
+    assert listing.startswith("*Agents · Lobby*")
+    assert listing.count("*Ada*") == 1
+    assert "Bob" not in listing
+    await cmd_chat(update, _telegram_context("Bob"))
+    assert update.message.replies[-1] == (
+        "No agent named 'Bob' on Lobby. /agents lists who's here; /floors to change floors."
+    )
+    assert get_session(111) is None
+    await cmd_chat(update, _telegram_context("Ada"))
+    assert get_session(111).target_agent_id == lobby_ada.id
+
+    await cmd_floor(update, _telegram_context("2"))
+    await cmd_agents(update, _telegram_context())
+    listing = update.message.replies[-1]
+    assert listing.startswith("*Agents · Finance*")
+    assert listing.count("*Ada*") == 1
+    assert "*Bob*" in listing
+    await cmd_chat(update, _telegram_context("Ada"))
+    session = get_session(111)
+    assert (session.target_agent_id, session.floor_id) == (finance_ada.id, finance.id)
+    assert session.target_agent_id != bob.id
+
+
+async def test_telegram_join_after_a_floor_move_reads_as_stale() -> None:
+    ada = _agent("Ada", 1)
+    finance = create_floor("Finance")
+    bob = _agent("Bob", 2, floor_id=finance.id)
+    db.create_channel(name="Lobby desk", member_agent_ids=[ada.id], created_by=ada.id)
+    db.create_channel(name="Confidential", member_agent_ids=[bob.id], created_by=bob.id)
+    update = _telegram_update()
+    await cmd_channels(update, _telegram_context())
+
+    await cmd_floor(update, _telegram_context("2"))
+    await cmd_join(update, _telegram_context("1"))
+
+    assert update.message.replies[-1] == "That list is stale. Send /channels again, then /join N."
+    session = get_session(111)
+    assert (session.session_type, session.target_channel_id, session.floor_id) == ("idle", None, finance.id)
 
 
 # ─── Floor rename and delete, vacation ───
@@ -674,6 +842,22 @@ async def test_delete_floor_send_home_discards_the_cancelled_turns_claim() -> No
     # re-runs it.
     assert db.list_agent_triggers(ada.id, status="claimed") == []
     assert db.get_agent_trigger(row.id) is None
+
+
+async def test_deleting_a_floor_moves_its_telegram_users_to_lobby_with_the_chat_closed() -> None:
+    stays = _agent("Stays", 1)
+    finance = create_floor("Finance")
+    bob = _agent("Bob", 2, floor_id=finance.id)
+    upsert_session(111, session_type="dm", floor_id=finance.id, target_agent_id=bob.id, agent_names_key="bob")
+    upsert_session(222, session_type="dm", floor_id=LOBBY_ID, target_agent_id=stays.id, agent_names_key="stays")
+
+    await delete_floor(finance.id, occupants="send_home", services=_Services())
+
+    moved = get_session(111)
+    assert (moved.floor_id, moved.session_type) == (LOBBY_ID, "idle")
+    assert (moved.target_agent_id, moved.target_channel_id, moved.agent_names_key) == (None, None, None)
+    untouched = get_session(222)
+    assert (untouched.floor_id, untouched.session_type, untouched.target_agent_id) == (LOBBY_ID, "dm", stays.id)
 
 
 def _dm_task(title: str, assignee_id: str):

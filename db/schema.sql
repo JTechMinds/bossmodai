@@ -942,6 +942,7 @@ CREATE TABLE IF NOT EXISTS telegram_sessions (
                          CHECK (session_type IN ('dm', 'group', 'idle')),
     target_agent_id   VARCHAR REFERENCES agents(id),
     target_channel_id VARCHAR REFERENCES channels(id),
+    floor_id          VARCHAR,
     agent_names_key   VARCHAR,
     last_active_at    TIMESTAMP DEFAULT current_timestamp,
     created_at        TIMESTAMP DEFAULT current_timestamp,

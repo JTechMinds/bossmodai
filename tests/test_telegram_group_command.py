@@ -8,6 +8,7 @@ A thread opened from Telegram is a normal channel the GUI list returns.
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -20,13 +21,15 @@ from api.auth import LOCAL_API_TOKEN_HEADER, install_local_api_auth
 from api.routes import router
 from core import config
 from integrations.telegram.bot import (
-    TELEGRAM_START_COMMAND_HELP,
+    TELEGRAM_COMMANDS,
     cmd_channels,
+    cmd_chat,
     cmd_help,
     cmd_join,
     cmd_start,
     cmd_thread,
 )
+from integrations.telegram.formatters import format_help
 from integrations.telegram.join_list import reset_channel_list_snapshots
 from integrations.telegram.sessions import clear_session, get_session
 
@@ -100,10 +103,18 @@ def _stamp(channel_id: str, when: datetime) -> None:
     )
 
 
-def test_help_is_start_alias_and_prints_the_command_map() -> None:
-    help_text = TELEGRAM_START_COMMAND_HELP
-    for token in ("/help", "/thread", "/channels", "/join", "/agents", "/chat", "/status", "/approve"):
-        assert token in help_text
+def _names_command(text: str, name: str) -> bool:
+    """True when ``/name`` appears as a whole command (``/floor`` is not ``/floors``)."""
+    return re.search(rf"/{name}(?![a-z_])", text) is not None
+
+
+def test_help_names_every_menu_command_and_where_you_are() -> None:
+    help_text = format_help(floor_name="Finance", open_label="no chat open")
+    assert help_text.startswith("You're on Finance · no chat open\n")
+    menu_names = [command.name for command in TELEGRAM_COMMANDS if command.menu is not None]
+    assert menu_names, "the menu lists commands"
+    for name in menu_names:
+        assert _names_command(help_text, name), name
     assert "/group" not in help_text
     assert "/meeting" not in help_text
 
@@ -114,22 +125,35 @@ async def test_cmd_help_reply_matches_cmd_start() -> None:
     await cmd_start(start_update, _context())
     await cmd_help(help_update, _context())
     assert start_update.message.replies == help_update.message.replies
-    assert TELEGRAM_START_COMMAND_HELP in start_update.message.replies[0]
+    assert format_help(floor_name="Lobby", open_label="no chat open") in start_update.message.replies[0]
+
+
+async def test_help_names_the_open_dm_or_thread() -> None:
+    db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
+    db.create_agent("Bob", role="Eng", desk_x=2, desk_y=1)
+    update = _authorized_update()
+
+    await cmd_chat(update, _context("Ada"))
+    await cmd_help(update, _context())
+    assert "You're on Lobby · chatting with Ada\n" in update.message.replies[-1]
+
+    await cmd_thread(update, _context())
+    await cmd_help(update, _context())
+    assert "You're on Lobby · in thread Ada, Bob\n" in update.message.replies[-1]
 
 
 def test_settings_and_handlers_use_thread_not_group_or_meeting() -> None:
     settings_js = (_REPO_ROOT / "ui/static/js/settings/settings-telegram.js").read_text(encoding="utf-8")
-    source = (_REPO_ROOT / "integrations/telegram/bot.py").read_text(encoding="utf-8")
+    names = {command.name for command in TELEGRAM_COMMANDS}
     assert "/thread" in settings_js
     assert "/help" in settings_js
     assert "/join" in settings_js
+    assert "/floors" in settings_js
     assert "/group" not in settings_js
     assert "/meeting" not in settings_js
-    assert 'CommandHandler("help", cmd_help)' in source
-    assert 'CommandHandler("thread", cmd_thread)' in source
-    assert 'CommandHandler("join", cmd_join)' in source
-    assert 'CommandHandler("group"' not in source
-    assert 'CommandHandler("meeting"' not in source
+    assert {"floors", "floor", "thread", "join", "help"} <= names
+    assert "group" not in names
+    assert "meeting" not in names
 
 
 async def test_cmd_thread_opens_channel_not_meeting_session() -> None:
@@ -166,6 +190,11 @@ async def test_cmd_thread_rejoins_existing_roster_without_a_duplicate() -> None:
     await cmd_thread(update, _context())
     first_id = db.list_channels()[0].id
     clear_session(111)
+    closed = get_session(111)
+    assert closed is not None, "closing keeps the row, and with it the floor"
+    assert closed.session_type == "idle"
+    assert (closed.target_channel_id, closed.agent_names_key) == (None, None)
+    assert closed.floor_id == "lobby"
 
     await cmd_thread(update, _context())
 

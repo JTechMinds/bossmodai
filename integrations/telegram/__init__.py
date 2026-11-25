@@ -48,7 +48,7 @@ async def start(
         logger.error(blocked)
         return None
 
-    from integrations.telegram.bot import create_application
+    from integrations.telegram.bot import create_application, menu_commands
     from integrations.telegram.bridge import TelegramEventBridge
 
     token = config.require("telegram_bot_token")
@@ -56,6 +56,9 @@ async def start(
     bridge = TelegramEventBridge(app.bot)
 
     await app.initialize()
+    # The menu Telegram shows when the operator types "/". A failure raises
+    # into the caller's "failed to start" warning; polling would fail too.
+    await app.bot.set_my_commands(menu_commands())
     await app.start()
     await app.updater.start_polling(drop_pending_updates=True)
 

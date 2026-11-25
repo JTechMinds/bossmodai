@@ -12,6 +12,7 @@ from typing import Any
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.bm_cli.approvals import display_approval_prefix
+from core.models.floor import Floor
 
 
 _MD_ESCAPE_RE = re.compile(r"([_*\[\]()~`>#+\-=|{}.!\\])")
@@ -34,12 +35,21 @@ def escape_md(text: str) -> str:
     return _MD_ESCAPE_RE.sub(r"\\\1", str(text))
 
 
-def format_agent_list(agents: list[dict[str, Any]]) -> str:
-    """Format a list of agents with name, role, and status."""
-    if not agents:
-        return escape_md("No agents found.")
+def format_agent_list(agents: list[dict[str, Any]], *, floor_name: str) -> str:
+    """Format one floor's agents with name, role, and status (MarkdownV2).
 
-    lines = ["*Agents*\n"]
+    Args:
+        agents: World-state rows, already filtered to the floor.
+        floor_name: The floor's label, shown on the header.
+
+    Returns:
+        A ``*Agents · Floor*`` header and one row per agent, or a single
+        "No agents on Floor." line when the list is empty.
+    """
+    if not agents:
+        return escape_md(f"No agents on {floor_name}.")
+
+    lines = [f"*Agents · {escape_md(floor_name)}*\n"]
     for agent in agents:
         name = escape_md(agent.get("name", "Unknown"))
         role = escape_md(agent.get("role", ""))
@@ -163,14 +173,75 @@ def format_agent_reply(agent_name: str, content: str) -> str:
     return f"*\\[{name}\\]* {body}"
 
 
-def format_notification(kind: str, data: dict[str, Any]) -> str | None:
-    """Format a runtime event notification. Returns None if not worth sending."""
-    event = data.get("event", kind)
-    detail = data.get("detail", "")
-    agent_name = data.get("agent_name", "")
+def format_floor_list(active: list[Floor], suspended: list[Floor], current_floor_id: str) -> str:
+    """Format the floor list for ``/floors`` (MarkdownV2).
 
-    if not detail:
-        return None
+    Active floors are numbered 1..N in the order given, the numbers
+    ``/floor N`` takes. Suspended floors carry no number and are listed
+    apart, since nobody can move onto one.
 
-    prefix = f"*{escape_md(agent_name)}*: " if agent_name else ""
-    return f"{prefix}{escape_md(detail)}"
+    Args:
+        active: Active floors in the app switcher's order (Lobby first).
+        suspended: Suspended floors, in the same order.
+        current_floor_id: The user's floor, marked ``← you're here``; when it
+            is suspended a line says so instead.
+
+    Returns:
+        The ``*Floors*`` header, the numbered rows, the suspended line(s)
+        when any floor is suspended, and the ``/floor N`` footer.
+    """
+    lines = ["*Floors*\n"]
+    for index, floor in enumerate(active, start=1):
+        marker = " ← you're here" if floor.id == current_floor_id else ""
+        lines.append(escape_md(f"{index}. {floor.name}{marker}"))
+    if suspended:
+        lines.append("")
+        names = ", ".join(floor.name for floor in suspended)
+        lines.append(escape_md(f"Suspended (resume in BossMod): {names}"))
+        for floor in suspended:
+            if floor.id == current_floor_id:
+                lines.append(escape_md(f"You're on {floor.name}, which is suspended."))
+    lines.append("")
+    lines.append(escape_md("Go to a floor with /floor N."))
+    return "\n".join(lines)
+
+
+def format_help(*, floor_name: str, open_label: str) -> str:
+    """The ``/help`` guide, grouped by task, opening with where the user is.
+
+    Plain text: it is sent with no parse mode, so nothing is escaped.
+
+    Args:
+        floor_name: The user's current floor.
+        open_label: What is open: ``chatting with Ada``, ``in thread Books``
+            or ``no chat open``.
+
+    Returns:
+        The guide text.
+    """
+    return (
+        f"You're on {floor_name} · {open_label}\n"
+        "\n"
+        "Move between floors\n"
+        "/floors — list floors with numbers\n"
+        "/floor <N> — go to floor N (closes your open chat)\n"
+        "\n"
+        "Talk to agents on this floor\n"
+        "/agents — who's here\n"
+        "/chat <name> — chat with one agent\n"
+        "/chat <name> <name> — thread with those agents\n"
+        "/thread — thread with everyone on this floor\n"
+        "Then just type: messages go to your open chat or thread.\n"
+        "\n"
+        "Switch threads\n"
+        "/channels — this floor's threads, numbered\n"
+        "/join <N> — switch to thread N from that list\n"
+        "\n"
+        "Close\n"
+        "/chat — close your open chat or thread\n"
+        "\n"
+        "All floors\n"
+        "/status — quick summary\n"
+        "/approve — pending approvals\n"
+        "/help — this guide"
+    )

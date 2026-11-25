@@ -39,14 +39,6 @@ def remember_channel_list(
     _snapshots[telegram_user_id] = (floor_id, tuple(channel_ids))
 
 
-def remembered_floor_id(telegram_user_id: int) -> str | None:
-    """The floor the last list was scoped to, if a list was shown."""
-    snapshot = _snapshots.get(telegram_user_id)
-    if snapshot is None:
-        return None
-    return snapshot[0]
-
-
 def resolve_join_ordinal(
     telegram_user_id: int,
     ordinal: int,

@@ -198,9 +198,25 @@ def rename_floor(floor_id: str, name: str) -> Floor:
 def delete_floor_row(floor_id: str) -> None:
     """Remove one floor row. Callers clear its agents and threads first.
 
+    Telegram users on this floor move to Lobby with their chat closed, so a
+    stored Telegram floor always names a floor that exists.
+
     Raises ValueError for Lobby, which every agent and thread falls back on.
     """
     token = (floor_id or "").strip()
     if token == LOBBY_ID:
         raise ValueError("Lobby cannot be deleted")
+    execute(
+        """
+        UPDATE telegram_sessions
+        SET floor_id = $1,
+            session_type = 'idle',
+            target_agent_id = NULL,
+            target_channel_id = NULL,
+            agent_names_key = NULL,
+            updated_at = current_timestamp
+        WHERE floor_id = $2
+        """,
+        [LOBBY_ID, token],
+    )
     execute("DELETE FROM floors WHERE id = $1", [token])

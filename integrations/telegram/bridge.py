@@ -1,7 +1,9 @@
 """BossMod AI — Telegram event bridge.
 
-Receives runtime events from ``RuntimeServices._dispatch_event()`` and
-forwards relevant ones to Telegram users with active sessions.
+Receives runtime events from ``RuntimeServices._dispatch_event()``.
+Forwards agent speech in each user's open DM or thread. Sends each CLI
+approval card and each process check-in card once to every allowlisted
+user. Nothing else reaches Telegram.
 """
 
 from __future__ import annotations
@@ -12,24 +14,18 @@ from typing import Any
 from telegram import Bot
 
 import db
+from core import config
 from core.bm_cli.process_announce import PROCESS_CHECKIN_EVENT
+from core.models.cli_policy import CLI_APPROVAL_KIND
 from integrations.telegram import formatters
+from integrations.telegram.auth import parse_allowed_user_ids
 from integrations.telegram.process_checkin import format_checkin_card
 from integrations.telegram.sessions import (
-    list_active_sessions,
     list_sessions_for_agent,
     list_sessions_for_channel,
 )
 
 logger = logging.getLogger(__name__)
-
-_SIGNIFICANT_ACTIVITY_EVENTS = {
-    "task_created",
-    "task_completed",
-    "task_blocked",
-    "task_stalled",
-    "guardian_alert",
-}
 
 
 class TelegramEventBridge:
@@ -37,6 +33,8 @@ class TelegramEventBridge:
 
     def __init__(self, bot: Bot) -> None:
         self._bot = bot
+        # Approval cards already sent, so each goes out once per app run.
+        self._sent_approval_ids: set[str] = set()
 
     async def dispatch(self, kind: str, data: dict[str, Any]) -> None:
         """Route one runtime event to the appropriate handler."""
@@ -52,66 +50,51 @@ class TelegramEventBridge:
     # ------------------------------------------------------------------
 
     async def _on_chat_message(self, data: dict[str, Any]) -> None:
-        """Forward agent DM replies to Telegram users in a session with that agent."""
-        if data.get("from") == "human" or data.get("from_type") == "human":
+        """Forward an agent's DM line to the users with that DM open.
+
+        A CLI approval notice sends its card instead. Every other line not
+        authored by the agent (receipts, task and memory notices, the
+        operator's own lines) stays in the app.
+        """
+        if data.get("notification_kind") == CLI_APPROVAL_KIND:
+            await self._send_approval_card(data.get("cli_approval"))
+            return
+        if data.get("from_type") != "agent":
             return
         agent_id = data.get("agent_id")
         if not agent_id:
             return
 
-        content = data.get("content", "")
-        from_name = data.get("from_name", "Agent")
-        notification_kind = data.get("notification_kind")
-
-        sessions = list_sessions_for_agent(agent_id)
-        if sessions:
-            text = formatters.format_agent_reply(from_name, content)
-            for session in sessions:
-                await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
-
-        if notification_kind and notification_kind != "receipt":
-            await self._push_notification_to_all(from_name, content, notification_kind, agent_id)
+        text = formatters.format_agent_reply(data.get("from_name", "Agent"), data.get("content", ""))
+        for session in list_sessions_for_agent(agent_id):
+            await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
 
     async def _on_channel_message(self, data: dict[str, Any]) -> None:
-        """Forward channel messages to Telegram users in that channel."""
-        if data.get("author_type") == "human":
+        """Forward an agent's thread line to the users with that thread open.
+
+        A CLI approval notice sends its card instead. System lines, round
+        markers included, and the operator's own lines stay in the app.
+        """
+        if data.get("notification_kind") == CLI_APPROVAL_KIND:
+            await self._send_approval_card(data.get("cli_approval"))
             return
-        # Round markers are engine/diagnostics boundaries, not operator lines.
-        if data.get("notification_kind") == "channel_round_marker":
+        if data.get("author_type") != "agent":
             return
         channel_id = data.get("channel_id")
         if not channel_id:
             return
 
-        content = data.get("content", "")
-        author_name = data.get("author_name", "Agent")
-
-        sessions = list_sessions_for_channel(channel_id)
-        if not sessions:
-            return
-
-        text = formatters.format_agent_reply(author_name, content)
-        for session in sessions:
+        text = formatters.format_agent_reply(data.get("author_name", "Agent"), data.get("content", ""))
+        for session in list_sessions_for_channel(channel_id):
             await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
 
     async def _on_activity(self, data: dict[str, Any]) -> None:
-        """Push significant activity events, and process check-in cards, to all active sessions."""
-        event = data.get("event", "")
-        if event == PROCESS_CHECKIN_EVENT:
+        """Send the process check-in card; every other activity event stays in the app."""
+        if data.get("event", "") == PROCESS_CHECKIN_EVENT:
             await self._send_process_checkin(data)
-            return
-        if event not in _SIGNIFICANT_ACTIVITY_EVENTS:
-            return
-
-        text = formatters.format_notification(event, data)
-        if text is None:
-            return
-
-        for session in list_active_sessions():
-            await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
 
     async def _send_process_checkin(self, data: dict[str, Any]) -> None:
-        """Send the keep-or-stop card for one asked check-in.
+        """Send the keep-or-stop card for one asked check-in to every allowlisted user.
 
         The runtime sink nests the activity's ``extra`` under ``data["extra"]``.
         The row is re-read: a card goes out only while the process still runs
@@ -131,86 +114,69 @@ class TelegramEventBridge:
             return
         agent = db.get_agent(row.agent_id)
         text, keyboard = format_checkin_card(row, agent.name if agent is not None else None)
-        for session in list_active_sessions():
-            await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2", reply_markup=keyboard)
+        for chat_id in self._card_recipients():
+            await self._send_safe(chat_id, text, parse_mode="MarkdownV2", reply_markup=keyboard)
 
-    async def _on_feed_update(self, data: dict[str, Any]) -> None:
-        """Check feed updates for approval-related notifications."""
-        entry = data.get("entry", {})
-        category = entry.get("category", "")
-        if category != "task":
+    async def _send_approval_card(self, card: dict[str, Any] | None) -> None:
+        """Send one CLI approval's Approve/Reject/Ask card once to every allowlisted user.
+
+        The emit path can broadcast the same approval's notice more than once,
+        so the card is deduped by request id for this app run. The row is
+        re-read: an approval answered before this event was drained sends
+        nothing.
+
+        Args:
+            card: The notice's ``cli_approval`` card (``CliApprovalRequest.as_card``).
+                ``None`` means the request row was gone when the notice was
+                built, so there is nothing to approve and nothing is sent.
+
+        Raises:
+            ValueError: The card has no ``id``; ``as_card`` always sets one,
+                so this is a bug.
+        """
+        if card is None:
             return
-
-        kind = entry.get("notification_kind") or entry.get("kind", "")
-        if kind not in ("completion", "blocked", "handoff", "abandoned"):
+        request_id = card.get("id")
+        if not request_id:
+            raise ValueError(f"cli_approval card without an id: {card!r}")
+        if request_id in self._sent_approval_ids:
             return
-
-        content = entry.get("content", "")
-        agent_name = entry.get("agent_name", "")
-        if not content:
+        request = db.get_cli_approval_request(request_id)
+        if request is None or request.status != "pending":
             return
-
-        text = formatters.format_notification(kind, {"detail": content, "agent_name": agent_name})
-        if text is None:
-            return
-
-        for session in list_active_sessions():
-            await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
+        self._sent_approval_ids.add(request_id)
+        text, keyboard = formatters.format_approval_card(request, db.get_agent(request.agent_id))
+        for chat_id in self._card_recipients():
+            await self._send_safe(chat_id, text, parse_mode="MarkdownV2", reply_markup=keyboard)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
-    async def _push_notification_to_all(
-        self,
-        agent_name: str,
-        content: str,
-        kind: str,
-        agent_id: str,
-    ) -> None:
-        """Push a notification to all active sessions NOT already DMing this agent."""
-        dm_user_ids = {s.telegram_user_id for s in list_sessions_for_agent(agent_id)}
-        text = formatters.format_notification(kind, {"detail": content, "agent_name": agent_name})
-        if text is None:
-            return
+    @staticmethod
+    def _card_recipients() -> list[int]:
+        """Every allowlisted Telegram user: the one recipient rule for action cards.
 
-        for session in list_active_sessions():
-            if session.telegram_user_id in dm_user_ids:
-                continue
-            await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
-
-        await self._check_approval_push(agent_id)
-
-    async def _check_approval_push(self, agent_id: str) -> None:
-        """Send inline-button approval cards if new pending requests exist."""
-        try:
-            requests = db.list_cli_approval_requests(status="pending", agent_id=agent_id)
-            if not requests:
-                return
-            agent = db.get_agent(agent_id)
-            sessions = list_active_sessions()
-            for req in requests:
-                text, keyboard = formatters.format_approval_card(req, agent)
-                for session in sessions:
-                    await self._send_safe(
-                        session.telegram_user_id,
-                        text,
-                        parse_mode="MarkdownV2",
-                        reply_markup=keyboard,
-                    )
-        except Exception:
-            logger.debug("Approval push check failed", exc_info=True)
+        Read at send time, like ``is_telegram_user_allowed``. A private chat's
+        id is the user's id, so no session row is needed: a card reaches the
+        operator whether their chat is open, closed, or they just moved
+        floors. Only allowlisted users can press its buttons anyway.
+        """
+        return sorted(parse_allowed_user_ids(config.get("telegram_allowed_user_ids")))
 
     async def _send_safe(self, chat_id: int, text: str, **kwargs: Any) -> None:
-        """Send a message, swallowing errors so one bad send doesn't block others."""
+        """Send a message; a failed send is logged at WARNING and the next recipient still gets theirs.
+
+        A card that did not arrive (for example, an allowlisted user who never
+        sent ``/start``, so Telegram refuses the bot) must show up in the log.
+        """
         try:
             await self._bot.send_message(chat_id=chat_id, text=text, **kwargs)
-        except Exception:
-            logger.debug("Failed to send Telegram message to %s", chat_id, exc_info=True)
+        except Exception as exc:
+            logger.warning("Failed to send Telegram message to %s: %s", chat_id, exc, exc_info=True)
 
     _HANDLERS: dict[str, Any] = {
         "chat_message": _on_chat_message,
         "channel_message": _on_channel_message,
         "activity": _on_activity,
-        "feed_update": _on_feed_update,
     }

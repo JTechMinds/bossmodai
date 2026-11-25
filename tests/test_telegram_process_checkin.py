@@ -16,7 +16,6 @@ from core import config
 from core.bm_cli import background_processes
 from integrations.telegram.bridge import TelegramEventBridge
 from integrations.telegram.process_checkin import format_checkin_card, handle_process_checkin_callback
-from integrations.telegram.sessions import upsert_session
 
 _ALLOWED = 111
 
@@ -180,7 +179,6 @@ def _checkin_event(row) -> dict:
 
 async def test_the_bridge_sends_the_card_only_for_a_live_asked_process() -> None:
     agent = db.create_agent("Charles", role="Eng")
-    upsert_session(_ALLOWED, session_type="dm", target_agent_id=agent.id, agent_names_key="charles")
     bot = _Bot()
     bridge = TelegramEventBridge(bot)
     not_asked = _row(agent)
