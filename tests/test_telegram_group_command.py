@@ -22,6 +22,7 @@ from api.routes import router
 from core import config
 from integrations.telegram.bot import (
     TELEGRAM_COMMANDS,
+    _JOIN_CLOSED,
     cmd_channels,
     cmd_chat,
     cmd_help,
@@ -156,6 +157,39 @@ def test_settings_and_handlers_use_thread_not_group_or_meeting() -> None:
     assert "meeting" not in names
 
 
+def _assert_no_placeholder_shorthand(label: str, text: str) -> None:
+    """Fail when ``text`` uses programmer notation a non-technical reader cannot follow."""
+    for mark in ("<", ">", "&lt;", "["):
+        assert mark not in text, f"{label}: {mark!r} in {text!r}"
+    assert re.search(r"\bN\b", text) is None, f"{label}: standalone N in {text!r}"
+
+
+def test_user_facing_copy_has_no_placeholder_shorthand() -> None:
+    """Help, menu, /join refusals and the Settings reference show examples, never placeholders.
+
+    People type brackets literally (``/floor <2>``), and ``N`` means nothing
+    to a non-technical reader, so every command is shown with a real example.
+    """
+    _assert_no_placeholder_shorthand(
+        "format_help", format_help(floor_name="Lobby", open_label="no chat open")
+    )
+    menus = [command.menu for command in TELEGRAM_COMMANDS if command.menu is not None]
+    assert menus, "the menu lists commands"
+    for menu in menus:
+        _assert_no_placeholder_shorthand("menu", menu)
+    assert _JOIN_CLOSED, "the /join refusals exist"
+    for status, reply in _JOIN_CLOSED.items():
+        _assert_no_placeholder_shorthand(f"_JOIN_CLOSED[{status}]", reply)
+
+    settings_js = (_REPO_ROOT / "ui/static/js/settings/settings-telegram.js").read_text(encoding="utf-8")
+    block = re.search(r"Bot Commands(.*?)</div>\s*</div>", settings_js, re.DOTALL)
+    assert block is not None, "the Bot Commands block is in the Settings page"
+    # Text content only: the tags themselves are markup, not copy.
+    text = re.sub(r"<[^>]+>", " ", block.group(1))
+    assert "/floor 2" in text and "/help" in text, "the block's rows were read"
+    _assert_no_placeholder_shorthand("Settings Bot Commands", text)
+
+
 async def test_cmd_thread_opens_channel_not_meeting_session() -> None:
     ada = db.create_agent("Ada", role="Eng", desk_x=1, desk_y=1)
     bob = db.create_agent("Bob", role="Eng", desk_x=2, desk_y=1)
@@ -267,7 +301,10 @@ async def test_join_fails_closed_when_the_list_is_stale() -> None:
     await cmd_join(update, _context("1"))
 
     assert get_session(111) is None
-    assert "stale" in update.message.replies[-1].lower()
+    assert update.message.replies[-1] == (
+        "The threads changed since you last looked. "
+        "Send /channels again, then /join and a number from the new list."
+    )
     assert [channel.id for channel in db.list_channels()] == [intruder.id, second.id, first.id]
     assert "Thread:" not in update.message.replies[-1]
 
@@ -285,13 +322,16 @@ async def test_join_fails_closed_without_a_list_or_for_an_unknown_row() -> None:
 
     await cmd_join(update, _context("1"))
     assert get_session(111) is None
-    assert "No thread list yet" in update.message.replies[-1]
+    assert update.message.replies[-1] == (
+        "Send /channels first to see this floor's threads. "
+        "Then /join and a number from that list, like /join 1."
+    )
     assert len(db.list_channels()) == 1
 
     await cmd_channels(update, _context())
     await cmd_join(update, _context("2"))
     assert get_session(111) is None
-    assert "not on the list" in update.message.replies[-1]
+    assert update.message.replies[-1] == "That number isn't on the list. Send /channels to see the numbers."
     assert db.list_channels()[0].id == only.id
 
     await cmd_join(update, _context("0"))

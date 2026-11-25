@@ -574,8 +574,15 @@ async def test_telegram_thread_and_channels_take_no_floor_name() -> None:
     _agent("Ada", 1)
     create_floor("Finance")
     for command, usage in (
-        (cmd_thread, "Usage: /thread — opens a thread with everyone on your floor. /floor N changes floors."),
-        (cmd_channels, "Usage: /channels — lists your floor's threads. /floor N changes floors."),
+        (
+            cmd_thread,
+            "Just send /thread on its own. It opens a thread with everyone on your floor. "
+            "Send /floors to change floors.",
+        ),
+        (
+            cmd_channels,
+            "Just send /channels on its own. It lists your floor's threads. Send /floors to change floors.",
+        ),
     ):
         update = _telegram_update()
         await command(update, _telegram_context("Finance"))
@@ -601,7 +608,7 @@ async def test_telegram_floors_numbers_active_floors_lobby_first_and_lists_suspe
         "\n"
         "Suspended \\(resume in BossMod\\): Paused\n"
         "\n"
-        "Go to a floor with /floor N\\."
+        "Go to a floor with /floor and its number, like /floor 2\\."
     )
 
     set_floor(111, paused.id)
@@ -609,6 +616,25 @@ async def test_telegram_floors_numbers_active_floors_lobby_first_and_lists_suspe
     listing = update.message.replies[-1]
     assert "← you're here" not in listing
     assert "You're on Paused, which is suspended\\." in listing
+
+
+async def test_telegram_floors_footer_example_is_a_floor_you_can_move_to() -> None:
+    update = _telegram_update()
+    await cmd_floors(update, _telegram_context())
+    assert update.message.replies[-1].splitlines()[-1] == "This is the only floor\\."
+
+    alpha = create_floor("alpha")
+    create_floor("Zeta")
+    await cmd_floors(update, _telegram_context())
+    assert update.message.replies[-1].splitlines()[-1] == (
+        "Go to a floor with /floor and its number, like /floor 2\\."
+    )
+
+    set_floor(111, alpha.id)
+    await cmd_floors(update, _telegram_context())
+    listing = update.message.replies[-1]
+    assert "2\\. alpha ← you're here" in listing
+    assert listing.splitlines()[-1] == "Go to a floor with /floor and its number, like /floor 1\\."
 
 
 async def test_telegram_floor_n_moves_closes_the_open_chat_and_refuses_a_missing_number() -> None:
@@ -619,26 +645,28 @@ async def test_telegram_floor_n_moves_closes_the_open_chat_and_refuses_a_missing
     assert get_session(111).target_agent_id == ada.id
 
     await cmd_floor(update, _telegram_context())
-    assert update.message.replies[-1] == "You're on Lobby. /floors lists floors; /floor N moves you."
+    assert update.message.replies[-1] == (
+        "You're on Lobby. Send /floors to see the floors, then /floor and a number, like /floor 2."
+    )
     for wrong, reply in (
         ("3", "No floor 3. Send /floors to see the list."),
         ("0", "No floor 0. Send /floors to see the list."),
-        ("two", "Usage: /floor N — N is a number from /floors."),
+        ("two", "Add a floor number, like /floor 2. Send /floors to see the numbers."),
     ):
         await cmd_floor(update, _telegram_context(wrong))
         assert update.message.replies[-1] == reply
     await cmd_floor(update, _telegram_context("1", "2"))
-    assert update.message.replies[-1] == "Usage: /floor N — N is a number from /floors."
+    assert update.message.replies[-1] == "Add a floor number, like /floor 2. Send /floors to see the numbers."
     assert get_session(111).target_agent_id == ada.id, "a refused move keeps the chat"
 
     await cmd_floor(update, _telegram_context("2"))
 
-    assert update.message.replies[-1] == "Now on Finance. Your open chat was closed.\n/agents shows who's here."
+    assert update.message.replies[-1] == "Now on Finance. Your open chat was closed.\nSend /agents to see who's here."
     session = get_session(111)
     assert (session.floor_id, session.session_type, session.target_agent_id) == (finance.id, "idle", None)
 
     await cmd_floor(update, _telegram_context("1"))
-    assert update.message.replies[-1] == "Now on Lobby.\n/agents shows who's here."
+    assert update.message.replies[-1] == "Now on Lobby.\nSend /agents to see who's here."
     assert get_session(111).floor_id == LOBBY_ID
 
 
@@ -668,7 +696,7 @@ async def test_telegram_agents_and_chat_see_only_the_current_floor() -> None:
     assert "Bob" not in listing
     await cmd_chat(update, _telegram_context("Bob"))
     assert update.message.replies[-1] == (
-        "No agent named 'Bob' on Lobby. /agents lists who's here; /floors to change floors."
+        "No agent named Bob on Lobby. Send /agents to see who's here, or /floors to change floors."
     )
     assert get_session(111) is None
     await cmd_chat(update, _telegram_context("Ada"))
@@ -698,7 +726,10 @@ async def test_telegram_join_after_a_floor_move_reads_as_stale() -> None:
     await cmd_floor(update, _telegram_context("2"))
     await cmd_join(update, _telegram_context("1"))
 
-    assert update.message.replies[-1] == "That list is stale. Send /channels again, then /join N."
+    assert update.message.replies[-1] == (
+        "The threads changed since you last looked. "
+        "Send /channels again, then /join and a number from the new list."
+    )
     session = get_session(111)
     assert (session.session_type, session.target_channel_id, session.floor_id) == ("idle", None, finance.id)
 

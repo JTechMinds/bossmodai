@@ -466,7 +466,7 @@ async def test_telegram_says_a_floor_or_its_agent_is_suspended() -> None:
     for command in (cmd_thread, cmd_channels):
         update = _telegram_update()
         await command(update, _telegram_context())
-        assert update.message.replies == ["Finance is suspended. Resume it in BossMod, or /floors to switch."]
+        assert update.message.replies == ["Finance is suspended. Resume it in BossMod, or send /floors to switch."]
 
     upsert_session(111, session_type="dm", floor_id=finance.id, target_agent_id=ada.id, agent_names_key="ada")
     dm = _telegram_update(text="hi")

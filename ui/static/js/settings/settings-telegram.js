@@ -117,20 +117,20 @@ const TelegramSection = (() => {
                             <span class="text-bm-muted font-sans">List floors with numbers</span>
                         </div>
                         <div class="flex gap-3">
-                            <span class="text-bm-accent shrink-0">/floor &lt;N&gt;</span>
-                            <span class="text-bm-muted font-sans">Go to floor N</span>
+                            <span class="text-bm-accent shrink-0">/floor 2</span>
+                            <span class="text-bm-muted font-sans">Go to floor 2 (number from /floors)</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/agents</span>
                             <span class="text-bm-muted font-sans">Agents on your floor</span>
                         </div>
                         <div class="flex gap-3">
-                            <span class="text-bm-accent shrink-0">/chat &lt;name&gt;</span>
-                            <span class="text-bm-muted font-sans">Open or resume a DM session</span>
+                            <span class="text-bm-accent shrink-0">/chat Ada</span>
+                            <span class="text-bm-muted font-sans">Chat with Ada (any name from /agents)</span>
                         </div>
                         <div class="flex gap-3">
-                            <span class="text-bm-accent shrink-0">/chat &lt;n1&gt; &lt;n2&gt;</span>
-                            <span class="text-bm-muted font-sans">Open the thread with those agents</span>
+                            <span class="text-bm-accent shrink-0">/chat Ada Bob</span>
+                            <span class="text-bm-muted font-sans">Thread with Ada and Bob</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/thread</span>
@@ -141,8 +141,8 @@ const TelegramSection = (() => {
                             <span class="text-bm-muted font-sans">Your floor's threads, numbered</span>
                         </div>
                         <div class="flex gap-3">
-                            <span class="text-bm-accent shrink-0">/join &lt;N&gt;</span>
-                            <span class="text-bm-muted font-sans">Switch to thread N from /channels</span>
+                            <span class="text-bm-accent shrink-0">/join 1</span>
+                            <span class="text-bm-muted font-sans">Open thread 1 from /channels</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/chat</span>
@@ -154,11 +154,11 @@ const TelegramSection = (() => {
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/approve</span>
-                            <span class="text-bm-muted font-sans">View and action pending approvals</span>
+                            <span class="text-bm-muted font-sans">See and answer approvals waiting for you</span>
                         </div>
                         <div class="flex gap-3">
                             <span class="text-bm-accent shrink-0">/help</span>
-                            <span class="text-bm-muted font-sans">Command map (same as /start)</span>
+                            <span class="text-bm-muted font-sans">How to use the bot</span>
                         </div>
                     </div>
                 </div>

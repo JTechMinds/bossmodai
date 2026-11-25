@@ -77,7 +77,7 @@ def format_status_summary(
         f"Agents: {escape_md(str(total))} total, {escape_md(str(working))} working, {escape_md(str(idle))} idle",
         f"Active tasks: {escape_md(str(len(active_tasks)))}",
         f"Blocked tasks: {escape_md(str(len(blocked_tasks)))}",
-        f"Pending approvals: {escape_md(str(pending_approvals))}",
+        f"Approvals waiting: {escape_md(str(pending_approvals))}",
     ]
     return "\n".join(lines)
 
@@ -96,7 +96,7 @@ def format_channels_list(
     """
     label = floor_name.strip() or "this floor"
     if not channels:
-        return escape_md(f"No active threads on {label}. Nothing to /join.")
+        return escape_md(f"No threads on {label} yet. Send /thread to open one with everyone here.")
 
     lines = [f"*Threads · {escape_md(label)}*\n"]
     floor_tag = escape_md(f"[{label}]")
@@ -110,7 +110,7 @@ def format_channels_list(
         )
 
     lines.append("")
-    lines.append(escape_md("Rejoin a row with /join N. If the list changed, send /channels again."))
+    lines.append(escape_md("Open one with /join and its number, like /join 1."))
     return "\n".join(lines)
 
 
@@ -118,12 +118,26 @@ def format_approval_list(
     requests: list[Any],
     agents_map: dict[str, Any],
 ) -> str:
-    """Format a list of pending approval requests."""
+    """Format the approvals waiting for an answer, each with its short code (MarkdownV2).
+
+    Each row starts with the shortest code that tells it apart from the
+    others (``display_approval_prefix``), the code ``/approve yes|no`` takes.
+
+    Args:
+        requests: Pending approval requests, in display order.
+        agents_map: Agent id → agent, for the name on each row.
+
+    Returns:
+        The ``*Approvals waiting for you*`` header, one row per request, and
+        a footer whose ``/approve`` example uses the first row's code, so the
+        example works as typed. With no requests, a single "No approvals are
+        waiting for you." line.
+    """
     if not requests:
-        return escape_md("No pending approvals.")
+        return escape_md("No approvals are waiting for you.")
 
     sibling_ids = [req.id if hasattr(req, "id") else str(req) for req in requests]
-    lines = ["*Pending Approvals*\n"]
+    lines = ["*Approvals waiting for you*\n"]
     for req in requests:
         req_id = req.id if hasattr(req, "id") else str(req)
         short_id = escape_md(display_approval_prefix(req_id, sibling_ids))
@@ -132,7 +146,13 @@ def format_approval_list(
         agent_name = escape_md(agent.name if agent and hasattr(agent, "name") else "Unknown")
         lines.append(f"`{short_id}` *{agent_name}*: `{command}`")
 
-    lines.append(f"\n{escape_md('Use /approve yes <id> or /approve no <id>')}")
+    # The same value the first row shows, so the example can be typed as is.
+    code = display_approval_prefix(sibling_ids[0], sibling_ids)
+    footer = (
+        "To answer one, use the code at the start of its line: "
+        f"/approve yes {code} to approve, /approve no {code} to reject."
+    )
+    lines.append(f"\n{escape_md(footer)}")
     return "\n".join(lines)
 
 
@@ -148,9 +168,9 @@ def format_approval_card(
     short_id = escape_md(display_approval_prefix(req_id, [req_id]))
 
     text_parts = [
-        f"*Approval Request*\n",
+        f"*Approval needed*\n",
         f"Agent: *{agent_name}*",
-        f"ID: `{short_id}`",
+        f"Code: `{short_id}`",
         f"Command: `{command}`",
     ]
     if content:
@@ -176,8 +196,8 @@ def format_agent_reply(agent_name: str, content: str) -> str:
 def format_floor_list(active: list[Floor], suspended: list[Floor], current_floor_id: str) -> str:
     """Format the floor list for ``/floors`` (MarkdownV2).
 
-    Active floors are numbered 1..N in the order given, the numbers
-    ``/floor N`` takes. Suspended floors carry no number and are listed
+    Active floors are numbered from 1 in the order given, the numbers
+    ``/floor`` takes. Suspended floors carry no number and are listed
     apart, since nobody can move onto one.
 
     Args:
@@ -188,7 +208,11 @@ def format_floor_list(active: list[Floor], suspended: list[Floor], current_floor
 
     Returns:
         The ``*Floors*`` header, the numbered rows, the suspended line(s)
-        when any floor is suspended, and the ``/floor N`` footer.
+        when any floor is suspended, and a footer. The footer's example,
+        ``like /floor K``, uses the number of the first active floor that is
+        not the user's, so it always moves them. When there is none (one
+        active floor, and the user is on it) the footer is "This is the only
+        floor."
     """
     lines = ["*Floors*\n"]
     for index, floor in enumerate(active, start=1):
@@ -202,7 +226,15 @@ def format_floor_list(active: list[Floor], suspended: list[Floor], current_floor
             if floor.id == current_floor_id:
                 lines.append(escape_md(f"You're on {floor.name}, which is suspended."))
     lines.append("")
-    lines.append(escape_md("Go to a floor with /floor N."))
+    # An example naming the user's own floor would answer "You're already on".
+    example = next(
+        (index for index, floor in enumerate(active, start=1) if floor.id != current_floor_id),
+        None,
+    )
+    if example is None:
+        lines.append(escape_md("This is the only floor."))
+    else:
+        lines.append(escape_md(f"Go to a floor with /floor and its number, like /floor {example}."))
     return "\n".join(lines)
 
 
@@ -223,25 +255,25 @@ def format_help(*, floor_name: str, open_label: str) -> str:
         f"You're on {floor_name} · {open_label}\n"
         "\n"
         "Move between floors\n"
-        "/floors — list floors with numbers\n"
-        "/floor <N> — go to floor N (closes your open chat)\n"
+        "/floors — see the floors, numbered\n"
+        "/floor 2 — go to floor 2 (use a number from /floors; this closes your open chat)\n"
         "\n"
         "Talk to agents on this floor\n"
-        "/agents — who's here\n"
-        "/chat <name> — chat with one agent\n"
-        "/chat <name> <name> — thread with those agents\n"
-        "/thread — thread with everyone on this floor\n"
-        "Then just type: messages go to your open chat or thread.\n"
+        "/agents — see who's here\n"
+        "/chat Ada — chat with Ada (use any name from /agents)\n"
+        "/chat Ada Bob — open a thread with Ada and Bob\n"
+        "/thread — open a thread with everyone on this floor\n"
+        "Then just type. Your messages go to the chat or thread you have open.\n"
         "\n"
         "Switch threads\n"
-        "/channels — this floor's threads, numbered\n"
-        "/join <N> — switch to thread N from that list\n"
+        "/channels — see this floor's threads, numbered\n"
+        "/join 1 — open thread 1 from that list\n"
         "\n"
         "Close\n"
-        "/chat — close your open chat or thread\n"
+        "/chat — on its own, closes your open chat or thread\n"
         "\n"
         "All floors\n"
         "/status — quick summary\n"
-        "/approve — pending approvals\n"
+        "/approve — approvals waiting for you\n"
         "/help — this guide"
     )

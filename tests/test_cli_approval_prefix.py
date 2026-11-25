@@ -73,3 +73,21 @@ def test_approval_list_shows_disambiguating_prefix() -> None:
     text = format_approval_list(requests, {})
     assert "abcdef01" in text
     assert "abcdef99" in text
+
+
+def test_approval_list_footer_example_uses_the_first_rows_code() -> None:
+    # Ids that share their first nine characters: the shown code runs past
+    # eight, so a fixed-length slice in the footer would not match the row.
+    requests = [
+        _req("abcdef01-1111-4000-8000-000000000001", "curl https://a.test"),
+        _req("abcdef01-2222-4000-8000-000000000002", "curl https://b.test"),
+    ]
+    lines = format_approval_list(requests, {}).splitlines()
+    assert lines[0] == "*Approvals waiting for you*"
+    assert lines[2].startswith("`abcdef01\\-1` ")
+    assert lines[3].startswith("`abcdef01\\-2` ")
+    assert lines[-1] == (
+        "To answer one, use the code at the start of its line: "
+        "/approve yes abcdef01\\-1 to approve, /approve no abcdef01\\-1 to reject\\."
+    )
+    assert format_approval_list([], {}) == "No approvals are waiting for you\\."

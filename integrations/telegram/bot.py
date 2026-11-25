@@ -47,9 +47,15 @@ from integrations.telegram.sessions import (
 logger = logging.getLogger(__name__)
 
 _JOIN_CLOSED = {
-    JoinListStatus.MISSING: "No thread list yet. Send /channels, then /join N.",
-    JoinListStatus.STALE: "That list is stale. Send /channels again, then /join N.",
-    JoinListStatus.UNKNOWN: "That row is not on the list. Send /channels, then /join N.",
+    JoinListStatus.MISSING: (
+        "Send /channels first to see this floor's threads. "
+        "Then /join and a number from that list, like /join 1."
+    ),
+    JoinListStatus.STALE: (
+        "The threads changed since you last looked. "
+        "Send /channels again, then /join and a number from the new list."
+    ),
+    JoinListStatus.UNKNOWN: "That number isn't on the list. Send /channels to see the numbers.",
 }
 
 
@@ -219,12 +225,13 @@ async def cmd_floor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not args:
         floor = _current_floor(user_id)
         await update.message.reply_text(
-            f"You're on {floor.name}. /floors lists floors; /floor N moves you."
+            f"You're on {floor.name}. Send /floors to see the floors, "
+            "then /floor and a number, like /floor 2."
         )
         return
     # isdecimal, not isdigit: int() rejects digits such as superscripts.
     if len(args) != 1 or not str(args[0]).isdecimal():
-        await update.message.reply_text("Usage: /floor N — N is a number from /floors.")
+        await update.message.reply_text("Add a floor number, like /floor 2. Send /floors to see the numbers.")
         return
     ordinal = int(args[0])
     active = _active_floors()
@@ -241,7 +248,7 @@ async def cmd_floor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply = f"Now on {target.name}."
     if had_open_chat:
         reply += " Your open chat was closed."
-    reply += "\n/agents shows who's here."
+    reply += "\nSend /agents to see who's here."
     await update.message.reply_text(reply)
 
 
@@ -284,9 +291,13 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         session = get_session(update.effective_user.id)
         if session and session.session_type != "idle":
             clear_session(update.effective_user.id)
-            await update.message.reply_text("Session closed.")
+            await update.message.reply_text("Chat closed.")
         else:
-            await update.message.reply_text("Usage: /chat <agent_name> [agent_name2 ...]")
+            await update.message.reply_text(
+                "Add an agent's name, like /chat Ada. "
+                "Add more names to open a thread with all of them. "
+                "Send /agents to see who's here."
+            )
         return
 
     user_id = update.effective_user.id
@@ -300,8 +311,8 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         agent = _resolve_agent_by_name(name, floor.id)
         if agent is None:
             await update.message.reply_text(
-                f"No agent named '{name}' on {floor.name}. "
-                "/agents lists who's here; /floors to change floors."
+                f"No agent named {name} on {floor.name}. "
+                "Send /agents to see who's here, or /floors to change floors."
             )
             return
         resolved.append(agent)
@@ -318,7 +329,7 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         status = formatters.get_status_label(agent.get("status", ""))
         await update.message.reply_text(
             f"Now chatting with {agent['name']} ({agent.get('role', '')}) — {status}\n"
-            f"Type anything to message them. /chat to close."
+            f"Type anything to message them. Send /chat on its own to close."
         )
     else:
         await _open_thread(update, context, user_id, resolved, floor_id=floor.id)
@@ -326,7 +337,7 @@ async def cmd_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 def _suspended_floor_reply(floor_name: str) -> str:
     """The reply for a command run on a suspended floor; it names the way out."""
-    return f"{floor_name} is suspended. Resume it in BossMod, or /floors to switch."
+    return f"{floor_name} is suspended. Resume it in BossMod, or send /floors to switch."
 
 
 def _agent_floor_suspended_reply(agent_name: str) -> str:
@@ -434,7 +445,8 @@ async def cmd_thread(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
     if context.args:
         await update.message.reply_text(
-            "Usage: /thread — opens a thread with everyone on your floor. /floor N changes floors."
+            "Just send /thread on its own. It opens a thread with everyone on your floor. "
+            "Send /floors to change floors."
         )
         return
     user_id = update.effective_user.id
@@ -466,7 +478,8 @@ async def cmd_channels(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     if context.args:
         await update.message.reply_text(
-            "Usage: /channels — lists your floor's threads. /floor N changes floors."
+            "Just send /channels on its own. It lists your floor's threads. "
+            "Send /floors to change floors."
         )
         return
     floor = _current_floor(update.effective_user.id)
@@ -501,7 +514,7 @@ async def cmd_join(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     args = context.args or []
     if len(args) != 1 or not str(args[0]).isdigit():
-        await update.message.reply_text("Usage: /join N — N is a row from /channels.")
+        await update.message.reply_text("Add a thread number, like /join 1. Send /channels to see the numbers.")
         return
     ordinal = int(args[0])
     floor = _current_floor(update.effective_user.id)
@@ -570,7 +583,11 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         return
 
     if len(args) < 2:
-        await update.message.reply_text("Usage: /approve yes <id> or /approve no <id> [note]")
+        await update.message.reply_text(
+            "Send /approve to see what's waiting. "
+            "To approve one, send /approve yes and its code, like /approve yes a1b2. "
+            "To reject, send /approve no a1b2, and add a reason after it if you like."
+        )
         return
 
     decision = args[0].lower()
@@ -582,19 +599,20 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     )
     if resolved.status == "ambiguous":
         await update.message.reply_text(
-            f"Ambiguous approval prefix '{prefix}'. "
-            "Use more characters so it matches exactly one pending request."
+            f"More than one approval starts with {prefix}. Type more of the code."
         )
         return
     if resolved.status != "unique" or resolved.request is None:
-        await update.message.reply_text(f"No pending approval matching '{prefix}'.")
+        await update.message.reply_text(
+            f"No approval is waiting with the code {prefix}. Send /approve to see them."
+        )
         return
     request = resolved.request
 
     if decision == "yes":
         approval = await _resume_telegram_approval(context, request.id, approved=True)
         if approval is None:
-            await update.message.reply_text("This approval is no longer pending.")
+            await update.message.reply_text("This approval isn't waiting anymore.")
             return
         await update.message.reply_text(f"Approved: {request.command}")
     elif decision == "no":
@@ -606,11 +624,11 @@ async def cmd_approve(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             note=note,
         )
         if approval is None:
-            await update.message.reply_text("This approval is no longer pending.")
+            await update.message.reply_text("This approval isn't waiting anymore.")
             return
         await update.message.reply_text(f"Rejected: {request.command}")
     else:
-        await update.message.reply_text("Use 'yes' or 'no': /approve yes <id> or /approve no <id>")
+        await update.message.reply_text("Start with yes or no, like /approve yes a1b2.")
 
 
 async def _resume_telegram_approval(
@@ -645,19 +663,19 @@ async def handle_approval_callback(update: Update, context: ContextTypes.DEFAULT
     request = db.get_cli_approval_request(request_id)
 
     if request is None or request.status != "pending":
-        await query.edit_message_text("This approval is no longer pending.")
+        await query.edit_message_text("This approval isn't waiting anymore.")
         return
 
     if action == "approve":
         approval = await _resume_telegram_approval(context, request_id, approved=True)
         if approval is None:
-            await query.edit_message_text("This approval is no longer pending.")
+            await query.edit_message_text("This approval isn't waiting anymore.")
             return
         await query.edit_message_text(f"Approved: {request.command}")
     elif action == "reject":
         approval = await _resume_telegram_approval(context, request_id, approved=False)
         if approval is None:
-            await query.edit_message_text("This approval is no longer pending.")
+            await query.edit_message_text("This approval isn't waiting anymore.")
             return
         await query.edit_message_text(f"Rejected: {request.command}")
     elif action == "ask":
@@ -719,7 +737,8 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if session is None or session.session_type == "idle":
         floor = _current_floor(user_id)
         await update.message.reply_text(
-            f"No chat open. /agents shows who's on {floor.name}; /chat <name> starts one."
+            f"No chat open. Send /agents to see who's on {floor.name}, "
+            "then /chat and a name, like /chat Ada."
         )
         return
 
@@ -732,7 +751,9 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     if session.session_type == "dm":
         if not session.target_agent_id:
-            await update.message.reply_text("Session invalid. Use /chat <agent> to start a new one.")
+            await update.message.reply_text(
+                "That chat isn't available anymore. Send /chat and a name to start a new one, like /chat Ada."
+            )
             clear_session(user_id)
             return
         try:
@@ -745,7 +766,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         except AgentOnVacation:
             clear_session(user_id)
             await update.message.reply_text(
-                "That agent is on vacation. Use /chat <agent> to talk to someone else."
+                "That agent is on vacation. Send /agents to see who's here."
             )
             return
         except FloorSuspended:
@@ -759,7 +780,7 @@ async def handle_plain_text(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     elif session.session_type == "group":
         channel = db.get_channel(session.target_channel_id)
         if channel is None or channel.status != "active":
-            await update.message.reply_text("Channel no longer active. Use /chat to start a new session.")
+            await update.message.reply_text("That thread was closed. Send /channels to pick another.")
             clear_session(user_id)
             return
         try:
@@ -801,14 +822,14 @@ class TelegramCommand(NamedTuple):
 TELEGRAM_COMMANDS: tuple[TelegramCommand, ...] = (
     TelegramCommand("start", cmd_start, None),
     TelegramCommand("floors", cmd_floors, "List floors and see which one you're on"),
-    TelegramCommand("floor", cmd_floor, "Go to floor N from /floors"),
+    TelegramCommand("floor", cmd_floor, "Go to a floor by number, like /floor 2"),
     TelegramCommand("agents", cmd_agents, "Agents on your floor"),
-    TelegramCommand("chat", cmd_chat, "Chat with an agent (no name closes it)"),
+    TelegramCommand("chat", cmd_chat, "Chat with an agent, like /chat Ada"),
     TelegramCommand("thread", cmd_thread, "Thread with everyone on your floor"),
     TelegramCommand("channels", cmd_channels, "Your floor's threads, numbered"),
-    TelegramCommand("join", cmd_join, "Switch to thread N from /channels"),
+    TelegramCommand("join", cmd_join, "Open a thread by number, like /join 1"),
     TelegramCommand("status", cmd_status, "Summary across all floors"),
-    TelegramCommand("approve", cmd_approve, "Pending approvals"),
+    TelegramCommand("approve", cmd_approve, "Approvals waiting for you"),
     TelegramCommand("help", cmd_help, "How to use this bot"),
 )
 
