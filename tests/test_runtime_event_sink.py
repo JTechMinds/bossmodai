@@ -278,19 +278,89 @@ async def test_a_normal_stop_announces_every_extension_changed_once() -> None:
 
 
 class _FakeClient:
-    """A WebSocket stand-in: records each frame, or fails every send with ``error``."""
+    """A WebSocket stand-in: records each frame it takes and each close code.
 
-    def __init__(self, error: Exception | None = None) -> None:
+    ``error`` fails every send with it. ``stuck`` makes every send wait
+    forever, like a screen that stopped reading; ``sending`` is set once
+    such a send has begun. ``pace`` sleeps that long before taking a frame,
+    and ``accept`` yields once, so other tasks run while it connects.
+    """
+
+    def __init__(self, error: Exception | None = None, *, stuck: bool = False, pace: float = 0.0) -> None:
         self.error = error
+        self.stuck = stuck
+        self.pace = pace
         self.frames: list[dict[str, Any]] = []
+        self.closes: list[int] = []
+        self.sending = asyncio.Event()
 
     async def accept(self) -> None:
-        return None
+        await asyncio.sleep(0)
 
     async def send_json(self, data: dict[str, Any]) -> None:
         if self.error is not None:
             raise self.error
+        if self.stuck:
+            self.sending.set()
+            await asyncio.Event().wait()
+        await asyncio.sleep(self.pace)
         self.frames.append(data)
+
+    async def close(self, code: int = 1000) -> None:
+        self.closes.append(code)
+
+
+def _no_initial_frames() -> list[dict[str, Any]]:
+    return []
+
+
+async def _connected(manager: ConnectionManager, *clients: _FakeClient) -> None:
+    """Connect each fake screen with no initial frames, so a test counts only its own broadcasts."""
+    for client in clients:
+        await manager.connect(client, initial_frames=_no_initial_frames)
+
+
+async def _left(manager: ConnectionManager, *clients: _FakeClient) -> None:
+    """Disconnect each fake screen, as the ws route's ``finally`` does."""
+    for client in clients:
+        await manager.disconnect(client)
+
+
+async def _screens_settle(predicate: Callable[[], bool], *, timeout: float = 2.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError("timed out waiting for the screens' senders")
+        await asyncio.sleep(0.001)
+
+
+def _screen_tasks() -> list[asyncio.Task[Any]]:
+    return [task for task in asyncio.all_tasks() if task.get_name().startswith("websocket-screen")]
+
+
+@pytest.fixture
+def screen_settings() -> Iterator[Callable[..., None]]:
+    """``screen_settings(key=value)`` sets WebSocket settings; each is put back to its seed afterwards.
+
+    This module shares one database per worker, so the seeds are put back
+    and re-read before the next test.
+    """
+    db.init_db()
+    changed: set[str] = set()
+
+    def apply(**values: str) -> None:
+        for key, value in values.items():
+            db.set_setting(key, value, "advanced")
+            changed.add(key)
+        config.reload()
+
+    try:
+        yield apply
+    finally:
+        for key in changed:
+            db.reset_setting_to_seed(key)
+        config.reload()
 
 
 @pytest.mark.asyncio
@@ -301,35 +371,279 @@ async def test_broadcast_drops_a_client_that_disconnects_mid_send_and_still_deli
     # First, so a failure that escaped would also cost the second client its frame.
     dropped = _FakeClient(WebSocketDisconnect(code=1006))
     live = _FakeClient()
-    await manager.connect(dropped)
-    await manager.connect(live)
+    await _connected(manager, dropped, live)
 
     await manager.broadcast({"type": "thought", "data": {"agent_id": "a1"}})
+    await _screens_settle(lambda: manager.connection_count == 1 and len(live.frames) == 1)
 
     assert live.frames == [{"type": "thought", "data": {"agent_id": "a1"}}]
-    assert manager.connection_count == 1
+    # Already gone: only unregistered, nothing to close.
+    assert dropped.frames == [] and dropped.closes == []
     await manager.broadcast({"type": "world_update", "data": {}})
+    await _screens_settle(lambda: len(live.frames) == 2)
     assert live.frames[-1] == {"type": "world_update", "data": {}}
+    await _left(manager, dropped, live)
 
 
 @pytest.mark.asyncio
-async def test_broadcast_without_its_send_timeout_setting_raises() -> None:
-    """No ``or 5.0``: a missing seed is a broken database, and it is said, not guessed."""
+async def test_broadcast_without_its_send_timeout_setting_drops_the_screen_and_logs_an_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """No ``or 5.0``: a missing seed is a broken database, and it is said, not guessed.
+
+    ``broadcast`` no longer reads the timeout; the screen's sender does, says
+    so at ERROR, and drops the screen with 1013 so its browser reconnects.
+    """
     db.init_db()
     manager = ConnectionManager()
     client = _FakeClient()
-    await manager.connect(client)
+    await _connected(manager, client)
+    sender = manager._connections[client].sender
+    assert sender is not None
     db.execute("DELETE FROM settings WHERE key = $1", ["ws_send_timeout_seconds"])
     config.reload()
     try:
-        with pytest.raises(config.ConfigError, match="ws_send_timeout_seconds"):
+        with caplog.at_level(logging.ERROR, logger="api.websocket"):
+            # Only this block: the connect above may have logged at INFO.
+            caplog.clear()
             await manager.broadcast({"type": "thought", "data": {"agent_id": "a1"}})
+            await asyncio.wait_for(asyncio.shield(sender), timeout=2.0)
+
         assert client.frames == []
+        assert manager.connection_count == 0
+        assert client.closes == [1013]
+        errors = [record for record in caplog.records if record.name == "api.websocket"]
+        # The sender says it cannot send; the close says it runs without its bound.
+        assert [record.getMessage() for record in errors] == [
+            "Cannot send to a screen; dropping it so it reconnects",
+            "Closing a screen without its ws_send_timeout_seconds bound",
+        ]
+        for record in errors:
+            assert record.levelno == logging.ERROR
+            assert record.exc_info is not None and isinstance(record.exc_info[1], config.ConfigError)
+            assert "ws_send_timeout_seconds" in str(record.exc_info[1])
     finally:
         # This module shares one database per worker, so the seed is put back
         # and re-read before the next test broadcasts.
         db.reset_setting_to_seed("ws_send_timeout_seconds")
         config.reload()
+
+
+@pytest.mark.asyncio
+async def test_broadcast_returns_while_a_screen_is_stuck_and_a_fast_screen_gets_every_frame(
+    screen_settings: Callable[..., None],
+) -> None:
+    # Far beyond the test, so the stuck screen is never dropped for its timeout here.
+    screen_settings(ws_send_timeout_seconds="60")
+    manager = ConnectionManager()
+    stuck, fast = _FakeClient(stuck=True), _FakeClient()
+    await _connected(manager, stuck, fast)
+    frames = [{"type": "agent_thought", "data": {"n": n}} for n in range(20)]
+
+    await manager.broadcast(frames[0])
+    await asyncio.wait_for(stuck.sending.wait(), timeout=2.0)
+    # The stuck screen's send is now blocked forever; each broadcast still returns at once.
+    for frame in frames[1:]:
+        await asyncio.wait_for(manager.broadcast(frame), timeout=1.0)
+
+    await _screens_settle(lambda: len(fast.frames) == len(frames))
+    assert fast.frames == frames
+    assert stuck.frames == [] and stuck.closes == []
+    assert manager.connection_count == 2
+    await _left(manager, stuck, fast)
+
+
+@pytest.mark.asyncio
+async def test_each_screen_gets_every_broadcast_in_order(screen_settings: Callable[..., None]) -> None:
+    screen_settings(ws_send_timeout_seconds="60")
+    manager = ConnectionManager()
+    # Senders at different paces, so broadcasts land while each is mid-send.
+    screens = [_FakeClient(), _FakeClient(pace=0.0005), _FakeClient(pace=0.001)]
+    await _connected(manager, *screens)
+    frames = [{"type": "activity", "data": {"n": n}} for n in range(200)]
+
+    for n, frame in enumerate(frames):
+        await manager.broadcast(frame)
+        if n % 7 == 0:
+            await asyncio.sleep(0)
+
+    await _screens_settle(lambda: all(len(screen.frames) == len(frames) for screen in screens), timeout=5.0)
+    for screen in screens:
+        assert screen.frames == frames
+    await _left(manager, *screens)
+
+
+@pytest.mark.asyncio
+async def test_a_screen_that_falls_behind_is_dropped_with_1013_and_a_warning(
+    screen_settings: Callable[..., None], caplog: pytest.LogCaptureFixture,
+) -> None:
+    screen_settings(ws_client_outbox_size="2", ws_send_timeout_seconds="60")
+    manager = ConnectionManager()
+    stuck, fast = _FakeClient(stuck=True), _FakeClient()
+    await _connected(manager, stuck, fast)
+    stuck_sender = manager._connections[stuck].sender
+    assert stuck_sender is not None
+    frames = [{"type": "agent_thought", "data": {"n": n}} for n in range(5)]
+
+    with caplog.at_level(logging.WARNING, logger="api.websocket"):
+        caplog.clear()
+        await manager.broadcast(frames[0])
+        # Frame 0 is the stuck screen's blocked send; frames 1 and 2 fill its outbox.
+        await asyncio.wait_for(stuck.sending.wait(), timeout=2.0)
+        for n in (1, 2, 3):
+            await manager.broadcast(frames[n])
+            # The fast screen keeps up, so its own outbox of 2 never fills.
+            await _screens_settle(lambda n=n: len(fast.frames) == n + 1)
+        # Frame 3 found the stuck outbox full: unregistered at once, closed by a task of its own.
+        assert manager.connection_count == 1
+        await _screens_settle(lambda: stuck.closes == [1013] and not manager._drop_tasks)
+        await manager.broadcast(frames[4])
+        await _screens_settle(lambda: len(fast.frames) == 5)
+
+    assert fast.frames == frames
+    assert stuck.frames == []
+    assert stuck_sender.cancelled()
+    warnings = [record for record in caplog.records if record.name == "api.websocket"]
+    assert [(record.levelno, record.getMessage()) for record in warnings] == [
+        (logging.WARNING, "Dropped a screen that fell 2 updates behind; it will reconnect and catch up"),
+    ]
+    await _left(manager, stuck, fast)
+
+
+@pytest.mark.asyncio
+async def test_a_send_timeout_closes_the_screen_with_1013(
+    screen_settings: Callable[..., None], caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A screen that timed out used to be forgotten but left open: its browser never resynced."""
+    screen_settings(ws_send_timeout_seconds="0.05")
+    manager = ConnectionManager()
+    stuck = _FakeClient(stuck=True)
+    await _connected(manager, stuck)
+
+    with caplog.at_level(logging.INFO, logger="api.websocket"):
+        # Only this block: the connect above may have logged at INFO.
+        caplog.clear()
+        await manager.broadcast({"type": "agent_thought", "data": {"n": 0}})
+        await _screens_settle(lambda: stuck.closes == [1013])
+
+    assert manager.connection_count == 0
+    assert [record.getMessage() for record in caplog.records if record.name == "api.websocket"] == [
+        "A screen did not take an update within 0.05s; dropping it so it reconnects and catches up",
+    ]
+    await _left(manager, stuck)
+
+
+@pytest.mark.asyncio
+async def test_connect_queues_the_initial_frames_before_any_broadcast(
+    screen_settings: Callable[..., None],
+) -> None:
+    screen_settings(ws_send_timeout_seconds="60")
+    manager = ConnectionManager()
+    at = datetime(2026, 11, 26, 13, 3, tzinfo=timezone.utc)
+    initial = [
+        {"type": "world_update", "data": {"at": at}},
+        {"type": "unified_feed", "data": {"items": []}},
+        {"type": "runtime_state", "data": {"lifecycle_state": "running"}},
+        {"type": "presence_snapshot", "data": []},
+    ]
+    client = _FakeClient()
+    # The broadcasts made while the screen was registered, by number.
+    registered: list[int] = []
+    stop = asyncio.Event()
+
+    async def broadcaster() -> None:
+        # Broadcasts on every loop turn, including while the screen is being accepted.
+        n = 0
+        while not stop.is_set():
+            if client in manager._connections:
+                registered.append(n)
+            await manager.broadcast({"type": "agent_presence", "data": {"n": n}})
+            n += 1
+            await asyncio.sleep(0)
+
+    task = asyncio.create_task(broadcaster())
+    await asyncio.sleep(0)
+    await manager.connect(client, initial_frames=lambda: initial)
+    right_after = {"type": "agent_presence", "data": {"n": "right after connect"}}
+    await manager.broadcast(right_after)
+    await _screens_settle(lambda: len(registered) >= 5)
+    stop.set()
+    await task
+    await _screens_settle(lambda: len(client.frames) == len(initial) + 1 + len(registered))
+
+    # Encoded once on the way in, as broadcasts are.
+    assert client.frames[:4] == [{"type": "world_update", "data": {"at": at.isoformat()}}, *initial[1:]]
+    assert client.frames[4] == right_after
+    assert client.frames[5:] == [{"type": "agent_presence", "data": {"n": n}} for n in registered]
+    await _left(manager, client)
+
+
+@pytest.mark.asyncio
+async def test_disconnect_cancels_the_sender_and_leaves_no_task_behind(
+    screen_settings: Callable[..., None],
+) -> None:
+    screen_settings(ws_send_timeout_seconds="60")
+    manager = ConnectionManager()
+    # One sender waits for its next frame; the other is blocked mid-send.
+    idle, stuck = _FakeClient(), _FakeClient(stuck=True)
+    await _connected(manager, idle, stuck)
+    senders = [manager._connections[client].sender for client in (idle, stuck)]
+    await manager.broadcast({"type": "agent_thought", "data": {"n": 0}})
+    await asyncio.wait_for(stuck.sending.wait(), timeout=2.0)
+    await _screens_settle(lambda: len(idle.frames) == 1)
+
+    await _left(manager, idle, stuck)
+
+    assert all(sender is not None and sender.cancelled() for sender in senders)
+    assert manager.connection_count == 0
+    assert _screen_tasks() == []
+    # It left: nothing is closed, and a second disconnect does nothing.
+    assert idle.closes == [] and stuck.closes == []
+    await _left(manager, idle, stuck)
+    assert manager.connection_count == 0
+
+
+class _RosterReadFailed(Exception):
+    """What an ``initial_frames`` builder raises in the connect-failure test."""
+
+
+@pytest.mark.asyncio
+async def test_a_connect_whose_initial_frames_fail_closes_with_1011_and_registers_nothing(
+    screen_settings: Callable[..., None],
+) -> None:
+    screen_settings(ws_send_timeout_seconds="60")
+    manager = ConnectionManager()
+    client = _FakeClient()
+
+    def failing_frames() -> list[dict[str, Any]]:
+        raise _RosterReadFailed("world state read failed")
+
+    with pytest.raises(_RosterReadFailed, match="world state read failed"):
+        await manager.connect(client, initial_frames=failing_frames)
+
+    # Accepted, then closed so the browser is not left connected and silent.
+    assert client.closes == [1011]
+    assert client.frames == []
+    assert manager.connection_count == 0 and client not in manager._connections
+    assert _screen_tasks() == []
+
+
+@pytest.mark.asyncio
+async def test_an_outbox_smaller_than_the_initial_frames_is_a_config_error_and_registers_nothing(
+    screen_settings: Callable[..., None],
+) -> None:
+    screen_settings(ws_client_outbox_size="3", ws_send_timeout_seconds="60")
+    manager = ConnectionManager()
+    client = _FakeClient()
+    initial = [{"type": "world_update", "data": {"n": n}} for n in range(4)]
+
+    with pytest.raises(config.ConfigError, match="ws_client_outbox_size"):
+        await manager.connect(client, initial_frames=lambda: initial)
+
+    assert client.closes == [1011]
+    assert client.frames == []
+    assert manager.connection_count == 0 and client not in manager._connections
+    assert _screen_tasks() == []
 
 
 class _ScriptedStdout:
@@ -412,6 +726,40 @@ async def test_the_reader_drops_each_bad_line_with_an_error_and_keeps_reading(
         ("presence_snapshot", {"rows": []}),
         ("extension_live", {"extension_id": None, "agent_id": None}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_the_reader_never_waits_on_a_screen() -> None:
+    """The agents' pace is never a screen's pace (the 2026-11-26 freeze).
+
+    With the real ``ConnectionManager`` as the sink and one screen whose
+    sends never return, the reader still takes every worker event and
+    reaches EOF at once; a second screen gets each event in order.
+    """
+    db.init_db()
+    manager = ConnectionManager()
+    stuck, fast = _FakeClient(stuck=True), _FakeClient()
+    await _connected(manager, stuck, fast)
+    services = RuntimeServices()
+    services.set_event_sink(manager)
+    thoughts = [{"agent_id": "a1", "thought": f"Step {n}", "action_name": "cli"} for n in range(50)]
+    services._process = _ScriptedProcess(
+        [_line({"type": "event", "payload": {"kind": "thought", "data": thought}}) for thought in thoughts]
+    )
+
+    try:
+        # A stalled send used to hold the reader for ws_send_timeout_seconds (5 s).
+        await asyncio.wait_for(services._read_worker_output(), timeout=2.0)
+
+        await _screens_settle(lambda: len(fast.frames) == len(thoughts) + 2)
+        assert fast.frames[:50] == [{"type": "agent_thought", "data": thought} for thought in thoughts]
+        assert [frame["type"] for frame in fast.frames[50:]] == ["presence_snapshot", "extension_live"]
+        # Still within its outbox, so still registered: only its own delivery waits.
+        assert stuck.frames == [] and manager.connection_count == 2
+    finally:
+        # The stream's end asked for an automatic restart; none is wanted here.
+        await runtime_services_module._cancel_and_wait(services._recovery_task)
+        await _left(manager, stuck, fast)
 
 
 # ─── a stream that ends while the worker still runs: bounded wait, then fail-stop ───

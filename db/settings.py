@@ -284,6 +284,10 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
 
     # ── WebSocket ──
     ("ws_send_timeout_seconds", "5", "advanced"),
+    # How many frames may wait for one screen before it is dropped and made
+    # to reconnect and catch up (api/websocket.py _ScreenOutbox). Read when a
+    # screen connects.
+    ("ws_client_outbox_size", "500", "advanced"),
     # A burst of world-state broadcasts (agent steps, movement ticks, roster
     # edits) within this window is sent as one world_update read once
     # (api/websocket.py ConnectionManager.broadcast_world_state).
