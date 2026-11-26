@@ -471,10 +471,13 @@ def _parse_json_object(raw_response: str) -> dict[str, Any]:
 
 def _normalize_conversation_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize the model-facing compact conversation payload into canonical fields."""
+    from core.agent_loop.parse_steer import lift_root_keys_from_data
     # Lazy: deliverables → bm_cli → … → role_contracts → deliverables is a cycle at import time.
     from core.agent_loop.deliverables import parse_wire_outs
 
     payload = _default_status_reply_if_say_only(payload)
+    # A th/next_owners nested in data is read where it belongs, not repaired.
+    payload = lift_root_keys_from_data(payload)
     if "act" not in payload:
         raise ValueError('missing "act"')
     extra_root = set(payload) - {"act", "intent", "msg", "commit", "data", "th", "next_owners"}

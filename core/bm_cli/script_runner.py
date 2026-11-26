@@ -323,12 +323,19 @@ def _executable(
 
 
 def _background_owner(agent: Agent, prepared: PreparedScript) -> BackgroundOwner:
-    """Who the script's ``&`` pipelines belong to, with each pipeline as the agent wrote it."""
+    """Who the script's ``&`` pipelines belong to, with each pipeline as the agent wrote it.
+
+    The task is the turn's work binding, the one answer to "which task is
+    this turn for": a detached turn binds none, so its processes wake nothing.
+    """
+    from core.agent_loop.work_binding import bound_task_id
+
     return BackgroundOwner(
         agent_id=agent.id,
         storage_key=agent.storage_key,
         cwd_virtual=prepared.cwd,
         item_commands=tuple(_pipeline_text(pipeline) for pipeline, _connector in prepared.body.items),
+        task_id=bound_task_id(agent.id),
     )
 
 

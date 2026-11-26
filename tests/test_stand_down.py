@@ -85,7 +85,7 @@ def _running_process(agent):
         process_id=process_id, agent_id=agent.id, command="npx vite", cwd="/me",
         run_tag=os.urandom(8).hex(), pid=os.getpid(), pid_create_time=psutil.Process().create_time(),
         log_path=str(background_processes.process_log_path(agent.storage_key, process_id)),
-        started_at=now - timedelta(minutes=5), checkin_due_at=now + timedelta(hours=2),
+        started_at=now - timedelta(minutes=5), checkin_due_at=now + timedelta(hours=2), task_id=None,
     )
 
 

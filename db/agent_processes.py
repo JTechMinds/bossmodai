@@ -18,7 +18,7 @@ from db.crud import execute, fetch_all, fetch_one, query
 
 _COLUMNS = (
     "id, agent_id, command, cwd, run_tag, pid, pid_create_time, log_path, status, stopped_by, "
-    "stop_reason, started_at, ended_at, checkin_due_at, checkin_requested_at"
+    "stop_reason, started_at, ended_at, checkin_due_at, checkin_requested_at, task_id"
 )
 _ENDED_STATUSES = frozenset({"exited", "stopped"})
 
@@ -35,6 +35,7 @@ def create_agent_process(
     log_path: str,
     started_at: datetime,
     checkin_due_at: datetime,
+    task_id: str | None,
 ) -> AgentProcess:
     """Record one launched background process as ``running``.
 
@@ -49,23 +50,29 @@ def create_agent_process(
         log_path: The real path of its log file.
         started_at: When the launch began (aware).
         checkin_due_at: When to ask the operator first (aware).
+        task_id: The task the launching turn was bound to (FK), or None for
+            a detached or unbound turn. Required, so every caller states it.
 
     Returns:
         The stored row.
 
     Raises:
-        sqlite3.IntegrityError: ``agent_id`` names no agent, or the id is taken.
+        sqlite3.IntegrityError: ``agent_id`` names no agent, ``task_id``
+            names no task, or the id is taken.
         RuntimeError: The row could not be read back.
     """
     execute(
         """
         INSERT INTO agent_processes (
             id, agent_id, command, cwd, run_tag, pid, pid_create_time, log_path, status,
-            started_at, checkin_due_at
+            started_at, checkin_due_at, task_id
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9, $10, $11)
         """,
-        [process_id, agent_id, command, cwd, run_tag, pid, pid_create_time, log_path, started_at, checkin_due_at],
+        [
+            process_id, agent_id, command, cwd, run_tag, pid, pid_create_time, log_path, started_at,
+            checkin_due_at, task_id,
+        ],
     )
     # Re-read rather than RETURNING: SQLite reports no declared column types
     # there, so the timestamps would come back as text.

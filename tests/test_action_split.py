@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 
@@ -97,6 +98,38 @@ def test_parse_action_code_fence_and_walk() -> None:
     parsed = parse_action(raw)
     assert parsed["action"] == "walkTo"
     assert parsed["destination"] == "desk"
+
+
+def test_parse_action_reads_a_th_nested_in_data() -> None:
+    parsed = parse_action('{"act":"cli","data":{"cmd":"status","th":"x"}}')
+    assert parsed["action"] == "bm_cli"
+    assert parsed["command"] == "status"
+    assert parsed["thought"] == "x"
+
+
+def test_parse_action_still_refuses_other_unknown_data_keys() -> None:
+    parsed = parse_action('{"act":"cli","data":{"cmd":"status","th_unused":"x"}}')
+    assert parsed["action"] == "_parse_failed"
+    assert "unexpected data keys: th_unused" in parsed["_raw_snippet"]
+
+
+def test_parse_action_logs_nothing_on_a_bad_step(caplog: pytest.LogCaptureFixture) -> None:
+    """The paused-work view re-parses old steps every turn; only the live caller logs."""
+    bad_steps = (
+        "Working. No JSON.",  # no JSON object at all
+        '{"act":"cli","data":{"cmd":"x"},',  # broken JSON
+        "[1, 2]",  # JSON, but not an object
+        '{"act":"cli","data":{"cmd":"status"},"th2":"x"}',  # invented top-level key
+        '{"act":"cli","data":{"cmd":"status","th_unused":"x"}}',  # unknown data key
+        '{"act":"cli","th":"a","data":{"cmd":"status","th":"b"}}',  # th set twice
+        '{"act":"cli","data":{"cmd":"  "},"th":"t"}',  # fails action validation
+    )
+    with caplog.at_level(logging.DEBUG):
+        for raw in bad_steps:
+            parsed = parse_action(raw)
+            assert parsed["action"] == "_parse_failed", raw
+            assert parsed["_raw_snippet"], raw
+    assert caplog.records == []
 
 
 async def test_execute_action_unknown_action_is_status_changed() -> None:

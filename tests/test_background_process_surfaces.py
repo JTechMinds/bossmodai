@@ -90,6 +90,7 @@ def _self_row(agent, *, command: str = "npx vite --port 5199", log: str | None =
         process_id=process_id, agent_id=agent.id, command=command, cwd="/projects/site",
         run_tag=os.urandom(8).hex(), pid=os.getpid(), pid_create_time=psutil.Process().create_time(),
         log_path=str(log_path), started_at=now - timedelta(minutes=5), checkin_due_at=now + timedelta(hours=2),
+        task_id=None,
     )
 
 
@@ -172,7 +173,7 @@ def test_stop_reaps_a_real_process_and_refuses_twice(client: TestClient, tmp_pat
     script = parse_shell_script("sleep 30 &")
     result = execute_shell_script(
         script, cwd=tmp_path, timeout_seconds=10, max_output_bytes=4096, allowed_roots=[tmp_path],
-        extra_env=[{}], background=BackgroundOwner(agent.id, agent.storage_key, "/me", ("sleep 30",)),
+        extra_env=[{}], background=BackgroundOwner(agent.id, agent.storage_key, "/me", ("sleep 30",), None),
     )
     row = db.get_agent_process(result.started_process_ids[0])
     assert row is not None

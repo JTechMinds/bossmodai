@@ -24,6 +24,8 @@ _WORKER_READY_TIMEOUT_SECONDS = 10.0
 _WORKER_STOP_TIMEOUT_SECONDS = 2.0
 _COMMAND_WAIT_TIMEOUT_SECONDS = 10.0
 _COMMAND_POLL_INTERVAL_SECONDS = 0.05
+# How much of a dropped worker output line its ERROR log shows.
+_OUTPUT_PREVIEW_BYTES = 200
 _WORKER_NAME = "primary"
 _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
 # Set to "1" in the worker's own environment (see ``_start_unlocked``).
@@ -587,30 +589,137 @@ class RuntimeServices:
             await asyncio.sleep(_COMMAND_POLL_INTERVAL_SECONDS)
 
     async def _read_worker_output(self) -> None:
+        """Read the worker's JSONL output line by line until the stream ends.
+
+        This reader is the worker's only output path, so a fault in one line
+        costs that line, never the stream: a line over the stream limit, a
+        line that is not UTF-8 JSON or not a JSON object, and a message whose
+        handling raises are each logged at ERROR and dropped, and reading
+        continues. The loop ends at EOF, when ``readline()`` itself fails
+        (logged at ERROR), or on cancellation, which is not caught: the
+        canceller (``_clear_process_state``) owns the lifecycle.
+
+        On the way out a pending ready wait fails. Then, unless a stop is
+        expected: after EOF or a stream failure while ``returncode`` is still
+        unset, :meth:`_settle_stream_end` gives the worker
+        ``_WORKER_STOP_TIMEOUT_SECONDS`` to show its exit and stops it
+        (fail-stop) when it does not; otherwise (an exit asyncio has already
+        seen, or a cancellation) :meth:`_record_unexpected_exit` runs.
+        """
         process = self._process
         if process is None or process.stdout is None:
             return
+        # How the stream ended, for the finally: "EOF" or the readline()
+        # failure. Still None when the loop was cancelled.
+        ended: str | None = None
         try:
             while True:
-                line = await process.stdout.readline()
-                if not line:
+                try:
+                    line = await process.stdout.readline()
+                except ValueError as exc:
+                    # Over the StreamReader limit: asyncio has already dropped
+                    # the line and the stream stays usable.
+                    logger.error("Dropped a runtime worker output line over the stream limit: %s", exc)
+                    continue
+                except Exception as exc:
+                    # The stream itself failed (an exception set on the reader
+                    # is raised again by every later read), so reading ends.
+                    logger.exception("Runtime worker output stream failed")
+                    ended = f"{type(exc).__name__}: {exc}"
                     break
-                message = json.loads(line.decode("utf-8"))
-                await self._handle_worker_message(message)
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            logger.exception("Failed reading runtime worker output")
+                if not line:
+                    ended = "EOF"
+                    break
+                try:
+                    message = json.loads(line.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    # E.g. a stray print() from a library inside the worker.
+                    logger.error(
+                        "Dropped a runtime worker output line that is not UTF-8 JSON (%s): %r",
+                        exc,
+                        line[:_OUTPUT_PREVIEW_BYTES],
+                    )
+                    continue
+                if not isinstance(message, dict):
+                    logger.error(
+                        "Dropped a runtime worker output line that is not a JSON object: %r",
+                        line[:_OUTPUT_PREVIEW_BYTES],
+                    )
+                    continue
+                try:
+                    await self._handle_worker_message(message)
+                except Exception:
+                    payload = message.get("payload")
+                    label = payload.get("kind") if isinstance(payload, dict) else message.get("type")
+                    # The database stays the source of truth for what the UI missed.
+                    logger.exception("Runtime worker %s event was not delivered; reading continues", label)
         finally:
             ready_future = self._ready_future
             if ready_future is not None and not ready_future.done():
                 ready_future.set_exception(RuntimeError("Runtime worker exited before ready"))
-            if not self._expecting_shutdown:
-                state = db.get_runtime_worker_state(_WORKER_NAME)
-                if state is None or state.lifecycle_state not in {"stopped", "error"}:
-                    db.mark_runtime_worker_error("Runtime worker exited unexpectedly", worker_name=_WORKER_NAME)
-                # A normal stop announces from _stop_unlocked instead.
-                await self._announce_worker_exit()
+            if ended is not None and not self._expecting_shutdown and process.returncode is None:
+                await self._settle_stream_end(process, ended)
+            else:
+                await self._record_unexpected_exit()
+
+    async def _settle_stream_end(self, process: asyncio.subprocess.Process, reason: str) -> None:
+        """Tell a worker's exit from a worker the app can no longer hear, once its stream ended.
+
+        asyncio sets ``returncode`` a few loop turns after stdout's EOF, so
+        ``None`` there does not yet mean the worker runs. It gets
+        ``_WORKER_STOP_TIMEOUT_SECONDS`` to show its exit:
+
+        - it exited: :meth:`_record_unexpected_exit`, as for any exit, so a
+          reason the worker recorded on its own row is kept;
+        - it still runs, and no stop began meanwhile: it is stopped, its row
+          is marked ``error`` with ``reason``, and its exit is announced. A
+          worker the app cannot hear must not keep running: its turns would
+          block on output while their leases keep them looking alive;
+        - a stop began during the wait: that stop owns the exit;
+        - this reader is cancelled during the wait: what a cancelled reader
+          always does (:meth:`_record_unexpected_exit`), then the
+          cancellation goes on.
+
+        Args:
+            process: The worker whose stdout ended.
+            reason: How it ended: ``EOF``, or the ``readline()`` failure.
+        """
+        try:
+            await asyncio.wait_for(process.wait(), timeout=_WORKER_STOP_TIMEOUT_SECONDS)
+        except asyncio.TimeoutError:
+            if self._expecting_shutdown:
+                return
+            logger.error(
+                "Runtime worker output stream ended while the worker was running (%s); stopping the worker",
+                reason,
+            )
+            # Only after the wait: terminate() on a child whose exit asyncio
+            # has not seen yet can reap it first and leave a wrong returncode.
+            await self._force_stop_process(process)
+            db.mark_runtime_worker_error(
+                f"Runtime worker stopped: its output stream ended while it was running ({reason})",
+                worker_name=_WORKER_NAME,
+            )
+            await self._announce_worker_exit()
+            return
+        except asyncio.CancelledError:
+            await self._record_unexpected_exit()
+            raise
+        await self._record_unexpected_exit()
+
+    async def _record_unexpected_exit(self) -> None:
+        """Mark the worker row ``error`` and announce the exit, unless a stop is expected.
+
+        A row already ``stopped`` or ``error`` keeps its state and reason
+        (e.g. the worker's own ``fatal`` reason).
+        """
+        if self._expecting_shutdown:
+            # A normal stop announces from _stop_unlocked instead.
+            return
+        state = db.get_runtime_worker_state(_WORKER_NAME)
+        if state is None or state.lifecycle_state not in {"stopped", "error"}:
+            db.mark_runtime_worker_error("Runtime worker exited unexpectedly", worker_name=_WORKER_NAME)
+        await self._announce_worker_exit()
 
     async def _handle_worker_message(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")

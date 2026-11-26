@@ -38,6 +38,9 @@ class AgentProcess(BaseModel):
         ended_at: When it was found ended or was stopped; None while running.
         checkin_due_at: When the operator is next asked whether to keep it.
         checkin_requested_at: When that question was asked; None while not asked.
+        task_id: The task the launching turn was bound to; None for a
+            detached turn, a turn with no live work, or a row recorded
+            before this column existed.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -57,6 +60,7 @@ class AgentProcess(BaseModel):
     ended_at: datetime | None = None
     checkin_due_at: datetime
     checkin_requested_at: datetime | None = None
+    task_id: str | None
 
     @property
     def short_id(self) -> str:

@@ -7,6 +7,7 @@ teardown, so nothing outlives the test and nothing else is signalled.
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import signal
@@ -22,6 +23,8 @@ import pytest
 
 import db
 from core import config
+from core.agent_loop import activity_runtime
+from core.agent_loop.work_binding import DETACHED_ORIGIN_KEY, bind_turn
 from core.agent_repository import agent_repository
 from core.bm_cli import background_processes
 from core.bm_cli.background_processes import BackgroundOwner
@@ -32,6 +35,9 @@ from core.bm_cli.session import set_cli_cwd
 from core.bm_cli.shell_executor import execute_shell_script
 from core.bm_cli.shell_script import parse_shell_script
 from core.floor_moves import move_project
+from core.models.agent_process import AgentProcess
+from core.runtime import services as runtime_services_module
+from core.tasking.transitions import transition_task
 from db.floors import LOBBY_ID, create_floor
 from tests._stand_down import send_on_vacation
 
@@ -99,6 +105,7 @@ def _run(tmp_path: Path, agent, text: str, *, timeout: int = 10, cwd: Path | Non
         storage_key=agent.storage_key,
         cwd_virtual="/me",
         item_commands=tuple(f"item {index}" for index in range(len(script.items))),
+        task_id=None,
     )
     return execute_shell_script(
         script, cwd=workdir, timeout_seconds=timeout, max_output_bytes=65536,
@@ -404,6 +411,7 @@ def test_processes_logs_and_id_rules() -> None:
         run_tag="t", pid=os.getpid(), pid_create_time=psutil.Process().create_time(),
         log_path=str(background_processes.process_log_path(agent.storage_key, "abcdef12-log")),
         started_at=datetime.now(timezone.utc), checkin_due_at=datetime.now(timezone.utc) + timedelta(hours=2),
+        task_id=None,
     )
     log = Path(row.log_path)
     log.parent.mkdir(parents=True, exist_ok=True)
@@ -487,6 +495,162 @@ def test_a_background_pipeline_never_gets_the_nest_git_credentials(
         _stop_everything.append(row.pid)
         environ = psutil.Process(row.pid).environ()
         assert not set(_TOKEN_ENV) & set(environ), sorted(environ)
+
+
+# ── a recorded end resumes the waiting task it was launched for ───────
+
+
+def _task_at(agent, status: str):
+    """A task assigned to ``agent`` with live work bound to it, then moved to ``status``.
+
+    ``waiting`` and ``blocked`` pause the work as ``wait`` and a block do;
+    ``active`` leaves it running; ``complete`` ends the task.
+    """
+    task = db.create_task("Confirm the build", assigned_to=agent.id)
+    activity_runtime.activate_work_activity(agent.id, task, task_status="active")
+    if status in {"waiting", "blocked"}:
+        activity_runtime.pause_active_work(agent.id, f"setup {status}", task_status=status)
+    elif status == "complete":
+        transition_task(task.id, "complete", reason="setup complete", actor="pytest")
+    refreshed = db.get_task(task.id)
+    assert refreshed is not None and refreshed.status == status
+    return refreshed
+
+
+def _row_for(agent, task_id: str | None, *, command: str = "npm test") -> AgentProcess:
+    """A running row for ``task_id`` whose run tag matches nothing, so ending it kills nothing."""
+    now = datetime.now(timezone.utc)
+    process_id = f"{os.urandom(4).hex()}-feed-0000-0000-000000000000"
+    return db.create_agent_process(
+        process_id=process_id, agent_id=agent.id, command=command, cwd="/me",
+        run_tag=os.urandom(8).hex(), pid=os.getpid(), pid_create_time=psutil.Process().create_time(),
+        log_path=str(background_processes.process_log_path(agent.storage_key, process_id)),
+        started_at=now, checkin_due_at=now + timedelta(hours=2), task_id=task_id,
+    )
+
+
+def _resumes(agent_id: str, task_id: str) -> list[str]:
+    """The ``content`` of every open ``activity_resumed`` for ``task_id``."""
+    return [
+        json.loads(row["payload"])["content"]
+        for row in db.list_agent_triggers(agent_id)
+        if row["trigger_type"] == "activity_resumed"
+        and row["task_id"] == task_id
+        and row["status"] in {"queued", "claimed"}
+    ]
+
+
+def test_a_launch_records_the_task_its_turn_is_bound_to(_stop_everything) -> None:
+    _enable_shell()
+    agent, state, _root = _agent_in_project()
+
+    def launch() -> AgentProcess:
+        result = execute_bm_cli(agent, state, "sleep 30 &")
+        assert result.ok is True, result.prompt_content
+        assert result.data is not None
+        row = db.get_agent_process(result.data["process_ids"][0])
+        assert row is not None
+        _stop_everything.append(row.pid)
+        return row
+
+    unbound = launch()
+    task = _task_at(agent, "active")
+    bound = launch()
+    with bind_turn(agent.id, {"type": "human_chat", DETACHED_ORIGIN_KEY: True}):
+        detached = launch()
+
+    assert unbound.task_id is None
+    assert bound.task_id == task.id
+    assert detached.task_id is None
+
+
+def test_an_exit_resumes_the_waiting_task_exactly_once(_stop_everything) -> None:
+    _enable_shell()
+    agent, state, _root = _agent_in_project()
+    task = _task_at(agent, "active")
+    launched = execute_bm_cli(agent, state, "sleep 30 &")
+    assert launched.data is not None
+    row = db.get_agent_process(launched.data["process_ids"][0])
+    assert row is not None and row.task_id == task.id
+    _stop_everything.append(row.pid)
+    # The agent `wait`s on its own run: no peer or operator will wake it.
+    activity_runtime.pause_active_work(agent.id, "Waiting for the test run", task_status="waiting")
+    os.kill(row.pid, signal.SIGKILL)
+    assert _gone(row.pid)
+
+    background_processes.sweep()
+    # Later observers of the same end: the next reader, and one holding the
+    # row from before the sweep recorded it.
+    background_processes.live_for_agent(agent.id)
+    assert background_processes._end_dead(row, background_processes.EXITED_REASON) is None
+
+    assert _resumes(agent.id, task.id) == [
+        f"Your background process `sleep 30` ended (Exited on its own). "
+        f'Check `processes logs {row.short_id}`, then continue "Confirm the build" or wait again.'
+    ]
+
+
+@pytest.mark.parametrize("status", ["active", "blocked", "complete"])
+def test_an_exit_wakes_nothing_while_the_task_is_not_waiting(status: str) -> None:
+    agent = _agent()
+    task = _task_at(agent, status)
+
+    assert background_processes._end_dead(_row_for(agent, task.id), background_processes.EXITED_REASON)
+
+    assert _resumes(agent.id, task.id) == []
+
+
+@pytest.mark.parametrize("by", ["agent", "system"])
+def test_a_stop_by_the_agent_or_the_system_wakes_nothing(by: str) -> None:
+    agent = _agent()
+    task = _task_at(agent, "waiting")
+
+    assert background_processes.stop(_row_for(agent, task.id).id, by=by, reason="Stopped") is not None
+
+    assert _resumes(agent.id, task.id) == []
+
+
+def test_an_exit_with_no_task_recorded_wakes_nothing() -> None:
+    agent = _agent()
+    task = _task_at(agent, "waiting")
+
+    assert background_processes._end_dead(_row_for(agent, None), background_processes.EXITED_REASON)
+
+    assert _resumes(agent.id, task.id) == []
+    assert db.list_agent_triggers(agent.id) == []
+
+
+def test_an_exit_adds_no_second_resume_to_an_open_one() -> None:
+    agent = _agent()
+    task = _task_at(agent, "waiting")
+    db.create_agent_trigger(
+        agent_id=agent.id, trigger_type="activity_resumed", source_channel="work",
+        payload={"content": "A peer updated the task."}, task_id=task.id,
+    )
+
+    assert background_processes._end_dead(_row_for(agent, task.id), background_processes.EXITED_REASON)
+
+    assert _resumes(agent.id, task.id) == ["A peer updated the task."]
+
+
+def test_an_operator_stop_resumes_the_waiting_task_and_wakes_the_dispatcher(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    agent = _agent()
+    task = _task_at(agent, "waiting")
+    command = "npm run test:webgpu -- --sha 0123456789abcdef --reporter verbose --grep confirmation-block-full"
+    row = _row_for(agent, task.id, command=command)
+    wakes: list[None] = []
+    monkeypatch.setattr(runtime_services_module, "request_dispatcher_wake", lambda: wakes.append(None))
+
+    stopped = background_processes.stop(row.id, by="operator", reason="Stopped by you")
+
+    assert stopped is not None and stopped.stopped_by == "operator"
+    assert _resumes(agent.id, task.id) == [
+        f"Your background process `{command[:80]}…` ended (Stopped by you). "
+        f'Check `processes logs {row.short_id}`, then continue "Confirm the build" or wait again.'
+    ]
+    assert wakes == [None]
 
 
 # ── idle agents carry no process text ──────────────────────────────────

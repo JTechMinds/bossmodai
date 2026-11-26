@@ -96,8 +96,19 @@ _DESTINATION_CODE_TO_NAME = {
 def parse_action(raw_response: str) -> dict[str, Any]:
     """Extract a flat JSON action from the LLM response.
 
-    Returns the full parsed dict. Returns ``_parse_failed`` action on failure
-    so callers can distinguish "agent chose idle" from "LLM returned garbage".
+    Pure: it logs nothing. The paused-work view re-parses old steps on every
+    decision turn (``work_snapshot.step_label``), so logging here would
+    repeat a stale failure each turn; the live execution turn logs each real
+    failure once, from ``_raw_snippet``.
+
+    Args:
+        raw_response: The model's reply text, optionally in a code fence.
+
+    Returns:
+        The canonical action dict. On failure, an ``action="_parse_failed"``
+        dict instead of raising, so callers can tell "agent chose idle" from
+        "LLM returned garbage". Every failure's ``_raw_snippet`` says what
+        was wrong.
     """
     text = raw_response.strip()
 
@@ -119,17 +130,14 @@ def parse_action(raw_response: str) -> dict[str, Any]:
             try:
                 parsed = json.loads(candidate)
             except json.JSONDecodeError as exc:
-                logger.warning("Failed to parse action JSON (%s): %s", exc.msg, text[:200])
                 # The repair prompt needs the decoder's reason and where it
                 # failed; the raw reply alone gave the model nothing to fix.
                 snippet = f"{exc.msg} near {candidate[max(0, exc.pos - 30):exc.pos + 30]!r}"
                 return parse_failed_payload(text, decision=False, snippet=snippet)
         else:
-            logger.warning("No JSON found in response: %s", text[:200])
             return parse_failed_payload(text, decision=False, snippet=text[:200])
 
     if not isinstance(parsed, dict):
-        logger.warning("Parsed action is not an object: %s", parsed)
         return {"action": "_parse_failed", "thought": "", "_raw_snippet": "Action payload must be a JSON object"}
 
     original = parsed
@@ -148,23 +156,18 @@ def parse_action(raw_response: str) -> dict[str, Any]:
         wire = peel_decision_envelope(original)
         parsed = _normalize_action_payload(wire)
     except InvalidDecisionEnvelope as exc:
-        logger.warning("Invalid compact action payload: %s", exc)
         return _schema_failed_action(raw_response, original, exc)
     except ValueError as exc:
-        logger.warning("Invalid compact action payload: %s", exc)
         return _schema_failed_action(raw_response, original, exc)
 
     if "action" not in parsed:
-        logger.warning("No 'action' key in response: %s", parsed)
         return {"action": "_parse_failed", "thought": _candidate_thought(parsed), "_raw_snippet": str(parsed)[:200]}
 
     if not isinstance(parsed["action"], str):
-        logger.warning("Action is not a string (%s): %s", type(parsed["action"]).__name__, parsed)
         return {"action": "_parse_failed", "thought": _candidate_thought(parsed), "_raw_snippet": str(parsed)[:200]}
 
     validation_error = _validate_action_payload(parsed)
     if validation_error:
-        logger.warning("Invalid action payload for %s: %s", parsed["action"], validation_error)
         return {
             "action": "_parse_failed",
             "thought": _candidate_thought(parsed),
@@ -203,6 +206,10 @@ def _normalize_action_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 'execution turns require a compact "act"; say-only / empty actions is for chat with the boss'
             )
         raise ValueError('missing "act"')
+    from core.agent_loop.parse_steer import lift_root_keys_from_data
+
+    # A th/next_owners nested in data is read where it belongs, not repaired.
+    payload = lift_root_keys_from_data(payload)
     extra_root = set(payload) - {"act", "data", "th", "next_owners"}
     if extra_root:
         raise ValueError(f'unexpected top-level keys: {", ".join(sorted(extra_root))}')

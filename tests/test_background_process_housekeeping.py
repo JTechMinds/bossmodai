@@ -88,6 +88,7 @@ def _self_row(agent, *, log: str | None = "ready\n"):
         process_id=process_id, agent_id=agent.id, command="npx vite", cwd="/me",
         run_tag=os.urandom(8).hex(), pid=os.getpid(), pid_create_time=psutil.Process().create_time(),
         log_path=str(log_path), started_at=now - timedelta(days=30), checkin_due_at=now + timedelta(hours=2),
+        task_id=None,
     )
 
 
@@ -260,7 +261,7 @@ def _launch_sleep(agent, *, cwd: Path):
     result = execute_shell_script(
         parse_shell_script("sleep 30 &"), cwd=cwd, timeout_seconds=10, max_output_bytes=4096,
         allowed_roots=[cwd], extra_env=[{}],
-        background=BackgroundOwner(agent.id, agent.storage_key, "/projects/site", ("sleep 30",)),
+        background=BackgroundOwner(agent.id, agent.storage_key, "/projects/site", ("sleep 30",), None),
     )
     (process_id,) = result.started_process_ids
     row = db.get_agent_process(process_id)

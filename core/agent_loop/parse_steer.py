@@ -51,6 +51,8 @@ _LOOKUP_ACTS = frozenset({"cli", "request_host_access"})
 _EXECUTION_CHAT_ACTS = frozenset(
     {"socialmsg", "taskmsg", "done", "block", "wait", "deleg", "drop"}
 )
+# Keys with one meaning in both contracts, valid only at the top level.
+_ROOT_ONLY_DATA_KEYS = ("th", "next_owners")
 
 
 class InvalidDecisionEnvelope(ValueError):
@@ -310,6 +312,46 @@ def read_remember(payload: dict[str, Any]) -> str | None:
         raise InvalidDecisionEnvelope('"remember" must be one sentence (a string) when provided')
     text = value.strip()
     return text or None
+
+
+def lift_root_keys_from_data(payload: dict[str, Any]) -> dict[str, Any]:
+    """Move the top-level-only keys ``th`` and ``next_owners`` out of ``data``.
+
+    Both keys mean the same thing in the execution and the decision
+    contract, and neither contract's ``data`` allows them, so a model that
+    nests one inside ``data`` is read as if it had put it at the top level
+    instead of paying a full repair turn. This is contract behavior, not a
+    fallback: any other unknown key, top level or inside ``data``, still
+    fails closed in the normalizers.
+
+    Args:
+        payload: The compact action or conversation object, after the
+            envelope peel.
+
+    Returns:
+        ``payload`` itself when ``data`` is not a dict (the normalizer's own
+        check reports that) or holds neither key. Otherwise a copy whose
+        ``data`` is a copy without the lifted keys and whose top level
+        carries them. The input is never mutated.
+
+    Raises:
+        ValueError: A key is present both at the top level and inside
+            ``data``; which one was meant is ambiguous, so it fails closed.
+    """
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return payload
+    found = [key for key in _ROOT_ONLY_DATA_KEYS if key in data]
+    if not found:
+        return payload
+    for key in found:
+        if key in payload:
+            raise ValueError(f'"{key}" belongs at the top level; it is set both there and inside "data"')
+    lifted = dict(payload)
+    lifted["data"] = {key: value for key, value in data.items() if key not in found}
+    for key in found:
+        lifted[key] = data[key]
+    return lifted
 
 
 def peel_decision_envelope(payload: dict[str, Any]) -> dict[str, Any]:

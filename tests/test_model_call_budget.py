@@ -636,6 +636,54 @@ async def test_row_in_another_thread_is_retracted_after_the_agents_turn(
     assert synced.count(bea.id) == synced_before + 1
 
 
+@pytest.mark.asyncio
+async def test_a_turn_ending_mid_retraction_does_not_break_the_emit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn's ``finally`` pops a painted row while the retraction loop awaits."""
+    synced = _busy_syncs(monkeypatch)
+    dispatcher = TurnDispatcher()
+    current_task = asyncio.current_task()
+    assert current_task is not None
+    # Busy holds a turn, so its row is carried instead of retracted.
+    dispatcher._active_turns["busy"] = current_task
+    dispatcher._painted_queued = {
+        ("ada", "room-a"): "Ada",
+        ("bea", "room-b"): "Bea",
+        ("cy", "room-c"): "Cy",
+        ("busy", "room-d"): "Busy",
+        ("dee", "room-e"): "Dee",
+    }
+    dispatcher._queue_notices = [
+        {"agent_id": "dee", "agent_name": "Dee", "channel_id": "room-e", "ahead": 1},
+    ]
+    idles: list[tuple[str, str | None]] = []
+
+    async def _presence(
+        *,
+        agent_id: str,
+        agent_name: str,
+        phase: str,
+        channel_id: str | None,
+        ahead: int | None = None,
+        since: str | None = None,
+    ) -> None:
+        if phase != "idle":
+            return
+        if not idles:
+            # Cy's turn ends while Ada's idle is in flight (_run_trigger's finally).
+            dispatcher._painted_queued.pop(("cy", "room-c"), None)
+        idles.append((agent_id, channel_id))
+
+    monkeypatch.setattr(dispatcher, "_broadcast_presence", _presence)
+
+    await dispatcher._emit_queue_notices()
+
+    assert sorted(idles) == [("ada", "room-a"), ("bea", "room-b"), ("cy", "room-c")]
+    assert sorted(synced) == ["ada", "bea", "cy"]
+    assert dispatcher._painted_queued == {("busy", "room-d"): "Busy", ("dee", "room-e"): "Dee"}
+
+
 class _WorldStateSink(NullRuntimeEventSink):
     """Drops every runtime event, and counts the world snapshots asked for."""
 

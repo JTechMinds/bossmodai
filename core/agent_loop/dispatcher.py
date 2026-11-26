@@ -1233,7 +1233,8 @@ class TurnDispatcher:
         for notice in notices:
             current[(str(notice["agent_id"]), notice.get("channel_id"))] = str(notice["agent_name"])
         carried: dict[tuple[str, str | None], str] = {}
-        for key, agent_name in self._painted_queued.items():
+        # A snapshot: _run_trigger's finally pops this map while the awaits below yield.
+        for key, agent_name in list(self._painted_queued.items()):
             agent_id, channel_id = key
             if key in current:
                 continue

@@ -22,6 +22,7 @@ from core.agent_loop.parse_steer import (
     describe_decision_parse_failure,
     describe_execution_parse_failure,
     kind_for_schema_error,
+    lift_root_keys_from_data,
     parse_failure_should_repair,
     parse_failure_steer,
     peel_decision_envelope,
@@ -309,6 +310,46 @@ def test_parse_action_invented_needs_approval_is_invalid_decision() -> None:
     assert parsed["action"] == "_parse_failed"
     assert parsed.get("_parse_kind") == "invalid_decision"
     assert "_needsApproval" in str(parsed.get("_raw_snippet") or "")
+
+
+# ─── top-level-only keys nested in data are read, not repaired ───
+
+
+def test_lift_moves_a_th_nested_in_data_to_the_top_level() -> None:
+    lifted = lift_root_keys_from_data({"act": "cli", "data": {"cmd": "status", "th": "check"}})
+    assert lifted == {"act": "cli", "data": {"cmd": "status"}, "th": "check"}
+
+
+def test_lift_moves_next_owners_nested_in_data_to_the_top_level() -> None:
+    lifted = lift_root_keys_from_data(
+        {"act": "done", "th": "shipped", "data": {"sum": "Done.", "next_owners": ["a1"]}}
+    )
+    assert lifted == {"act": "done", "th": "shipped", "data": {"sum": "Done."}, "next_owners": ["a1"]}
+
+
+def test_lift_refuses_a_key_set_both_at_the_top_level_and_inside_data() -> None:
+    for key, top, nested in (("th", "one", "two"), ("next_owners", ["a1"], ["a1"])):
+        with pytest.raises(
+            ValueError,
+            match=f'"{key}" belongs at the top level; it is set both there and inside "data"',
+        ):
+            lift_root_keys_from_data({"act": "cli", key: top, "data": {"cmd": "status", key: nested}})
+
+
+def test_lift_leaves_a_non_dict_data_for_the_normalizer_to_report() -> None:
+    for data in ("th", ["th"], None):
+        payload = {"act": "cli", "th": "t", "data": data}
+        assert lift_root_keys_from_data(payload) is payload
+    assert lift_root_keys_from_data({"act": "idle", "th": "t"}) == {"act": "idle", "th": "t"}
+
+
+def test_lift_does_not_mutate_its_input() -> None:
+    data = {"cmd": "status", "th": "check", "next_owners": ["a1"]}
+    payload = {"act": "cli", "data": data}
+    lifted = lift_root_keys_from_data(payload)
+    assert payload == {"act": "cli", "data": {"cmd": "status", "th": "check", "next_owners": ["a1"]}}
+    assert payload["data"] is data
+    assert lifted == {"act": "cli", "data": {"cmd": "status"}, "th": "check", "next_owners": ["a1"]}
 
 
 @pytest.mark.asyncio

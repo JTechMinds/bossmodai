@@ -268,7 +268,7 @@ def _asked_process(agent):
         process_id=f"{os.urandom(4).hex()}-feed-0000-0000-000000000000", agent_id=agent.id, command="npx vite",
         cwd="/projects/site", run_tag=os.urandom(8).hex(), pid=os.getpid(),
         pid_create_time=psutil.Process().create_time(), log_path="/nonexistent/log",
-        started_at=now - timedelta(hours=3), checkin_due_at=now - timedelta(seconds=1),
+        started_at=now - timedelta(hours=3), checkin_due_at=now - timedelta(seconds=1), task_id=None,
     )
     assert [item.id for item in background_processes.sweep().checkins] == [row.id]
     return row

@@ -1112,7 +1112,7 @@ def test_the_execution_prompt_shows_the_request_above_the_description() -> None:
 
 
 # ---------------------------------------------------------------------------
-# HA-CORR-P1-03 — watchdog covers accepted / waiting
+# HA-CORR-P1-03 — watchdog covers accepted
 # ---------------------------------------------------------------------------
 
 
@@ -1177,25 +1177,25 @@ async def test_watchdog_still_pings_quiet_active_task() -> None:
 
 
 @pytest.mark.asyncio
-async def test_watchdog_pings_quiet_waiting_task_but_does_not_stall() -> None:
+async def test_watchdog_leaves_a_quiet_waiting_task_alone() -> None:
+    """Waiting work is paused, so a ping could never be delivered to it.
+
+    Its wake sources are a peer's update, an operator message and the end
+    of the agent's own background process; the watchdog stays out.
+    """
     agent = _create_agent()
     task = _quiet_assigned_task(agent_id=agent.id, title="Waiting on human", status="waiting")
     assert task is not None
 
     await TaskWatchdog()._check_tasks()
-    pings = _watchdog_pings(agent.id, task.id)
-    assert pings
 
-    db.complete_agent_trigger(pings[0]["id"])
-    past_ping = datetime.now(timezone.utc) - timedelta(hours=2)
-    db.update_task(task.id, watchdog_pinged_at=past_ping)
-
-    await TaskWatchdog()._check_tasks()
-
+    assert [
+        row for row in db.list_agent_triggers(agent.id) if row["trigger_type"] == "watchdog_status_ping"
+    ] == []
     refreshed = db.get_task(task.id)
     assert refreshed is not None
+    assert refreshed.watchdog_pinged_at is None
     assert refreshed.status == "waiting"
-    assert refreshed.status != "stalled"
 
 
 @pytest.mark.asyncio

@@ -494,6 +494,9 @@ def _apply_migrations(con: SQLiteCompatConnection) -> None:
     for table in ("diagnostics", "diagnostic_steps"):
         for column in ("cached_prompt_tokens", "cache_reported_prompt_tokens"):
             _add_column_if_missing(con, table, column, "INTEGER NOT NULL DEFAULT 0")
+    # The task a background process was launched for. Existing rows read
+    # NULL, which is true: nothing recorded one, so their end wakes nothing.
+    _add_column_if_missing(con, "agent_processes", "task_id", "VARCHAR REFERENCES tasks(id)")
     # After every table rebuild above (a rebuild drops the old table's
     # indexes) and after tasks.owner_id is added.
     _create_hot_path_indexes(con)

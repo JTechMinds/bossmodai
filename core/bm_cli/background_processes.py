@@ -19,6 +19,9 @@ background process is a shell run whose reap is deferred:
   ``background_process_checkin_minutes`` the operator is asked whether to
   keep it. An unanswered question does nothing; no timer ever stops a
   process.
+* **End** (``_end_dead``, :func:`stop`): a recorded end (an exit, or an
+  operator stop) resumes the process's task when that task is ``waiting``:
+  the row keeps the task its launching turn was bound to.
 
 Every function here is synchronous and announces nothing: the callers that
 own an event sink (the watchdog, the API, the CLI turn) broadcast
@@ -85,12 +88,15 @@ class BackgroundOwner:
         cwd_virtual: The virtual directory the script runs in.
         item_commands: Each script item's pipeline as the agent wrote it, in
             order (one per ``ShellScript.items`` entry).
+        task_id: The task the script's turn is bound to, recorded on each
+            launched row; None for a detached or unbound turn.
     """
 
     agent_id: str
     storage_key: str
     cwd_virtual: str
     item_commands: tuple[str, ...]
+    task_id: str | None
 
 
 @dataclass(frozen=True)
@@ -190,6 +196,7 @@ def launch(*, owner: BackgroundOwner, command: str, start_pipeline: StartPipelin
             log_path=str(log_path),
             started_at=started_at,
             checkin_due_at=started_at + timedelta(minutes=minutes),
+            task_id=owner.task_id,
         )
     except BaseException:
         _abandon(run, procs)
@@ -234,7 +241,8 @@ def stop(process_id: str, *, by: ProcessStopper, reason: str) -> AgentProcess | 
 
     Returns:
         The ``stopped`` row, or ``None`` when there is no such row or it had
-        already ended.
+        already ended. A stop this call recorded resumes the row's task when
+        that task is waiting (see ``_wake_waiting_owner``).
     """
     row = db.get_agent_process(process_id)
     if row is None or row.status != "running":
@@ -245,6 +253,7 @@ def stop(process_id: str, *, by: ProcessStopper, reason: str) -> AgentProcess | 
     )
     if stopped is not None:
         logger.info("background process %s stopped by %s: %s", row.id, by, reason)
+        _wake_waiting_owner(stopped)
     return stopped
 
 
@@ -435,14 +444,46 @@ def _end_dead(row: AgentProcess, reason: str) -> AgentProcess | None:
     A root that exited can leave tagged children (a launcher that spawned a
     detached server, then quit). Nothing would track them once the row
     ends, so they are reaped: whatever runs in the background is always a
-    row the agent and the operator can see.
+    row the agent and the operator can see. An exit this call recorded
+    resumes the row's task when that task is waiting (see
+    ``_wake_waiting_owner``).
     """
     leftovers = reap_run(ShellRun(row.run_tag, row.started_at_epoch))
     if leftovers:
         logger.warning("background process %s exited and left pids %s; reaped them", row.id, leftovers)
-    return db.mark_agent_process_ended(
+    ended = db.mark_agent_process_ended(
         row.id, status="exited", ended_at=_now(), stopped_by=None, stop_reason=reason,
     )
+    if ended is not None:
+        _wake_waiting_owner(ended)
+    return ended
+
+
+def _wake_waiting_owner(row: AgentProcess) -> None:
+    """Queue the resume that tells an agent its background process ended, when one is owed.
+
+    Called only with the row ``db.mark_agent_process_ended`` returned, which
+    it returns once per end: whichever path observes the end first (sweep,
+    ``live_for_agent``, a stop, the boot sweep), the agent is woken once.
+    Whether a resume is owed is ``activity_scheduler.process_end_wake``'s
+    call. The dispatcher is then asked to look now: from the app process (a
+    desk or Telegram Stop) that files one ``wake_dispatcher``; inside the
+    worker it does nothing, and the dispatcher's own poll picks it up.
+
+    Args:
+        row: The ended row.
+    """
+    # Local: both modules' import chains load this one (services through
+    # config -> db -> core.bm_cli), so module-level imports would be circular.
+    from core.agent_loop.activity_scheduler import persist_result_triggers, process_end_wake
+    from core.runtime.services import request_dispatcher_wake
+
+    spec = process_end_wake(row)
+    if spec is None:
+        return
+    if persist_result_triggers({"trigger_requests": [spec]}):
+        logger.info("background process %s ended; resuming task %s for agent %s", row.id, row.task_id, row.agent_id)
+        request_dispatcher_wake()
 
 
 def _now() -> datetime:

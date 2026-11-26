@@ -12,7 +12,7 @@ from core.agent_loop.policies import get_trigger_policy
 from core.agent_loop.task_origins import stamp_origin_channel_payload
 from core.agent_loop.task_roles import task_assignment_sender
 from core.agent_loop.work_binding import is_detached
-from core.models import Activity, AgentState, Task
+from core.models import Activity, AgentProcess, AgentState, Task
 from core.scheduling.recurrence import describe, format_local_run, next_occurrence
 from core.tasking.dependencies import assignee_label
 from core.tasking.references import format_references_for_context
@@ -47,6 +47,8 @@ INTERRUPT_TRIGGER_TYPES = frozenset(
     }
 )
 _CONTINUABLE_TASK_STATUSES = frozenset({"accepted", "active"})
+# How much of a background command a process-end resume quotes.
+_PROCESS_COMMAND_PREVIEW_CHARS = 80
 
 
 def can_dispatch_trigger(
@@ -452,6 +454,57 @@ def build_task_resume_trigger(task: Task, *, reason: str) -> dict[str, Any]:
         "task_id": task.id,
         "payload": payload,
     }
+
+
+def process_end_wake(row: AgentProcess) -> dict[str, Any] | None:
+    """Return the resume that tells an agent its background process ended, if one is owed.
+
+    An agent that ``wait``s on its own background process has no other
+    wake source: its work is paused and its task parked in ``waiting``. A
+    resume is owed only when all hold:
+
+    - ``row.task_id`` is set (the launching turn was bound to a task);
+    - the process was not stopped by the agent itself (its own
+      ``processes stop``, which it saw in its own turn) nor by the system
+      (a stand-down, removal or folder move, whose flows own the agent's
+      state);
+    - the task exists, is still assigned to ``row.agent_id``, and is
+      ``waiting``;
+    - no ``activity_resumed`` for that task is already queued or claimed.
+
+    The agent decides what to do next; this only guarantees it is told.
+    ``persist_result_triggers`` still skips an agent on vacation or on a
+    suspended floor.
+
+    Args:
+        row: The ``agent_processes`` row whose end was just recorded.
+
+    Returns:
+        A ``trigger_requests``-shaped ``activity_resumed`` spec, or ``None``.
+    """
+    if not row.task_id:
+        return None
+    if row.stopped_by in {"agent", "system"}:
+        return None
+    task = db.get_task(row.task_id)
+    if task is None:
+        # Unexpected: the column is a foreign key and tasks are never deleted.
+        logger.warning("background process %s names missing task %s; no resume", row.id, row.task_id)
+        return None
+    if task.assigned_to != row.agent_id or task.status != "waiting":
+        return None
+    if db.has_open_trigger_matching(row.agent_id, trigger_types=["activity_resumed"], task_id=task.id):
+        return None
+    command = row.command
+    if len(command) > _PROCESS_COMMAND_PREVIEW_CHARS:
+        command = command[:_PROCESS_COMMAND_PREVIEW_CHARS] + "…"
+    return build_task_resume_trigger(
+        task,
+        reason=(
+            f"Your background process `{command}` ended ({row.stop_reason}). "
+            f'Check `processes logs {row.short_id}`, then continue "{task.title}" or wait again.'
+        ),
+    )
 
 
 def ensure_live_work_continuation(agent_id: str) -> dict[str, Any] | None:

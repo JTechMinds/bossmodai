@@ -1,4 +1,4 @@
-"""BossMod AI — In-flight task watchdog (active, accepted, waiting)."""
+"""BossMod AI — In-flight task watchdog (active, accepted)."""
 
 from __future__ import annotations
 
@@ -19,9 +19,8 @@ from core.tasking.transitions import transition_task
 from core.time import ensure_utc
 import db
 
-# Assigned work that can go quiet without a ping. Pending-without-assignee is
-# backlog, not in-flight work — leave it off this list (HA-CORR-P1-03).
-_WATCHDOG_TASK_STATUSES = ("active", "accepted", "waiting")
+# Waiting work is left out: its own wake sources resume it, and a ping cannot reach paused work.
+_WATCHDOG_TASK_STATUSES = ("active", "accepted")
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +169,6 @@ class TaskWatchdog:
                     continue
 
                 if now - pinged_at >= escalation_threshold and task.status != "stalled":
-                    if task.status == "waiting":
-                        # Waiting on a human (clarify / dependency). A ping already
-                        # exists or was recorded — do not stall the task.
-                        continue
                     transition_task(
                         task.id,
                         "stalled",

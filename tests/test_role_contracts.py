@@ -20,6 +20,7 @@ from api.routes import router
 from core import config
 from core.agent_loop.actions import execute_action, parse_action
 from core.agent_loop.activity_runtime import activate_work_activity
+from core.agent_loop.decision_contract import parse_decision
 from core.agent_loop.deliverables import OUTS_ITEM_SHAPE, missing_deliverables, parse_wire_outs
 from core.agent_loop.decision_runtime import apply_decision
 from core.agent_loop.role_contracts import (
@@ -673,6 +674,14 @@ def test_parser_rejects_the_retired_confirm_key() -> None:
     )
     assert rejected["action"] == "_parse_failed"
     assert "unexpected data keys: confirm" in rejected["_raw_snippet"]
+
+
+def test_the_decision_parser_reads_a_th_nested_in_data() -> None:
+    parsed = parse_decision(
+        '{"act":"reply","intent":"status","msg":"On it.","work_commit":false,"data":{"th":"answer the boss"}}'
+    )
+    assert parsed["decision"] == "answer", parsed
+    assert parsed["thought"] == "answer the boss"
 
 
 def test_shipped_contracts_no_longer_describe_the_specialty_gate() -> None:

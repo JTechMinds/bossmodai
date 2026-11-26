@@ -11,7 +11,7 @@ import asyncio
 import logging
 from typing import Any
 
-from fastapi import WebSocket
+from fastapi import WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 
 from core import config
@@ -55,15 +55,26 @@ class ConnectionManager:
         """Send a JSON message to all connected clients.
 
         Uses ``jsonable_encoder`` to handle datetime and Pydantic objects.
-        Automatically removes dead connections. Times out slow clients.
+        A client whose send fails is removed and logged at DEBUG; the others
+        still get the message, and no send failure reaches the caller. A send
+        fails when the client disconnected mid-send (``WebSocketDisconnect``:
+        Starlette converts the socket's ``OSError``), was already closed
+        (``RuntimeError``), or did not take the frame within
+        ``ws_send_timeout_seconds`` (``asyncio.TimeoutError``).
+
+        Args:
+            message: The JSON-encodable frame, e.g. ``{"type": ..., "data": ...}``.
+
+        Raises:
+            ConfigError: ``ws_send_timeout_seconds`` is missing or not a number.
         """
-        timeout = config.get_float("ws_send_timeout_seconds") or 5.0
+        timeout = config.require_float("ws_send_timeout_seconds")
         encoded = jsonable_encoder(message)
         dead: list[WebSocket] = []
         for ws in list(self._connections):
             try:
                 await asyncio.wait_for(ws.send_json(encoded), timeout=timeout)
-            except (ConnectionError, RuntimeError, asyncio.TimeoutError) as exc:
+            except (WebSocketDisconnect, RuntimeError, asyncio.TimeoutError) as exc:
                 logger.debug("WebSocket send failed, marking dead: %s", exc)
                 dead.append(ws)
         for ws in dead:
