@@ -13,8 +13,18 @@ The **Account** tab shows who is signed in. From there you can switch to another
 account, add another account, or sign out; a sign-in still open in the browser can be
 cancelled there too.
 
-The **Models** tab lists each model your plan offers with its thinking levels and its
-image input (Auto, On or Off). **Refresh models** reloads the list from your account.
+The **Models** tab lists each model your plan offers with an **On** switch, its
+thinking levels and its image input (Auto, On or Off). Only a model that is on is a
+connection you can pick; a model that is off stays listed so you can turn it back on,
+and a request to it is refused. **Refresh models** reloads the list from your account.
+
+The first time BossMod sees a model, it decides once whether it starts on: it does,
+unless your plan already offers a newer version of the same model. When a newer
+version first appears, BossMod turns the older versions of that model off, once; what
+you set by hand after that is kept until the next newer version arrives. A model that
+an agent or the saved System AI connection uses is never turned off, either way: the
+switch refuses and names who uses it, so move them to another model first. An older
+model's row notes which model is newer ("… is newer.").
 
 Signing out or disabling the extension preserves each model connection's ID and agent
 links; requests stop until the extension is enabled and a valid account is connected
@@ -95,6 +105,12 @@ are read:
 - `input_modalities`: a list containing `image` means images are supported; a list
   without it means unsupported; a missing or malformed list means unknown, so Auto
   sends no images. (Codex's own text+image default for a missing list is not copied.)
+
+Versions are read from each model's catalog `slug`, never from its display name: a
+slug made of a name, a dotted version number and optional name parts (for example
+`fx-6.1-alpha`) belongs to the line `fx-alpha` at version 6.1, and a name part after
+the version (`fx-6.1-alpha-mini`) makes its own line. A slug of any other shape, such
+as a dated snapshot, is never treated as older than another model, so it stays on.
 
 Effort names are stored as the catalog sends them and filtered when read, so adding a
 level to BossMod's vocabulary applies without a re-fetch. A malformed field is left

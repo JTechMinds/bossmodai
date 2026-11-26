@@ -5,8 +5,8 @@ turn context, or inject agent-memory warm text into a member prompt.
 Channel routing uses it for one small JSON completion. A missing model
 or a failed call returns ``None`` so the caller can fall back. An unset
 id, or a saved id that no longer names a connection, uses the first
-connection. This module does not write the setting, so an operator's
-saved pick stays put on upgrade.
+available connection. This module does not write the setting, so an
+operator's saved pick stays put on upgrade.
 
 The ``system_ai_thinking`` setting picks a thinking choice with the same
 vocabulary and merge as an agent's (``core.llm.thinking``): ``default`` sends
@@ -37,6 +37,7 @@ from core.llm.client import (
 )
 from core.llm.thinking import ThinkingConfigError, effective_extra_body
 from core.models import AIConnection
+from db.managed_connections import available
 
 logger = logging.getLogger(__name__)
 
@@ -48,23 +49,32 @@ def _usable(connection: AIConnection | None) -> AIConnection | None:
     return connection
 
 
+def first_available_connection() -> AIConnection | None:
+    """Return the connection an unset System AI falls back to.
+
+    Returns:
+        The first connection in list order (name) that its owner publishes
+        as available (``db.managed_connections.available``), or None when
+        there is none. Whether it has a model is not checked here.
+    """
+    return next((c for c in db.list_connections() if available(c.id)), None)
+
+
 def resolve_system_connection() -> AIConnection | None:
     """Return the System AI connection, or None when it cannot be used.
 
-    A saved connection id that still exists is used as stored. This read
+    A saved connection id that still exists is used as stored; the saved
+    choice counts as in use, so its extension never turns it off. This read
     does not write the setting. When the id is unset, or that connection
-    is gone, the first connection in list order (name) is used instead.
-    A saved connection that exists but has no model is not replaced.
+    is gone, ``first_available_connection`` is used instead. A saved
+    connection that exists but has no model is not replaced.
     """
     connection_id = config.get("system_ai_connection")
     if connection_id:
         connection = db.get_connection_by_id(connection_id)
         if connection is not None:
             return _usable(connection)
-    connections = db.list_connections()
-    if not connections:
-        return None
-    return _usable(connections[0])
+    return _usable(first_available_connection())
 
 
 def system_ai_is_configured() -> bool:

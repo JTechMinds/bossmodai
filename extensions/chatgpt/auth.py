@@ -14,6 +14,7 @@ import httpx
 import jwt
 from .capabilities import Capability
 from .config import ChatGPTConfig, ChatGPTError
+from .lineup import decide, has_fresh
 from .store import CredentialStore
 from core.extensions.model_provider import ProviderServices
 from typing import Callable
@@ -22,6 +23,13 @@ PLAN_SCOPE = "chatgpt.tokens.use.direct"
 # Stored catalogs carry per-model capability fields from this version on; an
 # older stored catalog has slugs and names only until the next refresh.
 CATALOG_VERSION = 2
+# Why a model the operator turned off is not a connection anyone can pick.
+TURNED_OFF_REASON = "Turned off in Extensions → ChatGPT → Models."
+
+
+def spoken_list(words: list[str]) -> str:
+    """``A``, ``A and B``, ``A, B and C``: names as a sentence reads them."""
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
 
 
 def catalog_entry(account: dict, slug: str | None) -> dict | None:
@@ -103,6 +111,7 @@ class ChatGPTSession:
             # The operator's stored choice per model; status shows what is in
             # effect, which a conflict can override.
             policies = dict(active.get("image_policies", {}))
+            enabled = dict(active.get("model_enabled", {}))
             refreshed = active.get("refreshed_at")
             catalog_version = active.get("catalog_version")
             conflicts = image_conflicts(active)
@@ -122,6 +131,7 @@ class ChatGPTSession:
             "connection_id": connection_id,
             "model": model,
             "image_policies": policies,
+            "model_enabled": enabled,
             "refreshed_at": refreshed,
             "catalog_version": catalog_version,
             "image_conflicts": conflicts,
@@ -266,17 +276,25 @@ class ChatGPTSession:
         if self.services.reconcile_connections is None:
             data["connection_id"] = self.services.publish_connection(model)
             return
+        models = account.get("models", [])
+        # No map is a pre-upgrade account's "nothing decided yet": every model
+        # is seen for the first time. What is in use is read only then.
+        choices = account.get("model_enabled", {})
+        in_use = self.services.models_in_use() if has_fresh(models, choices) else ()
+        account["model_enabled"] = decide(models, choices, in_use)
         policies = account.get("image_policies", {})
         entries = []
-        for m in account.get("models", []):
+        for m in models:
             capability = Capability.from_entry(m)
+            enabled = account["model_enabled"][m["slug"]]
             # A conflicting Enabled is published as disabled: the host refuses
             # Enabled on an unsupported model for the whole batch.
             entries.append(ManagedModel(
                 key=m["slug"], model=m["slug"], name=m["display_name"],
                 image_policy=capability.published_image_policy(policies.get(m["slug"], "auto")),
                 thinking_levels=capability.thinking_levels(),
-                images=capability.images))
+                images=capability.images,
+                available=enabled, reason=None if enabled else TURNED_OFF_REASON))
         data["connection_ids"] = self.services.reconcile_connections(entries)
         data["connection_id"] = data["connection_ids"].get(model)
 
@@ -329,6 +347,40 @@ class ChatGPTSession:
             self._ensure_connection(data, data.get("model") or account["models"][0]["slug"])
             self.store.save(data)
 
+    def set_model_enabled(self, model: str, enabled: bool) -> None:
+        """Store the operator's on/off choice for one model and republish.
+
+        Every model of the active account is republished, so the model's own
+        connection is available or not at once. The choice stands until the
+        next newer version of the model's line first appears.
+
+        Args:
+            model: A catalog slug of the active account (its ``ProviderModel.key``).
+            enabled: True to offer the model as a connection, False to turn it off.
+
+        Raises:
+            ChatGPTError: For a disabled extension, an active account that is
+                not signed in, a model its catalog does not list, or turning
+                off a model that agents or the saved System AI still use (the
+                message names them).
+        """
+        self.require_enabled()
+        with self.store.locked() as data:
+            account = data["accounts"].get(data["active"], {})
+            entry = catalog_entry(account, model)
+            if not account.get("access_token"):
+                raise ChatGPTError("Sign in to ChatGPT first.")
+            if entry is None:
+                raise ChatGPTError("Your ChatGPT account doesn't offer that model. Refresh models and try again.")
+            if not enabled:
+                users = self.services.models_in_use().get(model)
+                if users:
+                    raise ChatGPTError(
+                        f"{entry['display_name']} is still used by {spoken_list(users)}. Move them to another model first.")
+            account.setdefault("model_enabled", {})[model] = enabled
+            self._ensure_connection(data, data.get("model") or account["models"][0]["slug"])
+            self.store.save(data)
+
     def validate_request(self, request):
         import json
         token = self.access_token()
@@ -340,6 +392,11 @@ class ChatGPTSession:
             entry = catalog_entry(account, request.model)
             if entry is None:
                 raise ChatGPTError("This model isn't offered by your ChatGPT account. Refresh models in Extensions → ChatGPT → Models.")
+            # Strict: account_status() above decided every catalog slug while
+            # connected, so a missing choice is a bug, not "on".
+            if not account["model_enabled"][request.model]:
+                raise ChatGPTError(
+                    "This ChatGPT model is turned off. Turn it on in Extensions → ChatGPT → Models, or pick another model.")
             try:
                 extra = json.loads(request.extra_body or "{}")
                 if not isinstance(extra, dict) or not isinstance(extra.get("reasoning", {}), dict):
@@ -435,6 +492,7 @@ class ChatGPTSession:
             previous = data["accounts"].get(client_id, {})
             if previous.get("subject") == account["subject"]:
                 account["image_policies"] = previous.get("image_policies", {})
+                account["model_enabled"] = previous.get("model_enabled", {})
             data["accounts"][client_id] = account
             data["active"] = client_id
             self._ensure_connection(data, model)

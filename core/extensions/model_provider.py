@@ -6,10 +6,10 @@ accounts, authentication, model transports, and what the operator is told.
 A provider describes itself to the operator through ``ProviderStatus``: one
 plain sentence about the account state, the saved accounts and the actions
 that act on them, and the models it publishes — each with what it can do and
-its one operator setting, image input — with the actions that act on the
-list. The host renders that structure as the extension's Account and Models
-sections without knowing any provider, and posts the operator's choices back
-through ``provider_action``.
+its two operator settings, whether it is on and its image input — with the
+actions that act on the list. The host renders that structure as the
+extension's Account and Models sections without knowing any provider, and
+posts the operator's choices back through ``provider_action``.
 """
 
 from __future__ import annotations
@@ -37,6 +37,16 @@ Its values are ``{"model": <ProviderModel.key>, "policy": <ImagePolicy>}``.
 Every model provider's ``provider_action`` must accept it, refusing an unknown
 model or a policy outside that model's ``image_choices`` with a
 ``ProviderError``. The host UI mirrors this name (``IMAGE_POLICY_ACTION`` in
+ui/static/js/extensions/provider-sections.js).
+"""
+
+MODEL_ENABLED_ACTION = "model_enabled"
+"""The provider action the host posts when the operator turns one model on or off.
+
+Its values are ``{"model": <ProviderModel.key>, "enabled": "true" | "false"}``.
+Every model provider's ``provider_action`` must accept it, refusing an unknown
+model or any other ``enabled`` value with a ``ProviderError``. The host UI
+mirrors this name (``MODEL_ENABLED_ACTION`` in
 ui/static/js/extensions/provider-sections.js).
 """
 
@@ -109,10 +119,18 @@ class ProviderAccount(_Strict):
 class ProviderModel(_Strict):
     """One model the provider publishes, and what the operator may set on it.
 
+    Its two operator settings are whether it is on (``enabled``) and its
+    image input (``image_policy`` among ``image_choices``).
+
     Attributes:
         key: The ``ManagedModel.key`` it is published under; sent back as
-            ``values["model"]`` with ``IMAGE_POLICY_ACTION``.
+            ``values["model"]`` with ``MODEL_ENABLED_ACTION`` and
+            ``IMAGE_POLICY_ACTION``.
         name: Its display name.
+        enabled: The model is offered as a connection; a model that is off
+            is published unavailable and stays listed here so it can be
+            turned back on. Required: a provider that never decided must not
+            be read as "on".
         thinking: The host thinking levels it offers, in host order.
         thinking_default: The level the provider's own default uses, when the
             provider says.
@@ -130,6 +148,7 @@ class ProviderModel(_Strict):
 
     key: str = Field(min_length=1)
     name: str = Field(min_length=1)
+    enabled: bool
     thinking: list[ThinkingLevel] = Field(default_factory=list)
     thinking_default: ThinkingLevel | None = None
     images: ImageSupport
@@ -266,13 +285,21 @@ class ManagedModel(_Strict):
 
 @dataclass(frozen=True)
 class ProviderServices:
-    """Host operations scoped to one extension; injected by the loader."""
+    """Host operations scoped to one extension; injected by the loader.
+
+    ``models_in_use`` maps each managed key whose connection something still
+    uses to who uses it: agent names in creation order, then ``"System AI"``.
+    The host provides it together with ``reconcile_connections``.
+    """
 
     publish_connection: Callable[[str], str]
     is_enabled: Callable[[], bool]
     seal: Callable[[str], str]
     unseal: Callable[[str], str]
     reconcile_connections: Callable[[list[ManagedModel]], dict[str, str]] | None = None
+    # Defaulted only because it follows a defaulted field; it is always
+    # bound when ``reconcile_connections`` is.
+    models_in_use: Callable[[], dict[str, list[str]]] | None = None
 
 
 @runtime_checkable
@@ -306,9 +333,35 @@ def provider_id(api_base: str | None) -> str | None:
     return url.netloc
 
 
+def connection_users(connection_id: str) -> list[str]:
+    """Who still uses one host connection, as the operator knows them.
+
+    The one definition of "in use", shared by ``ProviderServices.models_in_use``
+    and the connection list. Only the saved System AI choice counts: the
+    unset fallback skips unavailable connections, so it never keeps a model
+    on.
+
+    Args:
+        connection_id: An AI connection id; an unknown id has no users.
+
+    Returns:
+        The names of the agents linked to it, in creation order, then
+        ``"System AI"`` when the saved ``system_ai_connection`` is this id.
+        Empty when nothing uses it.
+    """
+    import db
+    from core import config
+
+    users = [agent.name for agent in db.list_agents_by_connection(connection_id)]
+    if config.get("system_ai_connection") == connection_id:
+        users.append("System AI")
+    return users
+
+
 def services_for(entry) -> ProviderServices:
     """Bind minimal host services to a validated provider extension."""
     import db
+    from db.managed_connections import keys as managed_keys
     from db.secret_store import encrypt_secret, decrypt_secret
     from core.extensions.registry import is_enabled
 
@@ -340,8 +393,16 @@ def services_for(entry) -> ProviderServices:
         from db.managed_connections import reconcile as reconcile_rows
         return reconcile_rows(entry.id, spec.connection_name, entries)
 
+    def models_in_use() -> dict[str, list[str]]:
+        return {
+            key: users
+            for connection_id, key in managed_keys(entry.id).items()
+            if (users := connection_users(connection_id))
+        }
+
     return ProviderServices(
-        publish, lambda: is_enabled(entry.id), encrypt_secret, decrypt_secret, reconcile
+        publish, lambda: is_enabled(entry.id), encrypt_secret, decrypt_secret, reconcile,
+        models_in_use,
     )
 
 

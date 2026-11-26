@@ -183,6 +183,7 @@ def test_the_provider_sections() -> None:
         "providerHasAccountAndModelsTabs", "accountShowsWhoAndConnectedPill", "accountRowsHaveNoIds",
         "accountActionsFollowState", "modelsTableListsEachModel", "modelsThinkingUsesAppLabels",
         "imageSegmentPostsTheModelAndPolicy", "imageSegmentDisablesUnavailableChoices", "modelsUpdatedAtIsFormatted",
+        "modelsOnColumnHasALabelledSwitch", "modelSwitchPostsTheModelAndEnabled", "modelSwitchRefusalKeepsTheStatus",
     ):
         assert payload.get(key) is True, (key, payload)
 

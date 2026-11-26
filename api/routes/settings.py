@@ -14,6 +14,7 @@ from api.routes._shared import (
 )
 from api.websocket import manager
 from core import boss, config
+from core.extensions.model_provider import connection_users
 from core.agent_loop.standing_prefs import WARM_PREFIX_MAX_CHARS, WARM_SECTION_HEADER
 from core.context_budget import (
     COMPACTION_KEEP_SETTING,
@@ -38,7 +39,7 @@ from core.llm import connection_health
 from core.llm.call_budget import local_capacity_warning, slots_from_payload
 from core.llm.connection_url import ConnectionUrlError, is_loopback_base, validate_connection_test_url
 from core.llm.template_engine import TemplateError
-from core.llm.system_completion import resolve_system_connection
+from core.llm.system_completion import first_available_connection, resolve_system_connection
 from core.llm.thinking import unoffered
 from core.models.thinking import THINKING_CHOICES, ThinkingLevels
 from core.models import (
@@ -50,6 +51,7 @@ from core.runtime import runtime_services
 from core.runtime.services import request_dispatcher_wake
 from integrations.telegram.auth import parse_allowed_user_ids
 import db
+from db.managed_connections import available
 
 router = APIRouter()
 
@@ -691,14 +693,13 @@ def _system_connection_after(connection_id: str) -> AIConnection | None:
 
     The same rule as ``resolve_system_connection``, applied to the value
     being written rather than the stored one: an id that names a connection
-    is used, otherwise the first connection, otherwise None.
+    is used, otherwise ``first_available_connection``, otherwise None.
     """
     if connection_id:
         connection = db.get_connection_by_id(connection_id)
         if connection is not None:
             return connection
-    connections = db.list_connections()
-    return connections[0] if connections else None
+    return first_available_connection()
 
 
 def _refuse_orphaning_system_ai_thinking(key: str, value: str) -> None:
@@ -786,7 +787,22 @@ def _require_unmanaged(connection_id=None, endpoint=None):
 
 @router.get("/connections")
 async def list_connections():
-    return [serialize_connection(conn) for conn in db.list_connections()]
+    """List the connections that can be picked, plus any unusable one still in use.
+
+    A connection its extension publishes unavailable (turned off, or no
+    longer in its catalog) is listed only while an agent or the saved System
+    AI still uses it (``connection_users``), so their forms still show what
+    is stored. Every picker reads this list, so none offers a connection the
+    runtime refuses. ``GET /connections/{id}`` returns any connection.
+
+    Returns:
+        The serialized connections in name order.
+    """
+    return [
+        serialize_connection(conn)
+        for conn in db.list_connections()
+        if available(conn.id) or connection_users(conn.id)
+    ]
 
 
 @router.get("/connections/{connection_id}")

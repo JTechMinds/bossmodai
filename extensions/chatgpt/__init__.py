@@ -7,15 +7,17 @@ from core.bm_cli.types import BossModCliResult
 from core.extensions.contract import SetupError, SetupStatus
 from core.extensions.model_provider import (
     IMAGE_POLICY_ACTION,
+    MODEL_ENABLED_ACTION,
     ProviderAccount,
     ProviderAction,
     ProviderModel,
     ProviderStatus,
 )
 from core.models.thinking import THINKING_LEVELS
-from .auth import CATALOG_VERSION, ChatGPTSession
+from .auth import CATALOG_VERSION, ChatGPTSession, spoken_list
 from .capabilities import ACCEPTED_EFFORTS, Capability, host_key
 from .config import ChatGPTConfig, ChatGPTError
+from .lineup import newest_names
 from .provider import ResponsesAdapter
 from .store import CredentialStore
 
@@ -23,11 +25,6 @@ from .store import CredentialStore
 # Disabled for a model ChatGPT says takes no images.
 _ALL_POLICIES = ["auto", "enabled", "disabled"]
 _NO_IMAGE_POLICIES = ["auto", "disabled"]
-
-
-def _spoken_list(words: list[str]) -> str:
-    """``A``, ``A and B``, ``A, B and C``: names as a sentence reads them."""
-    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
 
 
 def _account_rows(account: dict) -> list[ProviderAccount]:
@@ -87,7 +84,8 @@ def _account_actions(account: dict) -> list[ProviderAction]:
     return actions
 
 
-def _model_row(entry: dict, stored_policy: str, current_catalog: bool) -> ProviderModel:
+def _model_row(entry: dict, stored_policy: str, current_catalog: bool, enabled: bool,
+               newer: str | None) -> ProviderModel:
     """One catalog model as the Models section shows it.
 
     Pure: reads only the stored catalog entry, so status polling never
@@ -100,18 +98,22 @@ def _model_row(entry: dict, stored_policy: str, current_catalog: bool) -> Provid
         stored_policy: The operator's stored image policy for it.
         current_catalog: False for a catalog stored before capability
             fields existed (``CATALOG_VERSION``).
+        enabled: The operator's stored on/off choice for it.
+        newer: The display name of its line's newest model when a newer
+            version of it is in the catalog (``lineup.newest_names``), else None.
 
     Returns:
-        The model with its thinking levels, its default, its image policy in
-        effect and the policies it may take, and a plain note: thinking names
-        BossMod can't offer yet, a catalog that listed no thinking options or
-        needs a refresh, and an Enabled that ChatGPT's catalog overrides.
+        The model with whether it is on, its thinking levels, its default,
+        its image policy in effect and the policies it may take, and a plain
+        note: thinking names BossMod can't offer yet, a catalog that listed no
+        thinking options or needs a refresh, an Enabled that ChatGPT's catalog
+        overrides, and the newer model of its line.
     """
     capability = Capability.from_entry(entry)
     offered = {host_key(effort) for effort in capability.offered}
     notes = []
     if capability.omitted:
-        names = _spoken_list([name[:1].upper() + name[1:] for name in capability.omitted])
+        names = spoken_list([name[:1].upper() + name[1:] for name in capability.omitted])
         notes.append(f"{names} thinking isn't available in BossMod yet.")
     if not current_catalog:
         notes.append("Refresh models to load thinking options.")
@@ -119,10 +121,13 @@ def _model_row(entry: dict, stored_policy: str, current_catalog: bool) -> Provid
         notes.append("ChatGPT didn't list thinking options for this model.")
     if capability.image_conflict(stored_policy):
         notes.append("ChatGPT says this model can't take images, so image input is off.")
+    if newer:
+        notes.append(f"{newer} is newer.")
     default = capability.default_effort
     return ProviderModel(
         key=entry["slug"],
         name=entry["display_name"],
+        enabled=enabled,
         thinking=[key for key in THINKING_LEVELS if key in offered],
         thinking_default=host_key(default) if default in ACCEPTED_EFFORTS else None,
         images=capability.images,
@@ -199,7 +204,11 @@ class ChatGPTExtension:
             message = "Sign in to let agents use your ChatGPT plan."
         current = account["catalog_version"] == CATALOG_VERSION
         policies = account["image_policies"]
-        models = [_model_row(entry, policies.get(entry["slug"], "auto"), current)
+        # Strict: while connected, account_status() has decided every slug.
+        enabled = account["model_enabled"]
+        newer = newest_names(account["models"])
+        models = [_model_row(entry, policies.get(entry["slug"], "auto"), current,
+                             enabled[entry["slug"]], newer.get(entry["slug"]))
                   for entry in account["models"]] if connected else []
         refreshed = account["refreshed_at"]
         return ProviderStatus(
@@ -223,6 +232,10 @@ class ChatGPTExtension:
             self.session.refresh_models()
         elif action == IMAGE_POLICY_ACTION and set(values) == {"model", "policy"}:
             self.session.set_image_policy(values["model"], values["policy"])
+        elif action == MODEL_ENABLED_ACTION and set(values) == {"model", "enabled"}:
+            if values["enabled"] not in {"true", "false"}:
+                raise ChatGPTError("Unknown ChatGPT action or invalid parameters.")
+            self.session.set_model_enabled(values["model"], values["enabled"] == "true")
         elif action == "cancel" and not values:
             self.session.cancel_login()
         elif action == "logout" and not values:

@@ -143,6 +143,8 @@ const BossModExtensionDetail = (() => {
                 busy: state.busy,
                 connectionName: item.model_provider.connection_name,
                 onAction: (action) => handlers.onProviderAction(action.key, action.values),
+                onModelEnabled: (model, enabled) => handlers.onProviderAction(
+                    PROVIDER.MODEL_ENABLED_ACTION, { model, enabled: enabled ? 'true' : 'false' }),
                 onImagePolicy: (model, policy) => handlers.onProviderAction(PROVIDER.IMAGE_POLICY_ACTION, { model, policy }),
             });
         }

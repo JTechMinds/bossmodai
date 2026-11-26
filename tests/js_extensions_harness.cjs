@@ -200,7 +200,8 @@ const folderOpens = [];
 let listReply = [bv];
 // A provider status as core/extensions/model_provider.py ProviderStatus
 // serialises it: signed out, then (connectedReply) two saved accounts, one
-// signed out, and four models covering every image and thinking shape.
+// signed out, and four models covering every image and thinking shape, one
+// of them turned off.
 let chatgptReply = { connected: false, pending: false, message: 'Sign in to let agents use your ChatGPT plan.', error: null,
     actions: [{ key: 'login', label: 'Sign in with ChatGPT', values: { account_id: '' }, primary: true }],
     accounts: [], models: [], models_updated_at: null, model_actions: [] };
@@ -216,21 +217,23 @@ const connectedReply = () => ({
             action: { key: 'login', label: 'Switch', values: { account_id: 'oaiapp_7f3e9a21' }, primary: false } },
     ],
     models: [
-        { key: 'fixture-a', name: 'Fixture A', thinking: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+        { key: 'fixture-a', name: 'Fixture A', enabled: true, thinking: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
             thinking_default: 'low', images: 'supported', image_policy: 'auto', image_choices: ['auto', 'enabled', 'disabled'],
             note: 'Ultra thinking isn’t available in BossMod yet.' },
-        { key: 'fixture-b', name: 'Fixture B', thinking: ['low', 'high'], thinking_default: null, images: 'unsupported',
+        { key: 'fixture-b', name: 'Fixture B', enabled: true, thinking: ['low', 'high'], thinking_default: null, images: 'unsupported',
             image_policy: 'auto', image_choices: ['auto', 'disabled'], note: null },
-        { key: 'fixture-c', name: 'Fixture C', thinking: [], thinking_default: null, images: 'unknown',
+        { key: 'fixture-c', name: 'Fixture C', enabled: false, thinking: [], thinking_default: null, images: 'unknown',
             image_policy: 'disabled', image_choices: ['auto', 'enabled', 'disabled'],
             note: 'ChatGPT didn’t list thinking options for this model.' },
-        { key: 'fixture-d', name: 'Fixture D', thinking: [], thinking_default: null, images: 'unknown',
+        { key: 'fixture-d', name: 'Fixture D', enabled: true, thinking: [], thinking_default: null, images: 'unknown',
             image_policy: 'auto', image_choices: [], note: null },
     ],
     models_updated_at: '2026-10-29T09:30:00Z',
     model_actions: [{ key: 'refresh', label: 'Refresh models', values: {}, primary: false }],
 });
 const chatgptCalls = [];
+// The detail a model_enabled post is refused with (409), or null to accept it.
+let chatgptRefusal = null;
 let demoConnected = false;
 // The Local Network Access stand-in: a command-less service with a panel and
 // settings. Each reply is a function so a case can swap behaviour. The status
@@ -385,6 +388,11 @@ global.apiFetch = async (url, init) => {
         // The provider stores the one model's policy and answers with it in effect.
         if (body && body.action === 'image_policy') chatgptReply = { ...chatgptReply, models: chatgptReply.models.map(
             (model) => (model.key === body.values.model ? { ...model, image_policy: body.values.policy } : model)) };
+        if (body && body.action === 'model_enabled') {
+            if (chatgptRefusal) return { ok: false, status: 409, json: async () => ({ detail: chatgptRefusal }) };
+            chatgptReply = { ...chatgptReply, models: chatgptReply.models.map(
+                (model) => (model.key === body.values.model ? { ...model, enabled: body.values.enabled === 'true' } : model)) };
+        }
         return ok(chatgptReply);
     }
     const viewMatch = url.match(/^\/api\/extensions\/mail\/agents\/a1\/view\?view=(\w+)&skip=(\d+)&top=(\d+)$/);
@@ -1576,22 +1584,29 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
     const modelsTable = () => panelOf(chatLayer).querySelector('.ext-models-table');
     const bodyRows = () => modelsTable().querySelector('tbody').children;
     const nameOf = (row) => row.children[0].children[0].textContent;
-    const thinkingOf = (row) => row.children[1].children[0].textContent;
-    const segmentOf = (row) => row.children[2].querySelector('[role="group"]');
+    // Model | On | Thinking | Image input.
+    const modelSwitchOf = (row) => row.children[1].querySelector('[role="switch"]');
+    const checkedOf = (row) => modelSwitchOf(row).getAttribute('aria-checked');
+    const thinkingOf = (row) => row.children[2].children[0].textContent;
+    const segmentOf = (row) => row.children[3].querySelector('[role="group"]');
     const optionsOf = (row) => segmentOf(row).querySelectorAll('button');
     const pressedOf = (row) => optionsOf(row).filter((b) => b.getAttribute('aria-pressed') === 'true').map((b) => b.textContent);
-    const effectOf = (row) => (row.children[2].querySelector('.ext-image-effect')
-        ? row.children[2].querySelector('.ext-image-effect').textContent : null);
+    const effectOf = (row) => (row.children[3].querySelector('.ext-image-effect')
+        ? row.children[3].querySelector('.ext-image-effect').textContent : null);
     const [rowA, rowB, rowC, rowD] = bodyRows();
     verdict.accountActionsFollowState = signedOutState && pendingState && connectedState
         && Boolean(buttonWith('Refresh models')) && modelsPanel.contains(buttonWith('Refresh models'))
         && !buttonWith('Sign out') && !buttonWith('Add another account');
     verdict.modelsTableListsEachModel = Boolean(modelsTable())
+        // Wider than a phone: the table scrolls inside its own wrapper, not the detail.
+        && modelsTable().parentNode.classList.contains('ext-models-scroll')
         && modelsPanel.querySelector('.field-hint').textContent
-            === 'Each model is a “Chat GPT” connection you can pick when you create or edit an agent.'
+            === 'Each model you turn on is a “Chat GPT” connection you can pick when you create or edit an agent.'
         && modelsTable().querySelector('caption').getAttribute('class') === 'visually-hidden'
+        && modelsTable().querySelector('caption').textContent
+            === 'Models, whether each is on, their thinking levels and their image input'
         && sameJson(modelsTable().querySelector('thead').querySelectorAll('th').map((th) => [th.textContent, th.getAttribute('scope')]),
-            [['Model', 'col'], ['Thinking', 'col'], ['Image input', 'col']])
+            [['Model', 'col'], ['On', 'col'], ['Thinking', 'col'], ['Image input', 'col']])
         && sameJson(bodyRows().map(nameOf), ['Fixture A', 'Fixture B', 'Fixture C', 'Fixture D'])
         && bodyRows().every((row) => row.children[0].tagName === 'TH' && row.children[0].getAttribute('scope') === 'row')
         && rowA.children[0].querySelector('.ext-model-note').textContent === 'Ultra thinking isn’t available in BossMod yet.'
@@ -1599,11 +1614,33 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && rowC.children[0].querySelector('.ext-model-note').textContent === 'ChatGPT didn’t list thinking options for this model.';
     // The app's own level labels (agent-fields.js), then the default.
     verdict.modelsThinkingUsesAppLabels = thinkingOf(rowA) === 'Off, Minimal, Low, Medium, High, Extra high, Max'
-        && rowA.children[1].querySelector('.ext-model-note').textContent === 'Default: Low'
-        && rowB.children[1].textContent === 'Low, High'
-        && rowC.children[1].textContent === 'Default only' && !rowC.children[1].querySelector('.ext-model-note')
+        && rowA.children[2].querySelector('.ext-model-note').textContent === 'Default: Low'
+        && rowB.children[2].textContent === 'Low, High'
+        && rowC.children[2].textContent === 'Default only' && !rowC.children[2].querySelector('.ext-model-note')
         && throwsError(() => global.BossModProviderSections.models(
             { ...connectedReply(), models: [{ ...connectedReply().models[1], thinking: ['ultra'] }] },
+            { busy: false, connectionName: 'Chat GPT', onAction() {}, onModelEnabled() {}, onImagePolicy() {} }));
+    // The On column: the app's switch, as the Agents table draws it — the
+    // column head says "On", so the label is the accessible name only.
+    const modelOptions = { busy: false, connectionName: 'Chat GPT', onAction() {}, onModelEnabled() {}, onImagePolicy() {} };
+    const { enabled: _dropped, ...withoutEnabled } = connectedReply().models[0];
+    verdict.modelsOnColumnHasALabelledSwitch = modelsTable().querySelector('thead').querySelectorAll('th')[1]
+            .classList.contains('ext-agents-control')
+        && bodyRows().every((row) => row.children[1].tagName === 'TD' && row.children[1].classList.contains('ext-agents-control')
+            && modelSwitchOf(row).classList.contains('switch-row') && !modelSwitchOf(row).disabled
+            && modelSwitchOf(row).querySelector('.switch-label').classList.contains('visually-hidden'))
+        && sameJson(bodyRows().map((row) => modelSwitchOf(row).textContent),
+            ['Use Fixture A', 'Use Fixture B', 'Use Fixture C', 'Use Fixture D'])
+        && sameJson(bodyRows().map(checkedOf), ['true', 'true', 'false', 'true'])
+        // A model without a boolean `enabled` is a broken status, not "on";
+        // the same status with it renders, and a missing handler is refused.
+        && !throwsError(() => global.BossModProviderSections.models(
+            { ...connectedReply(), models: [connectedReply().models[0]] }, modelOptions))
+        && throwsError(() => global.BossModProviderSections.models(
+            { ...connectedReply(), models: [withoutEnabled] }, modelOptions))
+        && throwsError(() => global.BossModProviderSections.models(
+            { ...connectedReply(), models: [{ ...connectedReply().models[0], enabled: 'true' }] }, modelOptions))
+        && throwsError(() => global.BossModProviderSections.models(connectedReply(),
             { busy: false, connectionName: 'Chat GPT', onAction() {}, onImagePolicy() {} }));
     verdict.imageSegmentDisablesUnavailableChoices = sameJson(optionsOf(rowA).map((b) => b.textContent), ['Auto', 'On', 'Off'])
         && segmentOf(rowA).classList.contains('menu-segment') && segmentOf(rowA).getAttribute('aria-label') === 'Image input for Fixture A'
@@ -1639,7 +1676,35 @@ const goBack = async (layer) => { const step = layer.steps.pop(); step.onBack();
         && !modelsHead.textContent.includes('2026-10-29T') && !modelsHead.textContent.includes('1793')
         && modelsHead.children[1].classList.contains('ext-panel-actions') && modelsHead.children[1].contains(buttonWith('Refresh models'))
         && throwsError(() => global.BossModProviderSections.models({ ...connectedReply(), models_updated_at: 'not a time' },
-            { busy: false, connectionName: 'Chat GPT', onAction() {}, onImagePolicy() {} }));
+            { busy: false, connectionName: 'Chat GPT', onAction() {}, onModelEnabled() {}, onImagePolicy() {} }));
+    // A switch posts its model and 'true' / 'false', every control held while
+    // it runs, and the answer shown.
+    modelSwitchOf(bodyRows()[2]).click();
+    const switchHeldWhileBusy = bodyRows().every((row) => modelSwitchOf(row).disabled && optionsOf(row).every((b) => b.disabled))
+        && buttonWith('Refresh models').disabled;
+    await drain();
+    const turnOnPost = chatgptCalls.filter((call) => call.url.endsWith('/provider/actions')).pop();
+    const turnedOn = checkedOf(bodyRows()[2]) === 'true' && !modelSwitchOf(bodyRows()[2]).disabled;
+    modelSwitchOf(bodyRows()[1]).click();
+    await drain();
+    const turnOffPost = chatgptCalls.filter((call) => call.url.endsWith('/provider/actions')).pop();
+    verdict.modelSwitchPostsTheModelAndEnabled = switchHeldWhileBusy && turnedOn
+        && turnOnPost.method === 'POST'
+        && sameJson(turnOnPost.body, { action: 'model_enabled', values: { model: 'fixture-c', enabled: 'true' } })
+        && sameJson(turnOffPost.body, { action: 'model_enabled', values: { model: 'fixture-b', enabled: 'false' } })
+        && checkedOf(bodyRows()[1]) === 'false'
+        && global.BossModProviderSections.MODEL_ENABLED_ACTION === 'model_enabled';
+    // A refusal is said above the hero, and the switch is redrawn from the
+    // status the server still has.
+    chatgptRefusal = 'Fixture A is still used by Ada. Move them to another model first.';
+    modelSwitchOf(bodyRows()[0]).click();
+    await drain();
+    const refusalShown = chatLayer.body.querySelector('.market-error');
+    verdict.modelSwitchRefusalKeepsTheStatus = Boolean(refusalShown)
+        && refusalShown.getAttribute('role') === 'alert'
+        && refusalShown.textContent === 'Fixture A is still used by Ada. Move them to another model first.'
+        && checkedOf(bodyRows()[0]) === 'true' && !modelSwitchOf(bodyRows()[0]).disabled;
+    chatgptRefusal = null;
     // Pending again, then closed: the poll stops with the dialog.
     await openTab(chatLayer, 'Account');
     chatgptReply = { ...connectedReply(), pending: true, message: 'Finish signing in in your browser.' };

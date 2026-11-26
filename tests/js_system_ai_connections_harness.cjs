@@ -2,7 +2,11 @@
  * Node harness: Settings → AI Connections renders the page description under
  * the heading, then System AI as one row of two toolbar dropdowns — the
  * connection and its thinking level — over one hint line. An unset or missing
- * pick shows the first connection. Rendering does not write the stored pick.
+ * pick shows the first available connection; a listed connection that is not
+ * available (still listed because something uses it) is never that fallback,
+ * and a list with nothing usable and nothing saved shows one line instead of
+ * the row; this file checks both itself, failing the run when they do not hold.
+ * Rendering does not write the stored pick.
  * The thinking dropdown offers the effective connection's levels, saves a
  * level change, and resets an orphaned level to `default` before a
  * connection switch is saved; refusals put the control back.
@@ -243,13 +247,24 @@ function systemAi(id, thinking = "default") {
     return [setting("system_ai_connection", id), setting("system_ai_thinking", thinking)];
 }
 
+/** Fail the run with `message` unless `condition` holds. */
+function expect(condition, message) {
+    if (!condition) throw new Error(`[system-ai harness] ${message}`);
+}
+
 async function main() {
     const plain = {
-        id: "conn-plain", name: "Local", model: "mock-small", api_base_url: "http://127.0.0.1:9",
+        id: "conn-plain", name: "Local", model: "mock-small", api_base_url: "http://127.0.0.1:9", available: true,
         thinking_levels: { off: { reasoning_effort: "none" }, low: { reasoning_effort: "low" } },
     };
     const quoted = {
-        id: "conn-quote", name: 'Bob "fast" <Local>', model: "gpt-4", api_base_url: "http://127.0.0.1:9",
+        id: "conn-quote", name: 'Bob "fast" <Local>', model: "gpt-4", api_base_url: "http://127.0.0.1:9", available: true,
+        thinking_levels: { high: { reasoning_effort: "high" } },
+    };
+    // First in name order, and not available: listed only because something
+    // still uses it (GET /api/connections).
+    const parked = {
+        id: "conn-parked", name: "Aardvark", model: "fx-old", api_base_url: "extension://demo", available: false,
         thinking_levels: { high: { reasoning_effort: "high" } },
     };
     world.connections = [plain, quoted];
@@ -350,6 +365,36 @@ async function main() {
     world.settings = systemAi("stale-id");
     const emptyListKept = (await paint()).view;
 
+    // An unset or stale pick skips the unavailable connection; a saved one is
+    // used as stored, available or not.
+    world.connections = [parked, plain, quoted];
+    world.settings = systemAi("");
+    const skipsUnavailable = (await paint()).view;
+    world.settings = systemAi("stale-id");
+    const staleSkipsUnavailable = (await paint()).view;
+    world.settings = systemAi("conn-parked");
+    const savedUnavailable = (await paint()).view;
+    const lowLevels = ["default", "off", "low"];
+    for (const [name, view] of [["unset", skipsUnavailable], ["stale", staleSkipsUnavailable]]) {
+        expect(view.connection && view.connection.value === "conn-plain",
+            `${name} pick fell back to ${view.connection && view.connection.value}, not the first available connection`);
+        expect(JSON.stringify(view.thinking.options.map((option) => option.value)) === JSON.stringify(lowLevels),
+            `${name} pick offered another connection's levels`);
+        expect(view.saves.length === 0, `${name} pick wrote the setting while painting`);
+    }
+    expect(savedUnavailable.connection.value === "conn-parked", "a saved unavailable connection was replaced");
+
+    // Every listed connection is unavailable and nothing is saved, so there is
+    // no connection to draw: one line replaces the row, and bind() returns
+    // before it would read a missing connection (a throw fails paint()).
+    world.connections = [parked, { ...plain, available: false }];
+    world.settings = systemAi("");
+    const noneUsable = (await paint()).view;
+    expect(JSON.stringify(noneUsable.paragraphs) === JSON.stringify(["None of your AI connections can be used right now."]),
+        `no usable connection showed ${JSON.stringify(noneUsable.paragraphs)}`);
+    expect(noneUsable.menuSelects.length === 0, "no usable connection still drew the dropdowns");
+    expect(noneUsable.saves.length === 0, "no usable connection wrote the setting while painting");
+
     process.stdout.write(JSON.stringify({
         ok: true,
         fetches,
@@ -369,6 +414,10 @@ async function main() {
         settingsFailed,
         emptyList,
         emptyListKept,
+        skipsUnavailable,
+        staleSkipsUnavailable,
+        savedUnavailable,
+        noneUsable,
     }));
 }
 

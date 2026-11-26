@@ -35,7 +35,7 @@ class DemoProvider:
         return ProviderStatus(message="Demo provider ready", connected=True,
             actions=[{"key": "connect", "label": "Connect demo"}],
             accounts=[{"label": "demo@example.com", "active": True, "signed_in": True}],
-            models=[{"key": "demo-model", "name": "Demo model", "thinking": ["low", "high"],
+            models=[{"key": "demo-model", "name": "Demo model", "enabled": True, "thinking": ["low", "high"],
                      "thinking_default": "low", "images": "supported", "image_policy": "auto",
                      "image_choices": ["auto", "enabled", "disabled"], "note": "A demo."}],
             models_updated_at=datetime(2026, 10, 29, 9, 30, tzinfo=timezone.utc),
@@ -188,7 +188,7 @@ def test_a_structured_status_round_trips_through_the_api(providers):
     ]
     assert status["models"] == [
         {
-            "key": "demo-model", "name": "Demo model", "thinking": ["low", "high"],
+            "key": "demo-model", "name": "Demo model", "enabled": True, "thinking": ["low", "high"],
             "thinking_default": "low", "images": "supported", "image_policy": "auto",
             "image_choices": ["auto", "enabled", "disabled"], "note": "A demo.",
         }
@@ -205,7 +205,7 @@ def test_a_structured_status_round_trips_through_the_api(providers):
 def test_the_status_contract_refuses_an_ambiguous_shape():
     from pydantic import ValidationError
     from core.extensions.model_provider import ProviderModel, ProviderStatus
-    model = {"key": "m", "name": "M", "images": "unknown", "image_policy": "auto"}
+    model = {"key": "m", "name": "M", "enabled": True, "images": "unknown", "image_policy": "auto"}
     account = {"label": "a@example.com", "active": True, "signed_in": True}
     primary = {"key": "a", "label": "A", "primary": True}
     with pytest.raises(ValidationError, match="model keys must be unique"):
@@ -220,6 +220,11 @@ def test_the_status_contract_refuses_an_ambiguous_shape():
         ProviderModel(**{**model, "image_choices": ["auto", "auto"]})
     with pytest.raises(ValidationError, match="ultra"):
         ProviderModel(**{**model, "thinking": ["ultra"]})
+    # Whether a model is on has no default: a provider must say.
+    with pytest.raises(ValidationError, match=r"enabled\n  Field required"):
+        ProviderModel(**{key: value for key, value in model.items() if key != "enabled"})
+    with pytest.raises(ValidationError, match="enabled"):
+        ProviderModel(**{**model, "enabled": None})
     with pytest.raises(ValidationError, match="timezone info"):
         ProviderStatus(message="x", models_updated_at=datetime(2026, 10, 29, 9, 30))
     with pytest.raises(ValidationError, match="must be in UTC"):
@@ -243,6 +248,7 @@ def test_the_flat_choice_contract_is_gone():
     assert not hasattr(model_provider, "ProviderChoice")
     assert not hasattr(model_provider, "ProviderOption")
     assert model_provider.IMAGE_POLICY_ACTION == "image_policy"
+    assert model_provider.MODEL_ENABLED_ACTION == "model_enabled"
 
 
 def test_missing_folder_fails_closed_without_loading_vendor_code(
@@ -338,3 +344,80 @@ def test_unrelated_legacy_provider_keeps_global_images(providers):
     set_supports_images(connection.model, True)
     registry.set_enabled('alpha-model', False)
     assert not image_capability(connection)
+
+
+def _publish(ext_id, *entries):
+    """Reconcile ``(key, available)`` pairs for one provider; returns key → connection id."""
+    from core.extensions.model_provider import ManagedModel, services_for
+    services = services_for(registry.get_discovery().get(ext_id))
+    return services.reconcile_connections([
+        ManagedModel(key=key, name=key.title(), model=key, available=on,
+                     reason=None if on else "Turned off.")
+        for key, on in entries
+    ])
+
+
+def test_models_in_use_names_the_agents_then_system_ai_per_managed_key(providers):
+    from core.extensions.model_provider import services_for
+    ids = _publish("alpha-model", ("kept", True), ("idle", True), ("off", False))
+    other = _publish("beta-model", ("kept", True))
+    db.create_agent("Ada", connection_id=ids["kept"])
+    db.create_agent("Grace", connection_id=ids["kept"])
+    db.create_agent("Linus", connection_id=ids["off"])
+    # Another provider's connection is not this provider's to report.
+    db.create_agent("Ken", connection_id=other["kept"])
+    db.set_setting("system_ai_connection", ids["kept"], "llm")
+    config.reload()
+    services = services_for(registry.get_discovery().get("alpha-model"))
+    assert services.models_in_use() == {"kept": ["Ada", "Grace", "System AI"], "off": ["Linus"]}
+    # A key that has left the catalog is still reported while it is used.
+    _publish("alpha-model", ("idle", True))
+    assert services.models_in_use() == {"kept": ["Ada", "Grace", "System AI"], "off": ["Linus"]}
+    beta = services_for(registry.get_discovery().get("beta-model"))
+    assert beta.models_in_use() == {"kept": ["Ken"]}
+
+
+def test_connection_list_hides_an_unavailable_connection_nobody_uses(providers):
+    ids = _publish("alpha-model", ("on", True), ("off-idle", False), ("off-agent", False), ("off-system", False))
+    ordinary = db.create_connection(name="Ordinary", api_base_url="https://example.com/v1", model="m")
+    db.create_agent("Ada", connection_id=ids["off-agent"])
+    db.set_setting("system_ai_connection", ids["off-system"], "llm")
+    config.reload()
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    with TestClient(app, headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}) as client:
+        listed = {row["id"]: row for row in client.get("/api/connections").json()}
+        assert set(listed) == {ordinary.id, ids["on"], ids["off-agent"], ids["off-system"]}
+        assert [listed[ids[key]]["available"] for key in ("on", "off-agent", "off-system")] == [True, False, False]
+        assert listed[ids["off-agent"]]["unavailable_reason"] == "Turned off."
+        # One connection is still read by id, listed or not.
+        assert client.get("/api/connections/" + ids["off-idle"]).json()["available"] is False
+
+
+def test_unset_system_ai_skips_unavailable_connections(providers):
+    from api.routes.settings import _system_connection_after
+    from core.llm.system_completion import first_available_connection, resolve_system_connection
+    # Name order: "Demo Connection — Aa" sorts before "Demo Connection — Zz" and "Zed".
+    ids = _publish("alpha-model", ("aa", False), ("zz", True))
+    ordinary = db.create_connection(name="Zed", api_base_url="https://example.com/v1", model="m")
+    config.reload()
+    assert [c.id for c in db.list_connections()] == [ids["aa"], ids["zz"], ordinary.id]
+    assert first_available_connection().id == ids["zz"]
+    assert resolve_system_connection().id == ids["zz"]
+    assert _system_connection_after("").id == ids["zz"]
+    assert _system_connection_after("gone-id").id == ids["zz"]
+    # A saved id is used as stored, available or not.
+    assert _system_connection_after(ids["aa"]).id == ids["aa"]
+    db.set_setting("system_ai_connection", ids["aa"], "llm")
+    config.reload()
+    assert resolve_system_connection().id == ids["aa"]
+    # Nothing available: no fallback.
+    _publish("alpha-model", ("aa", False), ("zz", False))
+    db.delete_connection(ordinary.id)
+    db.set_setting("system_ai_connection", "", "llm")
+    config.reload()
+    assert first_available_connection() is None
+    assert resolve_system_connection() is None
+    assert _system_connection_after("") is None
+

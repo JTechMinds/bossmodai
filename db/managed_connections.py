@@ -1,11 +1,39 @@
 """Stable identities and scoped capabilities for extension-owned connections."""
 from db.connection import transaction
-from db.crud import query_one
+from db.crud import query, query_one
 from db.ai_connections import create_connection, update_connection
 
 
 def metadata(connection_id):
     return query_one('SELECT * FROM managed_connections WHERE connection_id = $1', [connection_id])
+
+
+def available(connection_id: str) -> bool:
+    """Whether a connection can be used as its owner last published it.
+
+    Args:
+        connection_id: An AI connection id.
+
+    Returns:
+        True for a connection with no managed row (an ordinary connection);
+        otherwise the stored ``available`` flag, which is false for a model
+        its extension turned off or no longer lists.
+    """
+    row = metadata(connection_id)
+    return True if row is None else bool(row['available'])
+
+
+def keys(owner: str) -> dict[str, str]:
+    """Every managed connection one extension owns, by connection id.
+
+    Args:
+        owner: The owning extension's id.
+
+    Returns:
+        Connection id → the extension's local key for it, available or not.
+    """
+    rows = query('SELECT connection_id, local_key FROM managed_connections WHERE owner = $1', [owner])
+    return {row['connection_id']: row['local_key'] for row in rows}
 
 
 def reconcile(owner, name, entries):

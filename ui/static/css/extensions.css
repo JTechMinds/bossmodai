@@ -291,6 +291,10 @@ span.ext-live-url { text-decoration: none; }
 .ext-agents-table .ext-agents-control,
 .ext-models-table .ext-agents-control { width: 1%; white-space: nowrap; }
 
+/* The models table is wider than a phone; it scrolls inside its own section
+   rather than being cut off at the content's edge. */
+.ext-models-scroll { overflow-x: auto; }
+
 /* A refusal under its row reads as part of that row: no rule between them. */
 .ext-agents-table .ext-agents-error-row { height: auto; }
 .ext-agents-error-row > td { padding-top: 0; border-top: 0; }

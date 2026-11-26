@@ -26,7 +26,12 @@ from core import config
 from core.extensions.loader import import_package
 from core.extensions.registry import get_discovery
 from core.extensions.contract import ExtensionContext
-from core.extensions.model_provider import IMAGE_POLICY_ACTION, ProviderCompletion, services_for
+from core.extensions.model_provider import (
+    IMAGE_POLICY_ACTION,
+    MODEL_ENABLED_ACTION,
+    ProviderCompletion,
+    services_for,
+)
 
 API_BASE = "extension://chatgpt"
 package = import_package(get_discovery().get("chatgpt"))
@@ -1538,3 +1543,281 @@ def test_extension_names_no_models():
         text = path.read_text(encoding='utf-8')
         for forbidden in (r'gpt-', r'_EXACT', r'for_model'):
             assert not re.search(forbidden, text, re.IGNORECASE), (path.name, forbidden)
+
+
+# ── Model lines: on/off per model, older versions off when a newer one appears ──
+
+_TURNED_OFF = 'Turned off in Extensions → ChatGPT → Models.'
+
+
+def fx(slug, name=None):
+    """A stored catalog entry with a fixture slug; never a real model name."""
+    return {'slug': slug, 'display_name': name or slug.upper()}
+
+
+@pytest.mark.parametrize('slug, expected', [
+    ('fx-6-alpha', ('fx-alpha', (6,))),
+    ('fx-6.1-alpha', ('fx-alpha', (6, 1))),
+    ('fx-5.6-alpha', ('fx-alpha', (5, 6))),
+    ('fx-6.0-alpha', ('fx-alpha', (6,))),
+    ('fx-6.10-alpha', ('fx-alpha', (6, 10))),
+    # A suffix is part of the line.
+    ('fx-6.2-alpha-mini', ('fx-alpha-mini', (6, 2))),
+    ('fx-6.2-alpha-x2', ('fx-alpha-x2', (6, 2))),
+    ('fx-6', ('fx', (6,))),
+    # Unparseable: a dated snapshot, no version, a prefix with a digit, fixtures.
+    ('fx-6.2-alpha-2026-11-01', None),
+    ('q9-pro', None),
+    ('fixture-model-a', None),
+    ('test-model', None),
+    ('FX-6-alpha', None),
+    ('fx-6.-alpha', None),
+    ('fx--6-alpha', None),
+    ('fx-6-', None),
+])
+def test_model_line_reads_the_line_and_version_from_the_slug(slug, expected):
+    assert catalog_module('lineup').model_line(slug) == expected
+
+
+def test_newest_names_maps_superseded_slugs_to_their_lines_newest_name():
+    newest_names = catalog_module('lineup').newest_names
+    models = [
+        fx('fx-5.6-alpha'), fx('fx-6-alpha'), fx('fx-6.1-alpha', 'FX 6.1 Alpha'),
+        fx('fx-6.1-alpha-mini'),
+        # Equal versions supersede nothing.
+        fx('fx-6-beta'), fx('fx-6.0-beta'),
+        # Numbers compare as numbers: 6.10 is newer than 6.2.
+        fx('fx-6.2-gamma'), fx('fx-6.10-gamma', 'FX 6.10 Gamma'),
+        fx('fixture-model-a'), fx('fx-6.2-alpha-2026-11-01'),
+    ]
+    assert newest_names(models) == {
+        'fx-5.6-alpha': 'FX 6.1 Alpha', 'fx-6-alpha': 'FX 6.1 Alpha', 'fx-6.2-gamma': 'FX 6.10 Gamma'}
+    assert newest_names([]) == {}
+
+
+_ALPHA = [fx('fx-5.6-alpha'), fx('fx-6-alpha'), fx('fx-6.1-alpha')]
+
+
+@pytest.mark.parametrize('models, choices, in_use, expected', [
+    # First sight: on unless the catalog holds a newer version of its line.
+    (_ALPHA, {}, (), {'fx-5.6-alpha': False, 'fx-6-alpha': False, 'fx-6.1-alpha': True}),
+    # ...but a model in use stays on.
+    (_ALPHA, {}, {'fx-6-alpha'}, {'fx-5.6-alpha': False, 'fx-6-alpha': True, 'fx-6.1-alpha': True}),
+    # Unparseable slugs and suffix lines are their own; equal versions are both on.
+    ([fx('fixture-model-a'), fx('fx-6-alpha'), fx('fx-6.1-alpha-mini'), fx('fx-6-beta'), fx('fx-6.0-beta')], {}, (),
+     {'fixture-model-a': True, 'fx-6-alpha': True, 'fx-6.1-alpha-mini': True, 'fx-6-beta': True, 'fx-6.0-beta': True}),
+    # A re-enabled older model survives a refresh with no new model.
+    (_ALPHA, {'fx-5.6-alpha': True, 'fx-6-alpha': False, 'fx-6.1-alpha': True}, (),
+     {'fx-5.6-alpha': True, 'fx-6-alpha': False, 'fx-6.1-alpha': True}),
+    # A new newer model turns the older ones that are on off, except one in use.
+    ([*_ALPHA, fx('fx-6.2-alpha')], {'fx-5.6-alpha': True, 'fx-6-alpha': True, 'fx-6.1-alpha': True}, {'fx-6-alpha'},
+     {'fx-5.6-alpha': False, 'fx-6-alpha': True, 'fx-6.1-alpha': False, 'fx-6.2-alpha': True}),
+    # A new model of another line, or an older one, turns nothing off.
+    ([*_ALPHA, fx('fx-7-beta'), fx('fx-5-alpha')], {'fx-5.6-alpha': True, 'fx-6-alpha': True, 'fx-6.1-alpha': True}, (),
+     {'fx-5.6-alpha': True, 'fx-6-alpha': True, 'fx-6.1-alpha': True, 'fx-7-beta': True, 'fx-5-alpha': False}),
+    # A choice for a model that left the catalog is kept, so it is not new when it comes back.
+    ([fx('fx-6.1-alpha')], {'fx-6-alpha': True, 'fx-6.1-alpha': True}, (), {'fx-6-alpha': True, 'fx-6.1-alpha': True}),
+    ([fx('fx-6-alpha'), fx('fx-6.1-alpha')], {'fx-6-alpha': True, 'fx-6.1-alpha': True}, (),
+     {'fx-6-alpha': True, 'fx-6.1-alpha': True}),
+])
+def test_decide_rules(models, choices, in_use, expected):
+    lineup = catalog_module('lineup')
+    stored = dict(choices)
+    assert lineup.decide(models, choices, in_use) == expected
+    assert choices == stored, 'decide must not mutate the stored choices'
+
+
+def test_has_fresh_is_whether_a_catalog_slug_has_no_stored_choice():
+    has_fresh = catalog_module('lineup').has_fresh
+    assert has_fresh(_ALPHA, {})
+    assert has_fresh(_ALPHA, {'fx-5.6-alpha': True, 'fx-6-alpha': False})
+    assert not has_fresh(_ALPHA, {'fx-5.6-alpha': True, 'fx-6-alpha': False, 'fx-6.1-alpha': True})
+    # A stored choice for a model that left the catalog makes nothing fresh.
+    assert not has_fresh([fx('fx-6.1-alpha')], {'fx-6-alpha': True, 'fx-6.1-alpha': True})
+    assert not has_fresh([], {})
+
+
+def test_newer_version_turns_a_re_enabled_older_model_off_once():
+    lineup = catalog_module('lineup')
+    first = lineup.decide(_ALPHA, {}, ())
+    assert first == {'fx-5.6-alpha': False, 'fx-6-alpha': False, 'fx-6.1-alpha': True}
+    reenabled = {**first, 'fx-6-alpha': True}
+    assert not lineup.has_fresh(_ALPHA, reenabled)
+    assert lineup.decide(_ALPHA, reenabled, ()) == reenabled
+    arrived = lineup.decide([*_ALPHA, fx('fx-6.2-alpha')], reenabled, ())
+    assert arrived == {'fx-5.6-alpha': False, 'fx-6-alpha': False, 'fx-6.1-alpha': False, 'fx-6.2-alpha': True}
+    # Once: turning it back on is kept until the next newer version arrives.
+    again = {**arrived, 'fx-6.1-alpha': True}
+    assert lineup.decide([*_ALPHA, fx('fx-6.2-alpha')], again, ()) == again
+
+
+def published_choice(slug):
+    """``(available, reason)`` as the host stores them for ``slug``'s connection."""
+    _, meta = published(slug)
+    return bool(meta['available']), meta['reason']
+
+
+def test_pre_upgrade_account_decides_each_model_once_keeping_models_in_use_on(monkeypatch):
+    from dataclasses import replace
+    from core.extensions.model_provider import ManagedModel
+    models = [fx('fx-5.6-alpha', 'FX-5.6 Alpha'), fx('fx-6-alpha', 'FX-6 Alpha'),
+              fx('fx-6.1-alpha', 'FX-6.1 Alpha'), {'slug': 'test-model', 'display_name': 'Test'}]
+    # What the previous version left: every model published available, no choices stored.
+    with store.locked() as data:
+        data['accounts']['oaiapp_test'] = account(models=models)
+        data['active'] = 'oaiapp_test'
+        store.save(data)
+    ids = auth.services.reconcile_connections(
+        [ManagedModel(key=m['slug'], model=m['slug'], name=m['display_name']) for m in models])
+    db.create_agent('Ada', connection_id=ids['fx-6-alpha'])
+    status = auth.account_status()
+    assert status['connected'] and status['error'] is None
+    assert status['model_enabled'] == {
+        'fx-5.6-alpha': False, 'fx-6-alpha': True, 'fx-6.1-alpha': True, 'test-model': True}
+    assert published_choice('fx-5.6-alpha') == (False, _TURNED_OFF)
+    assert published_choice('fx-6-alpha') == (True, None)
+    assert published_choice('fx-6.1-alpha') == (True, None)
+    assert published_choice('test-model') == (True, None)
+    # The same connections, by identity.
+    assert {slug: published(slug)[0].id for slug in ids} == ids
+    rows = {m.key: m for m in extension().provider_status().models}
+    assert [(key, row.enabled) for key, row in rows.items()] == [
+        ('fx-5.6-alpha', False), ('fx-6-alpha', True), ('fx-6.1-alpha', True), ('test-model', True)]
+    # The note comes after the existing notes.
+    assert rows['fx-5.6-alpha'].note == 'Refresh models to load thinking options. FX-6.1 Alpha is newer.'
+    assert rows['fx-6-alpha'].note == 'Refresh models to load thinking options. FX-6.1 Alpha is newer.'
+    assert rows['fx-6.1-alpha'].note == 'Refresh models to load thinking options.'
+    # Nothing new to decide: an ordinary status poll does not read what is in use.
+    services = auth.services
+    auth.services = replace(services, models_in_use=lambda: pytest.fail('read what is in use with nothing to decide'))
+    try:
+        assert auth.account_status()['model_enabled']['fx-6-alpha'] is True
+    finally:
+        auth.services = services
+    # A newer version arrives: the older ones go off once, now that nothing uses them.
+    db.update_agent(db.list_agents_by_connection(ids['fx-6-alpha'])[0].id, connection_id=ids['test-model'])
+    monkeypatch.setattr(auth, 'model_catalog', lambda _: [*models, fx('fx-6.2-alpha', 'FX-6.2 Alpha')])
+    auth.refresh_models()
+    assert auth.account_status()['model_enabled'] == {
+        'fx-5.6-alpha': False, 'fx-6-alpha': False, 'fx-6.1-alpha': False, 'fx-6.2-alpha': True, 'test-model': True}
+    assert published_choice('fx-6.1-alpha') == (False, _TURNED_OFF)
+    assert published_choice('fx-6.2-alpha') == (True, None)
+
+
+def test_turning_a_model_off_and_on_republishes_it(monkeypatch):
+    models = [fx('fx-6-alpha', 'FX-6 Alpha'), {'slug': 'test-model', 'display_name': 'Test'}]
+    saved_account(models=models)
+    auth.set_model_enabled('test-model', False)
+    assert published_choice('test-model') == (False, _TURNED_OFF)
+    assert published_choice('fx-6-alpha') == (True, None)
+    assert published('test-model')[0].name == 'Chat GPT — Test'
+    assert [(m.key, m.enabled) for m in extension().provider_status().models] == [
+        ('fx-6-alpha', True), ('test-model', False)]
+    auth.set_model_enabled('test-model', True)
+    assert published_choice('test-model') == (True, None)
+    # A later refresh with no new model keeps the choice.
+    auth.set_model_enabled('test-model', False)
+    monkeypatch.setattr(auth, 'model_catalog', lambda _: models)
+    auth.refresh_models()
+    assert published_choice('test-model') == (False, _TURNED_OFF)
+    assert auth.account_status()['model_enabled'] == {'fx-6-alpha': True, 'test-model': False}
+
+
+def test_a_model_in_use_cannot_be_turned_off_and_the_refusal_names_who_uses_it():
+    saved_account(models=[fx('fx-6-alpha', 'FX-6 Alpha'), {'slug': 'test-model', 'display_name': 'Test'}])
+    connection, _ = published('fx-6-alpha')
+    db.create_agent('Ada', connection_id=connection.id)
+    db.create_agent('Grace', connection_id=connection.id)
+    db.set_setting('system_ai_connection', connection.id, 'llm')
+    config.reload()
+    with pytest.raises(ChatGPTError, match=re.escape(
+            'FX-6 Alpha is still used by Ada, Grace and System AI. Move them to another model first.')):
+        auth.set_model_enabled('fx-6-alpha', False)
+    assert published_choice('fx-6-alpha') == (True, None)
+    assert auth.account_status()['model_enabled']['fx-6-alpha'] is True
+    db.set_setting('system_ai_connection', '', 'llm')
+    config.reload()
+    with pytest.raises(ChatGPTError, match=re.escape(
+            'FX-6 Alpha is still used by Ada and Grace. Move them to another model first.')):
+        auth.set_model_enabled('fx-6-alpha', False)
+    # Turning on is never refused for being in use.
+    auth.set_model_enabled('fx-6-alpha', True)
+
+
+def test_model_switch_refusals_name_their_own_cause():
+    saved_account(access_token=None)
+    with pytest.raises(ChatGPTError, match=re.escape('Sign in to ChatGPT first.')):
+        auth.set_model_enabled('test-model', False)
+    saved_account()
+    with pytest.raises(ChatGPTError, match=re.escape(
+            "Your ChatGPT account doesn't offer that model. Refresh models and try again.")):
+        auth.set_model_enabled('not-offered', True)
+    set_enabled('chatgpt', False)
+    with pytest.raises(ChatGPTError, match=re.escape('Enable ChatGPT in Extensions first.')):
+        auth.set_model_enabled('test-model', False)
+    set_enabled('chatgpt', True)
+    with store.locked() as data:
+        assert data['accounts']['oaiapp_test']['model_enabled'] == {'test-model': True}
+
+
+def test_a_model_that_is_off_refuses_requests():
+    from core.extensions.model_provider import ProviderRequest
+    saved_account()
+    auth.set_model_enabled('test-model', False)
+    with pytest.raises(ChatGPTError, match=re.escape(
+            'This ChatGPT model is turned off. Turn it on in Extensions → ChatGPT → Models, or pick another model.')):
+        auth.validate_request(ProviderRequest('test-model', []))
+    auth.set_model_enabled('test-model', True)
+    assert auth.validate_request(ProviderRequest('test-model', [])) == 'secret-access'
+
+
+def test_model_enabled_action_accepts_only_true_or_false():
+    saved_account()
+    ext = extension()
+    for values in ({'model': 'test-model', 'enabled': 'yes'}, {'model': 'test-model', 'enabled': 'True'},
+                   {'model': 'test-model', 'enabled': ''}, {'model': 'test-model'},
+                   {'model': 'test-model', 'enabled': 'false', 'policy': 'auto'}):
+        with pytest.raises(ChatGPTError, match=re.escape('Unknown ChatGPT action or invalid parameters.')):
+            ext.provider_action(MODEL_ENABLED_ACTION, values)
+    assert auth.account_status()['model_enabled'] == {'test-model': True}
+    ext.provider_action(MODEL_ENABLED_ACTION, {'model': 'test-model', 'enabled': 'false'})
+    assert [(m.key, m.enabled) for m in ext.provider_status().models] == [('test-model', False)]
+    ext.provider_action(MODEL_ENABLED_ACTION, {'model': 'test-model', 'enabled': 'true'})
+    assert [(m.key, m.enabled) for m in ext.provider_status().models] == [('test-model', True)]
+    with pytest.raises(ChatGPTError, match="doesn't offer that model"):
+        ext.provider_action(MODEL_ENABLED_ACTION, {'model': 'not-offered', 'enabled': 'true'})
+
+
+def test_model_switch_round_trips_through_the_api_and_narrows_the_connection_list():
+    saved_account(models=[fx('fx-6-alpha', 'FX-6 Alpha'), {'slug': 'test-model', 'display_name': 'Test'}])
+    used, _ = published('fx-6-alpha')
+    db.create_agent('Ada', connection_id=used.id)
+    app = FastAPI()
+    app.include_router(router)
+    install_local_api_auth(app)
+    with TestClient(app, headers={LOCAL_API_TOKEN_HEADER: db.ensure_local_api_token()}) as client:
+        def post(model, enabled):
+            return client.post('/api/extensions/chatgpt/provider/actions',
+                               json={'action': MODEL_ENABLED_ACTION, 'values': {'model': model, 'enabled': enabled}})
+
+        refused = post('fx-6-alpha', 'false')
+        assert refused.status_code == 409
+        assert refused.json()['detail'] == 'FX-6 Alpha is still used by Ada. Move them to another model first.'
+        answered = post('test-model', 'false')
+        assert answered.status_code == 200
+        assert [(m['key'], m['enabled']) for m in answered.json()['models']] == [
+            ('fx-6-alpha', True), ('test-model', False)]
+        assert [c['model'] for c in client.get('/api/connections').json()] == ['fx-6-alpha']
+        assert post('test-model', 'true').status_code == 200
+        assert [c['model'] for c in client.get('/api/connections').json()] == ['fx-6-alpha', 'test-model']
+
+
+def test_same_account_reauth_keeps_model_choices(monkeypatch):
+    saved_account()
+    auth.set_model_enabled('test-model', False)
+    mock_login(monkeypatch)
+    auth.accept_callback(callback_query(), attempt())
+    assert auth.account_status()['model_enabled'] == {'test-model': False}
+    assert published_choice('test-model') == (False, _TURNED_OFF)
+    assert [(m.key, m.enabled) for m in extension().provider_status().models] == [('test-model', False)]
+

@@ -24,15 +24,19 @@ const BossModSystemAi = (() => {
 
     /**
      * The connection System AI uses: the saved id when it is listed,
-     * otherwise the first connection. Mirrors resolve_system_connection in
-     * core/llm/system_completion.py.
+     * otherwise the first available connection. Mirrors
+     * resolve_system_connection and first_available_connection in
+     * core/llm/system_completion.py. The list can still hold an unusable
+     * connection that something uses, so its first entry is not the
+     * server's fallback.
      *
      * @param {string} savedId
-     * @param {object[]} connections
+     * @param {object[]} connections  As GET /api/connections returns them,
+     *   each with its `available` flag.
      * @returns {object|null}
      */
     function effectiveConnection(savedId, connections) {
-        return connections.find(conn => conn.id === savedId) || connections[0] || null;
+        return connections.find(conn => conn.id === savedId) || connections.find(conn => conn.available) || null;
     }
 
     /**
@@ -87,13 +91,15 @@ const BossModSystemAi = (() => {
      * when the row is drawn. markup() and bind() both read it, so they cannot
      * disagree about whether the controls exist.
      *
-     * @param {{connections: object[], connectionsFailed: boolean, settingsFailed: boolean}} state
+     * @param {{savedId: string, connections: object[], connectionsFailed: boolean,
+     *   settingsFailed: boolean}} state
      * @returns {string|null}
      */
     function blockedMessage(state) {
         if (state.settingsFailed) return 'System AI could not be loaded.';
         if (state.connectionsFailed) return 'AI connections could not be loaded.';
         if (!state.connections.length) return 'No AI connections yet.';
+        if (!effectiveConnection(state.savedId, state.connections)) return 'None of your AI connections can be used right now.';
         return null;
     }
 
@@ -101,7 +107,7 @@ const BossModSystemAi = (() => {
      * The System AI block: the row (label, connection mount, thinking mount)
      * and its hint, or one line saying why there is no row.
      *
-     * @param {{connections: object[], connectionsFailed: boolean,
+     * @param {{savedId: string, connections: object[], connectionsFailed: boolean,
      *   settingsFailed: boolean, thinking: (string|null)}} state
      *   `thinking` is the stored `system_ai_thinking`, or null when the row
      *   is missing — a broken install, said as such rather than drawn as
