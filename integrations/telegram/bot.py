@@ -79,6 +79,8 @@ def create_application(
     app.add_handler(CallbackQueryHandler(handle_approval_callback, pattern=r"^(approve|reject|ask):"))
     from integrations.telegram.process_checkin import CALLBACK_PATTERN, handle_process_checkin_callback  # needs _check_auth
     app.add_handler(CallbackQueryHandler(handle_process_checkin_callback, pattern=CALLBACK_PATTERN))
+    from integrations.telegram import runtime_card  # needs _check_auth
+    app.add_handler(CallbackQueryHandler(runtime_card.handle_runtime_restart_callback, pattern=runtime_card.CALLBACK_PATTERN))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_plain_text))
 
     return app

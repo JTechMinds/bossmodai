@@ -1,6 +1,7 @@
 """Map, world, metrics, activity, diagnostics, and runtime-control routes."""
 
 import asyncio
+import logging
 from datetime import datetime
 from typing import Literal
 
@@ -18,6 +19,11 @@ from core.world.tilemap import get_map_data
 import db
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+
+# The Needs card shows a failed action's ``detail`` under the card, so it is
+# operator copy; the exception goes to the app log.
+_RESTART_FAILED_DETAIL = "The AI runtime could not start. BossMod will try again on its own."
 
 
 class RuntimeContractsBody(BaseModel):
@@ -211,6 +217,32 @@ async def set_runtime_state(body: RuntimeControlBody):
                 event="runtime_resumed",
                 detail="AI runtime services resumed.",
             )
+    await manager.broadcast_runtime_state(payload)
+    return payload
+
+
+@router.post("/runtime/restart")
+async def restart_runtime() -> dict[str, object]:
+    """Start the AI runtime again now: the "Restart now" on its Needs card.
+
+    Clears the outage and the automatic-restart history, then starts the
+    runtime worker unless it already runs (``RuntimeServices.restart_worker``).
+    A start that ends an outage logs the restart to the activity log, which
+    makes every client re-read its Needs.
+
+    Returns:
+        The runtime status payload, also broadcast as ``runtime_state``.
+
+    Raises:
+        HTTPException: 503 when the worker did not start. The detail is the
+            card's plain-language error line; the exception is logged at
+            ERROR, and automatic restarts take over again.
+    """
+    try:
+        payload = await runtime_services.restart_worker()
+    except Exception as exc:
+        logger.exception("Restart now did not start the runtime worker")
+        raise HTTPException(503, _RESTART_FAILED_DETAIL) from exc
     await manager.broadcast_runtime_state(payload)
     return payload
 

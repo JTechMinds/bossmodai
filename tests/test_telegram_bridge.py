@@ -1,9 +1,9 @@
 """The Telegram event bridge forwards conversation and action cards only.
 
 Agent speech reaches the users with that DM or thread open. A CLI approval
-card and a process check-in card each go once to every allowlisted user.
-Notices (receipts, task, memory and queue lines), round markers, activity
-events and feed updates stay in the app.
+card, a process check-in card and a runtime outage card each go once to
+every allowlisted user. Notices (receipts, task, memory and queue lines),
+round markers, other activity events and feed updates stay in the app.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import os
 from collections.abc import Iterator
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import psutil
 import pytest
@@ -24,6 +25,7 @@ from core.models.cli_policy import CLI_APPROVAL_KIND
 from db.floors import LOBBY_ID
 from integrations.telegram.bridge import TelegramEventBridge
 from integrations.telegram.formatters import format_agent_reply
+from integrations.telegram.runtime_card import handle_runtime_restart_callback
 from integrations.telegram.sessions import set_floor, upsert_session
 
 
@@ -317,3 +319,98 @@ async def test_a_failed_send_is_logged_and_the_other_recipients_still_get_the_ca
     assert failures[0].levelno == logging.WARNING
     assert "111" in failures[0].getMessage()
     assert "bot can't initiate conversation" in failures[0].getMessage()
+
+
+# ── the runtime outage card ────────────────────────────────────────────
+
+
+def _runtime_down(since: str) -> dict:
+    # RuntimeServices._give_up's activity, as the Telegram queue carries it.
+    return {
+        "event": "runtime_worker_down",
+        "detail": (
+            "Your agents can't work until it runs again. "
+            "BossMod tried to restart it 3 times; the last time, it stopped responding."
+        ),
+        "agent_name": None,
+        "extra": {"since": since, "attempts": 3, "reason": "it stopped responding"},
+    }
+
+
+async def test_a_runtime_outage_sends_one_card_per_outage_to_every_allowlisted_user() -> None:
+    bridge, bot = _bridge()
+    outage = _runtime_down("2026-11-26T13:05:00+00:00")
+
+    await bridge.dispatch("activity", outage)
+    await bridge.dispatch("activity", outage)
+    # A restart is logged in the app only.
+    await bridge.dispatch("activity", {
+        "event": "runtime_worker_restarted", "detail": "AI runtime restarted after it stopped responding.",
+        "agent_name": None, "extra": None,
+    })
+    await bridge.dispatch("activity", _runtime_down("2026-11-26T14:00:00+00:00"))
+
+    assert _chat_ids(bot) == [111, 222, 111, 222]
+    sent = bot.sent[0]
+    assert sent["parse_mode"] == "MarkdownV2"
+    assert sent["text"] == (
+        "*The AI runtime has stopped*\n"
+        "Your agents can't work until it runs again\\. "
+        "BossMod tried to restart it 3 times; the last time, it stopped responding\\."
+    )
+    assert [(button.text, button.callback_data) for button in sent["reply_markup"].inline_keyboard[0]] == [
+        ("Restart now", "rtrestart"),
+    ]
+
+
+class _Services:
+    """The injected RuntimeServices, as far as the Restart now button uses it."""
+
+    def __init__(self, error: Exception | None = None) -> None:
+        self.restarts = 0
+        self._error = error
+
+    async def restart_worker(self) -> dict:
+        self.restarts += 1
+        if self._error is not None:
+            raise self._error
+        return {"state": "running"}
+
+
+class _Query:
+    def __init__(self) -> None:
+        self.data = "rtrestart"
+        self.answered = False
+        self.edits: list[str] = []
+
+    async def answer(self) -> None:
+        self.answered = True
+
+    async def edit_message_text(self, text: str) -> None:
+        self.edits.append(text)
+
+
+async def _press_restart(services: _Services, *, user_id: int = 111) -> _Query:
+    query = _Query()
+    update = SimpleNamespace(effective_user=SimpleNamespace(id=user_id), callback_query=query)
+    await handle_runtime_restart_callback(update, SimpleNamespace(bot_data={"services": services}))
+    return query
+
+
+async def test_restart_now_on_the_card_restarts_the_runtime_and_says_whether_it_runs() -> None:
+    running = _Services()
+    query = await _press_restart(running)
+    assert running.restarts == 1
+    assert query.answered and query.edits == ["Running again."]
+
+    stopped = _Services(RuntimeError("Runtime worker exited before ready"))
+    query = await _press_restart(stopped)
+    assert stopped.restarts == 1
+    assert query.edits == ["Still stopped. BossMod will try again on its own."]
+
+
+async def test_restart_now_from_a_user_off_the_allowlist_does_nothing() -> None:
+    services = _Services()
+    query = await _press_restart(services, user_id=999)
+    assert services.restarts == 0
+    assert not query.answered and query.edits == []

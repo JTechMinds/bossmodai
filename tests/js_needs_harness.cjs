@@ -146,6 +146,25 @@ function connectionRow(connectionId) {
     };
 }
 
+/** The AI runtime whose automatic restarts gave up, exactly as api/routes/needs.py emits it. */
+function runtimeRow() {
+    return {
+        id: "runtime:primary",
+        kind: "runtime",
+        card_kind: "runtime",
+        agent_id: null,
+        agent_name: null,
+        title: "The AI runtime has stopped",
+        sub: "Your agents can't work until it runs again. "
+            + "BossMod tried to restart it 3 times; the last time, it stopped responding.",
+        created_at: "2026-09-07T10:00:00Z",
+        conversation_id: null,
+        actions: [
+            { label: "Restart now", method: "POST", tone: "primary", href: "/api/runtime/restart" },
+        ],
+    };
+}
+
 /** One work summary too long for the settings, exactly as api/routes/needs.py emits it. */
 function workSummaryRow(agentId) {
     return {
@@ -1349,6 +1368,61 @@ async function main() {
     offConnectionInvalidate();
     const connectionNeedRendersFirst = true;
 
+    // ─── 13i'. A stopped AI runtime: ahead of connections, Restart now, no "Show me" ───
+    const runtimeStore = BossModStore.createStore({ needs: [] });
+    const runtimeBus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
+    const offRuntimeInvalidate = BossModOperatorInvalidate.attach({ bus: runtimeBus });
+    const runtimeCalls = [];
+    const runtimeApi = (url, init) => {
+        runtimeCalls.push({ url, method: (init && init.method) || "GET" });
+        if (url.startsWith("/api/needs")) {
+            return Promise.resolve({ ok: true, json: () => Promise.resolve([
+                // The oldest on the wire, and still the first group.
+                connectionRow("c1"), blockedRow("t-r", "a1"), runtimeRow(),
+            ]) });
+        }
+        return Promise.resolve({ ok: true, text: () => Promise.resolve("") });
+    };
+    const runtimeNeeds = BossModNeeds.createNeedsStore({ store: runtimeStore, bus: runtimeBus, api: runtimeApi });
+    await drain();
+    const runtimeNeed = runtimeStore.getState().needs.find((item) => item.id === "runtime:primary");
+    if (!runtimeNeed) throw new Error("a runtime need must reach the queue");
+    if (runtimeNeed.target !== null || runtimeNeed.agentId !== null || runtimeNeed.conversationId !== null) {
+        throw new Error(`a runtime need belongs to nobody and shows nowhere, got ${JSON.stringify(runtimeNeed)}`);
+    }
+    const runtimeBell = documentStub.createElement("button");
+    documentStub.body.append(runtimeBell);
+    const runtimePopover = BossModNeedsPopover.openPopover({
+        store: runtimeStore, needs: runtimeNeeds, anchor: runtimeBell, navigate: () => {},
+        openSettingsAt: () => {},
+    });
+    await drain();
+    const runtimeGroups = runtimePopover.element.querySelectorAll(".popover-group-title")
+        .map((node) => node.textContent);
+    if (runtimeGroups[0] !== "AI runtime (1)" || runtimeGroups[1] !== "AI connections (1)") {
+        throw new Error(`the AI runtime group must come first, then AI connections, got ${JSON.stringify(runtimeGroups)}`);
+    }
+    const runtimeEntry = runtimePopover.element.querySelector('[data-need-id="runtime:primary"]');
+    if (!runtimeEntry) throw new Error("the popover must list the stopped runtime");
+    const runtimeButtons = runtimeEntry.querySelectorAll(".popover-action");
+    if (runtimeButtons.map((node) => node.textContent).join(",") !== "Restart now") {
+        throw new Error(`a runtime need offers only Restart now, got ${runtimeButtons.map((n) => n.textContent)}`);
+    }
+    if (runtimeEntry.querySelector(".popover-show-me")) {
+        throw new Error("a runtime need must not offer Show me");
+    }
+    runtimeCalls.length = 0;
+    await runtimeButtons[0].dispatchClick();
+    await drain();
+    const restartCall = runtimeCalls.find((item) => item.url === "/api/runtime/restart");
+    if (!restartCall || restartCall.method !== "POST") {
+        throw new Error(`Restart now must POST its server href, got ${JSON.stringify(runtimeCalls)}`);
+    }
+    runtimePopover.close();
+    runtimeNeeds.destroy();
+    offRuntimeInvalidate();
+    const runtimeNeedRendersFirst = true;
+
     // ─── 13j. A work-summary need's button opens Settings at its field ───
     const summaryStore = BossModStore.createStore({ needs: [] });
     const summaryBus = BossModBus.createBus(BossModBus.KNOWN_TOPICS);
@@ -1590,6 +1664,7 @@ async function main() {
         nestGitSchemaMismatchDismisses,
         nestGitGroupIsLabeled,
         connectionNeedRendersFirst,
+        runtimeNeedRendersFirst,
         workSummaryTargetIsSettings,
         workSummaryDiagnosticIsNoErrorNorRecovery,
         workSummaryPopoverOpensSettings,

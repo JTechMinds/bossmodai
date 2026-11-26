@@ -5,9 +5,12 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import signal
+import sqlite3
 import sys
+import time
 from contextlib import suppress
 from datetime import datetime, timezone
 from pathlib import Path
@@ -15,6 +18,13 @@ from typing import Any, Callable, Protocol
 
 from core import config
 from core.runtime.presence import PresenceRegistry
+from core.runtime.supervisor import (
+    RUNTIME_DOWN_EVENT,
+    RUNTIME_RESTARTED_EVENT,
+    RestartHistory,
+    WorkerOutage,
+    restart_allowed,
+)
 import db
 import db.connection as db_connection
 
@@ -30,6 +40,11 @@ _WORKER_NAME = "primary"
 _HUMAN_PREEMPTED_TRIGGER_TYPES = ["activity_resumed", "watchdog_status_ping", "social"]
 # Set to "1" in the worker's own environment (see ``_start_unlocked``).
 _WORKER_ENV = "BOSSMOD_RUNTIME_WORKER"
+# Supervision settings (db/settings.py), each read when it is used.
+_RESTART_DELAY_SETTING = "runtime_worker_restart_delay_seconds"
+_RESTART_LIMIT_SETTING = "runtime_worker_restart_limit"
+_RESTART_WINDOW_SETTING = "runtime_worker_restart_window_minutes"
+_UNRESPONSIVE_SETTING = "runtime_worker_unresponsive_seconds"
 
 
 def is_runtime_worker() -> bool:
@@ -98,6 +113,14 @@ class RuntimeServices:
         # Who is mid-turn, from the worker's agent_presence deltas; sent to
         # each WebSocket client on connect (presence_snapshot).
         self._presence = PresenceRegistry()
+        # Supervision. Why the worker last stopped unexpectedly, held until a
+        # start succeeds (which logs the restart once), and the outage once
+        # automatic restarts gave up (the Needs card).
+        self._incident: str | None = None
+        self._outage: WorkerOutage | None = None
+        self._restart_history = RestartHistory()
+        self._recovery_task: asyncio.Task[None] | None = None
+        self._heartbeat_watch: asyncio.Task[None] | None = None
 
     def set_telegram_bridge(self, bridge: Any) -> None:
         """Attach the Telegram event bridge and start its one consumer task.
@@ -166,7 +189,11 @@ class RuntimeServices:
             await self._start_unlocked()
 
     async def stop(self) -> None:
-        """Stop the runtime worker process and the Telegram consumer, if any."""
+        """Stop the runtime worker process and the Telegram consumer, if any.
+
+        The automatic recovery and the heartbeat watch are cancelled first
+        (``_stop_unlocked``), so the stop never races a restart.
+        """
         async with self._guard():
             await self._stop_unlocked()
         await self._stop_telegram_consumer()
@@ -194,6 +221,49 @@ class RuntimeServices:
             logger.info("Application reseeded; %d AI connection(s) preserved", restored)
             config.reload()
             await self._start_unlocked()
+
+    def outage(self) -> WorkerOutage | None:
+        """Return the current outage: automatic restarts gave up and the worker is still stopped.
+
+        Read by the Needs list (``api/routes/needs.py``). Set when a recovery
+        runs out of attempts, or cannot read its settings; cleared by any
+        start that succeeds and by :meth:`restart_worker`. Held in this
+        process only: an app restart starts the worker afresh.
+
+        Returns:
+            The outage, or ``None`` while the worker runs or is being
+            restarted automatically.
+        """
+        return self._outage
+
+    async def restart_worker(self) -> dict[str, object]:
+        """Start the runtime worker again now: the operator's Restart now (Needs card, Telegram card).
+
+        Under the guard, so it waits for a start already under way instead of
+        cancelling it halfway: a pending automatic recovery is cancelled, the
+        restart history and the outage are cleared, then the worker is started
+        unless it already runs. A start that succeeds ends the incident as
+        every start does (the restart is logged once). A start that fails is
+        handed back to automatic recovery with the fresh history, so the
+        operator is told again if those restarts give up too.
+
+        Returns:
+            :meth:`status_payload` after the start.
+
+        Raises:
+            Exception: Whatever the start raised (``_start_unlocked``); the
+                worker row already holds it as ``last_error``.
+        """
+        async with self._guard():
+            await _cancel_and_wait(self._recovery_task)
+            self._restart_history.clear()
+            self._outage = None
+            try:
+                await self._start_unlocked()
+            except Exception:
+                self._schedule_recovery("it could not start", kill=False)
+                raise
+        return self.status_payload()
 
     def state(self) -> str:
         state = config.get(self._STATE_KEY)
@@ -453,14 +523,30 @@ class RuntimeServices:
             await self._clear_process_state()
             db.mark_runtime_worker_error(str(exc), worker_name=_WORKER_NAME)
             raise
+        await self._restart_heartbeat_watch()
+        incident = self._incident
+        if incident is not None:
+            # Whoever started it, this start ends the incident and the outage.
+            # Cleared before the announcement, so the restart is logged once.
+            self._incident = None
+            self._outage = None
+            logger.info("Runtime worker restarted after %s", incident)
+            try:
+                await self._announce_runtime(RUNTIME_RESTARTED_EVENT, f"AI runtime restarted after {incident}.")
+            except Exception:
+                # The worker runs: a lost log line must not fail its start.
+                logger.exception("The runtime worker restart was not announced")
 
     async def _stop_unlocked(self) -> None:
+        # First, and before the awaits below: a recovery asked for while this
+        # stop runs would bring the worker back (``_schedule_recovery``).
+        self._expecting_shutdown = True
+        await self._stop_supervision()
         process = self._process
         if process is None:
             db.mark_runtime_worker_stopped(worker_name=_WORKER_NAME)
             return
 
-        self._expecting_shutdown = True
         db.mark_runtime_worker_stopping(process.pid if process.returncode is None else None, worker_name=_WORKER_NAME)
 
         process_loop = self._process_loop
@@ -604,7 +690,9 @@ class RuntimeServices:
         unset, :meth:`_settle_stream_end` gives the worker
         ``_WORKER_STOP_TIMEOUT_SECONDS`` to show its exit and stops it
         (fail-stop) when it does not; otherwise (an exit asyncio has already
-        seen, or a cancellation) :meth:`_record_unexpected_exit` runs.
+        seen, or a cancellation) :meth:`_record_unexpected_exit` runs. A
+        stream that ended (not a cancelled reader) then asks for an automatic
+        restart (:meth:`_schedule_recovery`), from its own task.
         """
         process = self._process
         if process is None or process.stdout is None:
@@ -661,6 +749,10 @@ class RuntimeServices:
                 await self._settle_stream_end(process, ended)
             else:
                 await self._record_unexpected_exit()
+                # Never after a cancellation: the canceller is (re)starting or
+                # stopping the worker, and asking here would loop.
+                if ended is not None:
+                    self._schedule_recovery("it stopped unexpectedly", kill=False)
 
     async def _settle_stream_end(self, process: asyncio.subprocess.Process, reason: str) -> None:
         """Tell a worker's exit from a worker the app can no longer hear, once its stream ended.
@@ -670,15 +762,18 @@ class RuntimeServices:
         ``_WORKER_STOP_TIMEOUT_SECONDS`` to show its exit:
 
         - it exited: :meth:`_record_unexpected_exit`, as for any exit, so a
-          reason the worker recorded on its own row is kept;
+          reason the worker recorded on its own row is kept; then an
+          automatic restart is asked for, unless a stop began meanwhile;
         - it still runs, and no stop began meanwhile: it is stopped, its row
-          is marked ``error`` with ``reason``, and its exit is announced. A
-          worker the app cannot hear must not keep running: its turns would
-          block on output while their leases keep them looking alive;
+          is marked ``error`` with ``reason``, its exit is announced, and an
+          automatic restart is asked for. A worker the app cannot hear must
+          not keep running: its turns would block on output while their
+          leases keep them looking alive;
         - a stop began during the wait: that stop owns the exit;
         - this reader is cancelled during the wait: what a cancelled reader
           always does (:meth:`_record_unexpected_exit`), then the
-          cancellation goes on.
+          cancellation goes on. No restart is asked for: the canceller owns
+          the worker.
 
         Args:
             process: The worker whose stdout ended.
@@ -701,11 +796,13 @@ class RuntimeServices:
                 worker_name=_WORKER_NAME,
             )
             await self._announce_worker_exit()
+            self._schedule_recovery("its output stream ended while it was running", kill=False)
             return
         except asyncio.CancelledError:
             await self._record_unexpected_exit()
             raise
         await self._record_unexpected_exit()
+        self._schedule_recovery("it stopped unexpectedly", kill=False)
 
     async def _record_unexpected_exit(self) -> None:
         """Mark the worker row ``error`` and announce the exit, unless a stop is expected.
@@ -720,6 +817,281 @@ class RuntimeServices:
         if state is None or state.lifecycle_state not in {"stopped", "error"}:
             db.mark_runtime_worker_error("Runtime worker exited unexpectedly", worker_name=_WORKER_NAME)
         await self._announce_worker_exit()
+
+    # ─── Supervision: automatic restarts, the heartbeat watch, the outage ───
+
+    def _schedule_recovery(
+        self,
+        reason: str,
+        *,
+        kill: bool,
+        target: asyncio.subprocess.Process | None = None,
+    ) -> bool:
+        """Ask for an automatic restart of the worker, run in a task of its own.
+
+        Never inside the reader task: a start cancels the reader
+        (``_clear_process_state``), so a recovery running there would cancel
+        itself. Synchronous, so a caller on its way out (the reader's
+        ``finally``) asks without yielding first.
+
+        Refused while a stop is expected (``_expecting_shutdown``: a stop, a
+        reseed, or a recovery's own kill owns the worker), and while a
+        recovery already runs. That one covers the request: its next start
+        restarts a worker that has exited, and after a start it checks
+        whether that worker already ended.
+
+        Args:
+            reason: Why the worker needs restarting, as a plain phrase that
+                reads after "AI runtime restarted after" and "the last
+                time," (e.g. "it stopped unexpectedly").
+            kill: Stop the worker first: it runs but stopped responding.
+            target: With ``kill``, the worker process that was judged
+                unresponsive. Only that process is ever stopped, so a
+                worker started in its place before the recovery runs is
+                left alone. Given exactly when ``kill`` is.
+
+        Returns:
+            Whether a recovery was started.
+
+        Raises:
+            ValueError: ``kill`` without a ``target``, or a ``target``
+                without ``kill``.
+        """
+        if kill != (target is not None):
+            raise ValueError(f"A recovery takes a target process exactly when it kills (kill={kill})")
+        if self._expecting_shutdown:
+            return False
+        running = self._recovery_task
+        if running is not None and not running.done():
+            logger.info("A runtime worker recovery is already running; it covers this one (%s)", reason)
+            return False
+        task = asyncio.create_task(
+            self._recover(reason, kill=kill, target=target), name="runtime-worker-recovery",
+        )
+        task.add_done_callback(_log_supervision_failure)
+        self._recovery_task = task
+        return True
+
+    async def _recover(
+        self,
+        reason: str,
+        *,
+        kill: bool,
+        target: asyncio.subprocess.Process | None = None,
+    ) -> None:
+        """Restart the worker after the restart delay, under the crash-loop guard, or record the outage.
+
+        The incident is recorded first (an open one keeps its first cause,
+        which is why the worker stopped), so the start that ends it logs the
+        restart once, whoever performs it. With ``kill`` the ``target`` is
+        first stopped under the guard as a deliberate stop; its row is
+        marked ``error`` and its exit announced, as for any worker that is
+        gone. Only while it is still the worker this process runs: a target
+        that already exited, or was replaced while this recovery waited for
+        the guard, is not stopped and its row is left as it is.
+
+        Each attempt is recorded in the sliding window. Past
+        ``runtime_worker_restart_limit`` attempts within
+        ``runtime_worker_restart_window_minutes`` the restarts give up
+        (:meth:`_give_up`). Otherwise it sleeps
+        ``runtime_worker_restart_delay_seconds`` without holding the guard,
+        so an operator's Pause, Resume or Restart now never waits behind it,
+        then starts the worker under the guard. That start does nothing when
+        someone else already restarted the worker. A start that raises is
+        logged with its traceback and tried again as "it could not start";
+        a worker that ended before this recovery returned (its reader's
+        request found this one still running) is tried again as "it stopped
+        unexpectedly".
+
+        Each setting is read when it is used. An unusable one is logged at
+        ERROR and the restarts give up at once, so the operator is told
+        instead of being left with a stopped worker.
+
+        Args:
+            reason: Why the worker needs restarting (see :meth:`_schedule_recovery`).
+            kill: Stop ``target`` first.
+            target: The worker judged unresponsive; given exactly when
+                ``kill`` is (checked by :meth:`_schedule_recovery`).
+
+        Raises:
+            ValueError: ``kill`` without a ``target``.
+            asyncio.CancelledError: Cancelled by a stop, a reseed or Restart
+                now, which hold the guard while they cancel; never caught.
+        """
+        if kill and target is None:
+            raise ValueError("A recovery that kills needs the target process it judged")
+        if self._incident is None:
+            self._incident = reason
+        if kill and target is not None:
+            async with self._guard():
+                if self._process is target and target.returncode is None:
+                    # Before the kill, so the reader's finally does not take it for a crash.
+                    self._expecting_shutdown = True
+                    await self._force_stop_process(target)
+                    await self._clear_process_state()
+                    db.mark_runtime_worker_error(f"Runtime worker stopped: {reason}", worker_name=_WORKER_NAME)
+                    await self._announce_worker_exit()
+                else:
+                    # It exited, or another worker took its place while this
+                    # waited; the loop below restarts only a worker that is gone.
+                    logger.info("Unresponsive runtime worker pid %s is no longer running; not stopping", target.pid)
+        tried = 0
+        while True:
+            try:
+                window_seconds = _require_positive_float(_RESTART_WINDOW_SETTING) * 60
+                limit = config.require_positive_int(_RESTART_LIMIT_SETTING)
+                delay = _require_positive_float(_RESTART_DELAY_SETTING)
+            except config.ConfigError:
+                logger.exception("Runtime worker automatic restarts stopped: a restart setting is unusable")
+                await self._give_up(reason, attempts=tried)
+                return
+            count = self._restart_history.record(time.monotonic(), window_seconds=window_seconds)
+            if not restart_allowed(count, limit=limit):
+                await self._give_up(reason, attempts=count - 1)
+                return
+            logger.warning(
+                "Restarting the runtime worker in %g s because %s (attempt %d of %d within %g min)",
+                delay, reason, count, limit, window_seconds / 60,
+            )
+            await asyncio.sleep(delay)
+            tried += 1
+            async with self._guard():
+                try:
+                    await self._start_unlocked()
+                except Exception:
+                    logger.exception("Runtime worker restart failed")
+                    reason = "it could not start"
+                    continue
+            reader = self._reader_task
+            if reader is None or not reader.done():
+                return
+            # The worker it left running is already gone, and that reader's
+            # request was refused while this recovery still ran.
+            reason = "it stopped unexpectedly"
+            self._incident = reason
+
+    async def _give_up(self, reason: str, *, attempts: int) -> None:
+        """Record the outage and announce it: the Need (bell, toast, tray badge) and the Telegram card.
+
+        Args:
+            reason: Why the worker stopped the last time.
+            attempts: Automatic restarts tried within the restart window.
+        """
+        outage = WorkerOutage(since=datetime.now(timezone.utc), reason=reason, attempts=attempts)
+        self._outage = outage
+        logger.error(
+            "Runtime worker automatic restarts gave up after %d attempt(s); the last time, %s", attempts, reason,
+        )
+        await self._announce_runtime(
+            RUNTIME_DOWN_EVENT,
+            outage.describe(),
+            extra={"since": outage.since.isoformat(), "attempts": attempts, "reason": reason},
+        )
+
+    async def _restart_heartbeat_watch(self) -> None:
+        """Replace the heartbeat watch with one for the worker that just became ready."""
+        await _cancel_and_wait(self._heartbeat_watch)
+        task = asyncio.create_task(self._watch_heartbeat(), name="runtime-worker-heartbeat-watch")
+        task.add_done_callback(_log_supervision_failure)
+        self._heartbeat_watch = task
+
+    async def _stop_supervision(self) -> None:
+        """Cancel the automatic recovery, then the heartbeat watch, and wait until both have stopped."""
+        await _cancel_and_wait(self._recovery_task)
+        await _cancel_and_wait(self._heartbeat_watch)
+        self._recovery_task = None
+        self._heartbeat_watch = None
+
+    async def _watch_heartbeat(self) -> None:
+        """Restart a worker that runs but stopped responding: its heartbeat has not moved for too long.
+
+        Every ``runtime_heartbeat_seconds`` it reads the worker row. Only a
+        row that reads ``running`` with this app's child's pid is judged; a
+        row marked ``error`` has its pid cleared, so it never matches. The
+        silence is measured on this process's monotonic clock from when the
+        watch last saw the heartbeat change, not from the stamp's wall-clock
+        age: across a computer's sleep both processes stop, and the wall
+        clock's jump must not read as a frozen worker. Past
+        ``runtime_worker_unresponsive_seconds`` of silence (its own
+        threshold, far above the 3x display one, so one slow prune never
+        kills a healthy worker) it asks for a recovery that kills the
+        process it judged, and ends. While another recovery runs, the
+        request is refused and it keeps watching.
+
+        A read or settings error is logged at ERROR and the next check
+        still runs, at the last usable interval. It runs until cancelled (a
+        start replaces it; a stop ends it); with no usable interval at all
+        it logs that at ERROR and ends.
+        """
+        interval: float | None = None
+        seen: datetime | None = None
+        seen_at = 0.0
+        while True:
+            try:
+                interval = db.heartbeat_interval_seconds()
+            except config.ConfigError:
+                if interval is None:
+                    logger.exception("Runtime worker heartbeat watch did not start; this worker is not watched")
+                    return
+                logger.exception("Runtime worker heartbeat watch keeps its last usable interval (%g s)", interval)
+            await asyncio.sleep(interval)
+            try:
+                state = db.get_runtime_worker_state(_WORKER_NAME)
+                threshold = _require_positive_float(_UNRESPONSIVE_SETTING)
+            except (config.ConfigError, sqlite3.Error):
+                logger.exception("Runtime worker heartbeat check failed; checking again in %g s", interval)
+                continue
+            process = self._process
+            if (
+                state is None
+                or process is None
+                or state.lifecycle_state != "running"
+                or state.pid != process.pid
+                or state.last_heartbeat_at is None
+            ):
+                seen = None
+                continue
+            now = time.monotonic()
+            if state.last_heartbeat_at != seen:
+                seen, seen_at = state.last_heartbeat_at, now
+                continue
+            silent = now - seen_at
+            if silent > threshold and self._schedule_recovery("it stopped responding", kill=True, target=process):
+                logger.error(
+                    "Runtime worker pid %s recorded no heartbeat for %.1f s; stopping and restarting it",
+                    process.pid,
+                    silent,
+                )
+                return
+
+    async def _announce_runtime(self, event: str, detail: str, extra: dict[str, Any] | None = None) -> None:
+        """Announce an app-side runtime event: to the activity log and every client, then to Telegram.
+
+        For what only the app can see (the worker restarted, or restarts
+        gave up). The sink persists it to the activity log and broadcasts it
+        (``ConnectionManager.broadcast_activity``). The Telegram bridge gets
+        the shape it reads from the worker's own ``activity`` events; a full
+        Telegram queue drops it for Telegram only, logged at WARNING.
+
+        Args:
+            event: The activity event name (``core/runtime/supervisor.py``).
+            detail: The plain-language line the activity log shows.
+            extra: Fields merged into the broadcast entry, or ``None``.
+        """
+        sink = self._event_sink
+        if sink is not None:
+            await sink.broadcast_activity(event=event, detail=detail, agent_name=None, extra=extra)
+        queue = self._telegram_queue
+        if queue is None:
+            return
+        try:
+            queue.put_nowait(("activity", {"event": event, "detail": detail, "agent_name": None, "extra": extra}))
+        except asyncio.QueueFull:
+            logger.warning(
+                "Telegram dispatch queue is full (%d); dropped one %s event for Telegram",
+                queue.maxsize,
+                event,
+            )
 
     async def _handle_worker_message(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
@@ -838,6 +1210,45 @@ async def _drain_telegram(bridge: Any, queue: asyncio.Queue[tuple[str, dict[str,
             await bridge.dispatch(kind, data)
         except Exception:
             logger.warning("Telegram bridge dispatch failed for %s", kind, exc_info=True)
+
+
+def _require_positive_float(key: str) -> float:
+    """Read a required setting as a finite number greater than 0.
+
+    Raises:
+        ConfigError: The setting is missing, not a number, not finite, or
+            not greater than 0.
+    """
+    value = config.require_float(key)
+    if not math.isfinite(value) or value <= 0:
+        raise config.ConfigError(f"Required setting '{key}' must be a number greater than 0: {value!r}")
+    return value
+
+
+async def _cancel_and_wait(task: asyncio.Task[None] | None) -> None:
+    """Cancel ``task`` and, when it runs on this event loop, wait until it has stopped.
+
+    A task from another loop (an earlier test's) is only cancelled, as
+    ``_clear_process_state`` treats the reader.
+    """
+    if task is None or task.done():
+        return
+    task.cancel()
+    if task.get_loop() is asyncio.get_running_loop():
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+def _log_supervision_failure(task: asyncio.Task[None]) -> None:
+    """Log a supervision task that ended with an exception, which nothing else awaits.
+
+    A cancelled task ended on purpose and is not logged.
+    """
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.error("Runtime worker %s failed", task.get_name(), exc_info=exc)
 
 
 def _write_doorbell(process: asyncio.subprocess.Process) -> None:

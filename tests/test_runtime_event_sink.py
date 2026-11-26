@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 import uuid
 from collections.abc import Callable, Iterator
 from datetime import datetime, timezone
@@ -29,6 +30,7 @@ from core.runtime.events import (
 )
 from core.runtime import services as runtime_services_module
 from core.runtime.services import RuntimeServices
+from core.runtime.supervisor import WorkerOutage
 
 
 def test_core_package_does_not_import_api() -> None:
@@ -561,6 +563,519 @@ async def test_a_failed_stream_with_the_worker_still_running_stops_it(short_work
         "(ConnectionResetError: Connection lost)"
     )
     assert sink.calls == _EXIT_ANNOUNCED
+
+
+# ─── supervision: automatic restarts, the crash-loop guard, the frozen-worker watch ───
+
+
+# Above Linux's largest pid (4194304), so a fake worker never names a real process.
+_FAKE_PID_BASE = 5_000_000
+
+
+def _pid(n: int) -> int:
+    return _FAKE_PID_BASE + n
+
+
+class _FakeStdin:
+    """The doorbell pipe: always open, and nothing listens."""
+
+    def is_closing(self) -> bool:
+        return False
+
+    def write(self, data: bytes) -> None:
+        return None
+
+
+class _FakeWorkerStdout:
+    def __init__(self, worker: "_FakeWorker") -> None:
+        self._worker = worker
+
+    async def readline(self) -> bytes:
+        return await self._worker.next_line()
+
+    def close(self) -> None:
+        return None
+
+
+class _FakeWorker:
+    """A runtime worker stand-in for ``_start_unlocked``, as ``asyncio.create_subprocess_exec`` returns it.
+
+    It marks its row ``running`` and says ready, as the real worker does
+    (``ready=False``: it exits before ready instead), then runs until it is
+    terminated or ``crash()``-ed. ``crash_after_ready`` exits right after the
+    ready line; ``heartbeats`` stamps its heartbeat every 5 ms, otherwise it
+    never does (a frozen worker).
+    """
+
+    def __init__(self, pid: int, *, ready: bool = True, crash_after_ready: bool = False, heartbeats: bool = False) -> None:
+        self.pid = pid
+        self.returncode: int | None = None
+        self.stdin = _FakeStdin()
+        self.stdout: _FakeWorkerStdout | None = _FakeWorkerStdout(self)
+        self.terminations = 0
+        self._ready = ready
+        self._crash_after_ready = crash_after_ready
+        self._heartbeats = heartbeats
+        self._said_ready = False
+        self._exited = asyncio.Event()
+        self._beats: asyncio.Task[None] | None = None
+
+    async def next_line(self) -> bytes:
+        if not self._said_ready:
+            self._said_ready = True
+            if not self._ready:
+                self._exit(1)
+                return b""
+            db.mark_runtime_worker_running(self.pid, worker_name="primary")
+            if self._heartbeats:
+                self._beats = asyncio.create_task(self._beat())
+            return _line({"type": "ready"})
+        if self._crash_after_ready:
+            self._exit(1)
+        await self._exited.wait()
+        return b""
+
+    async def _beat(self) -> None:
+        while self.returncode is None:
+            db.record_runtime_worker_heartbeat(self.pid, worker_name="primary")
+            await asyncio.sleep(0.005)
+
+    def _exit(self, code: int) -> None:
+        if self.returncode is None:
+            self.returncode = code
+        self._exited.set()
+
+    def crash(self) -> None:
+        self._exit(1)
+
+    async def wait(self) -> int:
+        await self._exited.wait()
+        assert self.returncode is not None
+        return self.returncode
+
+    def terminate(self) -> None:
+        self.terminations += 1
+        self._exit(-15)
+
+    def kill(self) -> None:
+        self.terminate()
+
+
+class _Spawner:
+    """Stands in for ``asyncio.create_subprocess_exec``: hands out the scripted workers in order."""
+
+    def __init__(self, workers: tuple[_FakeWorker, ...]) -> None:
+        self._waiting = list(workers)
+        self.spawned: list[_FakeWorker] = []
+
+    async def __call__(self, *args: Any, **kwargs: Any) -> _FakeWorker:
+        if not self._waiting:
+            raise RuntimeError("an unscripted runtime worker start")
+        worker = self._waiting.pop(0)
+        self.spawned.append(worker)
+        return worker
+
+
+class _RecordingBridge:
+    """The Telegram bridge as the dispatch queue's consumer sees it."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[str, dict[str, Any]]] = []
+
+    async def dispatch(self, kind: str, data: dict[str, Any]) -> None:
+        self.events.append((kind, data))
+
+
+@pytest.fixture
+def supervision(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., None]]:
+    """Restarts after 10 ms and stops that take 10 ms; ``supervision(key=value)`` sets more.
+
+    Every changed setting is put back to its seed afterwards: this module
+    shares one database per worker.
+    """
+    db.init_db()
+    monkeypatch.setattr(runtime_services_module, "_WORKER_STOP_TIMEOUT_SECONDS", 0.01)
+    changed: set[str] = set()
+
+    def apply(**values: str) -> None:
+        for key, value in values.items():
+            db.set_setting(key, value, "advanced")
+            changed.add(key)
+        config.reload()
+
+    apply(runtime_worker_restart_delay_seconds="0.01")
+    try:
+        yield apply
+    finally:
+        for key in changed:
+            db.reset_setting_to_seed(key)
+        config.reload()
+
+
+def _spawn(monkeypatch: pytest.MonkeyPatch, *workers: _FakeWorker) -> _Spawner:
+    spawner = _Spawner(workers)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", spawner)
+    return spawner
+
+
+def _supervised() -> tuple[RuntimeServices, _RecordingSink]:
+    services = RuntimeServices()
+    sink = _RecordingSink()
+    services.set_event_sink(sink)
+    return services, sink
+
+
+def _activities(sink: _RecordingSink) -> list[tuple[str, str]]:
+    return [(data["event"], data["detail"]) for kind, data in sink.calls if kind == "activity"]
+
+
+async def _until(predicate: Callable[[], bool], *, timeout: float = 5.0) -> None:
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while not predicate():
+        if loop.time() >= deadline:
+            raise AssertionError("timed out waiting for the runtime worker's supervision")
+        await asyncio.sleep(0.005)
+
+
+def _recovered(services: RuntimeServices) -> bool:
+    task = services._recovery_task
+    return task is not None and task.done()
+
+
+_RESTARTED_UNEXPECTEDLY = ("runtime_worker_restarted", "AI runtime restarted after it stopped unexpectedly.")
+
+
+@pytest.mark.asyncio
+async def test_an_unexpected_exit_restarts_the_worker_once_and_logs_it_once(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second = _FakeWorker(_pid(1)), _FakeWorker(_pid(2))
+    spawner = _spawn(monkeypatch, first, second)
+    services, sink = _supervised()
+    await services.start()
+    try:
+        first.crash()
+        await _until(lambda: _recovered(services))
+
+        assert spawner.spawned == [first, second]
+        assert services._process is second
+        assert _activities(sink) == [_RESTARTED_UNEXPECTEDLY]
+        assert services.outage() is None
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_restarts_that_keep_failing_stop_at_the_limit_and_tell_the_operator(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervision(runtime_worker_restart_limit="2")
+    first = _FakeWorker(_pid(1))
+    spawner = _spawn(monkeypatch, first, _FakeWorker(_pid(2), ready=False), _FakeWorker(_pid(3), ready=False))
+    services, sink = _supervised()
+    bridge = _RecordingBridge()
+    services.set_telegram_bridge(bridge)
+    await services.start()
+    try:
+        first.crash()
+        await _until(lambda: services.outage() is not None and bool(bridge.events))
+
+        outage = services.outage()
+        assert outage is not None
+        assert (outage.reason, outage.attempts) == ("it could not start", 2)
+        assert len(spawner.spawned) == 3
+        down = {
+            "event": "runtime_worker_down",
+            "detail": (
+                "Your agents can't work until it runs again. "
+                "BossMod tried to restart it 2 times; the last time, it could not start."
+            ),
+            "agent_name": None,
+            "extra": {"since": outage.since.isoformat(), "attempts": 2, "reason": "it could not start"},
+        }
+        assert [data for kind, data in sink.calls if kind == "activity"] == [down]
+        assert bridge.events == [("activity", down)]
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_an_expected_stop_schedules_no_restart(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _FakeWorker(_pid(1))
+    spawner = _spawn(monkeypatch, worker)
+    services, sink = _supervised()
+    await services.start()
+
+    await services.stop()
+    await asyncio.sleep(0.05)
+
+    assert worker.terminations == 1
+    assert services._recovery_task is None
+    assert spawner.spawned == [worker]
+    assert _activities(sink) == []
+
+
+@pytest.mark.asyncio
+async def test_stop_cancels_a_pending_restart(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervision(runtime_worker_restart_delay_seconds="60")
+    worker = _FakeWorker(_pid(1))
+    spawner = _spawn(monkeypatch, worker)
+    services, sink = _supervised()
+    await services.start()
+    worker.crash()
+    await _until(lambda: services._recovery_task is not None)
+    pending = services._recovery_task
+    assert pending is not None
+
+    await services.stop()
+
+    assert pending.cancelled()
+    assert spawner.spawned == [worker]
+    assert _activities(sink) == []
+
+
+@pytest.mark.asyncio
+async def test_a_frozen_worker_is_stopped_restarted_and_logged(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervision(runtime_heartbeat_seconds="0.01", runtime_worker_unresponsive_seconds="0.1")
+    frozen, healthy = _FakeWorker(_pid(1)), _FakeWorker(_pid(2), heartbeats=True)
+    spawner = _spawn(monkeypatch, frozen, healthy)
+    services, sink = _supervised()
+    await services.start()
+    try:
+        await _until(lambda: bool(_activities(sink)))
+
+        assert frozen.terminations == 1
+        assert services._process is healthy
+        assert _activities(sink) == [
+            ("runtime_worker_restarted", "AI runtime restarted after it stopped responding."),
+        ]
+        # Its turns went with it: the empty presence snapshot was announced.
+        assert ("presence_snapshot", {"rows": []}) in sink.calls
+        # A worker whose heartbeat moves is left alone.
+        await asyncio.sleep(0.3)
+        assert healthy.terminations == 0
+        assert spawner.spawned == [frozen, healthy]
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_frozen_worker_replaced_before_its_kill_takes_the_guard_leaves_the_new_worker_alone(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervision(runtime_heartbeat_seconds="0.01", runtime_worker_unresponsive_seconds="0.1")
+    frozen, fresh = _FakeWorker(_pid(1)), _FakeWorker(_pid(2), heartbeats=True)
+    spawner = _spawn(monkeypatch, frozen, fresh)
+    services, sink = _supervised()
+    await services.start()
+    guard = services._guard()
+    # Held, so the recovery the watch asks for waits on it, as behind a Pause.
+    await guard.acquire()
+    try:
+        await _until(lambda: services._recovery_task is not None and services._incident is not None)
+        # Meanwhile the frozen worker exits on its own and a start replaces it.
+        frozen.crash()
+        await _until(lambda: services._reader_task is not None and services._reader_task.done())
+        await services._start_unlocked()
+        assert services._process is fresh
+    finally:
+        guard.release()
+    try:
+        await _until(lambda: _recovered(services))
+
+        assert fresh.terminations == 0 and frozen.terminations == 0
+        assert services._process is fresh and spawner.spawned == [frozen, fresh]
+        state = db.get_runtime_worker_state("primary")
+        assert state is not None and state.lifecycle_state == "running" and state.pid == fresh.pid
+        # The start that replaced it ended the incident: one restart line.
+        assert _activities(sink) == [
+            ("runtime_worker_restarted", "AI runtime restarted after it stopped responding."),
+        ]
+    finally:
+        await services.stop()
+
+
+def test_a_kill_recovery_names_its_target_and_only_a_kill_does() -> None:
+    services = RuntimeServices()
+    with pytest.raises(ValueError, match="target process exactly when it kills"):
+        services._schedule_recovery("it stopped responding", kill=True)
+    with pytest.raises(ValueError, match="target process exactly when it kills"):
+        services._schedule_recovery("it stopped unexpectedly", kill=False, target=_FakeWorker(_pid(1)))
+    assert services._recovery_task is None
+
+
+@pytest.mark.asyncio
+async def test_a_stale_heartbeat_on_another_pid_or_a_row_not_running_is_left_alone(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervision(runtime_heartbeat_seconds="0.01", runtime_worker_unresponsive_seconds="0.05")
+    worker = _FakeWorker(_pid(1))
+    _spawn(monkeypatch, worker)
+    services, sink = _supervised()
+    await services.start()
+    try:
+        # A row that names a process other than this app's child, never refreshed.
+        db.mark_runtime_worker_running(_pid(99), worker_name="primary")
+        await asyncio.sleep(0.3)
+        assert services._recovery_task is None and worker.terminations == 0
+
+        # This child's row, but not running.
+        db.mark_runtime_worker_stopping(worker.pid, worker_name="primary")
+        await asyncio.sleep(0.3)
+        assert services._recovery_task is None and worker.terminations == 0
+        assert _activities(sink) == []
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_now_clears_the_outage_and_the_restart_history(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _FakeWorker(_pid(1))
+    _spawn(monkeypatch, worker)
+    services, sink = _supervised()
+    services._incident = "it stopped responding"
+    services._outage = WorkerOutage(since=datetime.now(timezone.utc), reason="it stopped responding", attempts=3)
+    for _ in range(3):
+        services._restart_history.record(time.monotonic(), window_seconds=600)
+    try:
+        payload = await services.restart_worker()
+
+        assert services.outage() is None
+        assert services._process is worker
+        assert payload["worker"]["state"] == "running" and payload["worker"]["pid"] == worker.pid
+        assert _activities(sink) == [
+            ("runtime_worker_restarted", "AI runtime restarted after it stopped responding."),
+        ]
+        assert services._restart_history.record(time.monotonic(), window_seconds=600) == 1
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_restart_now_cancels_a_pending_automatic_restart(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervision(runtime_worker_restart_delay_seconds="60")
+    first, second = _FakeWorker(_pid(1)), _FakeWorker(_pid(2))
+    spawner = _spawn(monkeypatch, first, second)
+    services, sink = _supervised()
+    await services.start()
+    try:
+        first.crash()
+        await _until(lambda: services._recovery_task is not None)
+        pending = services._recovery_task
+        assert pending is not None
+
+        await services.restart_worker()
+
+        assert pending.cancelled()
+        assert spawner.spawned == [first, second] and services._process is second
+        assert _activities(sink) == [_RESTARTED_UNEXPECTEDLY]
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_failed_restart_now_is_handed_back_to_automatic_restarts(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    failing, healthy = _FakeWorker(_pid(1), ready=False), _FakeWorker(_pid(2))
+    spawner = _spawn(monkeypatch, failing, healthy)
+    services, sink = _supervised()
+    services._incident = "it stopped responding"
+    services._outage = WorkerOutage(since=datetime.now(timezone.utc), reason="it stopped responding", attempts=3)
+    try:
+        with pytest.raises(RuntimeError, match="exited before ready"):
+            await services.restart_worker()
+        assert services.outage() is None
+
+        await _until(lambda: _recovered(services))
+
+        assert spawner.spawned == [failing, healthy] and services._process is healthy
+        # The first cause is why it stopped; the log line keeps it.
+        assert _activities(sink) == [
+            ("runtime_worker_restarted", "AI runtime restarted after it stopped responding."),
+        ]
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_restart_someone_else_made_during_the_delay_is_left_alone(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    supervision(runtime_worker_restart_delay_seconds="0.2")
+    first, second = _FakeWorker(_pid(1)), _FakeWorker(_pid(2))
+    spawner = _spawn(monkeypatch, first, second)
+    services, sink = _supervised()
+    await services.start()
+    try:
+        first.crash()
+        await _until(lambda: services._recovery_task is not None and services._incident is not None)
+
+        # E.g. an enqueued trigger's start, while the recovery sleeps.
+        await services.start()
+        await _until(lambda: _recovered(services))
+
+        assert spawner.spawned == [first, second] and services._process is second
+        assert _activities(sink) == [_RESTARTED_UNEXPECTEDLY]
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_a_worker_that_dies_right_after_its_restart_is_restarted_again(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its reader asks for a restart while the recovery that started it still runs."""
+    first, brief, third = _FakeWorker(_pid(1)), _FakeWorker(_pid(2), crash_after_ready=True), _FakeWorker(_pid(3))
+    spawner = _spawn(monkeypatch, first, brief, third)
+    services, sink = _supervised()
+    await services.start()
+    try:
+        first.crash()
+        await _until(lambda: services._process is third and _recovered(services))
+
+        assert spawner.spawned == [first, brief, third]
+        assert _activities(sink) == [_RESTARTED_UNEXPECTEDLY, _RESTARTED_UNEXPECTEDLY]
+        assert services.outage() is None
+    finally:
+        await services.stop()
+
+
+@pytest.mark.asyncio
+async def test_an_unusable_restart_setting_gives_up_at_once_and_says_so(
+    supervision: Callable[..., None], monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    supervision(runtime_worker_restart_limit="0")
+    worker = _FakeWorker(_pid(1))
+    spawner = _spawn(monkeypatch, worker)
+    services, sink = _supervised()
+    await services.start()
+    try:
+        with caplog.at_level(logging.ERROR, logger="core.runtime.services"):
+            worker.crash()
+            await _until(lambda: services.outage() is not None)
+
+        outage = services.outage()
+        assert outage is not None
+        assert (outage.reason, outage.attempts) == ("it stopped unexpectedly", 0)
+        assert spawner.spawned == [worker]
+        assert "Runtime worker automatic restarts stopped: a restart setting is unusable" in [
+            record.getMessage() for record in caplog.records
+        ]
+        assert [event for event, _detail in _activities(sink)] == ["runtime_worker_down"]
+    finally:
+        await services.stop()
 
 
 # ─── peer_message (Office chatter) ───

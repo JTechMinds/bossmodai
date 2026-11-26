@@ -133,6 +133,32 @@ const BossModSystemSettingsMeta = (() => {
             label: 'Runtime Heartbeat Interval (seconds)',
             description: 'How often the runtime records that it is alive. A runtime silent for more than three intervals is reported as unhealthy. Default 5.',
         },
+        // Runtime recovery (core/runtime/services.py), also stored under 'advanced'.
+        // 91–94: the next free orders, so the four stay together at the end of the tab.
+        runtime_worker_restart_delay_seconds: {
+            order: 91,
+            tab: 'simulation',
+            label: 'Runtime Restart Delay (seconds)',
+            description: 'If the AI runtime stops unexpectedly, BossMod waits this long before starting it again. Default 5.',
+        },
+        runtime_worker_restart_limit: {
+            order: 92,
+            tab: 'simulation',
+            label: 'Runtime Restart Attempts',
+            description: 'How many times BossMod restarts the AI runtime on its own within the restart window. After that it stops trying and tells you. Default 3.',
+        },
+        runtime_worker_restart_window_minutes: {
+            order: 93,
+            tab: 'simulation',
+            label: 'Runtime Restart Window (minutes)',
+            description: 'How far back restart attempts count toward that limit. Default 10.',
+        },
+        runtime_worker_unresponsive_seconds: {
+            order: 94,
+            tab: 'simulation',
+            label: 'Unresponsive Runtime Restart (seconds)',
+            description: 'If the AI runtime records no heartbeat for this long, BossMod stops it and starts it again. Default 120.',
+        },
         world_state_coalesce_ms: {
             order: 86,
             tab: 'simulation',

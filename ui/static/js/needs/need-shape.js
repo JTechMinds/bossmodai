@@ -35,7 +35,7 @@ const BossModNeedShape = (() => {
     /**
      * @typedef {object} Need
      * @property {string} id
-     * @property {'consent'|'approval'|'blocked'|'error'|'process_checkin'|'connection'|'work_summary'} kind
+     * @property {'consent'|'approval'|'blocked'|'error'|'process_checkin'|'connection'|'work_summary'|'runtime'} kind
      * @property {string|null} agentId
      * @property {string} agentName
      * @property {string} title
@@ -252,6 +252,8 @@ const BossModNeedShape = (() => {
         // A floor suspended (its approvals, tasks and processes closed) and resumed (api/routes/floors.py).
         'floor_suspended',
         'floor_resumed',
+        // Restarts given up, and a restart (core/runtime/services.py); like `connection`, no KIND_TARGETS entry.
+        'runtime_worker_down', 'runtime_worker_restarted',
     ]);
 
     /**

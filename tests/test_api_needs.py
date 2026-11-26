@@ -20,7 +20,7 @@ REQUIRED_KEYS = {
     "id", "kind", "agent_id", "agent_name", "title", "sub",
     "created_at", "conversation_id", "actions",
 }
-VALID_KINDS = {"consent", "approval", "blocked", "error", "connection", "work_summary"}
+VALID_KINDS = {"consent", "approval", "blocked", "error", "connection", "work_summary", "runtime"}
 
 
 def setup_function() -> None:
@@ -183,6 +183,89 @@ def test_paused_connection_with_nothing_waiting_says_so(client: TestClient) -> N
     res = client.get("/api/needs", headers=_auth())
     item = next(n for n in res.json() if n["kind"] == "connection")
     assert item["sub"].startswith("Nothing is waiting on it. The provider said: ")
+
+
+def test_a_stopped_runtime_comes_first_with_restart_now_only_while_its_outage_lasts(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Restarts gave up: one item, about no agent and no conversation, in the same words as its Telegram card."""
+    from datetime import datetime, timezone
+
+    from core.runtime import runtime_services
+    from core.runtime.supervisor import WorkerOutage
+
+    _paused_connection()
+
+    def kinds() -> list[str]:
+        res = client.get("/api/needs", headers=_auth())
+        assert res.status_code == 200, res.text
+        return [n["kind"] for n in res.json()]
+
+    assert kinds() == ["connection"]
+
+    outage = WorkerOutage(since=datetime.now(timezone.utc), reason="it stopped responding", attempts=3)
+    monkeypatch.setattr(runtime_services, "_outage", outage)
+    res = client.get("/api/needs", headers=_auth())
+    assert res.status_code == 200, res.text
+    needs = res.json()
+    assert [n["kind"] for n in needs] == ["runtime", "connection"]
+    item = needs[0]
+    assert REQUIRED_KEYS <= set(item), f"missing keys: {REQUIRED_KEYS - set(item)}"
+    assert item["kind"] in VALID_KINDS
+    assert item == {
+        "id": "runtime:primary",
+        "kind": "runtime",
+        "card_kind": "runtime",
+        "agent_id": None,
+        "agent_name": None,
+        "title": "The AI runtime has stopped",
+        "sub": (
+            "Your agents can't work until it runs again. "
+            "BossMod tried to restart it 3 times; the last time, it stopped responding."
+        ),
+        "created_at": outage.since.isoformat(),
+        "conversation_id": None,
+        "actions": [
+            {"label": "Restart now", "method": "POST", "tone": "primary", "href": "/api/runtime/restart"},
+        ],
+    }
+
+    monkeypatch.setattr(runtime_services, "_outage", None)
+    assert kinds() == ["connection"]
+
+
+def test_restart_route_restarts_the_runtime_and_returns_its_state(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from core.runtime import runtime_services
+
+    calls: list[str] = []
+    payload = {"state": "running", "paused": False, "worker": {"state": "running", "healthy": True}}
+
+    async def restart() -> dict:
+        calls.append("restart")
+        return payload
+
+    monkeypatch.setattr(runtime_services, "restart_worker", restart)
+    res = client.post("/api/runtime/restart", headers=_auth())
+    assert res.status_code == 200, res.text
+    assert res.json() == payload
+    assert calls == ["restart"]
+
+
+def test_restart_route_503_is_the_cards_plain_error_line(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Needs card shows a failed action's detail as is, so it is operator copy, never the exception."""
+    from core.runtime import runtime_services
+
+    async def restart() -> dict:
+        raise TimeoutError()
+
+    monkeypatch.setattr(runtime_services, "restart_worker", restart)
+    res = client.post("/api/runtime/restart", headers=_auth())
+    assert res.status_code == 503, res.text
+    assert res.json() == {"detail": "The AI runtime could not start. BossMod will try again on its own."}
 
 
 def test_retry_route_404_for_an_unknown_connection(client: TestClient) -> None:

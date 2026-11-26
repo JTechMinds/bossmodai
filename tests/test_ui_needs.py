@@ -114,6 +114,9 @@ def test_needs_harness() -> None:
         # A paused AI connection renders first, under "AI connections", with
         # Retry now and no "Show me".
         "connectionNeedRendersFirst": True,
+        # A stopped AI runtime whose restarts gave up renders ahead of even
+        # the connections, under "AI runtime", with Restart now and no "Show me".
+        "runtimeNeedRendersFirst": True,
         # A work summary too long for the settings: its button opens Settings
         # → System Settings → Context Window at the field, from the bell and
         # the toast, and its failed turn's diagnostic is neither an error card

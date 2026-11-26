@@ -384,6 +384,17 @@ _SEED_SETTINGS: list[tuple[str, str, str]] = [
     # How often the runtime worker stamps its heartbeat. Readers treat a
     # heartbeat older than 3x this as a dead worker (db/runtime_control.py).
     ("runtime_heartbeat_seconds", "5", "advanced"),
+    # Runtime worker supervision (core/runtime/services.py): a worker that
+    # stops unexpectedly is started again after the delay, at most the limit
+    # of times within the window; then the operator is told (a Need). A worker
+    # whose heartbeat has not moved for the unresponsive seconds is stopped
+    # and restarted under the same limit. Those seconds sit far above the 3x
+    # heartbeat display threshold on purpose: one slow prune must never kill
+    # a healthy worker.
+    ("runtime_worker_restart_delay_seconds", "5", "advanced"),
+    ("runtime_worker_restart_limit", "3", "advanced"),
+    ("runtime_worker_restart_window_minutes", "10", "advanced"),
+    ("runtime_worker_unresponsive_seconds", "120", "advanced"),
     # Attachments (paste/attach Phase-1)
     ("bossmod.attach.max_size_mb", "10", "advanced"),
     ("bossmod.attach.max_per_message", "5", "advanced"),

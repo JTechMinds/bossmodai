@@ -21,13 +21,16 @@ const BossModNeedsPopover = (() => {
     const FOCUSABLE = 'button, input';
 
     /**
-     * Rendering order. A paused AI connection comes first, because it is why
-     * other work is waiting; then decisions the operator owes, before reports.
+     * Rendering order. A stopped AI runtime comes first, because nothing works
+     * without it; then a paused AI connection, because it is why other work is
+     * waiting; then decisions the operator owes, before reports.
      */
     const KIND_ORDER = Object.freeze([
-        'connection', 'work_summary', 'consent', 'nest_git', 'approval', 'process_checkin', 'blocked', 'error',
+        'runtime', 'connection', 'work_summary', 'consent', 'nest_git', 'approval', 'process_checkin', 'blocked',
+        'error',
     ]);
     const KIND_LABELS = Object.freeze({
+        runtime: 'AI runtime',
         connection: 'AI connections',
         work_summary: 'Work summaries',
         consent: 'Folder access',

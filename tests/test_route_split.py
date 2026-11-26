@@ -158,6 +158,7 @@ EXPECTED_ROUTES = {
     (("GET",), "/api/runtime/contracts", "get_runtime_contracts"),
     (("GET",), "/api/runtime/state", "get_runtime_state"),
     (("PUT",), "/api/runtime/state", "set_runtime_state"),
+    (("POST",), "/api/runtime/restart", "restart_runtime"),
     (("PUT",), "/api/runtime/contracts", "set_runtime_contracts"),
     (("POST",), "/api/runtime/contracts/reset", "reset_runtime_contracts"),
     (("POST",), "/api/runtime/contracts/preview", "preview_runtime_contract"),
@@ -208,7 +209,7 @@ def _route_table():
 def test_public_route_table_unchanged() -> None:
     got = _route_table()
     assert got == EXPECTED_ROUTES
-    assert len(got) == 173
+    assert len(got) == 174
 
 
 def test_from_api_routes_import_router_still_works() -> None:

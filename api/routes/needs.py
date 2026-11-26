@@ -14,6 +14,8 @@ from fastapi import APIRouter
 
 import db
 from core.floors import is_on_vacation
+from core.runtime import runtime_services
+from core.runtime.supervisor import OUTAGE_TITLE
 from db.floors import suspended_floor_ids
 
 router = APIRouter()
@@ -66,6 +68,37 @@ def _out_of_service_agent_ids() -> frozenset[str]:
         for agent in db.list_agents()
         if is_on_vacation(agent) or (agent.floor_id or "") in suspended
     )
+
+
+def _runtime_needs() -> list[dict[str, Any]]:
+    """The one item for an AI runtime whose automatic restarts gave up, with Restart now.
+
+    Nothing works while the runtime worker is stopped, so like a paused
+    connection it belongs to no agent and no conversation (``agent_id`` and
+    ``conversation_id`` are ``None``). Its sub line is the same two plain
+    sentences its Telegram card carries (``WorkerOutage.describe``), never
+    exception text.
+
+    Returns:
+        One item while ``runtime_services.outage()`` is set; otherwise none.
+    """
+    outage = runtime_services.outage()
+    if outage is None:
+        return []
+    return [{
+        "id": "runtime:primary",
+        "kind": "runtime",
+        "card_kind": "runtime",
+        "agent_id": None,
+        "agent_name": None,
+        "title": OUTAGE_TITLE,
+        "sub": outage.describe(),
+        "created_at": outage.since.isoformat(),
+        "conversation_id": None,
+        "actions": [
+            {"label": "Restart now", "method": "POST", "tone": "primary", "href": "/api/runtime/restart"},
+        ],
+    }]
 
 
 def _connection_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
@@ -418,11 +451,14 @@ def _process_checkin_needs(cache: dict[str, str]) -> list[dict[str, Any]]:
 async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     """Everything currently waiting on an operator decision, newest first.
 
-    Aggregates paused AI connections (first: they are why other work is
-    waiting), pending consents (host path, shell executor, Nest git,
-    workspace preference), pending CLI approvals, blocked/stalled tasks,
-    background-process check-ins, and work summaries too long for the
-    work-context settings (no action: "Show me" opens the field).
+    Aggregates a stopped AI runtime whose automatic restarts gave up
+    (first: nothing works without it), paused AI connections (next: they
+    are why other work is waiting), pending consents (host path, shell
+    executor, Nest git, workspace preference), pending CLI approvals,
+    blocked/stalled tasks, background-process check-ins, and work summaries
+    too long for the work-context settings (no action: "Show me" opens the
+    field). The newest-first sort keeps that order only among items of the
+    same time; the client groups by kind.
     Error needs are client-held (the ``diagnostic`` topic) and never listed
     here. Every action decides something — approve, deny, nudge — and none is
     a read-only inspection: "Show me" is the client's way to look. Actions
@@ -439,7 +475,8 @@ async def list_needs(limit: int = 100) -> list[dict[str, Any]]:
     """
     cache: dict[str, str] = {}
     needs = (
-        _connection_needs(cache)
+        _runtime_needs()
+        + _connection_needs(cache)
         + _work_summary_needs(cache)
         + _consent_needs(cache)
         + _approval_needs(cache)

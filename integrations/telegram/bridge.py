@@ -1,9 +1,10 @@
 """BossMod AI — Telegram event bridge.
 
-Receives runtime events from ``RuntimeServices._dispatch_event()``.
+Receives runtime events from ``RuntimeServices._dispatch_event()`` and the
+app's own runtime announcements (``RuntimeServices._announce_runtime``).
 Forwards agent speech in each user's open DM or thread. Sends each CLI
-approval card and each process check-in card once to every allowlisted
-user. Nothing else reaches Telegram.
+approval card, each process check-in card and each "the AI runtime has
+stopped" card once to every allowlisted user. Nothing else reaches Telegram.
 """
 
 from __future__ import annotations
@@ -17,9 +18,11 @@ import db
 from core import config
 from core.bm_cli.process_announce import PROCESS_CHECKIN_EVENT
 from core.models.cli_policy import CLI_APPROVAL_KIND
+from core.runtime.supervisor import RUNTIME_DOWN_EVENT
 from integrations.telegram import formatters
 from integrations.telegram.auth import parse_allowed_user_ids
 from integrations.telegram.process_checkin import format_checkin_card
+from integrations.telegram.runtime_card import format_runtime_down_card
 from integrations.telegram.sessions import (
     list_sessions_for_agent,
     list_sessions_for_channel,
@@ -35,6 +38,8 @@ class TelegramEventBridge:
         self._bot = bot
         # Approval cards already sent, so each goes out once per app run.
         self._sent_approval_ids: set[str] = set()
+        # Runtime outages already announced, by their "since", likewise.
+        self._sent_outages: set[str] = set()
 
     async def dispatch(self, kind: str, data: dict[str, Any]) -> None:
         """Route one runtime event to the appropriate handler."""
@@ -89,9 +94,40 @@ class TelegramEventBridge:
             await self._send_safe(session.telegram_user_id, text, parse_mode="MarkdownV2")
 
     async def _on_activity(self, data: dict[str, Any]) -> None:
-        """Send the process check-in card; every other activity event stays in the app."""
-        if data.get("event", "") == PROCESS_CHECKIN_EVENT:
+        """Send the process check-in card or the runtime outage card; every other activity event stays in the app.
+
+        The outage card is for automatic restarts giving up
+        (``runtime_worker_down``). A successful restart is logged in the app
+        only, so ``runtime_worker_restarted`` sends nothing.
+        """
+        event = data.get("event", "")
+        if event == PROCESS_CHECKIN_EVENT:
             await self._send_process_checkin(data)
+        elif event == RUNTIME_DOWN_EVENT:
+            await self._send_runtime_down_card(data)
+
+    async def _send_runtime_down_card(self, data: dict[str, Any]) -> None:
+        """Send the "the AI runtime has stopped" card, with Restart now, once per outage to every allowlisted user.
+
+        Deduped by the outage's ``since`` (``data["extra"]["since"]``) for
+        this app run, like the approval cards by request id. The card's text
+        is the event's detail, the same two sentences the Needs card shows.
+
+        Raises:
+            ValueError: The event carries no ``since`` or no ``detail``;
+                ``RuntimeServices._give_up`` always sends both, so this is a bug.
+        """
+        extra = data.get("extra") or {}
+        since = extra.get("since")
+        detail = data.get("detail")
+        if not since or not detail:
+            raise ValueError(f"{RUNTIME_DOWN_EVENT} without a since or a detail: {data!r}")
+        if since in self._sent_outages:
+            return
+        self._sent_outages.add(since)
+        text, keyboard = format_runtime_down_card(detail)
+        for chat_id in self._card_recipients():
+            await self._send_safe(chat_id, text, parse_mode="MarkdownV2", reply_markup=keyboard)
 
     async def _send_process_checkin(self, data: dict[str, Any]) -> None:
         """Send the keep-or-stop card for one asked check-in to every allowlisted user.
