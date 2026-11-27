@@ -141,12 +141,14 @@ const BossModFileViewer = (() => {
 
     // ─── Panel ───
 
-    function render(payload, api, { saveUrl, rawUrl }) {
+    function render(payload, api, { saveUrl, rawUrl, linksFor }) {
         const name = String(payload.name || 'File');
         const image = CONTENT.isImage(name);
         const binary = payload.binary === true && !image;
         const editable = !binary && !image;
         let content = String(payload.content || '');
+        // How a link inside this file opens: built once, for both paints.
+        const links = linksFor(payload.path);
 
         // `md` is the shared prose vocabulary in css/markdown.css. Rendered
         // markdown had none until it existed: this pane painted headings and
@@ -177,7 +179,7 @@ const BossModFileViewer = (() => {
         function setMode(mode) {
             editing = mode === 'edit';
             if (editing) editor.value = content;
-            else CONTENT.renderInto(rendered, name, content);
+            else CONTENT.renderInto(rendered, name, content, links);
             rendered.hidden = editing;
             editor.hidden = !editing;
             save.hidden = !editing;
@@ -245,7 +247,7 @@ const BossModFileViewer = (() => {
         if (binary) {
             body.append(h('p', { class: 'place-empty-hint' }, BINARY_COPY));
         } else {
-            CONTENT.renderInto(rendered, name, content);
+            CONTENT.renderInto(rendered, name, content, links);
             body.append(rendered, editor);
         }
         if (payload.truncated) body.append(h('p', { class: 'file-view-meta' }, TRUNCATED_COPY));
@@ -281,29 +283,36 @@ const BossModFileViewer = (() => {
     /**
      * Open one file.
      *
-     * @param {string} path  Virtual path.
+     * The namespace decides all three endpoints together — the read, Save's
+     * PUT and the image preview's raw bytes — so they always address the
+     * place the file was read from.
+     *
+     * @param {string} path  Virtual path, in the namespace `agentId` names.
      * @param {object} deps
      * @param {Function} deps.api  Authenticated fetch helper, from ctx.
-     * @param {string} [deps.apiUrl]  A different read endpoint — the desk
-     *   browser reads an agent's desk rather than the company workspace.
-     * @param {string} [deps.saveUrl]  The PUT endpoint for Save; defaults to
-     *   `/api/company/files`.
-     * @param {string} [deps.rawUrl]  The raw-bytes base URL for image
-     *   previews; defaults to `/api/company/files/raw`.
-     *   `apiUrl`, `saveUrl` and `rawUrl` must address one namespace: a caller
-     *   that overrides `apiUrl` must override all three, or Save and preview
-     *   resolve the path somewhere it does not live.
+     * @param {string} [deps.agentId]  Non-empty: the path is in that agent's
+     *   desk namespace (`/api/agents/{id}/desk`), as `/me` paths are. Empty
+     *   or absent: the company workspace (`/api/company/files`).
+     * @param {(filePath: string) => MarkdownLinks} deps.linksFor  How links
+     *   inside a markdown file open, given the path the server read it at.
+     *   Required, so a viewer whose links lead nowhere cannot be opened by
+     *   accident; places/files/path-opener.js is the one caller and builds it.
      * @returns {Promise<void>}
-     * @throws {Error} When the file cannot be read. The caller decides what to
-     *   say; swallowing it would leave a click that does nothing.
+     * @throws {Error} When `api` or `linksFor` is missing, or when the file
+     *   cannot be read. The caller decides what to say; swallowing it would
+     *   leave a click that does nothing.
      */
     async function open(path, deps) {
-        const {
-            api, apiUrl, saveUrl = '/api/company/files', rawUrl = '/api/company/files/raw',
-        } = deps || {};
+        const { api, agentId, linksFor } = deps || {};
         if (typeof api !== 'function') throw new Error('[file-viewer] deps.api is required');
+        if (typeof linksFor !== 'function') throw new Error('[file-viewer] deps.linksFor is required');
         close();
-        const url = apiUrl || `/api/company/files?path=${encodeURIComponent(path)}`;
+        const desk = agentId ? `/api/agents/${encodeURIComponent(agentId)}/desk` : '';
+        const url = desk
+            ? `${desk}?path=${encodeURIComponent(path)}`
+            : `/api/company/files?path=${encodeURIComponent(path)}`;
+        const saveUrl = desk || '/api/company/files';
+        const rawUrl = desk ? `${desk}/raw` : '/api/company/files/raw';
         let payload;
         try {
             const res = await api(url, { cache: 'no-store' });
@@ -313,7 +322,7 @@ const BossModFileViewer = (() => {
             console.error('[file-viewer] could not load the file', err);
             throw err;
         }
-        render(payload, api, { saveUrl, rawUrl });
+        render(payload, api, { saveUrl, rawUrl, linksFor });
     }
 
     /**

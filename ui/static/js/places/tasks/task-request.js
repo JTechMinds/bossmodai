@@ -40,23 +40,30 @@ const BossModTaskRequest = (() => {
      * @param {object[]} deps.tasks  The page's list, to find the parent.
      * @param {(agentId: string) => (string|undefined)} deps.colorOf  Roster
      *   colours for an agent author's chip.
+     * @param {Function} deps.api  Authenticated fetch helper: a path link in
+     *   a message opens through it, as `task`'s assignee sees the path when
+     *   the message has no agent author — for a parent's request too, since
+     *   this task's assignee is the one working from it (task-message.js).
      * @returns {{element: HTMLElement, measure: () => void}|null} null when
      *   neither the task nor its parent has a request. `measure` decides
      *   every message's clamp and must be called once `element` is on screen.
-     * @throws {Error} When the list or colorOf is missing (a forwarded
+     * @throws {Error} When the list, colorOf or api is missing (a forwarded
      *   request could not be looked up, which is a different fact), or when
      *   a message has no content, no known author type, or a non-human author
      *   without a name: a made-up line would not be what the agent reads.
      */
     function section(task, deps) {
-        const { tasks, colorOf } = deps || {};
+        const { tasks, colorOf, api } = deps || {};
         if (!Array.isArray(tasks)) throw new Error('[task-request] section needs the task list');
         if (typeof colorOf !== 'function') throw new Error('[task-request] section needs colorOf');
+        if (typeof api !== 'function') throw new Error('[task-request] section needs api');
         const { messages, parent } = sourceOf(task, tasks);
         if (messages.length === 0) return null;
         const rows = messages.map((message) => BossModTaskMessage.row(message, {
             colorOf,
             moreLabel: 'Show the full message',
+            api,
+            assigneeOf: () => task.assigned_to,
         }));
         const what = parent
             ? `From the parent task, “${parent.title || 'Untitled task'}”, word for word.`

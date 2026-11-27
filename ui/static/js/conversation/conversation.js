@@ -25,9 +25,9 @@ const BossModConversation = (() => {
         const cardCtx = { api, navigate, openDesk };
 
         function openDeliverable(path, agentId) {
-            if (typeof BossModTaskDeliverables !== 'undefined'
-                && typeof BossModTaskDeliverables.openDeliverablePath === 'function') {
-                return BossModTaskDeliverables.openDeliverablePath(api, path, agentId || '');
+            if (typeof BossModPathOpener !== 'undefined'
+                && typeof BossModPathOpener.openPath === 'function') {
+                return BossModPathOpener.openPath(api, path, agentId || '');
             }
             // The deliverable opener is not loaded: the desk of the agent who
             // wrote it, opened on the path. A desk needs an owner.
@@ -50,7 +50,7 @@ const BossModConversation = (() => {
         let pendingLive = null;
 
         const transcript = BossModTranscript.createTranscript({
-            renderMessage: BossModMessage.renderMessage,
+            renderMessage: (message) => BossModMessage.renderMessage(message, cardCtx),
             renderEventCard: (message) => BossModEventCards.renderEventCard(message, cardCtx),
         });
 

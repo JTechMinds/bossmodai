@@ -18,6 +18,7 @@ FILES = JS / "places" / "files"
 # The order the Files harness evaluates its modules in.
 FILES_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "core" / "store.js",
     JS / "core" / "bus.js",
@@ -35,6 +36,8 @@ FILES_MODULES = [
     FILES / "file-form.js",
     FILES / "file-ops.js",
     FILES / "file-viewer.js",
+    # The place shows a file through the one opener; it calls the viewer.
+    FILES / "path-opener.js",
     FILES / "files-data.js",
     FILES / "host-roots.js",
     # The Files place's folder opener delegates the 409 handler prompt to the
@@ -204,13 +207,24 @@ def test_company_files_named_path_harness() -> None:
     assert company_line["painted"] is True
     # A file directly under the root: a lone house would say nothing.
     assert payload["viewerRootFileLine"]["rows"] == 0
-    # Save and image preview address the namespace the file was read from:
-    # a desk opener's endpoints are used, and the company ones are the default.
+    # The read, Save and image preview address the namespace the file was
+    # read from: an agentId means that agent's desk, and the company
+    # endpoints are the default.
     desk = payload["viewerDeskEndpoints"]
+    assert desk["readCalls"] == [
+        "/api/agents/a1/desk?path=%2Fme%2Fa.md", "/api/agents/a1/desk?path=%2Fme%2Fpic.png",
+    ]
     assert desk["saveCalls"] == ["/api/agents/a1/desk"]
     assert desk["saveBody"] == {"path": "/me/a.md", "content": "edited"}
     assert desk["rawCalls"] == ["/api/agents/a1/desk/raw?path=%2Fme%2Fpic.png"]
     company = payload["viewerCompanyEndpoints"]
+    assert company["readCalls"] == [
+        "/api/company/files?path=%2Fme%2Fa.md", "/api/company/files?path=%2Fme%2Fpic.png",
+    ]
     assert company["saveCalls"] == ["/api/company/files"]
     assert company["saveBody"] == {"path": "/me/a.md", "content": "edited"}
     assert company["rawCalls"] == ["/api/company/files/raw?path=%2Fme%2Fpic.png"]
+    # A viewer with dead links cannot be opened; the links built for the
+    # file's own path reach markdown on both paints (first, and back to View).
+    assert payload["viewerNeedsLinksFor"] is True
+    assert payload["viewerLinksInBothPaints"] is True

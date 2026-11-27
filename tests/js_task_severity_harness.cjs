@@ -16,7 +16,7 @@ installDom();
 installIconsStub();
 global.lucide = null;
 global.BossModMarkdown = { render: (text) => [document.createTextNode(text)] };
-/** Every path the file viewer was asked to open. */
+/** Every path the file viewer was asked to open, through the real path opener. */
 const viewed = [];
 global.BossModFileViewer = { open: (path) => { viewed.push(path); return Promise.resolve(); } };
 
@@ -27,8 +27,9 @@ const NAMES = [
     "BossModAutoGrow",
     "BossModFileListing",
     "BossModFactList",
+    "BossModMarkdownLinks",
     "BossModClampedMarkdown",
-    "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModTaskCard", "BossModTaskDeliverables",
+    "BossModTasksColumns", "BossModTasksData", "BossModTaskChecklist", "BossModPathOpener", "BossModTaskCard", "BossModTaskDeliverables",
     "BossModTaskEvents", "BossModTaskSteps", "BossModTaskStepsHistory", "BossModTaskDetailSections",
     "BossModTaskMessage", "BossModTaskRequest",
     "BossModAssignOutcomes", "BossModAssignForm",

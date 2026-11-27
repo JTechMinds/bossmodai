@@ -150,6 +150,7 @@ API_BY_INJECTION = {
     # The Files place and its dialogs take `api` from the shell's ctx and hand
     # it down; none of them names the global.
     "places/files/file-viewer.js",
+    "places/files/path-opener.js",
     "places/files/files-data.js",
     # Metrics reads GET /api/metrics/dashboard through the injected helper.
     "places/metrics/metrics-place.js",

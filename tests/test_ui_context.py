@@ -19,6 +19,7 @@ CONTEXT_MODULES = [
     # The shared REST client: BossModScheduleApi words refusals with its formatError.
     JS / "api-client.js",
     JS / "core" / "dom.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "core" / "clamped-markdown.js",
     JS / "core" / "fact-list.js",
@@ -90,6 +91,7 @@ CONTEXT_MODULES = [
     JS / "places" / "files" / "file-form.js",
     JS / "places" / "files" / "file-ops.js",
     JS / "places" / "files" / "file-viewer.js",
+    JS / "places" / "files" / "path-opener.js",
     CONTEXT / "floor-plan.js",
     CONTEXT / "mini-office.js",
     CONTEXT / "office-chatter.js",
@@ -456,8 +458,9 @@ def test_desk_notes_read_the_workspace_not_a_column() -> None:
     # No schema work: this reads the desk endpoint that already exists.
     assert "/desk?path=" in notes
     assert "done_fail_bar" not in notes, "Notes is the workspace now, not the stand-in"
-    # One viewer, the same one the desk browser opens.
-    assert "BossModFileViewer.open(" in notes
+    # One viewer, the same one the desk browser opens, through the one
+    # opener that shows any file.
+    assert "BossModPathOpener.openFile(" in notes
     assert "innerHTML" not in notes
 
     # The stand-in was not deleted with the slot it occupied: the agent's

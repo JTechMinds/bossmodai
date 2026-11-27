@@ -21,9 +21,10 @@
  * is what keeps `<span>` off the allowlist entirely — hljs emits its spans
  * into a tree nothing inspects again.
  *
- * The vendored marked v15 carries no mention of `javascript` and dropped its
- * `sanitize` option four majors ago. Nothing upstream is filtering URL
- * schemes; that check is here or it does not happen.
+ * Links and URL schemes are core/markdown-links.js's, which loads first: the
+ * walk hands it every `<a>` that survives the attribute allowlist, and it
+ * decides whether that anchor is an external link, a path link that opens in
+ * the app, or plain text.
  */
 const BossModMarkdown = (() => {
 
@@ -69,9 +70,6 @@ const BossModMarkdown = (() => {
         INPUT: ['type', 'checked', 'disabled'],
     });
 
-    /** What an anchor may point at. Everything else renders as its own text. */
-    const ALLOWED_SCHEMES = Object.freeze(['http:', 'https:', 'mailto:']);
-
     /** A fence's language, as marked writes it. */
     const LANGUAGE_CLASS = /^language-([a-z0-9+#-]+)$/;
 
@@ -115,9 +113,10 @@ const BossModMarkdown = (() => {
      * recognise.
      *
      * @param {HTMLElement} el
+     * @param {MarkdownLinks} [links]  Passed on to the promoted children.
      * @returns {void}
      */
-    function unwrap(el) {
+    function unwrap(el, links) {
         const parent = el.parentNode;
         if (!parent) {
             el.remove();
@@ -126,7 +125,7 @@ const BossModMarkdown = (() => {
         const moved = Array.from(el.childNodes);
         for (const child of moved) parent.insertBefore(child, el);
         el.remove();
-        for (const child of moved) sanitizeNode(child);
+        for (const child of moved) sanitizeNode(child, links);
     }
 
     /**
@@ -140,39 +139,6 @@ const BossModMarkdown = (() => {
         for (const { name } of Array.from(el.attributes)) {
             if (!allowed.includes(name)) el.removeAttribute(name);
         }
-    }
-
-    /**
-     * Resolve an anchor's target and decide whether it may stay one.
-     *
-     * `target` and `rel` are OVERWRITTEN rather than merely permitted: an
-     * agent naming its own `target="_self"` would otherwise navigate the shell
-     * away from the app, and a new tab must never be handed a window
-     * reference. A rejected scheme is logged rather than swallowed — the
-     * anchor's text still renders, which is the documented behaviour, not a
-     * failure hidden behind a default.
-     *
-     * @param {HTMLElement} el
-     * @returns {boolean} false when the link must be unwrapped to its text.
-     */
-    function hardenLink(el) {
-        const href = el.getAttribute('href');
-        if (!href) return false;
-        let url;
-        try {
-            url = new URL(href, document.baseURI);
-        } catch (err) {
-            console.warn('[markdown] unparseable link; rendering it as text', href, err);
-            return false;
-        }
-        if (!ALLOWED_SCHEMES.includes(url.protocol)) {
-            console.warn('[markdown] refused link scheme; rendering it as text', url.protocol);
-            return false;
-        }
-        el.setAttribute('href', url.href);
-        el.setAttribute('target', '_blank');
-        el.setAttribute('rel', 'noopener noreferrer');
-        return true;
     }
 
     /**
@@ -244,9 +210,10 @@ const BossModMarkdown = (() => {
      * Sanitise one node in place, descending into whatever survives.
      *
      * @param {Node} node
+     * @param {MarkdownLinks} [links]  The surface's path opener (hardenLink).
      * @returns {void}
      */
-    function sanitizeNode(node) {
+    function sanitizeNode(node, links) {
         if (node.nodeType === TEXT_NODE) return;
         // Comments and anything else that is neither text nor an element. A
         // comment carries no information the operator asked for and is the
@@ -268,12 +235,12 @@ const BossModMarkdown = (() => {
         }
         const allowed = ALLOWED[tag];
         if (!allowed) {
-            unwrap(node);
+            unwrap(node, links);
             return;
         }
         stripAttributes(node, allowed);
-        if (tag === 'A' && !hardenLink(node)) {
-            unwrap(node);
+        if (tag === 'A' && !BossModMarkdownLinks.hardenLink(node, links)) {
+            unwrap(node, links);
             return;
         }
         if (tag === 'INPUT' && !hardenCheckbox(node)) {
@@ -282,7 +249,7 @@ const BossModMarkdown = (() => {
         }
         if (tag === 'CODE') keepLanguageClass(node);
         if (tag === 'TABLE') wrapForScroll(node);
-        sanitize(node);
+        sanitize(node, links);
     }
 
     /**
@@ -293,12 +260,16 @@ const BossModMarkdown = (() => {
      * be tested directly (tests/js_markdown_harness.cjs).
      *
      * @param {Node} root  Mutated in place.
+     * @param {MarkdownLinks} [links]  How this surface opens path links;
+     *   absent, they render as plain text.
      * @returns {void}
+     * @throws {Error} When `links` is given without both functions.
      */
-    function sanitize(root) {
+    function sanitize(root, links) {
+        BossModMarkdownLinks.assertLinks(links);
         // A snapshot, because unwrapping a child rewrites this list underneath
         // the walk.
-        for (const node of Array.from(root.childNodes)) sanitizeNode(node);
+        for (const node of Array.from(root.childNodes)) sanitizeNode(node, links);
     }
 
     /**
@@ -372,14 +343,18 @@ const BossModMarkdown = (() => {
      * spread it just as happily.
      *
      * @param {string} text
+     * @param {MarkdownLinks} [links]  How this surface opens path links;
+     *   absent, they render as plain text.
      * @returns {Node[]} Empty for empty input.
+     * @throws {Error} When `links` is given without both functions.
      */
-    function render(text) {
+    function render(text, links) {
+        BossModMarkdownLinks.assertLinks(links);
         const source = String(text || '');
         if (!source) return [];
         const parsed = new DOMParser().parseFromString(
             marked.parse(source, { gfm: true, breaks: true }), 'text/html');
-        sanitize(parsed.body);
+        sanitize(parsed.body, links);
         highlightCode(parsed.body);
         return Array.from(parsed.body.childNodes);
     }
@@ -389,10 +364,12 @@ const BossModMarkdown = (() => {
      *
      * @param {HTMLElement} el
      * @param {string} text
+     * @param {MarkdownLinks} [links]  As for render().
      * @returns {void}
+     * @throws {Error} When `links` is given without both functions.
      */
-    function renderInto(el, text) {
-        el.replaceChildren(...render(text));
+    function renderInto(el, text, links) {
+        el.replaceChildren(...render(text, links));
     }
 
     return { render, renderInto, sanitize, withHighlighter };

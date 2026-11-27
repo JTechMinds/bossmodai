@@ -35,6 +35,7 @@ ARCHIVE_OPEN_TASKS_HARNESS = Path(__file__).resolve().parent / "js_archive_open_
 # The conversation stack, in the order the archive harness evaluates it.
 CONVERSATION_STACK = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
@@ -93,6 +94,7 @@ CONVERSATION_STACK = [
 # builds its Rewind and paints the agent `⋯`'s rows).
 PRESENCE_STACK = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",

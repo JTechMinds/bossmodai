@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 JS = ROOT / "ui" / "static" / "js"
 CSS = ROOT / "ui" / "static" / "css"
 MARKDOWN = JS / "core" / "markdown.js"
+MARKDOWN_LINKS = JS / "core" / "markdown-links.js"
 STYLESHEET = CSS / "markdown.css"
 HTML = ROOT / "ui" / "templates" / "index.html"
 HARNESS = Path(__file__).resolve().parent / "js_markdown_harness.cjs"
@@ -43,7 +44,7 @@ def test_markdown_harness() -> None:
     nodes, and that is what runs here.
     """
     result = subprocess.run(
-        ["node", str(HARNESS), str(MARKDOWN)],
+        ["node", str(HARNESS), str(MARKDOWN_LINKS), str(MARKDOWN)],
         check=False,
         capture_output=True,
         text=True,
@@ -63,7 +64,23 @@ def test_markdown_harness() -> None:
         "dataHrefUnwrapped": True,
         "httpsHrefKeptAndHardened": True,
         "mailtoHrefKept": True,
-        "relativeHrefResolved": True,
+        # A workspace path is no URL: resolved against the page it became a
+        # dead browser tab. It is plain text where the surface has no opener,
+        # and otherwise an href-less link that opens through it — by click or
+        # Enter, never Space — and says so when it cannot.
+        "pathHrefWithoutLinksIsText": True,
+        "pathHrefBecomesPathLink": True,
+        "pathLinkResolveNullIsText": True,
+        "fragmentOnlyHrefIsText": True,
+        "pathHrefDropsQueryFragmentAndDecodes": True,
+        "protocolRelativeStaysExternal": True,
+        "pathLinkClickOpens": True,
+        "pathLinkEnterOpens": True,
+        "pathLinkSpaceDoesNotOpen": True,
+        "pathLinkFailureMarked": True,
+        "pathLinkRetryClearsFailure": True,
+        "agentRoleTabindexClassStripped": True,
+        "linksMissingOpenThrows": True,
         "targetInjectionOverwritten": True,
         "imageBecomesAltText": True,
         # Unwrapped, never deleted: text is not lost to a tag we do not know.
@@ -141,7 +158,8 @@ def test_the_allowlist_is_a_whitelist_not_a_blocklist() -> None:
     """
     source = _read(MARKDOWN)
     assert "const ALLOWED = Object.freeze({" in source
-    assert "const ALLOWED_SCHEMES = Object.freeze(" in source
+    # The scheme allowlist lives with the rest of what an anchor may be.
+    assert "const ALLOWED_SCHEMES = Object.freeze(" in _read(MARKDOWN_LINKS)
     # The one thing that must never be reachable through an allowlist entry.
     for tag in ("'SCRIPT'", "'STYLE'", "'IFRAME'", "'OBJECT'", "'EMBED'"):
         assert tag in source.split("const STRIPPED", 1)[1].split("}", 1)[0], (
@@ -156,12 +174,15 @@ def test_markdown_is_loaded_and_styled() -> None:
     """The module and its prose vocabulary are both wired into the page."""
     html = _read(HTML)
     assert "static_url('js/core/markdown.js')" in html
+    assert "static_url('js/core/markdown-links.js')" in html
     assert "static_url('css/markdown.css')" in html
     # After the vendored library it reads and the loader it fetches
     # highlight.js through, and before every surface that renders a message.
     scripts = re.findall(r"<script\b[^>]*\bsrc=\"\{\{ static_url\('([^']+\.js)'\) \}\}\"", html)
     assert scripts.index("js/vendor/marked.min.js") < scripts.index("js/core/markdown.js")
     assert scripts.index("js/core/lazy-script.js") < scripts.index("js/core/markdown.js")
+    # markdown.js hands every anchor to markdown-links.js, so it loads first.
+    assert scripts.index("js/core/markdown-links.js") < scripts.index("js/core/markdown.js")
     # highlight.js is not a script tag: markdown.js loads it on the first
     # fence that declares a language, from the URL this meta carries.
     assert "js/vendor/highlight.min.js" not in scripts

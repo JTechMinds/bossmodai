@@ -20,7 +20,7 @@ installIconsStub();
 
 const paths = process.argv.slice(2);
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdownLinks", "BossModMarkdown", "BossModAvatar", "BossModSwitch", "BossModStore", "BossModBus", "BossModPresence", "BossModOperatorInvalidate", "BossModFormat", "BossModGates",
     "BossModConsentCard", "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModYoloMode", "BossModMenu", "BossModMenuButton", "BossModEmptyState",
     "BossModNoteGroup", "BossModTranscript", "BossModTranscriptCache", "BossModMessage", "BossModEventCards",
     "BossModTitleRename", "BossModChromeMenu", "BossModChromeSwitch", "BossModConversationChrome",
@@ -383,6 +383,10 @@ async function main() {
         );
     }
 
+    // A turn rendered outside a conversation still needs the card context's
+    // opener; these checks are about the chrome, so it opens nothing.
+    const bareCtx = { openDeliverable: async () => {}, agentId: null };
+
     // Live miss after #98: an agent face with showAuthor off still paints
     // quiet .msg-author. TheAuditor's top turn was an orphan initial.
     const auditorTurn = global.BossModMessage.renderMessage({
@@ -394,7 +398,7 @@ async function main() {
         showAuthor: false,
         text: "Review parked.",
         createdAt: "",
-    });
+    }, bareCtx);
     const auditorFace = auditorTurn.querySelector(".msg-face");
     const auditorName = auditorTurn.querySelector(".msg-author");
     const auditorBubble = auditorTurn.querySelector(".msg");
@@ -428,12 +432,60 @@ async function main() {
         showAuthor: false,
         text: "Ship it.",
         createdAt: "",
-    });
+    }, bareCtx);
     const humanFace = humanTurn.querySelector(".msg-face");
     const humanFaceSaysYou = Boolean(humanFace && humanFace.textContent === "Y");
     if (!humanFaceSaysYou) {
         throw new Error(`human face must be "You": face=${humanFace && humanFace.textContent}`);
     }
+
+    // ─── agentPathLinksOpenAsTheAuthor / humanPathLinksOpenAsTheDmAgent / renderMessageNeedsCtx ───
+    // A body's workspace path opens through the conversation's deliverable
+    // opener, as its author sees it, else as the DM's agent does; only an
+    // absolute path is a link. The markdown stub passes text through, so the
+    // `links` the body is rendered with is captured instead.
+    const realRender = global.BossModMarkdown.render;
+    const renderedLinks = [];
+    global.BossModMarkdown.render = (text, links) => {
+        renderedLinks.push(links);
+        return realRender(text, links);
+    };
+    const linkOpens = [];
+    const dmCtx = {
+        openDeliverable: (path, agentId) => { linkOpens.push({ path, agentId }); },
+        agentId: "dm-agent",
+    };
+    global.BossModMessage.renderMessage({
+        kind: "message", key: "link-agent", author: "agent", authorAgentId: "a7", authorName: "Brad",
+        text: "[verdict](/projects/x.md)", createdAt: "",
+    }, dmCtx);
+    const agentLinks = renderedLinks.pop();
+    await agentLinks.open("/projects/x.md");
+    const agentPathLinksOpenAsTheAuthor = agentLinks.resolve("/projects/x.md") === "/projects/x.md"
+        && agentLinks.resolve("docs/x.md") === null
+        && JSON.stringify(linkOpens) === JSON.stringify([{ path: "/projects/x.md", agentId: "a7" }]);
+    if (!agentPathLinksOpenAsTheAuthor) {
+        throw new Error(`an agent's path link must open as its author: ${JSON.stringify(linkOpens)}`);
+    }
+    linkOpens.length = 0;
+    global.BossModMessage.renderMessage({
+        kind: "message", key: "link-human", author: "human", authorName: "Jordan",
+        text: "[plan](/me/plan.md)", createdAt: "",
+    }, dmCtx);
+    await renderedLinks.pop().open("/me/plan.md");
+    const humanPathLinksOpenAsTheDmAgent = JSON.stringify(linkOpens)
+        === JSON.stringify([{ path: "/me/plan.md", agentId: "dm-agent" }]);
+    if (!humanPathLinksOpenAsTheDmAgent) {
+        throw new Error(`the operator's path link must open as the DM's agent: ${JSON.stringify(linkOpens)}`);
+    }
+    global.BossModMarkdown.render = realRender;
+    let renderMessageNeedsCtx = false;
+    try {
+        global.BossModMessage.renderMessage({ kind: "message", key: "no-ctx", author: "agent", text: "x", createdAt: "" });
+    } catch (err) {
+        renderMessageNeedsCtx = err.message === "[message] renderMessage needs ctx.openDeliverable";
+    }
+    if (!renderMessageNeedsCtx) throw new Error("renderMessage without ctx must throw, not render dead links");
 
     // ─── cacheSkipsLoading ───
     // A re-click paints from the cache with no flash of an empty room.
@@ -1781,7 +1833,7 @@ async function main() {
     const shotAtt = { id: "att-1", file_name: "shot.png", file_size: 3, preview_tier: "image", company_path: "/lobby/.attachments/direct/a/u_shot.png" };
     const renderAtts = (atts) => BossModMessage.renderMessage({
         kind: "message", key: `k-${atts.map((a) => a.id).join("-")}`, author: "human", text: "", createdAt: "", attachments: atts,
-    });
+    }, { openDeliverable: async () => {}, agentId: null });
     const firstPaint = renderAtts([shotAtt]);
     for (let i = 0; i < 5; i += 1) await tick();
     const secondPaint = renderAtts([shotAtt]);
@@ -1944,6 +1996,9 @@ async function main() {
         faceLowerLeftBesideBubble,
         noOrphanAgentFace,
         humanFaceSaysYou,
+        agentPathLinksOpenAsTheAuthor,
+        humanPathLinksOpenAsTheDmAgent,
+        renderMessageNeedsCtx,
         turnGap,
         titleOpensEditOnEnter,
         saveActionAppearsBesideArchive,

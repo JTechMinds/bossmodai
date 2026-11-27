@@ -451,6 +451,10 @@
 .msg-human .md a { color: var(--accent-deep); }
 .msg-human .md :not(pre) > code { background: var(--panel); }
 
+/* A failed path link's --alert is 4.16 on this ground, under AA; the ink
+   variant is 5.68. On the agent's --bg, --alert itself is 4.57. */
+.msg-human .md .md-path-link.is-failed { color: var(--alert-ink); }
+
 .msg-agent {
   background: var(--bg);
   color: var(--ink);

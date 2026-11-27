@@ -18,6 +18,7 @@ HARNESS = Path(__file__).resolve().parent / "js_lazy_script_harness.cjs"
 MODULES = [
     JS / "core" / "dom.js",
     JS / "core" / "lazy-script.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "places" / "files" / "file-content.js",
     JS / "core" / "data-table.js",

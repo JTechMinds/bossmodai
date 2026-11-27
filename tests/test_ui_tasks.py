@@ -66,7 +66,10 @@ DETAIL_MODULES = [
     JS / "core" / "autogrow.js",
     # The Edit mode file picker draws the desk's crumbs and rows.
     JS / "core" / "file-listing.js",
-    JS / "core" / "fact-list.js", JS / "core" / "clamped-markdown.js",
+    JS / "core" / "fact-list.js",
+    # A saved message's path links resolve with the conversation rule.
+    JS / "core" / "markdown-links.js",
+    JS / "core" / "clamped-markdown.js",
     TASKS / "tasks-columns.js", TASKS / "tasks-data.js", TASKS / "task-checklist.js",
     TASKS / "task-deliverables.js",
     TASKS / "task-events.js",
@@ -94,9 +97,12 @@ DETAIL_MODULES = [
 
 SEVERITY_HARNESS = Path(__file__).resolve().parent / "js_task_severity_harness.cjs"
 
-# The detail's chain plus the card, which loads after the data layer it reads.
+# The detail's chain plus the card, which loads after the data layer it reads,
+# and the real path opener a reference card opens through (the file viewer it
+# calls is the harness's recording stub).
 SEVERITY_MODULES = [
     *DETAIL_MODULES[: DETAIL_MODULES.index(TASKS / "task-deliverables.js")],
+    JS / "places" / "files" / "path-opener.js",
     TASKS / "task-card.js",
     *DETAIL_MODULES[DETAIL_MODULES.index(TASKS / "task-deliverables.js"):],
 ]
@@ -633,13 +639,24 @@ def test_task_detail_harness() -> None:
         "forwardedRequestNamesTheParent": True,
         "noRequestNoSection": True,
         "malformedRequestThrows": True,
+        # A path in a saved message opens in the app, as its agent author
+        # sees it, else as this task's current assignee does (read at click
+        # time); only an absolute path is a link, and nothing renders a link
+        # it could not open.
+        "requestSectionNeedsApi": True,
+        "messageLinksResolveAbsolutePaths": True,
+        "requestLinksOpenAsAuthorElseAssignee": True,
+        "messageRowNeedsApiAndAssigneeOf": True,
+        "messageLinksReadTheAssigneeWhenClicked": True,
         "requestSitsAboveTheTaskInViewAndEditMode": True,
         # Before this task (task-origin.js): its four states, the toggle's
         # aria-expanded, and the forwarded label.
         "originLoadsThenRemovesItselfWhenNone": True,
         "originOwnIsCollapsedThenShown": True,
+        "originLinksOpenAsTheAssignee": True,
         "originForwardedNamesTheParent": True,
         "originErrorSaysSoAndRetries": True,
+        "originSectionNeedsAssigneeOf": True,
         # What the task's work has used (task-usage.js): its four states (none
         # hides in place and shows live on the first work turn), the three
         # facts' words, its place in the facts grid, and the live re-read,

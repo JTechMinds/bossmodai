@@ -15,9 +15,10 @@ const { installDom } = require("./js_fake_dom.cjs");
 
 const documentStub = installDom();
 
+// argv: [2] core/markdown-links.js [3] core/markdown.js, in index.html order.
 const paths = process.argv.slice(2);
-if (paths.length !== 1) {
-    throw new Error(`expected 1 module path, got ${paths.length}`);
+if (paths.length !== 2) {
+    throw new Error(`expected 2 module paths, got ${paths.length}`);
 }
 
 // ─── The two vendored globals the module reads ───
@@ -54,7 +55,8 @@ global.hljs = {
     },
 };
 
-eval(`${fs.readFileSync(paths[0], "utf8")}\n;global.BossModMarkdown = BossModMarkdown;\n`);
+eval(`${fs.readFileSync(paths[0], "utf8")}\n;global.BossModMarkdownLinks = BossModMarkdownLinks;\n`);
+eval(`${fs.readFileSync(paths[1], "utf8")}\n;global.BossModMarkdown = BossModMarkdown;\n`);
 const { sanitize, render } = global.BossModMarkdown;
 
 // ─── Tree builders ───
@@ -166,14 +168,128 @@ function check(name, value) {
         && node.getAttribute("href") === "mailto:ops@example.com");
 }
 
-// ─── relativeHrefResolved ───
-// Resolved against the document base rather than rejected: a relative link is
-// the app's own route, and `new URL` needs the base to say so.
+/**
+ * A `links` that records what it was asked, resolving every path to itself
+ * unless a case overrides a member.
+ *
+ * @param {object} [overrides]  Replacement `resolve` / `open`.
+ * @returns {{links: object, seen: {resolved: string[], opened: string[]}}}
+ */
+function recordingLinks(overrides) {
+    const seen = { resolved: [], opened: [] };
+    const links = {
+        resolve: (path) => { seen.resolved.push(path); return path; },
+        open: (path) => { seen.opened.push(path); },
+        ...overrides,
+    };
+    return { links, seen };
+}
+
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+
+// ─── pathHrefWithoutLinksIsText ───
+// A workspace path is not a URL. Resolved against the page's base it became
+// a dead http://127.0.0.1:…/projects/x.md tab; a surface that passes no
+// opener shows the link's text instead.
 {
-    const node = el("a", { href: "/files" }, "files");
+    const root = body(el("p", null, el("a", { href: "/projects/x.md" }, "the verdict")));
+    sanitize(root);
+    check("pathHrefWithoutLinksIsText",
+        tags(root).join(",") === "P" && root.textContent === "the verdict");
+}
+
+// ─── pathHrefBecomesPathLink ───
+// No href at all: the http(s) interceptor would steal any href, and a
+// middle-click would still reach the dead page. The tooltip is the path the
+// surface resolved, and the agent's own target/rel/title do not survive.
+{
+    const { links } = recordingLinks({ resolve: (path) => `/resolved${path}` });
+    const node = el("a", { href: "/projects/x.md", title: "agent title", target: "_self", rel: "opener" }, "x");
+    sanitize(body(node), links);
+    check("pathHrefBecomesPathLink",
+        node.tagName === "A"
+        && node.getAttribute("href") === null
+        && node.getAttribute("target") === null
+        && node.getAttribute("rel") === null
+        && node.getAttribute("role") === "link"
+        && node.getAttribute("tabindex") === "0"
+        && node.getAttribute("class") === "md-path-link"
+        && node.getAttribute("title") === "/resolved/projects/x.md");
+}
+
+// ─── pathLinkResolveNullIsText ───
+// A path the surface cannot place (a relative one in chat) is its text.
+{
+    const { links, seen } = recordingLinks({ resolve: (path) => { seen.resolved.push(path); return null; } });
+    const root = body(el("a", { href: "docs/x.md" }, "docs"));
+    sanitize(root, links);
+    check("pathLinkResolveNullIsText",
+        tags(root).length === 0 && root.textContent === "docs" && same(seen.resolved, ["docs/x.md"]));
+}
+
+// ─── fragmentOnlyHrefIsText ───
+// Nothing in a rendered body to scroll to, so a bare #… or ?… is never asked
+// about.
+{
+    const { links, seen } = recordingLinks();
+    const root = body(el("a", { href: "#5-acceptance-checks" }, "checks"), el("a", { href: "?x=1" }, " query"));
+    sanitize(root, links);
+    check("fragmentOnlyHrefIsText",
+        tags(root).length === 0 && root.textContent === "checks query" && seen.resolved.length === 0);
+}
+
+// ─── pathHrefDropsQueryFragmentAndDecodes ───
+// marked runs every href through encodeURI, so `a b.md` arrives encoded; the
+// fragment opens the file at its top.
+{
+    const { links, seen } = recordingLinks();
+    sanitize(body(el("a", { href: "/projects/a%20b.md?x=1#s" }, "a b")), links);
+    check("pathHrefDropsQueryFragmentAndDecodes", same(seen.resolved, ["/projects/a b.md"]));
+}
+
+// ─── protocolRelativeStaysExternal ───
+{
+    const { links, seen } = recordingLinks();
+    const node = el("a", { href: "//example.com/docs" }, "docs");
+    sanitize(body(node), links);
+    check("protocolRelativeStaysExternal",
+        node.getAttribute("href") === "https://example.com/docs"
+        && node.getAttribute("target") === "_blank"
+        && node.getAttribute("rel") === "noopener noreferrer"
+        && node.getAttribute("role") === null
+        && seen.resolved.length === 0);
+}
+
+// ─── agentRoleTabindexClassStripped ───
+// Only a path link the sanitiser made carries these; an agent cannot dress an
+// external link as one.
+{
+    const node = el("a", { href: "https://x", role: "link", tabindex: "0", class: "md-path-link" }, "x");
     sanitize(body(node));
-    check("relativeHrefResolved",
-        node.tagName === "A" && node.getAttribute("href") === "https://bossmod.localhost/files");
+    check("agentRoleTabindexClassStripped",
+        node.getAttribute("role") === null
+        && node.getAttribute("tabindex") === null
+        && node.getAttribute("class") === null
+        && node.getAttribute("href") === "https://x/");
+}
+
+// ─── linksMissingOpenThrows ───
+// A `links` that cannot open is a wiring bug: it would paint links that do
+// nothing, so it fails loudly, through sanitize and render alike.
+{
+    const throwsWith = (fn) => {
+        try {
+            fn();
+            return false;
+        } catch (err) {
+            return err.message === "[markdown] links needs resolve and open functions";
+        }
+    };
+    nextBody = body(el("p", null, "x"));
+    check("linksMissingOpenThrows",
+        throwsWith(() => sanitize(body(el("p", null, "x")), { resolve: (path) => path }))
+        && throwsWith(() => render("x", { resolve: (path) => path }))
+        && throwsWith(() => render("x", { open() {} })));
 }
 
 // ─── targetInjectionOverwritten ───
@@ -399,4 +515,92 @@ function check(name, value) {
     check("renderOfEmptyTextIsEmpty", render("").length === 0);
 }
 
-console.log(JSON.stringify({ ok: true, ...results }));
+/**
+ * Activating a path link: a click or Enter opens it, Space does not, and a
+ * failure is marked on the link until a retry clears it. Async, because the
+ * failure lands when `open` rejects.
+ *
+ * @returns {Promise<void>}
+ */
+async function pathLinkActivation() {
+    const tick = () => new Promise((resolve) => setImmediate(resolve));
+    const pathLink = (open) => {
+        const node = el("a", { href: "/projects/x.md" }, "x");
+        sanitize(body(node), { resolve: (path) => path, open });
+        return node;
+    };
+    /** Fire one event at the link; true when its default was prevented. */
+    const fire = (node, type, key) => {
+        let prevented = false;
+        node.dispatchEvent({ type, key, preventDefault() { prevented = true; } });
+        return prevented;
+    };
+
+    // ─── pathLinkClickOpens ───
+    {
+        const opened = [];
+        const node = pathLink((path) => { opened.push(path); });
+        const prevented = fire(node, "click");
+        await tick();
+        check("pathLinkClickOpens",
+            prevented && same(opened, ["/projects/x.md"]) && !node.classList.contains("is-failed"));
+    }
+
+    // ─── pathLinkEnterOpens ───
+    {
+        const opened = [];
+        const node = pathLink((path) => { opened.push(path); });
+        const prevented = fire(node, "keydown", "Enter");
+        await tick();
+        check("pathLinkEnterOpens", prevented && same(opened, ["/projects/x.md"]));
+    }
+
+    // ─── pathLinkSpaceDoesNotOpen ───
+    // Link semantics, not button semantics: Space scrolls the page.
+    {
+        const opened = [];
+        const node = pathLink((path) => { opened.push(path); });
+        const prevented = fire(node, "keydown", " ");
+        await tick();
+        check("pathLinkSpaceDoesNotOpen", !prevented && opened.length === 0);
+    }
+
+    // ─── pathLinkFailureMarked ───
+    // A link that cannot open says so; it never silently does nothing.
+    {
+        const node = pathLink(() => Promise.reject(new Error("Path not found")));
+        fire(node, "click");
+        await tick();
+        check("pathLinkFailureMarked",
+            node.classList.contains("is-failed") && node.getAttribute("title") === "Path not found");
+    }
+
+    // ─── pathLinkRetryClearsFailure ───
+    // The mark is cleared the moment the retry starts, not when it lands.
+    {
+        let failing = true;
+        let release = null;
+        const node = pathLink(() => (failing
+            ? Promise.reject(new Error("Path not found"))
+            : new Promise((resolve) => { release = resolve; })));
+        fire(node, "click");
+        await tick();
+        const failedFirst = node.classList.contains("is-failed");
+        failing = false;
+        fire(node, "click");
+        const clearedAtOnce = !node.classList.contains("is-failed")
+            && node.getAttribute("title") === "/projects/x.md";
+        release();
+        await tick();
+        check("pathLinkRetryClearsFailure",
+            failedFirst && clearedAtOnce && !node.classList.contains("is-failed"));
+    }
+}
+
+pathLinkActivation().then(
+    () => console.log(JSON.stringify({ ok: true, ...results })),
+    (err) => {
+        console.error(err && err.stack ? err.stack : err);
+        process.exit(1);
+    },
+);

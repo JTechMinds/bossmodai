@@ -172,6 +172,7 @@
          head and highlight.js, loaded lazily. Agent output is untrusted, so it
          parses inertly and sanitises against an allowlist; every surface that
          renders markdown loads after it. -->
+    <script defer src="{{ static_url('js/core/markdown-links.js') }}"></script>
     <script defer src="{{ static_url('js/core/markdown.js') }}"></script>
     <!-- Markdown clamped to six lines with a measured "show more": the task
          detail's instructions and the agent desk's description. -->
@@ -363,6 +364,7 @@
     <script defer src="{{ static_url('js/places/files/file-form.js') }}"></script>
     <script defer src="{{ static_url('js/places/files/file-ops.js') }}"></script>
     <script defer src="{{ static_url('js/places/files/file-viewer.js') }}"></script>
+    <script defer src="{{ static_url('js/places/files/path-opener.js') }}"></script>
     <script defer src="{{ static_url('js/places/files/files-data.js') }}"></script>
     <script defer src="{{ static_url('js/places/files/host-roots.js') }}"></script>
     <script defer src="{{ static_url('js/places/files/folder-opener.js') }}"></script>

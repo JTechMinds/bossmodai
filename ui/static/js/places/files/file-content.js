@@ -109,11 +109,16 @@ const BossModFileContent = (() => {
      * @param {HTMLElement} el
      * @param {string} name     The file name; decides markdown vs code vs JSON.
      * @param {string} content
+     * @param {MarkdownLinks} [links]  How links in a markdown file open
+     *   (core/markdown-links.js); absent, they render as plain text. Code and
+     *   JSON have no links and ignore it.
      * @returns {void}
+     * @throws {Error} When `links` is given without both functions
+     *   (BossModMarkdown.renderInto).
      */
-    function renderInto(el, name, content) {
+    function renderInto(el, name, content, links) {
         if (isMarkdown(name)) {
-            BossModMarkdown.renderInto(el, content);
+            BossModMarkdown.renderInto(el, content, links);
             return;
         }
         clear(el);

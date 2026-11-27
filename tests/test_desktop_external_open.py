@@ -102,7 +102,7 @@ def test_one_shared_interceptor_and_one_desktop_command() -> None:
 
 def test_markdown_still_hardens_http_links_without_navigating_in_app() -> None:
     """The sanitiser keeps http(s) anchors; the interceptor is what opens them."""
-    markdown = _read(JS / "core" / "markdown.js")
+    markdown = _read(JS / "core" / "markdown-links.js")
     assert "el.setAttribute('target', '_blank')" in markdown
     assert "ALLOWED_SCHEMES = Object.freeze(['http:', 'https:', 'mailto:'])" in markdown
     css = _read(ROOT / "ui" / "static" / "css" / "conversation.css")

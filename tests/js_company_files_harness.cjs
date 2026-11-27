@@ -8,9 +8,11 @@
  * A read still in flight when the place is left never paints the next mount.
  * The real file viewer's folder line lists folders only (house root, chevron
  * separators, the server's root label kept as a visually-hidden name) and is
- * absent for a file directly under the root. The viewer's Save and image
- * preview use the endpoints its opener passed (a desk opener passes the
- * desk's), and fall back to the company endpoints when none are passed.
+ * absent for a file directly under the root. The viewer's read, Save and
+ * image preview address the namespace its opener names (an `agentId` means
+ * that agent's desk) and the company endpoints otherwise. It refuses to open
+ * without `linksFor`, and hands the links built for the file's own path to
+ * markdown on the first paint and on every return to View.
  *
  * Re-pointed in Phase 3B from company-files.js to places/files/. The payload
  * keys are byte-identical to the dock-era harness: the properties are the same,
@@ -38,10 +40,10 @@ global.window.BossModApi = {
 };
 
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
+    "BossModDom", "BossModMarkdownLinks", "BossModMarkdown", "BossModStore", "BossModBus", "BossModFormat", "BossModGates",
     "BossModOverlayFocus", "BossModModalTrail", "BossModOverlayActions", "BossModOverlays", "BossModMenu", "BossModMenuButton", "BossModPlaces",
     "BossModFloorScope", "BossModFileContent", "BossModFileForm",
-    "BossModFileOps", "BossModFileViewer", "BossModFilesData", "BossModHostRoots",
+    "BossModFileOps", "BossModFileViewer", "BossModPathOpener", "BossModFilesData", "BossModHostRoots",
     "BossModDeskOpener", "BossModFolderOpener", "BossModFileGrid",
     "BossModFileActions", "BossModFilesToolbar", "BossModFilesPlace",
 ];
@@ -66,6 +68,9 @@ global.BossModFileViewer = {
     open(path) { viewerOpens.push(path); return Promise.resolve(); },
     close() {},
 };
+
+/** A `linksFor` for the cases that are not about links: every link is text. */
+const inertLinksFor = () => ({ resolve: () => null, open: () => Promise.resolve() });
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const drain = async () => { for (let i = 0; i < 8; i += 1) await settle(); };
@@ -145,6 +150,7 @@ async function viewerFolderLine(crumbs) {
             name: "a.md", path: "/me/reports/a.md", content: "hello", size_bytes: 5,
             breadcrumbs: crumbs,
         })),
+        linksFor: inertLinksFor,
     });
     const rows = documentStub.body.querySelectorAll(".file-view-crumbs");
     const tokens = rows.length ? rows[0].childNodes.map((node) => {
@@ -165,12 +171,14 @@ async function viewerFolderLine(crumbs) {
  * Open the REAL viewer, Save an edit, and record where each request went.
  *
  * A text file is edited and saved, then an image is opened, so the result
- * names the read, the PUT, and the raw-bytes fetch in order.
+ * names the reads, the PUT, and the raw-bytes fetch in order.
  *
- * @param {object} endpoints  `apiUrl`, `saveUrl`, `rawUrl`, or none of them.
- * @returns {Promise<{saveCalls: string[], rawCalls: string[], saveBody: object|null}>}
+ * @param {object} namespace  `{agentId}` for an agent's desk, or `{}` for
+ *   the company workspace.
+ * @returns {Promise<{readCalls: string[], saveCalls: string[], rawCalls: string[],
+ *   saveBody: object|null}>}
  */
-async function viewerEndpoints(endpoints) {
+async function viewerEndpoints(namespace) {
     const calls = [];
     let reading = { name: "a.md", path: "/me/a.md", content: "hello", size_bytes: 5, breadcrumbs: [] };
     const api = (url, init) => {
@@ -181,7 +189,7 @@ async function viewerEndpoints(endpoints) {
         if (init && init.method === "PUT") return Promise.resolve(ok({ status: "ok" }));
         return Promise.resolve(ok(reading));
     };
-    await RealFileViewer.open("/me/a.md", { api, ...endpoints });
+    await RealFileViewer.open("/me/a.md", { api, ...namespace, linksFor: inertLinksFor });
     const button = (label) => documentStub.body.querySelectorAll("button")
         .find((el) => el.textContent === label);
     await button("Edit").dispatchClick();
@@ -190,25 +198,79 @@ async function viewerEndpoints(endpoints) {
     await drain();
     RealFileViewer.close();
     reading = { name: "pic.png", path: "/me/pic.png", size_bytes: 3, breadcrumbs: [] };
-    await RealFileViewer.open("/me/pic.png", { api, ...endpoints });
+    await RealFileViewer.open("/me/pic.png", { api, ...namespace, linksFor: inertLinksFor });
     await drain();
     RealFileViewer.close();
     const put = calls.find((call) => call.method === "PUT");
     return {
+        readCalls: calls.filter((call) => call.method === "GET" && !call.url.includes("raw?path="))
+            .map((call) => call.url),
         saveCalls: calls.filter((call) => call.method === "PUT").map((call) => call.url),
         rawCalls: calls.filter((call) => call.url.includes("raw?path=")).map((call) => call.url),
         saveBody: put ? JSON.parse(put.body) : null,
     };
 }
 
+/**
+ * The REAL viewer refuses to open without `linksFor`: a markdown file whose
+ * links lead nowhere is not a state any opener should reach by accident.
+ *
+ * @returns {Promise<boolean>} true when it rejected with the documented error
+ *   before asking the server for anything.
+ */
+async function viewerNeedsLinksFor() {
+    let asked = false;
+    try {
+        await RealFileViewer.open("/me/a.md", { api: () => { asked = true; return Promise.resolve(ok({})); } });
+    } catch (err) {
+        return err.message === "[file-viewer] deps.linksFor is required" && !asked;
+    }
+    return false;
+}
+
+/**
+ * Open the REAL viewer on a markdown file and record what markdown was
+ * handed: `linksFor` is asked once, for the path the server read the file
+ * at, and the object it returns reaches both the first paint and the paint
+ * on returning to View from Edit.
+ *
+ * @returns {Promise<boolean>}
+ */
+async function viewerLinksInBothPaints() {
+    const asked = [];
+    const links = { resolve: () => null, open: () => Promise.resolve() };
+    const handed = [];
+    const realRenderInto = global.BossModMarkdown.renderInto;
+    global.BossModMarkdown.renderInto = (el, text, given) => {
+        handed.push(given);
+        return realRenderInto(el, text, given);
+    };
+    try {
+        await RealFileViewer.open("/asked/for.md", {
+            api: () => Promise.resolve(ok({
+                name: "e.md", path: "/f1/p/docs/e.md", content: "[runbook](runbook.md)", size_bytes: 21,
+                breadcrumbs: [],
+            })),
+            linksFor: (filePath) => { asked.push(filePath); return links; },
+        });
+        const button = (label) => documentStub.body.querySelectorAll("button")
+            .find((el) => el.textContent === label);
+        await button("Edit").dispatchClick();
+        await button("View").dispatchClick();
+    } finally {
+        global.BossModMarkdown.renderInto = realRenderInto;
+        RealFileViewer.close();
+    }
+    return asked.length === 1 && asked[0] === "/f1/p/docs/e.md"
+        && handed.length === 2 && handed.every((given) => given === links);
+}
+
 async function main() {
-    // ─── The viewer's endpoints come from its opener ───
-    const deskEndpoints = await viewerEndpoints({
-        apiUrl: "/api/agents/a1/desk?path=%2Fme%2Fa.md",
-        saveUrl: "/api/agents/a1/desk",
-        rawUrl: "/api/agents/a1/desk/raw",
-    });
+    // ─── The viewer's endpoints come from its opener's namespace ───
+    const deskEndpoints = await viewerEndpoints({ agentId: "a1" });
     const companyEndpoints = await viewerEndpoints({});
+    const needsLinksFor = await viewerNeedsLinksFor();
+    const linksInBothPaints = await viewerLinksInBothPaints();
 
     // ─── The viewer's folder line: folders only, house root, chevrons ───
     const deskLine = await viewerFolderLine([
@@ -427,6 +489,8 @@ async function main() {
         viewerRootFileLine: rootFileLine,
         viewerDeskEndpoints: deskEndpoints,
         viewerCompanyEndpoints: companyEndpoints,
+        viewerNeedsLinksFor: needsLinksFor,
+        viewerLinksInBothPaints: linksInBothPaints,
         floorRowsShowNames,
         floorGlyphs,
         gridPainted,

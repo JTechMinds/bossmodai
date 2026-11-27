@@ -13,6 +13,7 @@ HARNESS = Path(__file__).resolve().parent / "js_office_chatter_harness.cjs"
 # The order the harness evaluates its modules in: index.html's order.
 MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "core" / "clamped-markdown.js",
     JS / "core" / "avatar.js",

@@ -24,6 +24,9 @@
  * record what it was asked to render. The real renderer is covered by its own
  * harness (js_markdown_harness.cjs), and this fake DOM has no DOMParser of its
  * own; what matters here is that the instructions go THROUGH the renderer.
+ * The `links` a saved message is rendered with are recorded beside it, and
+ * BossModPathOpener is a recording stub: the real opener's subject is
+ * test_js_company_task_detail.py, and here it is whose path a link opens.
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -34,10 +37,21 @@ installIconsStub();
 global.lucide = null;
 
 const renders = [];
+/** Each render's text with the `links` it was handed (undefined for none). */
+const renderLinks = [];
 global.BossModMarkdown = {
-    render: (text) => {
+    render: (text, links) => {
         renders.push(text);
+        renderLinks.push({ text, links });
         return [document.createTextNode(text)];
+    },
+};
+/** Every path a message's link asked the opener for, with the api it was handed. */
+const pathOpens = [];
+global.BossModPathOpener = {
+    openPath: (api, path, agentId) => {
+        pathOpens.push({ api, path, agentId });
+        return Promise.resolve();
     },
 };
 
@@ -48,6 +62,8 @@ const NAMES = [
     "BossModAutoGrow",
     "BossModFileListing",
     "BossModFactList",
+    // A saved message's links resolve with the real rule (it is pure).
+    "BossModMarkdownLinks",
     // The instructions' clamp is the shared component the desk's description
     // uses too; it renders through the stubbed BossModMarkdown above.
     "BossModClampedMarkdown",
@@ -515,6 +531,15 @@ async function main() {
 async function requestSection() {
     const REQUEST = global.BossModTaskRequest;
     const throws = (fn) => { try { fn(); return false; } catch (err) { return true; } };
+    /** True when `fn` throws exactly `message`: the right refusal, not any one. */
+    const throwsWith = (fn, message) => {
+        try {
+            fn();
+            return false;
+        } catch (err) {
+            return err.message === message;
+        }
+    };
     const ASKED = {
         ...BLOCKED, id: "t-asked", title: "Review the rubric",
         request_messages: [
@@ -528,7 +553,7 @@ async function requestSection() {
     const colorOf = (agentId) => (agentId === "a1" ? "#3b82f6" : undefined);
 
     // ── ownRequestReadsAsAsked ──────────────────────────────────────────
-    const own = REQUEST.section(ASKED, { tasks, colorOf });
+    const own = REQUEST.section(ASKED, { tasks, colorOf, api });
     const authors = own.element.querySelectorAll(".task-detail-message-author");
     const texts = own.element.querySelectorAll(".task-detail-message-text");
     const ownRequestReadsAsAsked = own.element.querySelector(".task-detail-heading").textContent === "Request"
@@ -555,7 +580,7 @@ async function requestSection() {
     if (!requestClampFollowsOverflow) fail("the request's clamps did not follow their own overflow");
 
     // ── forwardedRequestNamesTheParent ──────────────────────────────────
-    const forwarded = REQUEST.section(ASKED_CHILD, { tasks, colorOf });
+    const forwarded = REQUEST.section(ASKED_CHILD, { tasks, colorOf, api });
     const forwardedRequestNamesTheParent = Boolean(forwarded)
         && forwarded.element.querySelector(".task-detail-meta").textContent
             === "From the parent task, “Review the rubric”, word for word."
@@ -564,20 +589,94 @@ async function requestSection() {
     if (!forwardedRequestNamesTheParent) fail("a child without a request did not show its parent's");
 
     // ── noRequestNoSection ──────────────────────────────────────────────
-    const noRequestNoSection = REQUEST.section(BLOCKED, { tasks: TASKS, colorOf }) === null
+    const noRequestNoSection = REQUEST.section(BLOCKED, { tasks: TASKS, colorOf, api }) === null
         // A child whose parent has no request, and one whose parent is not listed.
-        && REQUEST.section(CHILD_OPEN, { tasks: TASKS, colorOf }) === null
-        && REQUEST.section(ASKED_CHILD, { tasks: [ASKED_CHILD], colorOf }) === null;
+        && REQUEST.section(CHILD_OPEN, { tasks: TASKS, colorOf, api }) === null
+        && REQUEST.section(ASKED_CHILD, { tasks: [ASKED_CHILD], colorOf, api }) === null;
     if (!noRequestNoSection) fail("a task without a request still drew a Request section");
 
     // ── malformedRequestThrows ──────────────────────────────────────────
-    const malformed = (message) => throws(() => REQUEST.section({ id: "x", request_messages: [message] }, { tasks, colorOf }));
+    const malformed = (message) => throws(() => REQUEST.section({ id: "x", request_messages: [message] }, { tasks, colorOf, api }));
     const malformedRequestThrows = malformed({ author_type: "human", author_name: "Boss", content: "" })
         && malformed({ author_name: "Jim", content: "Do it." })
         && malformed({ author_type: "agent", author_agent_id: "a1", author_name: "", content: "Do it." })
-        && throws(() => REQUEST.section(ASKED, { tasks }))
-        && throws(() => REQUEST.section(ASKED, { colorOf }));
+        && throws(() => REQUEST.section(ASKED, { tasks, api }))
+        && throws(() => REQUEST.section(ASKED, { colorOf, api }));
     if (!malformedRequestThrows) fail("a malformed request message drew a row instead of throwing");
+
+    // ── requestSectionNeedsApi ──────────────────────────────────────────
+    // A request whose path links could not open would render dead links.
+    const requestSectionNeedsApi = throwsWith(() => REQUEST.section(ASKED, { tasks, colorOf }),
+        "[task-request] section needs api");
+    if (!requestSectionNeedsApi) fail("a Request section without api did not throw");
+
+    // ── messageLinksResolveAbsolutePaths / requestLinksOpenAsAuthorElseAssignee ──
+    // A path in a saved message opens through the path opener with the
+    // section's api: as its agent author sees it, else as THIS task's
+    // assignee does, for a parent's forwarded request too. Only an absolute
+    // path is a link, by the conversation rule (markdown-links.js).
+    const LINKED = {
+        ...BLOCKED, id: "t-linked", assigned_to: "a2",
+        request_messages: [
+            { author_type: "human", author_agent_id: null, author_name: "Boss", content: "Read [the plan](/me/plan.md)." },
+            { author_type: "agent", author_agent_id: "a1", author_name: "Jim", content: "See [x](/projects/x.md)." },
+        ],
+    };
+    const LINKED_CHILD = { ...CHILD_OPEN, id: "c-linked", parent_task_id: LINKED.id, assigned_to: "a3", request_messages: [] };
+    const linkedTasks = [LINKED, LINKED_CHILD];
+    const handedFor = (task) => {
+        const before = renderLinks.length;
+        REQUEST.section(task, { tasks: linkedTasks, colorOf, api });
+        return renderLinks.slice(before).map((entry) => entry.links);
+    };
+    const ownLinks = handedFor(LINKED);
+    const childLinks = handedFor(LINKED_CHILD);
+    const messageLinksResolveAbsolutePaths = ownLinks.length === 2 && childLinks.length === 2
+        && [...ownLinks, ...childLinks].every((links) => links
+            && links.resolve === global.BossModMarkdownLinks.resolveAbsolutePath
+            && typeof links.open === "function")
+        && ownLinks[0].resolve("docs/x.md") === null && ownLinks[0].resolve("/me/plan.md") === "/me/plan.md";
+    if (!messageLinksResolveAbsolutePaths) fail("a saved message's links do not use the conversation rule");
+    pathOpens.length = 0;
+    await ownLinks[0].open("/me/plan.md");
+    await ownLinks[1].open("/projects/x.md");
+    await childLinks[0].open("/me/plan.md");
+    await childLinks[1].open("/projects/x.md");
+    const opened = pathOpens.map((entry) => ({ sameApi: entry.api === api, path: entry.path, agentId: entry.agentId }));
+    const requestLinksOpenAsAuthorElseAssignee = same(opened, [
+        { sameApi: true, path: "/me/plan.md", agentId: "a2" },
+        { sameApi: true, path: "/projects/x.md", agentId: "a1" },
+        { sameApi: true, path: "/me/plan.md", agentId: "a3" },
+        { sameApi: true, path: "/projects/x.md", agentId: "a1" },
+    ]);
+    if (!requestLinksOpenAsAuthorElseAssignee) fail(`request links opened as ${JSON.stringify(opened)}`);
+
+    // ── messageRowNeedsApiAndAssigneeOf ─────────────────────────────────
+    const ROW = global.BossModTaskMessage;
+    const human = LINKED.request_messages[0];
+    const messageRowNeedsApiAndAssigneeOf = throwsWith(
+        () => ROW.row(human, { colorOf, moreLabel: "More", assigneeOf: () => "a2" }), "[task-message] row needs api")
+        && throwsWith(() => ROW.row(human, { colorOf, moreLabel: "More", api }), "[task-message] row needs assigneeOf")
+        && throwsWith(() => ROW.row(human, { colorOf, moreLabel: "More", api, assigneeOf: "a2" }),
+            "[task-message] row needs assigneeOf");
+    if (!messageRowNeedsApiAndAssigneeOf) fail("a message row without api or assigneeOf did not throw");
+
+    // ── messageLinksReadTheAssigneeWhenClicked ──────────────────────────
+    // Read at click time, so a reassignment while the panel is open is
+    // followed; with no assignee the owner is '' and the opener says so.
+    let assignee = "a2";
+    const rowBefore = renderLinks.length;
+    ROW.row(human, { colorOf, moreLabel: "More", api, assigneeOf: () => assignee });
+    const rowLinks = renderLinks[rowBefore].links;
+    pathOpens.length = 0;
+    assignee = "a4";
+    await rowLinks.open("/me/plan.md");
+    assignee = null;
+    await rowLinks.open("/me/plan.md");
+    const messageLinksReadTheAssigneeWhenClicked = same(pathOpens.map((entry) => entry.agentId), ["a4", ""]);
+    if (!messageLinksReadTheAssigneeWhenClicked) {
+        fail(`a row's links opened as ${JSON.stringify(pathOpens.map((entry) => entry.agentId))}`);
+    }
 
     // ── requestSitsAboveTheTaskInViewAndEditMode ────────────────────────
     const { actions } = recordingActions();
@@ -615,6 +714,11 @@ async function requestSection() {
         forwardedRequestNamesTheParent,
         noRequestNoSection,
         malformedRequestThrows,
+        requestSectionNeedsApi,
+        messageLinksResolveAbsolutePaths,
+        requestLinksOpenAsAuthorElseAssignee,
+        messageRowNeedsApiAndAssigneeOf,
+        messageLinksReadTheAssigneeWhenClicked,
         requestSitsAboveTheTaskInViewAndEditMode,
     };
 }
@@ -704,6 +808,16 @@ async function originSection() {
         // Right after the Request, before the Task.
         && nextHeading(panel, headedSection(panel, "Request")) === "Before this task"
         && nextHeading(panel, origin) === "Task";
+    // ── originLinksOpenAsTheAssignee ────────────────────────────────────
+    // The detail hands the section the assignee it painted: the operator's
+    // line opens as the agent working the task sees it.
+    const originHuman = renderLinks.filter((entry) => entry.text === MESSAGES[0].content).pop();
+    pathOpens.length = 0;
+    await originHuman.links.open("/me/notes.md");
+    const originLinksOpenAsTheAssignee = same(
+        pathOpens.map((entry) => ({ sameApi: entry.api === api, path: entry.path, agentId: entry.agentId })),
+        [{ sameApi: true, path: "/me/notes.md", agentId: ASKED.assigned_to }]);
+    if (!originLinksOpenAsTheAssignee) fail(`an origin link opened as ${JSON.stringify(pathOpens)}`);
     const texts = origin.querySelectorAll(".task-detail-message-text");
     // The first message overflows its clamp; it is measured when first shown.
     texts[0].scrollHeight = 400;
@@ -776,13 +890,25 @@ async function originSection() {
         fail(`origin error: shown ${errorShown}, malformed ${malformedShown}, retried ${retriedToNone}`);
     }
 
+    // ── originSectionNeedsAssigneeOf ────────────────────────────────────
+    let originAssigneeError = null;
+    try {
+        global.BossModTaskOrigin.section({ api, taskId: "t-x", colorOf });
+    } catch (err) {
+        originAssigneeError = err.message;
+    }
+    const originSectionNeedsAssigneeOf = originAssigneeError === "[task-origin] deps.assigneeOf is required";
+    if (!originSectionNeedsAssigneeOf) fail(`an origin section without assigneeOf: ${originAssigneeError}`);
+
     originReply = answer({ origin: null });
     if (top() !== null) fail("an origin case outlived its close");
     return {
         originLoadsThenRemovesItselfWhenNone,
         originOwnIsCollapsedThenShown,
+        originLinksOpenAsTheAssignee,
         originForwardedNamesTheParent,
         originErrorSaysSoAndRetries,
+        originSectionNeedsAssigneeOf,
     };
 }
 

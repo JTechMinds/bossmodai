@@ -19,7 +19,7 @@ const documentStub = installDom();
 require("./js_markdown_stub.cjs").installMarkdownStub(documentStub);
 
 const NAMES = [
-    "BossModDom", "BossModMarkdown", "BossModClampedMarkdown", "BossModAvatar", "BossModStore",
+    "BossModDom", "BossModMarkdownLinks", "BossModMarkdown", "BossModClampedMarkdown", "BossModAvatar", "BossModStore",
     "BossModBus", "BossModFormat", "BossModGates", "BossModFloorScope", "BossModOfficeChatter",
 ];
 const paths = process.argv.slice(2);

@@ -15,8 +15,9 @@
  *
  * Invoked by tests/test_lazy_vendor_scripts.py. Not a browser bundle.
  *
- * argv: [2] core/dom.js [3] core/lazy-script.js [4] core/markdown.js
- *       [5] places/files/file-content.js [6] core/data-table.js
+ * argv: [2] core/dom.js [3] core/lazy-script.js [4] core/markdown-links.js
+ *       [5] core/markdown.js [6] places/files/file-content.js
+ *       [7] core/data-table.js
  */
 const fs = require("fs");
 const { installDom } = require("./js_fake_dom.cjs");
@@ -30,7 +31,7 @@ const bodyQueryAll = document.querySelectorAll.bind(document);
 document.querySelectorAll = (selector) => [
     ...document.head.querySelectorAll(selector), ...bodyQueryAll(selector)];
 
-const [domPath, lazyPath, markdownPath, fileContentPath, dataTablePath] = process.argv.slice(2);
+const [domPath, lazyPath, markdownLinksPath, markdownPath, fileContentPath, dataTablePath] = process.argv.slice(2);
 const load = (file, name) => eval(`${fs.readFileSync(file, "utf8")}\n;global.${name} = ${name};\n`);
 load(domPath, "BossModDom");
 load(lazyPath, "BossModLazyScript");
@@ -128,6 +129,7 @@ async function logged(fn) {
     let nextBody = null;
     global.marked = { parse: (text) => String(text) };
     global.DOMParser = class { parseFromString() { return { body: nextBody }; } };
+    load(markdownLinksPath, "BossModMarkdownLinks");
     load(markdownPath, "BossModMarkdown");
     load(fileContentPath, "BossModFileContent");
     load(dataTablePath, "BossModDataTable");

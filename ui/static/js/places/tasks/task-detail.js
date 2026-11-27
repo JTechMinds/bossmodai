@@ -87,10 +87,10 @@ const BossModTaskDetail = (() => {
         if (!task) throw new Error(`[task-detail] no task "${taskId}" in the current list`);
 
         const events = BossModTaskEvents.createTaskEvents({ api, taskId: task.id, colorOf });
-        // Built once per open, not per repaint: it fetches, and it is read-only.
-        const origin = BossModTaskOrigin.section({ api, taskId: task.id, colorOf });
         /** The row renderColumn() last painted: the usage follows its assignee's turns. */
         let painted = task;
+        // Built once per open, not per repaint: it fetches, and it is read-only.
+        const origin = BossModTaskOrigin.section({ api, taskId: task.id, colorOf, assigneeOf: () => painted.assigned_to });
         const usage = BossModTaskUsage.section({
             api, bus, taskId: task.id, assigneeOf: () => painted.assigned_to,
         });
@@ -123,7 +123,7 @@ const BossModTaskDetail = (() => {
             const children = tasks.filter((item) => item.parent_task_id === current.id);
             const instructions = editing ? null : SECTIONS.instructions(current);
             // Read-only in Edit mode too: nobody edits what was asked.
-            const request = BossModTaskRequest.section(current, { tasks, colorOf });
+            const request = BossModTaskRequest.section(current, { tasks, colorOf, api });
             const assigneeValue = editing ? editMode.assigneeControl : undefined;
             const severityValue = editing ? editMode.severityControl : undefined;
             status = editing ? statusActions(current) : null;

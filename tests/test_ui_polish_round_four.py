@@ -107,6 +107,7 @@ CONTEXT_MODULES = [
     # The shared REST client: BossModScheduleApi words refusals with its formatError.
     JS / "api-client.js",
     JS / "core" / "dom.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "core" / "clamped-markdown.js",
     JS / "core" / "fact-list.js",
@@ -175,6 +176,7 @@ CONTEXT_MODULES = [
     JS / "places" / "files" / "file-form.js",
     JS / "places" / "files" / "file-ops.js",
     JS / "places" / "files" / "file-viewer.js",
+    JS / "places" / "files" / "path-opener.js",
     JS / "context" / "floor-plan.js",
     JS / "context" / "mini-office.js",
     JS / "context" / "office-chatter.js",

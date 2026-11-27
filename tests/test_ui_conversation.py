@@ -18,6 +18,7 @@ CONVERSATION_HARNESS = Path(__file__).resolve().parent / "js_conversation_harnes
 # The order the conversation harness evaluates its modules in.
 CONVERSATION_MODULES = [
     JS / "core" / "dom.js",
+    JS / "core" / "markdown-links.js",
     JS / "core" / "markdown.js",
     JS / "core" / "avatar.js",
     JS / "core" / "switch.js",
@@ -478,6 +479,12 @@ def test_conversation_harness() -> None:
         "faceLowerLeftBesideBubble": True,
         "noOrphanAgentFace": True,
         "humanFaceSaysYou": True,
+        # A body's workspace path opens through the deliverable opener, as
+        # its author sees it, else as the DM's agent; only an absolute path
+        # is a link, and a turn with no opener refuses to render dead ones.
+        "agentPathLinksOpenAsTheAuthor": True,
+        "humanPathLinksOpenAsTheDmAgent": True,
+        "renderMessageNeedsCtx": True,
         "turnGap": True,
         # The polish round moved the receipts preference out of the action row
         # and behind the header's `⋯`, where later view options go. Its storage
@@ -695,7 +702,7 @@ def test_event_cards_render_desk_action_only_when_injected() -> None:
     assert "ctx.openDesk(agentId, filePath);" in note
     controller = _read(CONVERSATION / "conversation.js")
     assert "openDeliverable" in controller
-    assert "BossModTaskDeliverables.openDeliverablePath" in controller
+    assert "BossModPathOpener.openPath" in controller
     thread = _read(SOURCES / "thread-source.js")
     assert "deskPath: raw.desk_path || null" in thread
     assert "taskId: raw.task_id || null" in thread

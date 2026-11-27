@@ -126,6 +126,14 @@
 
 .md a { color: var(--accent); text-decoration: underline; }
 
+/* A path link (core/markdown.js) is an <a> with no href, so the UA gives it
+   no pointer; its colour and underline are still `.md a`'s. One that could
+   not open says so in --alert, as a failed Tasks deliverable card does:
+   4.57:1 on --bg and 4.90:1 on --panel. A bubble whose fill takes it under
+   AA overrides it in conversation.css. */
+.md .md-path-link { cursor: pointer; }
+.md .md-path-link.is-failed { color: var(--alert); }
+
 .md hr {
   margin: 12px 0;
   border: 0;

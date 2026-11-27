@@ -232,7 +232,7 @@ const BossModFilesPlace = (() => {
     // ─── Actions ───
 
     function openViewer(path) {
-        void BossModFileViewer.open(path, { api: ctxRef.api }).catch((err) => {
+        void BossModPathOpener.openFile(ctxRef.api, path, '').catch((err) => {
             setError(`Could not open ${path}: ${(err && err.message) || 'the request failed.'}`);
         });
     }

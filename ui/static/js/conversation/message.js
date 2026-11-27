@@ -16,6 +16,13 @@
  * transcript that formatted `**x**` for one speaker and not the other would be
  * two renderers again, and a pasted log is worth a fence whoever pasted it.
  *
+ * A link to a workspace path (`[verdict](/projects/x.md)`) opens in the app
+ * through the conversation's deliverable opener, the one the Done note's link
+ * uses. `/me` and `/projects` mean something only to one agent, so the path is
+ * read as the message's author sees it, else as the DM's agent does — the
+ * Done note's rule. Only an absolute path becomes a link: a message records no
+ * working folder, so a relative one stays text rather than a guess.
+ *
  * The name is chrome, not prose. It sits above the paragraph bubble as
  * quiet agent-colored text — the same ink family as the initial, regular
  * weight, no chip fill, no border. A color-coded initial sits lower-left
@@ -90,8 +97,8 @@ const BossModMessage = (() => {
     async function openAttachment(att, control) {
         control.classList.remove('is-failed');
         try {
-            if (typeof BossModFileViewer === 'undefined') throw new Error('The file viewer is not loaded.');
-            await BossModFileViewer.open(att.company_path, { api: BossModApi.fetch });
+            if (typeof BossModPathOpener === 'undefined') throw new Error('The file viewer is not loaded.');
+            await BossModPathOpener.openFile(BossModApi.fetch, att.company_path, '');
         } catch (err) {
             console.error('[message] could not open attachment', att.id, err);
             control.classList.add('is-failed');
@@ -179,23 +186,39 @@ const BossModMessage = (() => {
      *   because in a DM every non-human turn is the same agent. `faded`
      *   (with `describedBy`, the compaction divider's id) marks a row the
      *   agents no longer see word for word.
+     * @param {object} ctx  The conversation's card context.
+     * @param {(path: string, agentId: string) => (Promise<void>|void)} ctx.openDeliverable
+     *   Opens a workspace path as `agentId` sees it; a path link in the body
+     *   calls it on click and shows its rejection on the link.
+     * @param {string|null} [ctx.agentId]  The DM's agent, null in a thread:
+     *   whose `/me` and `/projects` a path means when the message has no
+     *   agent author. With neither, the owner is '' and the opener reports
+     *   that no agent is recorded.
      * @returns {HTMLElement}
      * @throws {Error} When called with a kind other than 'message'. The
      *   transcript dispatches on kind, so arriving here with another one means
-     *   a source produced a shape no renderer owns.
+     *   a source produced a shape no renderer owns. Also when `ctx` carries
+     *   no opener: the body's path links would render dead.
      */
-    function renderMessage(message) {
+    function renderMessage(message, ctx) {
         if (!message || message.kind !== 'message') {
             throw new Error(`[message] renderMessage got kind "${message && message.kind}"`);
+        }
+        if (!ctx || typeof ctx.openDeliverable !== 'function') {
+            throw new Error('[message] renderMessage needs ctx.openDeliverable');
         }
         const author = AUTHORS.has(message.author) ? message.author : 'other';
         const key = String(message.key || '').trim();
         const createdAt = String(message.createdAt || '').trim();
         const text = String(message.text || '');
         const attachments = Array.isArray(message.attachments) ? message.attachments : null;
+        const owner = String(message.authorAgentId || ctx.agentId || '');
 
         const body = h('div', { class: 'msg-body md' },
-            BossModMarkdown.render(text));
+            BossModMarkdown.render(text, {
+                resolve: BossModMarkdownLinks.resolveAbsolutePath,
+                open: (path) => ctx.openDeliverable(path, owner),
+            }));
         if (typeof BossModMentionPills !== 'undefined') {
             BossModMentionPills.linkify(body);
         }

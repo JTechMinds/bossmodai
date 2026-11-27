@@ -28,6 +28,10 @@ const BossModClampedMarkdown = (() => {
      *   so a surface keeps its own hook (the task detail's
      *   `task-detail-instructions`).
      * @param {string} options.moreLabel  What the reveal link says.
+     * @param {MarkdownLinks} [options.links]  How path links in the text open
+     *   (core/markdown-links.js). Absent, they render as plain text, which is
+     *   the documented behaviour for a surface with no path opener (the desk's
+     *   description, office chatter, a task's instructions).
      * @returns {{ element: HTMLElement, measure: () => void }} `element` is
      *   `div.clamped-md > (div.md.is-clamped, button.btn-link.clamped-more)`,
      *   the button hidden until measured — a toggle for text that fits would
@@ -36,9 +40,10 @@ const BossModClampedMarkdown = (() => {
      *   button, which removes both on click. Measuring again after either
      *   outcome is a no-op.
      * @throws {Error} When `text` is empty — an empty clamp would draw a link
-     *   to nothing — or `moreLabel` is missing.
+     *   to nothing — or `moreLabel` is missing, or `links` is given without
+     *   both functions (BossModMarkdown.render).
      */
-    function create({ text, className, moreLabel } = {}) {
+    function create({ text, className, moreLabel, links } = {}) {
         if (typeof text !== 'string' || !text.trim()) {
             throw new Error('[clamped-markdown] text is required');
         }
@@ -46,7 +51,7 @@ const BossModClampedMarkdown = (() => {
             throw new Error('[clamped-markdown] moreLabel is required');
         }
         const body = h('div', { class: className ? `md is-clamped ${className}` : 'md is-clamped' },
-            BossModMarkdown.render(text));
+            BossModMarkdown.render(text, links));
         /** Set once the clamp has been decided or lifted, so measure is idempotent. */
         let settled = false;
         const more = h('button', {

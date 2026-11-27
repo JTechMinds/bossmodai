@@ -65,17 +65,22 @@ const BossModTaskOrigin = (() => {
      * @param {string} deps.taskId
      * @param {(agentId: string) => (string|undefined)} deps.colorOf  Roster
      *   colours for an agent author's chip.
+     * @param {() => (string|null|undefined)} deps.assigneeOf  The task's
+     *   current assignee, read when a path link in a message is clicked:
+     *   whose `/me` and `/projects` the path means when the message has no
+     *   agent author (task-message.js).
      * @returns {{element: HTMLElement, isEmpty: () => boolean, destroy: () => void}}
      *   `element` shows the loading line at once; `isEmpty` turns true once
      *   the task proved to have no conversation, and the element has then
      *   removed itself, so a repaint leaves it out.
-     * @throws {Error} When api, taskId or colorOf is missing.
+     * @throws {Error} When api, taskId, colorOf or assigneeOf is missing.
      */
     function section(deps) {
-        const { api, taskId, colorOf } = deps || {};
+        const { api, taskId, colorOf, assigneeOf } = deps || {};
         if (typeof api !== 'function') throw new Error('[task-origin] deps.api is required');
         if (!taskId) throw new Error('[task-origin] deps.taskId is required');
         if (typeof colorOf !== 'function') throw new Error('[task-origin] deps.colorOf is required');
+        if (typeof assigneeOf !== 'function') throw new Error('[task-origin] deps.assigneeOf is required');
 
         const load = BossModGates.createLoadGeneration();
         const element = h('section', { class: 'task-detail-section' });
@@ -95,6 +100,8 @@ const BossModTaskOrigin = (() => {
             const rows = origin.messages.map((message) => BossModTaskMessage.row(message, {
                 colorOf,
                 moreLabel: 'Show the full message',
+                api,
+                assigneeOf,
             }));
             const list = h('div', { class: 'task-detail-origin-messages', id: listId },
                 ...rows.map((row) => row.element));
